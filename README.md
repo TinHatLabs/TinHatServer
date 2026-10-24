@@ -63,6 +63,13 @@ Each one sets up the same way: open the address it shows, type its setup code, a
 Tests: `python3 -m unittest discover -s appliance/tests`, and in `names/` and `relay/`:
 `python3 -m unittest discover -s tests`.
 
+## How it's made
+Tin Hat is AI-built. The code is written with Claude (Anthropic's AI) and reviewed adversarially by a second AI model
+(the "Astra" in the source comments), directed and tested by its maintainer. The apps and the server side have been in
+daily use by one group of friends for about two years; the packaging that lets anyone run their own server is new
+(October 2026). Every change goes through automated tests and adversarial reviews, and all of the source is here to
+read. It has not had a professional security audit.
+
 ## Security
 Found a security problem? Please don't open a public issue: report it privately through this repository's Security tab
 (Report a vulnerability), or email security@tinhat.me.
