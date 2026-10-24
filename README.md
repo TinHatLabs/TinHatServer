@@ -7,7 +7,9 @@ updates, backups, moving to another computer.
 **Use Tin Hat for anything, including streaming, communities and businesses. If you run a modified version for other
 people, share your changes** ([AGPL-3.0-or-later](LICENSE)).
 
-> **Not released yet.** It's being tested; the first release will be published on this repository's Releases page.
+**Download:** the [latest release](https://github.com/TinHatLabs/TinHatServer/releases/latest) has every file below;
+step-by-step guides for each are on [tinhat.dev/server](https://tinhat.dev/server/). The apps (Windows, Linux, Flatpak,
+web) are at [tinhat.dev](https://tinhat.dev/).
 
 ## Ways to run it
 | On | You get |
