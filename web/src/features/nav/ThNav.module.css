@@ -1,0 +1,125 @@
+/* ThNav.qml — rail + room panel, filling its host (the phones' stack home); ThDock.qml — the nav drawer's chrome. */
+.nav {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.column {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.column > .nav {
+  flex: 1 1 auto;
+}
+/* sidebar loading state (column 0 while busy): spinner + caption, above the nav */
+.loading {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: var(--th-rooms-loading-bg);
+  color: var(--th-rooms-loading-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.column[data-mobile] {
+  padding-bottom: 0;
+}
+
+/* ---- ThDock.qml: the nav drawer's chrome in the dock host — the handle and the panel frame at the solver's rects
+   (islands C6/C7: LAYOUT.md §7.9, handle (6, 6, 40, 40) and panel (6, 50, 340, 680) at 1560×960); the nav column's
+   islands sit inside the panel (z 20), fading + sliding with it ---- */
+.dockHost {
+  position: absolute;
+  inset: 0;
+  pointer-events: none !important;
+}
+.handle {
+  position: absolute;
+  padding: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--th-dock-handle-border);
+  background: var(--th-dock-handle-bg);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    opacity var(--th-dur),
+    background-color var(--th-dur);
+  z-index: 2;
+}
+.handle[data-open] {
+  background: var(--th-dock-handle-bg-active);
+}
+.pinDot {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--th-dock-pin-bg);
+  border: 1px solid var(--th-dock-pin-border);
+}
+.handleBadge {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  background: var(--th-badge-count-bg) !important;
+  /* Qt Rectangle borders are drawn INSIDE the 17 px badge (the coloured disc shows 14 px) */
+  border: 1.5px solid var(--th-dock-badge-border);
+  box-sizing: border-box;
+  background-clip: padding-box;
+  padding: 0 2.5px !important; /* smallSpacing 4 minus the inside border */
+  line-height: calc(15px - 2 * 1.5px) !important;
+}
+.panel {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: 12px;
+  /* 10.8: the nav drawer panel's own tokens (drawer.panel.* default to the dock.panel.* values — OLED/Goose unchanged);
+     the shadow keeps dock.panel.shadow (no drawer token). Desktop: ThDock.qml's panel. */
+  background: var(--th-drawer-panel-bg);
+  border: 1px solid var(--th-drawer-panel-border);
+  box-shadow: 0 4px 18px var(--th-dock-panel-shadow);
+  overflow: hidden;
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateX(-16px);
+  transition:
+    opacity var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+  z-index: 1;
+}
+.panel[data-open] {
+  opacity: 1;
+  transform: none;
+  animation: dockIn var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.panel:not([data-open]) {
+  pointer-events: none;
+}
+@keyframes dockIn {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+
+/* touch screens with the desktop layout (tablets): there is no hover to reveal the handle */
+:global(html[data-touch]) .handle {
+  opacity: 1 !important;
+}

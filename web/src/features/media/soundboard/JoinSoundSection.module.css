@@ -1,0 +1,61 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.explain {
+  color: var(--th-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  overflow-wrap: anywhere;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.combo {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.status {
+  text-align: center;
+  color: var(--th-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+.resRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 41.4px;
+  padding: 0 4px;
+  border-radius: var(--th-radius);
+  cursor: pointer;
+}
+.resRow:hover {
+  background: var(--th-settings-sound-row-bg-hover);
+}
+.resPlaying,
+.resPlaying:hover {
+  background: var(--th-settings-sound-row-bg-active);
+}
+.resName {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--th-settings-sound-row-fg);
+  font-size: var(--th-font-size);
+}
+:global(html[data-touch]) .resRow {
+  height: 48px;
+}

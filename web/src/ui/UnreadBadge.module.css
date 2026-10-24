@@ -1,0 +1,19 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  height: 17px;
+  min-width: 17px;
+  padding: 0 4px;
+  border-radius: 8.5px;
+  background: var(--th-badge-count-bg);
+  color: var(--th-badge-count-fg);
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+.hl {
+  background: var(--th-badge-count-bg-mention);
+}

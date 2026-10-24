@@ -1,0 +1,176 @@
+/* RowEditor.module.css — the button-row editor (RowEditor.qml has the same numbers): a 720 px dialog; the preview
+   strip; Look / Size radio rows; two columns — the row's buttons (40 px rows: glyph, label, "hide when it doesn't
+   apply", ▲ ▼ −) and the action drawer (32 px rows by group, a search field); phones stack the columns full width.
+   Colours: the dialog's tokens and the surface roles (the palette's row look). */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(78vh, 720px);
+  min-height: 0;
+}
+.preview {
+  flex: none;
+  min-height: 58px;
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--th-surface-sunken);
+  border: 1px solid var(--th-dialog-border);
+  display: flex;
+  align-items: center;
+}
+.previewEmpty {
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+}
+.looks {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+}
+.lookRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.lookName {
+  min-width: 36px;
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+}
+.columns {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.stacked {
+  grid-template-columns: 1fr;
+}
+.col {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  min-height: 0;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 5px;
+  background: var(--th-surface-raised);
+}
+.glyph {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.emoji {
+  font-size: 16px;
+  line-height: 1;
+}
+.itemText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+.itemLabel {
+  color: var(--th-dialog-fg);
+  font-size: var(--th-font-size);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.itemFlag {
+  font-size: var(--th-font-size-small);
+}
+.itemNote {
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+}
+.itemTools {
+  flex: none;
+  display: flex;
+  gap: 0;
+}
+.pickHead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.drawer {
+  overflow-y: auto;
+  min-height: 0;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 6px;
+}
+.groupName {
+  padding: 4px 8px 2px;
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+  font-weight: 700;
+}
+.drawerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--th-dialog-fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.drawerRow:hover:not(:disabled),
+.drawerRow:focus-visible {
+  background: var(--th-surface-hover);
+}
+.drawerRow:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.drawerLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--th-font-size);
+}
+.drawerMore {
+  flex: none;
+  color: var(--th-dialog-hint-fg);
+}

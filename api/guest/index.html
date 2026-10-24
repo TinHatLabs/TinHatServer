@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Guests</title>
+<style>
+  /* The guest room's door (docs/GUESTS.md): knock with a name, wait until a member lets you in, then Tin Hat opens in
+     this browser, in the Guests room. No account, nothing to install. */
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0f; --panel: #16161d; --line: #26262f; --text: #e8e8ef; --dim: #9a9aa8;
+    --accent: #7aa2f7; --bad: #f7768e; --good: #7ee787;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { color-scheme: light; --bg: #f4f4f7; --panel: #ffffff; --line: #dcdce4; --text: #18181f; --dim: #5c5c6b;
+            --accent: #3d6ee0; --bad: #c4314b; --good: #1f8a3a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+         font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         display: flex; align-items: center; justify-content: center;
+         padding: 16px max(16px, env(safe-area-inset-left, 0px)); }
+  .card { width: min(460px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; }
+  h1 { margin: 0 0 4px; font-size: 21px; text-wrap: balance; }
+  .sub { color: var(--dim); margin: 0 0 18px; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; }
+  input, button { font: inherit; border-radius: 9px; padding: 11px 13px; }
+  input { flex: 1 1 200px; min-width: 0; border: 1px solid var(--line); background: var(--bg); color: inherit; }
+  button { border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .55; cursor: default; }
+  .err { color: var(--bad); min-height: 1.5em; margin-top: 10px; }
+  .hint { color: var(--dim); font-size: 14px; margin-top: 14px; }
+  .wait { display: flex; align-items: center; gap: 12px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); flex: 0 0 auto;
+         animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main class="card" aria-live="polite">
+  <section id="ask">
+    <h1 id="title">Guests</h1>
+    <p class="sub" id="lede">Type your name and knock. Someone there lets you in; you don't need an account.</p>
+    <form id="form">
+      <input id="name" autocomplete="nickname" maxlength="32" placeholder="Your name" aria-label="Your name" required>
+      <button id="knock" type="submit">Knock</button>
+    </form>
+    <div class="err" id="err" role="alert"></div>
+    <p class="hint">You'll be in the Guests room for up to 12 hours, with a temporary account that's removed afterwards.
+      Calls ask for your microphone (and camera, if you want).</p>
+  </section>
+  <section id="waiting" hidden>
+    <h1>Waiting at the door…</h1>
+    <div class="wait"><span class="dot" aria-hidden="true"></span><p class="sub" style="margin:0">They've been told you're here. Keep this page open.</p></div>
+    <p class="hint">If nobody comes within 10 minutes, the knock runs out and you can try again.</p>
+  </section>
+  <section id="done" hidden>
+    <h1 id="doneTitle"></h1>
+    <p class="sub" id="doneText"></p>
+    <button id="again" type="button" hidden>Knock again</button>
+  </section>
+</main>
+<script type="module">
+const qs = new URLSearchParams(location.search);
+const g = qs.get("g") || "";
+const $ = (id) => document.getElementById(id);
+const show = (id) => { for (const s of ["ask", "waiting", "done"]) $(s).hidden = s !== id; };
+const finish = (title, text, again = false) => {
+  $("doneTitle").textContent = title;
+  $("doneText").textContent = text;
+  $("again").hidden = !again;
+  show("done");
+};
+const closed = () => finish("This guest link isn't open", "Ask whoever sent it for a new one.");
+try { const saved = localStorage.getItem("tinhat-guest-name"); if (saved) $("name").value = saved; } catch { /* private window */ }
+
+async function door() {
+  if (!/^[A-Za-z0-9_-]{24}$/.test(g)) return closed();
+  try {
+    const r = await fetch(`/api/guest/door?g=${encodeURIComponent(g)}`, { cache: "no-store" });
+    if (r.status === 404) return closed();
+    const d = await r.json();
+    document.title = `Guests · ${d.server}`;
+    $("title").textContent = `Guests · ${d.server}`;
+    if (!d.open) return finish("The guest room is closed right now", "Ask whoever sent the link to open it, then load this page again.");
+    $("name").focus();
+  } catch {
+    $("err").textContent = "Couldn't reach the server. Check your connection and reload.";
+  }
+}
+
+let ticket = "", every = 2, timer = 0;
+async function poll() {
+  try {
+    const r = await fetch(`/api/guest/ticket?t=${encodeURIComponent(ticket)}`, { cache: "no-store" });
+    const d = await r.json().catch(() => ({ state: "expired" }));
+    if (d.state === "waiting") { timer = setTimeout(poll, every * 1000); return; }
+    if (d.state === "in" && d.session && typeof d.session.web === "string" && d.session.web.startsWith(`${location.origin}/`)) {
+      finish("You're in", "Opening Tin Hat…");
+      location.replace(d.session.web);
+      return;
+    }
+    if (d.state === "turned-away") return finish("Nobody let you in this time", "You can knock again later.", true);
+    if (d.state === "closed") return closed();
+    return finish("The knock ran out", "Nobody answered in time.", true);
+  } catch {
+    timer = setTimeout(poll, Math.min(10, every * 2) * 1000);  // a blip: keep waiting
+  }
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("name").value.trim();
+  if (!name) return;
+  try { localStorage.setItem("tinhat-guest-name", name); } catch { /* fine */ }
+  $("knock").disabled = true;
+  $("err").textContent = "";
+  try {
+    const r = await fetch("/api/guest/knock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ g, name }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 410) return closed();
+    if (!r.ok) { $("err").textContent = d.error || "That didn't work. Try again in a moment."; return; }
+    ticket = d.ticket;
+    every = Math.max(1, Number(d.every) || 2);
+    show("waiting");
+    timer = setTimeout(poll, every * 1000);
+  } catch {
+    $("err").textContent = "Couldn't reach the server. Check your connection and try again.";
+  } finally {
+    $("knock").disabled = false;
+  }
+});
+$("again").addEventListener("click", () => { clearTimeout(timer); show("ask"); door(); });
+door();
+</script>
+</body>
+</html>

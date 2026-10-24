@@ -1,0 +1,132 @@
+# Tin Hat Server — the services. The manager (tinhat-manager.service) runs this with
+#   docker compose -p tinhat -f /opt/tinhat/compose.yaml --env-file /var/lib/tinhat/compose.env …
+# Values come from compose.env, which the setup wizard writes. Before setup only `caddy` runs (it shows the
+# wizard). Image tags are pinned; the image build records their digests in /opt/tinhat/images.lock.
+name: tinhat
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    # Stock Caddy 2.10.2 + DNS modules (built into the image by provision.sh from build/caddy/Dockerfile): acmedns for
+    # from-anywhere mode (DNS-01 through the Tin Hat names service); cloudflare, porkbun, desec, duckdns for own domains.
+    image: tinhat/caddy:2.10.2-dns
+    pull_policy: never
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      # Lab only: trust the lab's roots too when talking to the names service (production leaves this empty).
+      SSL_CERT_FILE: ${CADDY_CA_FILE:-}
+    volumes:
+      - /var/lib/tinhat/ca:/etc/tinhat-ca:ro
+      - /var/lib/tinhat/caddy/etc:/etc/caddy:ro
+      - /var/lib/tinhat/caddy/data:/data
+      - /var/lib/tinhat/caddy/config:/config
+      - /opt/tinhat/web:/srv/web:ro
+      - /var/lib/tinhat/wellknown:/srv/wk:ro
+    logging: *logging
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    shm_size: 128m
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_DB: synapse
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - /var/lib/tinhat/postgres:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse -d synapse"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    logging: *logging
+
+  synapse:
+    image: matrixdotorg/synapse:v1.145.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+      # tinhat_rules (manager/synapse/): guests stay in the guest room (docs/GUESTS.md)
+      PYTHONPATH: /tinhat-modules
+    volumes:
+      - /var/lib/tinhat/synapse:/data
+      - /var/lib/tinhat/synapse-modules:/tinhat-modules:ro  # refreshed file by file (apiconf.sync_synapse_modules)
+      - /var/lib/tinhat/api/public:/tinhat-api:ro
+    ports:
+      - "127.0.0.1:8008:8008"
+    networks: [backend]
+    logging: *logging
+
+  livekit:
+    # 1.13+: advertise_internal_ip, so home callers reach a server that is also reachable from
+    # outside without the router looping traffic back in.
+    image: livekit/livekit-server:v1.13.7
+    network_mode: host
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit/livekit.yaml"]
+    volumes:
+      - /var/lib/tinhat/livekit:/etc/livekit:ro
+    logging: *logging
+
+  lk-jwt:
+    image: ghcr.io/element-hq/lk-jwt-service:0.4.0
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      LIVEKIT_JWT_BIND: "127.0.0.1:8070"
+      LIVEKIT_URL: wss://${TINHAT_SERVER_NAME:-unset}/livekit/sfu
+      LIVEKIT_KEY: ${LIVEKIT_KEY:-}
+      LIVEKIT_SECRET: ${LIVEKIT_SECRET:-}
+      LIVEKIT_FULL_ACCESS_HOMESERVERS: ${TINHAT_SERVER_NAME:-}
+      SSL_CERT_FILE: ${JWT_CA_FILE:-}
+    # It checks a caller's sign-in through the server's own name: that name is this machine (a line of its own in the
+    # container's /etc/hosts, so the Compose edition, whose manager can't write the host's, works the same way).
+    extra_hosts:
+      - "${TINHAT_SERVER_NAME:-unset.invalid}:${TINHAT_SELF_IP:-127.0.1.1}"
+    volumes:
+      - /var/lib/tinhat/ca:/etc/tinhat-ca:ro
+    logging: *logging
+
+  api:
+    # The Tin Hat API (api/ in the repository; built into the image by provision.sh from build/api): the soundboard,
+    # GIFs, YouTube search, guest links, Memories files, call moderation, presence, web push (+ its gateway, which
+    # Synapse reaches at the box's address on the backend network) and game servers. Its environment, keys and state
+    # are written by the manager into /var/lib/tinhat/api (manager/tinhat/apiconf.py); recordings are read from
+    # /var/lib/tinhat/vods.
+    image: tinhat/api:0.3.1
+    pull_policy: never
+    network_mode: host
+    restart: unless-stopped
+    env_file: /var/lib/tinhat/api/env
+    volumes:
+      - /var/lib/tinhat/api:/conf
+      - /var/lib/tinhat/vods:/vods:ro
+    logging: *logging
+
+  games:
+    # The games catalogue (the Game Reel's list of games + cover art), from the same image.
+    image: tinhat/api:0.3.1
+    pull_policy: never
+    network_mode: host
+    restart: unless-stopped
+    command: ["node", "/opt/tinhat-api/games/server.mjs"]
+    env_file: /var/lib/tinhat/api/env
+    environment:
+      PORT: "3003"
+    volumes:
+      - /var/lib/tinhat/api:/conf
+    logging: *logging
+
+networks:
+  backend: {}

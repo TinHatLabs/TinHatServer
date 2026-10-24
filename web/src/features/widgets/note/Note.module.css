@@ -1,0 +1,150 @@
+/* note/Note.module.css — the Sticky note widget (WIDGETS-UI.md §14): the paper (radius 8, padding 8 12, a 3 px edge),
+   the note in W-text with its links, the author line (avatar 16 · W-meta · Edit), the editor (the house text area, the
+   counter, Cancel / Save). */
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.status {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+  text-align: center;
+}
+.empty {
+  min-height: 56px;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--th-widget-meta-fg);
+}
+.add {
+  height: 26px;
+}
+.paper {
+  position: relative;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--th-widget-note-paper-bg);
+  outline: none;
+}
+.paper::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--th-widget-note-paper-edge);
+}
+.paper[data-editable] {
+  cursor: pointer;
+}
+.paper:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.fadeBox {
+  position: relative;
+}
+.noteText {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--th-widget-fg);
+}
+.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+.fadeOut {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  animation: fadeOut var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.fadeIn {
+  animation: fadeIn var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+.link {
+  color: var(--th-widget-note-link-fg);
+  text-decoration: underline;
+}
+.meta {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 0 4px;
+}
+.metaText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.editBtn {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 8px;
+  font-size: calc(var(--th-font-size) * 0.85);
+}
+.editor {
+  display: flex;
+  flex-direction: column;
+}
+.area {
+  padding: 8px;
+}
+.editRow {
+  height: 34px;
+  padding-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.editRow > button {
+  height: 26px;
+  min-height: 26px;
+}
+.counter {
+  flex: 1 1 auto;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-muted-fg);
+}
+.counter[data-near] {
+  color: var(--th-widget-note-counter-limit-fg);
+}
+.headerText {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.body[data-mobile] .noteText {
+  font-size: 15px;
+}
+.body[data-mobile] .metaText {
+  font-size: 13px;
+}

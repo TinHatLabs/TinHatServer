@@ -1,0 +1,56 @@
+.flyout {
+  width: 320px;
+  height: 300px;
+  padding: 8px;
+  border-radius: var(--th-radius);
+  background: var(--th-profile-bg);
+  border: 1px solid var(--th-profile-border);
+  box-shadow: 0 4px 16px var(--th-profile-shadow);
+  color: var(--th-profile-fg);
+}
+.col {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* Qt ColumnLayout filling 300 px: every cell grows by the same share, its item centred in it */
+.cell {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+.cell > * {
+  max-width: 100%;
+}
+.name {
+  text-align: center;
+  font-weight: 700;
+  font-size: calc(var(--th-font-size) * 1.2);
+  line-height: 1.36;
+  overflow-wrap: anywhere;
+}
+.mxid {
+  text-align: center;
+  color: var(--th-profile-mxid-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  word-break: break-all;
+}
+.dm {
+  width: 100%;
+  margin-top: 4px;
+}
+.name,
+.mxid {
+  width: 100%;
+}
+:global(html[data-ff="mobile"]) .col {
+  gap: 12px;
+  padding: 4px 0 12px;
+}
+:global(html[data-ff="mobile"]) .dm {
+  min-height: 48px;
+}

@@ -1,0 +1,102 @@
+/* asks.module.css — the calm first run's questions (asks.tsx). The same card as the notifications / presence questions
+   (push.module.css / presence.module.css: account.ask.* tokens, radius 12, 1 px border, 12 px padding), in three
+   places: the footer slot above the account card (absolute, the same placements as those cards), the room page (under
+   the header, 4 px in like the Media Party banner) and the top of the Settings window's pane. */
+.ask {
+  box-sizing: border-box;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--th-account-ask-bg);
+  border: 1px solid var(--th-account-ask-border);
+  animation: askIn var(--th-dur) ease-out;
+}
+@keyframes askIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* the footer slot: exactly where the notifications / presence cards sit */
+.footer {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: calc(9px + 46px + 8px);
+  z-index: 2;
+}
+.footer[data-mobile] {
+  bottom: calc(max(8px, calc(var(--th-safe-bottom) - 8px)) + 56px + 8px);
+}
+.footer[data-placement="island"] {
+  left: calc(-1 * var(--island-inset, 4px));
+  right: calc(-1 * var(--island-inset, 4px));
+  bottom: calc(100% + var(--island-inset, 4px) + 8px);
+}
+.footer[data-placement="flat"] {
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+}
+
+/* the room page: a row under the header (text left, buttons right; wraps on a narrow page) */
+.room {
+  flex: none;
+  margin: 4px;
+  padding: 8px 8px 8px 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.room .head {
+  flex: 1 1 260px;
+  align-items: center;
+}
+.room .btns {
+  margin-top: 0;
+  margin-left: auto;
+}
+
+/* Settings: the top of the pane's column */
+.settings {
+  margin: 0 0 16px;
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.icon {
+  flex: none;
+  margin-top: 1px;
+}
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--th-account-ask-dot); /* the fixed "Online" green (REACH §2.6 — every theme) */
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-account-ask-fg);
+}
+.btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+.btn {
+  height: 30px !important;
+  min-height: 30px !important;
+}
+:global(html[data-touch]) .btn {
+  height: 44px !important;
+  min-height: 44px !important;
+}

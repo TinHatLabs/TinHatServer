@@ -1,0 +1,19 @@
+/* menus.module.css — the ☰ Theme menu's swatch (THEMES-UI.md §12; the desktop's ThemeSwatch.qml): 30 × 16, radius 4,
+   a 1 px border drawn inside; the dots sit at x 5 / 12 / 19, y 5 of the swatch = 4 / 11 / 18, 4 inside its border.
+   Every colour is the ROW theme's own (inline: fill + border, dots), never the active theme's. */
+.swatch {
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 30px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+}
+.swatchDot {
+  position: absolute;
+  top: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}

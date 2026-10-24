@@ -1,0 +1,76 @@
+/* ErrorBoundary.tsx — the "Something went wrong" recovery card (W1). Its element tokens only (recovery.*, web only —
+   DECISIONS D22; the backdrop is the window background, window.bg); readable on OLED: a lit card with a 1 px frame,
+   bright title, the short error in the danger colour, a 48 px accent Reload. */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-toast);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(16px + var(--th-safe-top)) calc(16px + var(--th-safe-right)) calc(16px + var(--th-safe-bottom))
+    calc(16px + var(--th-safe-left));
+  background: var(--th-window-bg);
+  font-family: var(--th-font);
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(360px, 100%);
+  padding: 24px;
+  border-radius: var(--th-radius-lg);
+  background: var(--th-recovery-card-bg);
+  box-shadow: inset 0 0 0 1px var(--th-recovery-card-border);
+}
+.title {
+  color: var(--th-recovery-title-fg);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 700;
+}
+.detail {
+  color: var(--th-recovery-detail-fg);
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.hint {
+  color: var(--th-recovery-hint-fg);
+  font-size: 14px;
+  line-height: 20px;
+}
+.reload {
+  min-height: 48px;
+  border-radius: var(--th-radius);
+  background: var(--th-recovery-button-primary-bg);
+  color: var(--th-recovery-button-primary-fg);
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+}
+.reload:hover {
+  filter: brightness(1.12);
+}
+.reload:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--th-recovery-button-border-focus);
+}
+/* "Go to Home" (off the home page): the flat secondary under Reload — a crash that one room's content causes
+   would otherwise come back on every Reload of #/room/… */
+.home {
+  min-height: 48px;
+  border-radius: var(--th-radius);
+  background: transparent;
+  color: var(--th-recovery-button-fg);
+  box-shadow: inset 0 0 0 1px var(--th-recovery-button-border);
+  font-size: 16px;
+  text-align: center;
+}
+.home:hover {
+  background: var(--th-recovery-button-bg-hover);
+}
+.home:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--th-recovery-button-border-focus);
+}

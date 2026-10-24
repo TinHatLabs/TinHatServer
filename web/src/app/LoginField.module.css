@@ -1,0 +1,136 @@
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.label {
+  margin-left: 4px;
+  color: var(--th-login-field-label-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  font-weight: 700;
+  user-select: none;
+}
+.frame {
+  --icon-color: var(--th-login-field-icon);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px; /* 2.2 gridUnits = 39.6, snapped to 40 by the layout */
+  padding: 0 4px;
+  border-radius: var(--th-radius-lg);
+  background: var(--th-login-field-bg);
+  box-shadow: inset 0 0 0 1px var(--th-login-field-border);
+  transition:
+    background-color var(--th-dur) linear,
+    box-shadow var(--th-dur) linear;
+  cursor: text;
+}
+.frame:focus-within {
+  --icon-color: var(--th-login-field-icon-focus);
+  background: var(--th-login-field-bg-focus);
+  box-shadow: inset 0 0 0 2px var(--th-login-field-border-focus);
+}
+.halo {
+  position: absolute;
+  inset: -3px;
+  border-radius: calc(var(--th-radius-lg) + 3px);
+  box-shadow: inset 0 0 0 3px var(--th-login-field-glow-focus);
+  opacity: 0;
+  transition: opacity var(--th-dur) linear;
+  pointer-events: none;
+}
+.frame:focus-within .halo {
+  opacity: 0.22;
+}
+.icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: flex;
+}
+.prefix {
+  flex: none;
+  margin-right: -2px;
+  color: var(--th-login-field-prefix-fg);
+  font-family: var(--th-font-mono);
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  user-select: none;
+}
+.frame:focus-within .prefix {
+  color: var(--th-login-field-prefix-fg-focus);
+}
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--th-login-field-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  caret-color: var(--th-login-field-caret);
+}
+.input::placeholder {
+  color: var(--th-login-field-placeholder);
+  opacity: 1;
+}
+.input:-webkit-autofill,
+.input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--th-login-field-fg);
+  transition: background-color 600000s 0s;
+}
+/* Not motion: the 600000 s "transition" holds Chrome's autofill fill off. The motion switch's snap rule (tokens.css,
+   GPU.md §1) zeroes every transition while the window is unfocused / Reduce motion is on — keep this one. */
+:global(:root:not([data-animate])) .input:-webkit-autofill,
+:global(:root:not([data-animate])) .input:-webkit-autofill:focus {
+  transition-duration: 600000s !important;
+}
+.eye {
+  --eye-color: var(--th-login-field-eye-icon);
+  position: relative;
+  flex: none;
+  width: 26px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.wash {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  background: var(--th-login-field-eye-bg-hover);
+  opacity: 0;
+  transition: opacity var(--th-dur) linear;
+}
+.eye:hover {
+  --eye-color: var(--th-login-field-eye-icon-hover);
+}
+.eye:hover .wash {
+  opacity: 0.16;
+}
+.eye:active .wash {
+  opacity: 0.3;
+}
+.disabled .frame {
+  cursor: default;
+}
+:root[data-ff="mobile"] .input {
+  font-size: 16px;
+}
+:root[data-ff="mobile"] .frame {
+  height: 46px;
+}

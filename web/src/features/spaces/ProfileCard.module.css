@@ -1,0 +1,65 @@
+.card {
+  width: 340px;
+  padding: 18px;
+  border-radius: 14px;
+  background: var(--th-profile-card-bg);
+  border: 1px solid var(--th-profile-card-border);
+  color: var(--th-profile-card-fg);
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.names {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.name {
+  font-weight: 700;
+  font-size: calc(var(--th-font-size) + 2pt);
+  line-height: 1.36;
+  overflow-wrap: anywhere;
+}
+.mxid {
+  color: var(--th-profile-card-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  overflow-wrap: anywhere;
+}
+.fill {
+  flex: 1 1 auto;
+}
+.dot {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+}
+.bio {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.bio a {
+  color: var(--th-profile-card-link-fg);
+}
+.dim {
+  color: var(--th-profile-card-hint-fg);
+}
+.dimSmall {
+  color: var(--th-profile-card-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

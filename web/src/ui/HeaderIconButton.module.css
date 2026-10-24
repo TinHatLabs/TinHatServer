@@ -1,0 +1,61 @@
+.btn {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  outline: none;
+  border-radius: 50%;
+  user-select: none;
+}
+.btn:disabled {
+  opacity: 0.5;
+}
+.wash {
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: var(--th-button-icon-bg-hover);
+  opacity: 0;
+  transition: opacity var(--th-dur) linear;
+}
+.ring {
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--th-button-icon-ring-hover);
+  opacity: 0;
+  transition: opacity var(--th-dur) linear;
+}
+.focus {
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--th-button-icon-ring-focus);
+  display: none;
+}
+.btn:focus-visible .focus,
+.btn[data-force="focus"] .focus {
+  display: block;
+}
+.hovered .wash {
+  opacity: 0.18;
+}
+.hovered.pressed .wash {
+  opacity: 0.3;
+}
+.hovered .ring {
+  opacity: 0.35;
+}
+.glyph {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  display: block;
+  transition:
+    transform var(--th-dur) cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.hovered .glyph {
+  transform: scale(1.16) rotate(-3deg);
+}

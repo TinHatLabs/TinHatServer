@@ -1,0 +1,138 @@
+/* ---- ThTextField / ThTextArea ------------------------------------------------------------ */
+.th {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  outline: none;
+  background: var(--th-input-bg);
+  color: var(--th-input-fg);
+  box-shadow: inset 0 0 0 1px var(--th-input-border);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  transition:
+    background-color var(--th-dur) linear,
+    box-shadow var(--th-dur) linear;
+  caret-color: var(--th-input-caret);
+}
+.th::placeholder {
+  color: var(--th-input-placeholder);
+  opacity: 1;
+}
+.th:hover:not(:disabled),
+.th[data-force="hover"] {
+  background: var(--th-input-bg-hover);
+}
+.th:focus,
+.th[data-force="focus"] {
+  background: var(--th-input-bg-focus);
+  box-shadow: inset 0 0 0 2px var(--th-input-border-focus);
+}
+/* TH-DS-09: a disabled field's frame is drawn at half opacity (the text is not) */
+.th:disabled {
+  background: var(--th-input-bg-disabled);
+  box-shadow: inset 0 0 0 1px var(--th-input-border-disabled);
+}
+.area {
+  height: auto;
+  min-height: 37px;
+  padding: 10px;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Controls.TextField (Basic) -------------------------------------------------------------- */
+.basic {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 6px 6px 6px 10px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: var(--th-input-basic-bg);
+  color: var(--th-input-fg);
+  box-shadow: inset 0 0 0 1px var(--th-input-basic-border);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  caret-color: var(--th-input-caret);
+}
+.basic::placeholder {
+  color: var(--th-input-placeholder);
+  opacity: 1;
+}
+.basic:focus,
+.basic[data-force="focus"] {
+  box-shadow: inset 0 0 0 2px var(--th-input-basic-border-focus);
+}
+.basic::-webkit-search-cancel-button,
+.basic::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* ---- Kirigami.SearchField --------------------------------------------------------------------- */
+.searchWrap {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.search {
+  padding-left: 28px;
+  padding-right: 4px;
+}
+.hasClear {
+  padding-right: 42px;
+}
+.searchIcon {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  margin-top: -8px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  pointer-events: none;
+}
+.clear {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.clear::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--th-button-tool-bg);
+  opacity: 0.5;
+}
+.clear:active::before {
+  background: var(--th-button-tool-bg-pressed);
+  opacity: 1;
+}
+
+/* phones: ≥ 16 px so iOS never zooms into a focused field */
+:root[data-ff="mobile"] .th,
+:root[data-ff="mobile"] .basic {
+  font-size: 16px;
+  line-height: 22px;
+}
+:root[data-ff="mobile"] .th:not(.area) {
+  height: 44px;
+}
+:root[data-ff="mobile"] .basic {
+  height: 44px;
+}

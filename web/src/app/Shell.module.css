@@ -1,0 +1,83 @@
+.shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-window-bg);
+  color: var(--th-window-fg);
+  overflow: hidden;
+}
+.banners {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+.banner {
+  margin: 4px;
+}
+.banner + .banner {
+  margin-top: 0;
+}
+/* 10.8: the desktop's islands look — the islands' margin left, right and above, none below (the dock host's margin is
+   the gap under the strip), so the banners line up with the island edges (Main.qml bannerMargin) */
+.banners[data-islands] > .banner {
+  margin: var(--banner-margin) var(--banner-margin) 0;
+}
+.body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+/* CornerDock = the nav drawer's chrome (handle + panel frame at the solver's rects), in the dock host: over the docked
+   islands (z 0) and the overlaid panel (z 2), under the drawer's islands (z 20); it lets the islands take the pointer
+   except where it draws (the dock sets pointer-events on itself). Corner mode, or a window narrower than 720 px. */
+.drawerLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  pointer-events: none;
+}
+.drawerLayer > * {
+  pointer-events: auto;
+}
+
+/* ---- phones: the stack ------------------------------------------------------------------------ */
+.mobile {
+  /* The iOS status bar is translucent (index.html): the band behind the clock belongs to what is at the top —
+     the banner strip when one shows, else the page itself (the room header paints its own colour up there, the
+     home page its background) — instead of a separate black strip (2026-09-25: "that dead space at the top"). */
+  --th-top-inset: var(--th-safe-top);
+  padding: 0 var(--th-safe-right) 0 var(--th-safe-left);
+  bottom: var(--th-vv-bottom);
+}
+.mobile:has(> .banners) {
+  --th-top-inset: 0px;
+}
+.mobile > .banners {
+  padding-top: var(--th-safe-top);
+}
+/* the home page: the rail and the room list each paint their own band behind the clock (SpaceRail / RoomList) */
+.stack {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.stackHome,
+.stackPage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-window-page-bg);
+}
+.stackPage {
+  animation: pushIn var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes pushIn {
+  from {
+    transform: translateX(32px);
+    opacity: 0;
+  }
+}

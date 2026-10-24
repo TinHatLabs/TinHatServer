@@ -1,0 +1,600 @@
+/* ThRoomList.qml — the room panel (292 px in the sidebar, 256 px in the corner dock). */
+.panel {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-rooms-bg);
+  color: var(--th-rooms-header-fg);
+  overflow: hidden;
+}
+
+/* ---- header 44 px ---- */
+.header {
+  position: relative;
+  flex: none;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  box-shadow: inset 0 -1px 0 var(--th-rooms-header-divider);
+}
+.headLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 8px;
+  font-size: var(--th-font-h4);
+  line-height: var(--th-line-h4);
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.headBtn {
+  position: absolute;
+  right: 4px;
+  top: 8px;
+  width: 28px;
+  min-width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+}
+.gear {
+  right: 34px;
+  opacity: 0;
+  transition: opacity var(--th-dur);
+}
+.gear:hover,
+.gear:focus-visible {
+  opacity: 1;
+}
+
+/* ---- filter (Kirigami.SearchField, margins 4) ---- */
+.filter {
+  flex: none;
+  margin: 4px;
+}
+.filterWrap {
+  display: block;
+}
+.search {
+  display: block;
+  width: 100%;
+}
+
+/* ---- list ---- */
+.list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  padding-bottom: calc(61px + var(--float-card, 0px)); /* 46 + 9 + 6: the last room clears the floating footer card (+ a question card above it) */
+  scrollbar-width: thin;
+  scrollbar-color: var(--th-rooms-scrollbar-thumb) transparent;
+}
+.empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 16px 40px;
+  color: var(--th-rooms-empty-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+
+.row {
+  position: relative;
+  flex: none;
+  padding-bottom: 2px;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  /* REACH §2.6: the presence dot's cut ring = the surface behind the avatar (the panel tinted by the wash) */
+  --row-surface: var(--th-rooms-item-presence-ring);
+}
+.row:hover {
+  --row-surface: var(--th-rooms-item-presence-ring-hover);
+}
+.row[data-selected] {
+  --row-surface: var(--th-rooms-item-presence-ring-selected);
+}
+.row[hidden] {
+  display: none;
+}
+.wash {
+  position: absolute;
+  inset: 1px 4px;
+  border-radius: 8px;
+  background: transparent;
+  transition: background-color var(--th-dur);
+  pointer-events: none;
+}
+.row:hover > .wash,
+.row:focus-visible > .wash {
+  background: var(--th-rooms-item-bg-hover);
+}
+.row[data-selected] > .wash {
+  background: var(--th-rooms-item-bg-selected);
+}
+.row:focus-visible > .wash {
+  box-shadow: inset 0 0 0 1px var(--th-rooms-item-ring-focus);
+}
+
+.main {
+  position: relative;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  padding-right: 0;
+}
+.avatar {
+  flex: none;
+}
+.star {
+  flex: none;
+}
+.flex0 {
+  flex: none;
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 72px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-rooms-item-fg);
+}
+.pill {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.pillInvite {
+  background: var(--th-rooms-pill-invite-bg);
+  color: var(--th-rooms-pill-invite-fg);
+}
+.pillNone {
+  background: var(--th-rooms-pill-not-joined-bg);
+  border: 1px solid var(--th-rooms-pill-not-joined-border);
+  padding: 1px 5px;
+  color: var(--th-rooms-pill-not-joined-fg);
+}
+.accept {
+  flex: none;
+  height: 26px !important;
+  min-height: 26px !important;
+}
+.decline {
+  flex: none;
+}
+.badge {
+  margin-right: 4px;
+}
+.spacer1 {
+  flex: none;
+  width: 1px;
+}
+
+/* sub-lines: x 36 (2·gridUnit), right 4, spacing 4, 16 px (Kirigami smallFont on the rig) */
+.sub {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 4px 0 36px;
+  min-height: var(--th-line-small);
+}
+.subLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.playing {
+  color: var(--th-rooms-activity-fg);
+}
+.setPlaying {
+  color: var(--th-rooms-activity-placeholder);
+  font-style: italic;
+}
+.pencil {
+  flex: none;
+  height: 22px !important;
+  min-height: 22px !important;
+  min-width: 40px !important; /* Basic ToolButton 40 × 22 (icon squeezed to ~10 px) */
+  padding: 0 6px !important;
+  border-radius: 4px;
+}
+/* Breeze look (D2): flat until hovered */
+.pencil::before {
+  opacity: 0 !important;
+}
+.pencil:hover::before {
+  opacity: 1 !important;
+  background: var(--th-rooms-activity-edit-bg-hover) !important;
+  border-radius: 4px;
+}
+.editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-font-size-small) !important;
+}
+
+.parts {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 4px 0 36px;
+}
+.part {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  border-radius: 5px;
+}
+.part:hover {
+  background: var(--th-rooms-caller-bg-hover);
+}
+.partName {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-rooms-caller-fg);
+}
+.smute {
+  position: relative;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.shield {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+}
+.statuses {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 4px 0 36px;
+}
+.status {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  font-style: italic;
+  color: var(--th-rooms-status-fg);
+}
+
+/* ---- invited space card ---- */
+.inviteCard {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 61px;
+}
+.inviteCol {
+  width: min(calc(100% - 16px), 288px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.center {
+  align-self: center;
+}
+.inviteText {
+  text-align: center;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-rooms-invite-card-fg);
+  overflow-wrap: anywhere;
+}
+.inviteSub {
+  text-align: center;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-rooms-invite-card-hint-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.joinBtn {
+  margin-top: 4px;
+  width: 100%;
+}
+.inviteHint {
+  text-align: center;
+}
+
+/* ---- rail extras (features/widgets): the widget stack sits between the list and the account card, so the list
+   ends above it (it keeps at least 160 px — the layout registry's rooms.min.h) and no longer runs under the card ---- */
+.panel:has(> [data-widget-stack]) > .list {
+  min-height: 160px;
+  padding-bottom: 8px;
+}
+.panel:has(> [data-widget-stack]) > .footerFade {
+  display: none;
+}
+
+/* ---- footer ---- */
+.footerFade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(95px + var(--float-card, 0px));
+  pointer-events: none;
+  background: linear-gradient(var(--th-rooms-fade-start-fill), var(--th-rooms-fade-mid-fill) 45%, var(--th-rooms-fade-end-fill));
+}
+.footer {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 9px;
+  height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* the QML RowLayout's margins 8 / 6 are measured from the Rectangle's edge — its 1 px border is
+     drawn inside and takes no layout space, so the CSS padding is 1 px less on each side */
+  padding: 0 5px 0 7px;
+  border-radius: 12px;
+  background: var(--th-account-bg);
+  border: 1px solid var(--th-account-border);
+  z-index: 1;
+}
+.me {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.footBtn {
+  flex: none;
+}
+/* REACH §2.7: avatar + name = one button → "Your status" (the popover / the phone's account sheet) */
+.meBtn {
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 5px 0 5px -3px;
+  padding: 0 4px 0 3px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+  -webkit-tap-highlight-color: transparent;
+}
+.meBtn {
+  --me-surface: var(--th-account-presence-ring);
+}
+.meBtn:hover,
+.meBtn[aria-expanded="true"] {
+  background: var(--th-account-me-bg-hover);
+  --me-surface: var(--th-account-presence-ring-hover);
+}
+.meBtn:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-account-me-ring-focus);
+}
+.meCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.meCol > .me {
+  display: block;
+}
+/* a DM row's secondary line = the peer's custom status (A4.5): smallFont in the status colour, from the name's
+   left edge (40 px), hugging the name (−9 px) like the desktop presLine */
+.dmStatus {
+  position: relative;
+  margin: -9px 8px 0 40px;
+  height: calc(var(--th-line-small) + 4px);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel[data-mobile] .dmStatus {
+  margin-left: 56px;
+}
+
+/* ---- phones: the stack's home screen — big thumb rows ---- */
+.panel[data-mobile] .header {
+  height: 52px;
+}
+.panel[data-mobile] .headLabel {
+  font-size: calc(var(--th-font-h4) * 1.2);
+}
+.panel[data-mobile] .headBtn {
+  top: 4px;
+  width: 44px;
+  min-width: 44px !important;
+  height: 44px !important;
+}
+.panel[data-mobile] .searchBtn {
+  right: 50px;
+}
+.panel[data-mobile] .gear {
+  right: 96px;
+}
+.panel[data-mobile] .filter {
+  margin: 6px 8px;
+}
+.panel[data-mobile] .main {
+  height: 56px;
+  gap: 8px;
+  padding-left: 12px;
+}
+.panel[data-mobile] .name {
+  font-size: 16px;
+  line-height: 22px;
+}
+.panel[data-mobile] .sub,
+.panel[data-mobile] .parts,
+.panel[data-mobile] .statuses {
+  margin-left: 56px;
+}
+/* a participant is a long-press target (volume sheet): a full 44 px thumb row */
+.panel[data-mobile] .part {
+  height: 44px;
+}
+/* footer tool buttons are 44 px thumb targets; name + avatar are one tap target (your profile) */
+.panel[data-mobile] .footBtn {
+  width: 44px;
+  height: 44px;
+}
+.panel[data-mobile] .meBtn {
+  min-height: 44px;
+}
+.panel[data-mobile] {
+  /* the room list paints its own band behind the translucent iOS status bar (Shell --th-top-inset) */
+  padding-top: var(--th-top-inset, 0px);
+  box-sizing: border-box;
+}
+.panel[data-mobile] .me {
+  font-size: 15px;
+  line-height: 20px;
+}
+.panel[data-mobile] .list {
+  padding-bottom: calc(80px + var(--th-safe-bottom) + var(--float-card, 0px));
+  -webkit-overflow-scrolling: touch;
+}
+.panel[data-mobile] .footer {
+  /* nested into the rounded bottom-right screen corner like the room composer: 12 px from the edge, a little into
+     the home-indicator zone (2026-09-25) */
+  right: 12px;
+  bottom: max(8px, calc(var(--th-safe-bottom) - 8px));
+  height: 56px;
+  border-radius: 20px;
+}
+.panel[data-mobile] .footerFade {
+  height: calc(110px + var(--th-safe-bottom) + var(--float-card, 0px));
+}
+.panel[data-mobile] .row:hover > .wash {
+  background: transparent;
+}
+.panel[data-mobile] .row[data-selected] > .wash {
+  background: var(--th-rooms-item-bg-selected);
+}
+.panel[data-mobile] .row:active > .wash {
+  background: var(--th-rooms-item-bg-pressed);
+}
+
+/* tablets (coarse pointer, desktop layout): no hover-only controls */
+:global(html[data-touch]) .gear {
+  opacity: 1;
+}
+
+/* phones: an invite's Accept / Decline on a second line, 44 px targets */
+.inviteActions {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  margin: 0 12px 8px 56px;
+}
+.inviteActions > * {
+  flex: 1 1 0;
+  height: 44px !important;
+  min-height: 44px !important;
+  font-size: 16px !important;
+}
+.inviteActions > * {
+  justify-content: center !important;
+  text-align: center;
+}
+.panel[data-mobile] .pillInvite {
+  margin-right: 12px;
+}
+
+/* ---- 11.0 (islands C6/C7): the desktop dock host's islands (RoomsIsland, AccountIsland) — the islands draw the fill,
+   the frame and the radius; the room list keeps no inset for a floating card (the card is its own island) ---- */
+.islandRooms {
+  background: transparent;
+}
+.islandRooms > .list {
+  padding-bottom: 8px; /* the desktop's bottomMargin 8 */
+}
+/* the sign-in / "Loading your rooms…" busy mark above the list (the sidebar column's, without its band) */
+.islandLoading {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  color: var(--th-rooms-loading-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+/* the account island: the card's box (the question card floats above it) */
+.accountAnchor {
+  position: relative;
+}
+/* the Flat layout style: the card 6 px in and 9 px up on the room list's colour (the island's fill), as before islands */
+.accountFlat {
+  padding: 6px 6px 9px;
+}
+.accountCard {
+  position: relative;
+  height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px 0 7px; /* the card's .footer padding: 8 / 6 from its edge with the 1 px border */
+  border-radius: 12px;
+  background: var(--th-account-bg);
+  border: 1px solid var(--th-account-border);
+}
+/* the account island's row: 46 px with the island's inset, 8 / 6 px from its edges (the card's own margins) */
+.accountRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: calc(46px - 2 * var(--island-inset, 4px));
+  box-sizing: border-box;
+  padding: 0 calc(6px - var(--island-inset, 4px)) 0 calc(8px - var(--island-inset, 4px));
+}

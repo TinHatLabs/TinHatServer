@@ -1,0 +1,140 @@
+/* polls/Polls.module.css — the Polls widget (WIDGETS-UI.md §17.1): rows 40 (padding 0 8, radius 8, gap 8: a 14 px
+   poll glyph · the question (W-text, elided) over the row line (W-meta)); "+ n more" 22; the empty band 56+ with the
+   New poll button; "Open a room to see its polls" 44. Header: "+ New" (20 high, radius 6, W-chip 600). */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+.row {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+}
+.row:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.lines {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.q,
+.line {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.q {
+  color: var(--th-widget-fg);
+}
+.line {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.more {
+  height: 22px;
+  line-height: 22px;
+  padding: 0 8px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.empty {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px 4px;
+  text-align: center;
+  color: var(--th-widget-meta-fg);
+}
+.emptyHint {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.empty .newBtn {
+  margin-top: 6px;
+}
+.noroom {
+  height: 44px;
+  display: grid;
+  place-items: center;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.newBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--th-widget-polls-new-fg);
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 600;
+  cursor: pointer;
+}
+.newBtn:hover:not(:disabled) {
+  color: var(--th-widget-polls-new-fg-hover);
+  background: var(--th-widget-polls-new-bg-hover);
+}
+.newBtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.newBtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.newLabel {
+  height: 24px;
+  padding: 0 10px;
+  font-size: calc(var(--th-font-size) * 0.85);
+}
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* phones: rows 52, question 15 px, line 13 px; New is a 36-high touch target (44 with the header's padding) */
+.newMobile {
+  height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.rowMobile {
+  height: 52px;
+}
+.rowMobile .q {
+  font-size: 15px;
+}
+.rowMobile .line {
+  font-size: 13px;
+}

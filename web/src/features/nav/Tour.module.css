@@ -1,0 +1,107 @@
+/* Tour.qml — column 432 wide (gu·24), spacing 8. */
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(432px, 100%);
+}
+.pager {
+  position: relative;
+  width: 100%;
+  height: 234px;
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+}
+.track {
+  display: flex;
+  height: 100%;
+  transition: transform var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.card {
+  flex: 0 0 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+}
+.art {
+  position: relative;
+  flex: none;
+  width: 128px;
+  height: 128px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 154px;
+  height: 154px;
+  margin: -77px 0 0 -77px;
+  border-radius: 50%;
+  opacity: 0.16;
+  background: linear-gradient(var(--th-tour-art-glow), transparent);
+}
+.title {
+  text-align: center;
+  font-size: var(--th-font-h2);
+  line-height: var(--th-line-h2);
+  color: var(--th-tour-title-fg);
+}
+.body {
+  text-align: center;
+  color: var(--th-tour-body-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  padding: 0 8px;
+}
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+.dot {
+  height: 5.6px;
+  width: 5.6px;
+  border-radius: 2.8px;
+  background: var(--th-tour-pager-dot);
+  transition:
+    width var(--th-dur),
+    background-color var(--th-dur);
+}
+.dot[data-on] {
+  width: 9.6px;
+  background: var(--th-tour-pager-dot-active);
+}
+.buttons {
+  /* the OverlaySheet's footer inset on the rig (box bottom 12 px under the buttons) */
+  margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* phones: the sheet is full screen — the card sits in the middle, the buttons at the thumb */
+:global(html[data-ff="mobile"]) .col {
+  width: 100%;
+}
+:global(html[data-ff="mobile"]) .pager {
+  height: max(340px, calc(100dvh - 250px - var(--th-safe-top) - var(--th-safe-bottom)));
+}
+:global(html[data-ff="mobile"]) .buttons {
+  margin-bottom: calc(12px + var(--th-safe-bottom));
+}
+:global(html[data-ff="mobile"]) .body {
+  font-size: 16px;
+  line-height: 22px;
+  padding: 0 12px;
+}

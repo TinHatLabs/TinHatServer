@@ -1,0 +1,107 @@
+/* Gallery.module.css — "Add a widget" (WIDGETS-UI.md §7). */
+.body {
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.card {
+  display: flex;
+  gap: 12px;
+  padding: 11px; /* 12 minus the 1 px frame */
+  border-radius: 12px;
+  background: var(--th-widget-gallery-card-bg);
+  border: 1px solid var(--th-widget-gallery-card-border);
+  transition: border-color var(--th-dur);
+}
+.card:hover,
+.card:focus-within {
+  border-color: var(--th-widget-gallery-card-border-hover);
+}
+.preview {
+  position: relative;
+  flex: none;
+  width: 292px;
+  max-height: 200px;
+  padding: 6px;
+  border-radius: 8px;
+  background: var(--th-widget-gallery-preview-bg);
+  overflow: hidden;
+}
+.preview > section {
+  max-height: 188px;
+}
+.badge {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--th-widget-gallery-badge-bg);
+  color: var(--th-widget-gallery-badge-fg);
+  pointer-events: none;
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: calc(var(--th-font-size) * 1.1);
+  font-weight: 600;
+  color: var(--th-widget-fg);
+}
+.titleText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.desc {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.sizes {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.actions {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.added {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-widget-gallery-added-fg);
+}
+
+/* phones: preview on top, full width */
+.list[data-mobile] .card {
+  flex-direction: column;
+}
+.list[data-mobile] .preview {
+  width: 100%;
+  max-height: none;
+}
+.list[data-mobile] .preview > section {
+  max-height: none;
+}

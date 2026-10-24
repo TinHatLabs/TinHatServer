@@ -1,0 +1,134 @@
+/* FloatingChats.qml — full mode: bg fill, 1 px sep frame; 40 px title bar (panel); chat-head 64 px. */
+.win {
+  position: fixed;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-chat-head-window-bg);
+  border: 1px solid var(--th-chat-head-window-border);
+  box-shadow: 0 8px 28px var(--th-chat-head-window-shadow);
+  overflow: hidden;
+}
+.title {
+  flex: none;
+  height: 40px;
+  box-sizing: border-box;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--th-chat-head-title-bar-bg);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.title:active {
+  cursor: grabbing;
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  color: var(--th-chat-head-title-bar-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sep {
+  flex: none;
+  height: 1px;
+  background: var(--th-chat-head-divider);
+}
+.grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--th-chat-head-grip-fg);
+  cursor: nwse-resize;
+  z-index: 50;
+  user-select: none;
+  touch-action: none;
+}
+.drop {
+  position: absolute;
+  inset: 40px 0 0 0;
+  z-index: 40;
+  background: var(--th-drop-inline-bg);
+  border: 2px solid var(--th-drop-inline-border);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 12px;
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  color: var(--th-drop-inline-fg);
+  pointer-events: none;
+}
+.head {
+  position: fixed;
+  width: 64px;
+  height: 64px;
+  box-sizing: border-box;
+  border-radius: 32px;
+  background: var(--th-chat-head-head-bg);
+  border: 2px solid var(--th-chat-head-head-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  box-shadow: 0 4px 16px var(--th-chat-head-head-shadow);
+}
+.badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+}
+.headX {
+  all: unset;
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border-radius: 11px;
+  background: var(--th-chat-head-close-bg);
+  border: 1px solid var(--th-chat-head-close-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* in-bubble toast pill: bottom-centre 64 px up, width min(window − 24, text + 24), height text + 14 */
+.pill {
+  position: absolute;
+  left: 50%;
+  bottom: 64px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--th-chat-head-toast-bg);
+  border: 1px solid var(--th-chat-head-toast-border);
+  color: var(--th-chat-head-toast-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transition: opacity var(--th-dur-slow);
+  z-index: 50;
+}

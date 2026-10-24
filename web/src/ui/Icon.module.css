@@ -1,0 +1,29 @@
+.icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  vertical-align: middle;
+  pointer-events: none;
+  line-height: 0;
+}
+
+.layer {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: block;
+}
+
+.img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Icon style "One colour" (THEMES-UI.md §10.3): the story's lit accent tone keeps the glyph's own ink */
+:global(html[data-icons="mono"]) .lit {
+  background: var(--icon-ink) !important;
+}

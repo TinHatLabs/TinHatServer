@@ -1,0 +1,166 @@
+/* justme/JustMe.module.css — "Is it just me?" (WIDGETS-UI.md §20). Rows 24 (L 28): padding 0 8, radius 6, the 8 px
+   dot, gap 8, "Name · reason" (W-text · W-meta), L: the 58 × 14 bar sparkline at the right. The friendly sentence in a
+   3 px-edged block, the footer "Checked 2:41 PM" + "Check again". No tokens of its own: the dots and bars are the
+   widgets' quality colours (widget.quality.*), text the body tokens (§9). stateFade = the dot's colour, `long`. */
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.row {
+  height: 24px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 6px;
+  min-width: 0;
+}
+.body[data-size="L"] .row {
+  height: 28px;
+}
+.dot {
+  flex: none;
+  display: inline-block;
+  border-radius: 50%;
+  background: var(--th-widget-quality-unknown-fill);
+  transition: background-color var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.dot[data-band="good"],
+.bar[data-band="good"] {
+  background: var(--th-widget-quality-good-fill);
+}
+.dot[data-band="ok"],
+.bar[data-band="ok"] {
+  background: var(--th-widget-quality-ok-fill);
+}
+.dot[data-band="poor"],
+.bar[data-band="poor"] {
+  background: var(--th-widget-quality-poor-fill);
+}
+.line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.name {
+  color: var(--th-widget-fg);
+}
+.reason {
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+}
+.row[data-band="unknown"] .reason {
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- L: the last 10 minutes, one bar per minute (bottom-aligned, 4 wide, 2 apart) ---- */
+.spark {
+  flex: none;
+  width: 58px;
+  height: 14px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+.bar {
+  width: 4px;
+  border-radius: 1px;
+}
+.gap {
+  width: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--th-widget-quality-unknown-fill);
+  opacity: 0.4;
+}
+
+/* ---- the friendly sentence (something is red / the connection is slow) ---- */
+.note {
+  margin: 4px 0 2px;
+  padding: 5px 8px 5px 10px;
+  border-left: 3px solid var(--th-widget-quality-poor-fill);
+  border-radius: 2px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  line-height: normal;
+  color: var(--th-widget-fg);
+}
+.note[data-tone="ok"] {
+  border-left-color: var(--th-widget-quality-ok-fill);
+}
+
+/* ---- footer ---- */
+.foot {
+  height: 24px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+.when {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.linkBtn {
+  flex: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-accent-bright);
+  cursor: pointer;
+}
+.linkBtn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.linkBtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.linkBtn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--th-widget-ring-focus);
+  border-radius: 3px;
+}
+
+/* ---- header ---- */
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.sumDot {
+  margin: 0 5px 1px 0;
+  vertical-align: middle;
+}
+
+/* ---- phones (WIDGETS-UI.md §8) ---- */
+.body[data-mobile] .row {
+  height: 40px;
+  gap: 10px;
+}
+.body[data-mobile] .name {
+  font-size: 15px;
+}
+.body[data-mobile] .reason,
+.body[data-mobile] .when,
+.body[data-mobile] .linkBtn,
+.body[data-mobile] .note {
+  font-size: 13px;
+}
+.body[data-mobile] .foot {
+  height: 44px;
+}

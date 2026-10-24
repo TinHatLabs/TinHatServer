@@ -1,0 +1,32 @@
+.pill {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 60px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.action {
+  font-weight: 700;
+  flex: none;
+}
+.measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+}

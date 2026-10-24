@@ -1,0 +1,2 @@
+patchedDependencies:
+  livekit-client@2.22.3: patches/livekit-client@2.22.3.patch

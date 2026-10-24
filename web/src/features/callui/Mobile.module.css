@@ -1,0 +1,192 @@
+.stage {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  background: var(--th-stage-bg);
+  display: flex;
+  flex-direction: column;
+  padding: var(--th-safe-top) var(--th-safe-right) 0 var(--th-safe-left);
+}
+.top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  min-height: 56px;
+  transition: opacity var(--th-dur-slow) linear, transform var(--th-dur-slow) cubic-bezier(0.33, 1, 0.68, 1);
+}
+.hideUp {
+  opacity: 0;
+  transform: translateY(-12px);
+  pointer-events: none;
+}
+.topBtn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  background: var(--th-stage-top-button-bg);
+  flex: none;
+}
+.topText {
+  flex: 1;
+  min-width: 0;
+}
+.topTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 16px;
+}
+.topSub {
+  color: var(--th-call-status-bar-count-fg);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+  flex: none;
+}
+.hiddenChip {
+  flex: none;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 18px;
+  background: var(--th-call-hidden-chip-bg);
+  border: 1px solid var(--th-call-hidden-chip-border);
+  color: var(--th-call-hidden-chip-fg);
+  font-size: 14px;
+}
+.banner {
+  flex: none;
+  margin: 0 8px 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--th-call-afk-banner-bg);
+  border: 1px solid var(--th-call-afk-banner-border);
+  color: var(--th-call-afk-banner-fg);
+  font-size: 15px;
+  font-weight: 700;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* the connection banners (reconnecting = .warn, lost = .bad; the resume and server-mute banners share .warn) */
+.warn,
+.bad {
+  color: var(--th-call-conn-banner-title-fg);
+}
+.warn {
+  background: var(--th-call-conn-banner-warn-bg);
+  border-color: var(--th-call-conn-banner-warn-border);
+  font-weight: 400;
+}
+.bad {
+  background: var(--th-call-conn-banner-bad-bg);
+  border-color: var(--th-call-conn-banner-bad-border);
+}
+.bannerBtn {
+  margin-left: auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--th-call-conn-banner-button-bg);
+  color: var(--th-call-conn-banner-button-fg);
+  font-weight: 700;
+}
+.scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 0 8px 12px;
+}
+.grid {
+  display: grid;
+  gap: 6px;
+}
+.cell {
+  position: relative;
+  min-width: 0;
+}
+.empty {
+  text-align: center;
+  color: var(--th-call-empty-fg);
+  padding: 32px 16px;
+  font-size: 15px;
+}
+.bar {
+  flex: none;
+  display: flex;
+  justify-content: space-evenly;
+  align-items: center;
+  padding: 10px 6px calc(10px + var(--th-safe-bottom));
+  background: var(--th-callbar-mobile-bg);
+  border-top: 1px solid var(--th-callbar-mobile-border);
+  transition: opacity var(--th-dur-slow) linear, transform var(--th-dur-slow) cubic-bezier(0.33, 1, 0.68, 1);
+}
+.hideDown {
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+}
+.pill {
+  position: fixed;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 6px 0 14px;
+  border-radius: 26px;
+  background: var(--th-call-mini-pill-bg);
+  border: 1px solid var(--th-call-mini-pill-border);
+  box-shadow: 0 6px 20px var(--th-call-mini-pill-shadow);
+  touch-action: none;
+  max-width: calc(100vw - 24px);
+}
+.pillText {
+  font-weight: 700;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.pillMic {
+  width: 40px;
+  height: 40px;
+  border-radius: 20px;
+  background: var(--th-call-mini-pill-mic-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.pillMicOff {
+  background: var(--th-call-mini-pill-mic-bg-muted);
+}
+/* landscape phones / tablets: keep the thumb bar compact and centred instead of spread edge to edge */
+@media (min-width: 700px) {
+  .bar {
+    justify-content: center;
+    gap: 14px;
+  }
+}
+
+/* the REC cue after "room · N streams" (fix/media wave 2) */
+.rec {
+  white-space: nowrap;
+  color: var(--th-call-status-bar-rec-fg);
+  font-weight: 700;
+}

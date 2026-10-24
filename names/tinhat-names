@@ -1,0 +1,168 @@
+#!/usr/bin/python3
+"""tinhat-names — run the names service, or manage it (on the machine it runs on).
+
+  tinhat-names serve [-c CONFIG]
+  tinhat-names code new [--uses N] [--days D] [--note TEXT]   a names code for a new server (invite-only launch)
+  tinhat-names code list | code revoke CODE
+  tinhat-names list [STATUS]                                  names and their state
+  tinhat-names suspend NAME REASON… | unsuspend NAME | retire NAME [REASON…]
+  tinhat-names notice NAME TEXT… | notice --all TEXT…          shown on that server's (every server's) dashboard
+  tinhat-names allow-move NAME [HOURS] [REASON…]              let an earlier backup of NAME take it over once (its
+                                                              owner lost the computer that had it); default 24 h
+  tinhat-names events [NAME]                                  the audit log
+  tinhat-names relay add ID URL --token-file F --cert-file F [--capacity N]
+                                                              a Tin Hat relay (it's asked who it is; docs/RELAY.md)
+  tinhat-names relay list | places [ID]                       relays, and which servers sit on them (traffic, state)
+  tinhat-names relay suspend NAME REASON… | unsuspend NAME    stop / restart carrying one server (its owner is told)
+  tinhat-names relay quota NAME GB|default                    that server's monthly allowance
+  tinhat-names relay drain ID | activate ID | sync [ID]       no new places / new places again / push the lists now
+  tinhat-names backup [--check | --list]                      back up now (database, keys, zone) / prove a restore
+                                                              works / list the copies (tinhat_names/backup.py)
+"""
+import json
+import os
+import sys
+import time
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from tinhat_names import config as config_mod  # noqa: E402
+
+
+def admin(cfg, method, path, body=None):
+    host, port = config_mod.loopback(cfg["admin_listen"])  # the admin API's own loopback port (plain HTTP): only there
+    host = f"[{host}]" if ":" in host else host
+    req = urllib.request.Request(f"http://{host}:{port}/v1/admin/{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Authorization": "Bearer " + open(cfg["admin_token_file"]).read().strip(),
+                                          "Content-Type": "application/json"})
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # never through an http_proxy setting
+    with direct.open(req, timeout=30) as r:
+        return json.load(r)
+
+
+def relay_cmd(cfg, rest):
+    sub = rest[0] if rest else "list"
+    gb = lambda b: f"{(b or 0) / 1e9:.1f} GB"  # noqa: E731
+    if sub == "add":
+        opts = {"token-file": None, "cert-file": None, "capacity": None}
+        rid, url, i = rest[1], rest[2], 3
+        while i < len(rest):
+            opts[rest[i].lstrip("-")] = rest[i + 1]
+            i += 2
+        out = admin(cfg, "POST", "relay-add", {"id": rid, "url": url, "token_file": opts["token-file"],
+                                               "cert_file": opts["cert-file"],
+                                               "capacity": int(opts["capacity"]) if opts["capacity"] else None})
+        r = out["relay"]
+        print(f'{r["id"]}: {r["public_ip"]}, WireGuard {r["wg_endpoint"]}, tunnels {r["tunnel_net"]}, ports '
+              f'{r["port_first"]}-{r["port_last"]}, up to {r["capacity"]} servers ({"synced" if out["synced"] else "NOT synced"})')
+    elif sub == "list":
+        out = admin(cfg, "GET", "relay-list")
+        for r in out["relays"]:
+            last = time.strftime("%m-%d %H:%M:%S", time.localtime(r["last_sync"])) if r["last_sync"] else "never"
+            print(f'{r["id"]:10} {r["status"]:9} {r["public_ip"]:15} {r["places"]}/{r["capacity"]} servers  '
+                  f'last sync {last}  {r["last_error"] or ""}')
+        print(f'default allowance {gb(out["default_quota"])} a month per server')
+    elif sub == "places":
+        for p in admin(cfg, "GET", "relay-places" + (f"/{rest[1]}" if len(rest) > 1 else ""))["places"]:
+            print(f'{p["name"]:20} {p["relay_id"]:8} {p["tunnel_ip"]:15} port {p["port"]}  {p["status"]:12} '
+                  f'{gb(p["bytes_month"])} of {gb(p["quota"])} in {p["month"]}  home {p["home_ip"] or "-"}  {p["reason"] or ""}')
+    elif sub in ("suspend", "unsuspend"):
+        out = admin(cfg, "POST", f"relay-{sub}/{rest[1]}", {"reason": " ".join(rest[2:])})
+        print(f'{out["place"]["name"]}: {out["place"]["status"]}')
+    elif sub == "quota":
+        out = admin(cfg, "POST", f"relay-quota/{rest[1]}", {"gb": rest[2]})
+        p = out["place"]
+        print(f'{p["name"]}: {gb(p["bytes_month"])} of {gb(p["quota"])} this month, {p["status"]}')
+    elif sub in ("drain", "activate"):
+        print(admin(cfg, "POST", f"relay-{sub}/{rest[1]}", {})["relay"]["status"])
+    elif sub == "sync":
+        print(admin(cfg, "POST", "relay-sync" + (f"/{rest[1]}" if len(rest) > 1 else ""), {})["synced"])
+    else:
+        print(__doc__.strip())
+        sys.exit(2)
+
+
+def main():
+    args = sys.argv[1:]
+    cfgpath = os.environ.get("TINHAT_NAMES_CONFIG", "/etc/tinhat-names/config.json")
+    if len(args) >= 2 and args[0] in ("-c", "--config"):
+        cfgpath, args = args[1], args[2:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return
+    if args[0] == "serve":
+        from tinhat_names.app import main as serve
+        sys.argv = [sys.argv[0], "-c", cfgpath] + args[1:]
+        serve()
+        return
+    cfg = config_mod.load(cfgpath)
+    cmd, rest = args[0], args[1:]
+    if cmd == "code":
+        sub = rest[0] if rest else "list"
+        if sub == "new":
+            opts = {"uses": 1, "days": 30, "note": ""}
+            i = 1
+            while i < len(rest):
+                k = rest[i].lstrip("-")
+                opts[k] = rest[i + 1]
+                i += 2
+            out = admin(cfg, "POST", "codes", {"uses": int(opts["uses"]), "days": float(opts["days"]),
+                                               "note": opts["note"]})
+            print(out["code"])
+        elif sub == "revoke":
+            print(admin(cfg, "POST", f"revoke/{rest[1]}", {}))
+        else:
+            for c in admin(cfg, "GET", "codes")["codes"]:
+                state = "revoked" if c["revoked"] else f'{c["uses"]}/{c["max_uses"]} used'
+                exp = time.strftime("%Y-%m-%d", time.localtime(c["expires"])) if c["expires"] else "never"
+                print(f'{c["code"]}  {state:10}  expires {exp}  {c["note"] or ""}')
+    elif cmd == "list":
+        q = f"?status={rest[0]}" if rest else ""
+        for n in admin(cfg, "GET", "names" + q)["names"]:
+            seen = time.strftime("%Y-%m-%d %H:%M", time.localtime(n["last_seen"])) if n["last_seen"] else "-"
+            print(f'{n["name"]:20} {n["status"]:9} {n["ip4"] or "-":15} seen {seen}  v{n["version"] or "?"}  '
+                  f'{n["reason"] or ""}')
+    elif cmd in ("suspend", "unsuspend", "retire"):
+        print(admin(cfg, "POST", f"{cmd}/{rest[0]}", {"reason": " ".join(rest[1:])}))
+    elif cmd == "allow-move":
+        hours = float(rest[1]) if len(rest) > 1 and rest[1].replace(".", "", 1).isdigit() else 24
+        why = " ".join(rest[2:] if len(rest) > 1 and rest[1].replace(".", "", 1).isdigit() else rest[1:])
+        print(admin(cfg, "POST", f"allow-move/{rest[0]}", {"hours": hours, "reason": why}))
+    elif cmd == "notice" and rest and rest[0] == "--all":
+        print(admin(cfg, "POST", "notice-all", {"text": " ".join(rest[1:])}))
+    elif cmd == "notice":
+        print(admin(cfg, "POST", f"notice/{rest[0]}", {"text": " ".join(rest[1:])}))
+    elif cmd == "relay":
+        relay_cmd(cfg, rest)
+    elif cmd == "backup":
+        from tinhat_names import backup
+        try:
+            if rest and rest[0] == "--check":
+                r = backup.check(cfg)
+                print(f'OK: copy {r["snapshot"]} from {r["time"][:19]} restores, {r["names"]} names, '
+                      f'{r["zone_records"]} zone records ({r["snapshots"]} copies kept)')
+            elif rest and rest[0] == "--list":
+                for s in backup.snapshots(cfg):
+                    print(s["short_id"], s["time"][:19])
+            else:
+                r = backup.backup(cfg, cfgpath if os.path.exists(cfgpath) else None)
+                by = r["names"]  # {status: count}
+                names = (f'{sum(by.values())} names ({", ".join(f"{n} {k}" for k, n in sorted(by.items()))})'
+                         if by else "no names yet")
+                print(f'backed up: {names}, {r["zone_records"]} zone records, files {", ".join(r["files"])}; '
+                      f'snapshot {r["snapshot"]} (+{r["added_bytes"]} bytes)')
+        except backup.BackupError as e:
+            print(f"backup failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif cmd == "events":
+        for e in admin(cfg, "GET", "events" + (f"/{rest[0]}" if rest else ""))["events"]:
+            print(time.strftime("%m-%d %H:%M:%S", time.localtime(e["ts"])), f'{e["kind"]:18} {e["name"] or "-":16} '
+                  f'{e["ip"] or "-":15} {e["detail"] or ""}')
+    else:
+        print(__doc__.strip())
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,177 @@
+/* soundpad/SoundPad.module.css — the Soundboard pad (WIDGETS-UI.md §22). A 3-column grid of big buttons (height 56,
+   gap 6, radius 10): the emoji (20 px) over the name (W-meta 600, one line). No tokens of its own: the buttons are the
+   soundboard panel's cards (soundboard.card.*: rest, hover, playing, focus), the text the widget body tokens.
+   pressRipple = one ring from the press point, `verylong`, only while animate (tokens.css zeroes the duration). */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 2px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.pad,
+.chip {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--th-soundboard-card-fg);
+  background: var(--th-soundboard-card-bg);
+  box-shadow: inset 0 0 0 1px var(--th-soundboard-card-border);
+  user-select: none;
+  outline: none;
+  transition: background-color var(--th-dur) linear;
+}
+.pad {
+  height: 56px;
+  min-width: 0;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 6px;
+}
+.pad:hover:not(:disabled),
+.chip:hover:not(:disabled) {
+  background: var(--th-soundboard-card-bg-hover);
+}
+.pad:focus-visible,
+.chip:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-soundboard-card-border-focus);
+}
+.playing,
+.playing:hover:not(:disabled) {
+  background: var(--th-soundboard-card-bg-active);
+  box-shadow: inset 0 0 0 2px var(--th-soundboard-card-border-active);
+}
+.pad:disabled,
+.chip:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.emoji {
+  font-size: 20px;
+  line-height: 24px;
+}
+.name {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+}
+.ripple {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: var(--th-soundboard-card-border-active);
+  opacity: 0;
+  animation: ripple var(--th-dur-verylong) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes ripple {
+  from {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(9);
+    opacity: 0;
+  }
+}
+
+/* ---- the line under the pad ---- */
+.hint {
+  padding: 0 6px 2px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.hint[data-off] {
+  color: var(--th-soundboard-status-fg-error);
+}
+
+/* ---- S: the first three as emoji chips (30 × 22, radius 11; the name is the tooltip). As many as fit WHOLE: the row
+   wraps, and a chip that would be cut wraps onto the hidden second line (a phone's header has room for two). ---- */
+.chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-content: flex-start;
+  gap: 4px;
+  height: 22px;
+  min-width: 0;
+  overflow: hidden;
+}
+.chip {
+  width: 30px;
+  height: 22px;
+  border-radius: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex: none;
+}
+.chip .emoji {
+  font-size: 13px;
+  line-height: 16px;
+}
+
+/* ---- states ---- */
+.empty {
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  text-align: center;
+  color: var(--th-widget-meta-fg);
+}
+.linkBtn {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-accent-bright);
+  cursor: pointer;
+}
+.linkBtn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.linkBtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.summaryText {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ---- phones (WIDGETS-UI.md §8) ---- */
+.body[data-mobile] .pad {
+  height: 64px;
+}
+.body[data-mobile] .emoji {
+  font-size: 24px;
+  line-height: 28px;
+}
+.body[data-mobile] .name,
+.body[data-mobile] .hint {
+  font-size: 13px;
+}

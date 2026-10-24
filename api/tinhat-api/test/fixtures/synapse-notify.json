@@ -1,0 +1,180 @@
+{
+ "_about": "Real Matrix push-gateway bodies captured from our Synapse 1.145 on 2026-09-25 (test accounts only, REACH A2.7): the pusher's data is replaced by placeholders the tests fill with a generated subscription; everything else is verbatim. Synapse strips data.url, sends membership/user_is_target for member events, and a count-only badge update has no event_id and no tweaks.",
+ "invite": {
+  "notification": {
+   "content": {
+    "displayname": "bob",
+    "is_direct": true,
+    "membership": "invite"
+   },
+   "counts": {
+    "unread": 28
+   },
+   "devices": [
+    {
+     "app_id": "dev.tinhat.web",
+     "data": {
+      "endpoint": "__ENDPOINT__",
+      "p256dh": "__P256DH__",
+      "auth": "__AUTH__",
+      "v": 1
+     },
+     "pushkey": "__PUSHKEY__",
+     "pushkey_ts": 1790325022,
+     "tweaks": {
+      "highlight": false,
+      "sound": "default"
+     }
+    }
+   ],
+   "event_id": "$FixtureEvent2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "id": "$FixtureEvent2xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "membership": "invite",
+   "prio": "high",
+   "room_id": "!FixtureRoomAAAAAAA:example.org",
+   "room_name": "Reach test DM",
+   "sender": "@alice:example.org",
+   "sender_display_name": "alice",
+   "type": "m.room.member",
+   "user_is_target": true
+  }
+ },
+ "encrypted_dm": {
+  "notification": {
+   "content": {
+    "algorithm": "m.megolm.v1.aes-sha2",
+    "ciphertext": "AwgAEnAReachFixtureNotRealCiphertext",
+    "device_id": "FIXTUREDEV",
+    "sender_key": "ReachFixtureNotARealKey0000000000000000000",
+    "session_id": "ReachFixtureNotARealSession000000000000000"
+   },
+   "counts": {
+    "unread": 28
+   },
+   "devices": [
+    {
+     "app_id": "dev.tinhat.web",
+     "data": {
+      "endpoint": "__ENDPOINT__",
+      "p256dh": "__P256DH__",
+      "auth": "__AUTH__",
+      "v": 1
+     },
+     "pushkey": "__PUSHKEY__",
+     "pushkey_ts": 1790325022,
+     "tweaks": {
+      "highlight": false,
+      "sound": "default"
+     }
+    }
+   ],
+   "event_id": "$FixtureEvent5xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "id": "$FixtureEvent5xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "prio": "high",
+   "room_id": "!FixtureRoomAAAAAAA:example.org",
+   "room_name": "Reach test DM",
+   "sender": "@alice:example.org",
+   "sender_display_name": "alice",
+   "type": "m.room.encrypted"
+  }
+ },
+ "group_message": {
+  "notification": {
+   "content": {
+    "body": "Reach server test: plain group message fixture (please ignore)",
+    "msgtype": "m.text"
+   },
+   "counts": {
+    "unread": 28
+   },
+   "devices": [
+    {
+     "app_id": "dev.tinhat.web",
+     "data": {
+      "endpoint": "__ENDPOINT__",
+      "p256dh": "__P256DH__",
+      "auth": "__AUTH__",
+      "v": 1
+     },
+     "pushkey": "__PUSHKEY__",
+     "pushkey_ts": 1790325022,
+     "tweaks": {
+      "highlight": false
+     }
+    }
+   ],
+   "event_id": "$FixtureEvent3xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "id": "$FixtureEvent3xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "prio": "low",
+   "room_id": "!FixtureRoomBBBBBBB:example.org",
+   "room_name": "Test Room",
+   "sender": "@alice:example.org",
+   "sender_display_name": "alice",
+   "type": "m.room.message"
+  }
+ },
+ "mention": {
+  "notification": {
+   "content": {
+    "body": "bob: Reach server test, mention fixture (please ignore)",
+    "m.mentions": {
+     "user_ids": [
+      "@bob:example.org"
+     ]
+    },
+    "msgtype": "m.text"
+   },
+   "counts": {
+    "unread": 28
+   },
+   "devices": [
+    {
+     "app_id": "dev.tinhat.web",
+     "data": {
+      "endpoint": "__ENDPOINT__",
+      "p256dh": "__P256DH__",
+      "auth": "__AUTH__",
+      "v": 1
+     },
+     "pushkey": "__PUSHKEY__",
+     "pushkey_ts": 1790325022,
+     "tweaks": {
+      "highlight": true,
+      "sound": "default"
+     }
+    }
+   ],
+   "event_id": "$FixtureEvent4xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "id": "$FixtureEvent4xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "prio": "high",
+   "room_id": "!FixtureRoomBBBBBBB:example.org",
+   "room_name": "Test Room",
+   "sender": "@alice:example.org",
+   "sender_display_name": "alice",
+   "type": "m.room.message"
+  }
+ },
+ "count_only": {
+  "notification": {
+   "counts": {
+    "unread": 27
+   },
+   "devices": [
+    {
+     "app_id": "dev.tinhat.web",
+     "data": {
+      "endpoint": "__ENDPOINT__",
+      "p256dh": "__P256DH__",
+      "auth": "__AUTH__",
+      "v": 1
+     },
+     "pushkey": "__PUSHKEY__",
+     "pushkey_ts": 1790325022
+    }
+   ],
+   "id": "",
+   "sender": "",
+   "type": null
+  }
+ }
+}

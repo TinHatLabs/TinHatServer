@@ -1,0 +1,41 @@
+/* Main.qml:7706-7749 now-playing pill: 34 tall, radius 17, padding ≈10, accent@.22 fill, 1 px accent */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 17px;
+  background: var(--th-callbar-now-playing-bg);
+  box-shadow: inset 0 0 0 1px var(--th-callbar-now-playing-border);
+  flex: none;
+  max-width: 100%;
+}
+.blink {
+  transition: opacity var(--th-dur-short);
+  flex: none;
+}
+.name {
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-callbar-now-playing-fg);
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stop {
+  min-width: 26px !important;
+  width: 26px;
+  height: 26px !important;
+  padding: 0 !important;
+}
+/* native: a 26 px Basic ToolButton (6 px padding) → a 14 px icon box whose stop glyph reads ≈ 8 px
+   (media-sbpill); the pack glyph fills more of its box, so 12 px lands on the same visual size */
+.stop :global(svg),
+.stop img {
+  width: 12px !important;
+  height: 12px !important;
+}

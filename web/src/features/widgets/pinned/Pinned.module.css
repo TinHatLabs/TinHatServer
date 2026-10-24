@@ -1,0 +1,160 @@
+/* pinned/Pinned.module.css — the Pinned widget (WIDGETS-UI.md §11). Row 40: padding 0 8, avatar 20, gap 8, two lines
+   (the name + time over the snippet); hover → the ⋯ button takes the time's place. */
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.status {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+  text-align: center;
+}
+.empty {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--th-widget-meta-fg);
+  text-align: center;
+}
+.emptyHint {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- a pin: 40 ---- */
+.row {
+  position: relative;
+  height: 40px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+}
+.row:hover,
+.rowOpen {
+  background: var(--th-widget-row-bg-hover);
+}
+.row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--th-widget-fg);
+}
+.when {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+}
+.line2 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.line2[data-quiet] {
+  color: var(--th-widget-muted-fg);
+}
+.kindIcon {
+  flex: none;
+}
+.snip {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* the ⋯ button: shown in the time's place (the time keeps its space, hidden) while the row is hovered / focused / its
+   menu is open */
+.moreBtn {
+  position: absolute;
+  right: 4px;
+  top: 1px;
+  width: 22px;
+  height: 22px;
+  display: none;
+  place-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.row:hover .moreBtn,
+.row:focus-within .moreBtn,
+.rowOpen .moreBtn {
+  display: grid;
+}
+.body:not([data-mobile]) .row:hover .when,
+.body:not([data-mobile]) .row:focus-within .when,
+.body:not([data-mobile]) .rowOpen .when {
+  visibility: hidden;
+}
+.moreBtn:hover,
+.moreBtn[aria-expanded="true"] {
+  background: var(--th-widget-menu-bg-hover);
+}
+.moreBtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.moreLine {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- header ---- */
+.summaryText,
+.roomName {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ---- phones (WIDGETS-UI.md §8) ---- */
+.body[data-mobile] .row {
+  height: 52px;
+  gap: 10px;
+}
+.body[data-mobile] .name {
+  font-size: 15px;
+}
+.body[data-mobile] .when,
+.body[data-mobile] .line2,
+.body[data-mobile] .moreLine {
+  font-size: 13px;
+}

@@ -1,0 +1,38 @@
+/* ButtonRow.module.css — Kirigami smallSpacing (4 px) between buttons, like the tool rows today. */
+.row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.vertical {
+  flex-direction: column;
+  align-items: stretch;
+}
+.wrap {
+  flex-wrap: wrap;
+}
+.cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.vertical .cell {
+  flex-direction: column;
+  align-items: stretch;
+}
+/* sepBefore: a 1 × 30 divider (the call bar's before Leave) */
+.sep {
+  width: 1px;
+  height: 30px;
+  margin: 0 2px;
+  background: var(--th-action-separator);
+  flex: none;
+}
+.sepH {
+  width: auto;
+  height: 1px;
+  margin: 2px 0;
+}

@@ -1,0 +1,190 @@
+/* In-app secondary window: 30 px Breeze-shaped title bar ([WM] activeBackground = panel,
+   activeForeground = text; inactive = bg / textDim), 1 px frame, a soft shadow. */
+.win {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-window-secondary-bg);
+  color: var(--th-window-secondary-fg);
+  box-shadow:
+    0 0 0 1px var(--th-window-secondary-border),
+    0 8px 32px var(--th-window-secondary-shadow);
+  outline: none;
+  min-width: 0;
+  min-height: 0;
+}
+.max {
+  box-shadow: none;
+}
+.titlebar {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 4px 0 7px;
+  background: var(--th-window-titlebar-bg);
+  color: var(--th-window-titlebar-fg);
+  user-select: none;
+  touch-action: none;
+}
+.active .titlebar {
+  background: var(--th-window-titlebar-bg-active);
+  color: var(--th-window-titlebar-fg-active);
+}
+.appIcon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: flex;
+}
+.appIcon img {
+  display: block;
+}
+.title {
+  position: absolute;
+  left: 60px;
+  right: 60px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.buttons {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.wbtn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+.wbtn:hover {
+  background: var(--th-window-titlebar-button-bg-hover);
+}
+.close:hover {
+  background: var(--th-window-titlebar-close-bg-hover);
+  color: var(--th-window-titlebar-close-fg-hover);
+}
+.body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.edge {
+  position: absolute;
+  z-index: 2;
+}
+.e_n {
+  left: var(--edge);
+  right: var(--edge);
+  top: calc(-1 * var(--edge) / 2);
+  height: var(--edge);
+  cursor: ns-resize;
+}
+.e_s {
+  left: var(--edge);
+  right: var(--edge);
+  bottom: calc(-1 * var(--edge) / 2);
+  height: var(--edge);
+  cursor: ns-resize;
+}
+.e_e {
+  top: var(--edge);
+  bottom: var(--edge);
+  right: calc(-1 * var(--edge) / 2);
+  width: var(--edge);
+  cursor: ew-resize;
+}
+.e_w {
+  top: var(--edge);
+  bottom: var(--edge);
+  left: calc(-1 * var(--edge) / 2);
+  width: var(--edge);
+  cursor: ew-resize;
+}
+.e_ne,
+.e_nw,
+.e_se,
+.e_sw {
+  width: calc(var(--edge) * 2);
+  height: calc(var(--edge) * 2);
+}
+.e_ne {
+  right: calc(-1 * var(--edge) / 2);
+  top: calc(-1 * var(--edge) / 2);
+  cursor: nesw-resize;
+}
+.e_sw {
+  left: calc(-1 * var(--edge) / 2);
+  bottom: calc(-1 * var(--edge) / 2);
+  cursor: nesw-resize;
+}
+.e_nw {
+  left: calc(-1 * var(--edge) / 2);
+  top: calc(-1 * var(--edge) / 2);
+  cursor: nwse-resize;
+}
+.e_se {
+  right: calc(-1 * var(--edge) / 2);
+  bottom: calc(-1 * var(--edge) / 2);
+  cursor: nwse-resize;
+}
+
+/* phones: full-screen sheet */
+.sheet {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-window-secondary-bg);
+  color: var(--th-window-secondary-fg);
+  padding: var(--th-safe-top) var(--th-safe-right) 0 var(--th-safe-left);
+  outline: none;
+  animation: slideIn var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes slideIn {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+.sheetHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  padding: 0 8px 0 4px;
+  background: var(--th-window-secondary-header-bg);
+  border-bottom: 1px solid var(--th-window-secondary-header-divider);
+}
+.back {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sheetTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheet .body {
+  padding-bottom: var(--th-safe-bottom);
+}

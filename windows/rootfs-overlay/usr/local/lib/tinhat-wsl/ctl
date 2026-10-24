@@ -1,0 +1,74 @@
+#!/bin/bash
+# ctl — what the Windows side (TinHatServer.exe and the installer) asks the server:
+#   wsl.exe -d TinHatServer -u root --exec /usr/local/lib/tinhat-wsl/ctl COMMAND
+#
+#   status            one line of JSON: phase, name, mode, setup code (before setup), whether a recovery code shows
+#   setup-code        the setup code (before setup); nothing after setup
+#   recovery-code     the recovery code the server shows right now (/run/tinhat/recovery-code); nothing if none
+#   wait-ready [SEC]  wait (default 300 s) until the setup page or the dashboard answers; exit 0 when it does
+#   stop              stop the server's services cleanly (the Windows side then ends the distribution)
+#   host-disk FREE TOTAL  the real free/total bytes of the Windows drive that holds the server's disk; written to
+#                     /run/tinhat-wsl/host-disk.json (inside WSL the server only sees its virtual disk's size)
+set -u
+case "${1:-status}" in
+  status)
+    exec python3 -I - <<'PY'
+import json, os
+def read(p):
+    try:
+        return open(p).read().strip()
+    except OSError:
+        return ""
+try:
+    s = json.load(open("/var/lib/tinhat/state.json"))
+except Exception:
+    s = {}
+phase = s.get("phase", "unconfigured")
+print(json.dumps({
+    "phase": phase,
+    "serverName": s.get("server_name") if phase == "ready" else None,
+    "mode": s.get("mode", "lan"),
+    "setupCode": read("/var/lib/tinhat/setup-code") if phase != "ready" else "",
+    "recoveryCode": bool(read("/run/tinhat/recovery-code")),
+    "version": read("/opt/tinhat/VERSION"),
+    "manager": os.system("systemctl -q is-active tinhat-manager.service") == 0,
+}))
+PY
+    ;;
+  setup-code)
+    cat /var/lib/tinhat/setup-code 2>/dev/null || true
+    ;;
+  recovery-code)
+    cat /run/tinhat/recovery-code 2>/dev/null || true
+    ;;
+  wait-ready)
+    # The setup page (or, once set up, the dashboard and the chat server) answers.
+    end=$(( $(date +%s) + ${2:-300} ))
+    while [ "$(date +%s)" -lt "$end" ]; do
+      if curl -fsS -o /dev/null --max-time 3 http://127.0.0.1/admin/setup/status; then
+        phase=$(python3 -I -c 'import json; print(json.load(open("/var/lib/tinhat/state.json")).get("phase", ""))' 2>/dev/null)
+        [ "$phase" != ready ] && exit 0
+        curl -fsS -o /dev/null --max-time 3 http://127.0.0.1:8008/health && exit 0
+      fi
+      sleep 2
+    done
+    exit 1
+    ;;
+  stop)
+    # Docker stops the containers as it shuts down (they come back at the next start); the manager first, so it
+    # doesn't restart anything meanwhile.
+    systemctl stop tinhat-manager.service
+    systemctl stop docker.service docker.socket containerd.service
+    sync
+    ;;
+  host-disk)
+    case "${2:-}${3:-}" in *[!0-9]*|"") echo "host-disk FREE TOTAL (bytes)" >&2; exit 2 ;; esac
+    mkdir -p /run/tinhat-wsl
+    printf '{"free": %s, "total": %s, "at": %s}\n' "$2" "$3" "$(date +%s)" > /run/tinhat-wsl/host-disk.json.new
+    mv -f /run/tinhat-wsl/host-disk.json.new /run/tinhat-wsl/host-disk.json
+    ;;
+  *)
+    sed -n '2,12p' "$0" >&2
+    exit 2
+    ;;
+esac

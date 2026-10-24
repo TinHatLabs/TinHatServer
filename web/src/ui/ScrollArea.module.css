@@ -1,0 +1,62 @@
+.area {
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+.bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 5;
+  transition: width var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+  touch-action: none;
+}
+.fat {
+  width: 14px;
+}
+.track {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 5px;
+  background: var(--th-scrollbar-track);
+  transition: opacity var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.thumb {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 5px;
+  background: var(--th-scrollbar-thumb);
+  transition:
+    background-color var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    opacity var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+/* a host's own idle alpha (idleAlpha prop): the token's colour at that alpha (before .hovered/.pressed, which win) */
+.idle {
+  background: rgb(from var(--th-scrollbar-thumb) r g b / var(--idle));
+}
+.hovered {
+  background: var(--th-scrollbar-thumb-hover);
+}
+.pressed {
+  background: var(--th-scrollbar-thumb-pressed);
+}

@@ -1,0 +1,70 @@
+/* motion.module.css — the widgets' one-shot motions (WIDGETS-UI.md §10). Durations are the duration token's steps, so
+   they are 0 while the motion switch is off (tokens.css), and every animation runs exactly once. */
+.rollBox {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+.roll {
+  display: inline-block;
+}
+.roll[data-enter] {
+  animation: rollIn var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes rollIn {
+  from {
+    transform: translateY(70%);
+    opacity: 0;
+  }
+}
+
+.fadeBox {
+  position: relative;
+  display: block;
+  overflow: hidden;
+}
+.fadeImg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  -webkit-user-drag: none;
+}
+.fadeImg[data-enter] {
+  animation: fadeIn var(--th-dur-verylong) cubic-bezier(0.455, 0.03, 0.515, 0.955);
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+
+/* rowSlide / personSlide / avatarSlide — shared keyframes for the widgets' rows */
+:global(.tw-enter-up) {
+  animation: enterUp var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+:global(.tw-enter-down) {
+  animation: enterDown var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+:global(.tw-enter-side) {
+  animation: enterSide var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes enterUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes enterDown {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+@keyframes enterSide {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+}

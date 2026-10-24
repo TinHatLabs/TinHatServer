@@ -1,0 +1,137 @@
+.page {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  background: var(--th-surface-window);
+  color: var(--th-text-primary);
+}
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--th-surface-island);
+  border-bottom: 1px solid var(--th-border-strong);
+}
+.links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.links a {
+  color: var(--th-text-link);
+}
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.themed {
+  min-width: 0;
+  padding: 12px;
+  background: var(--th-surface-window);
+  color: var(--th-text-primary);
+}
+.themed + .themed {
+  border-left: 1px solid var(--th-border-strong);
+}
+.themeName {
+  margin-bottom: 8px;
+  color: var(--th-accent-bright);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rowLabel {
+  flex: none;
+  width: 120px;
+  color: var(--th-text-secondary);
+  font-size: 11px;
+}
+.rowItems {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.live {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--th-surface-island);
+  border-top: 1px solid var(--th-border-strong);
+}
+.ctxArea {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px dashed var(--th-border-subtle);
+  color: var(--th-text-secondary);
+  user-select: none;
+}
+.iconGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+  padding: 12px;
+}
+.iconTile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-radius: var(--th-radius-sm);
+  background: var(--th-surface-island);
+}
+.iconTile:hover {
+  background: var(--th-surface-raised);
+}
+.iconSizes {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+}
+.iconName {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.iconKind {
+  font-size: 10px;
+  color: var(--th-text-secondary);
+}
+.mobileCol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+/* replica pages: an empty 1560×960 stage in the theme bg, popups placed at native coordinates */
+.replica {
+  position: fixed;
+  inset: 0;
+  background: var(--th-surface-window);
+}

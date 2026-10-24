@@ -1,0 +1,15 @@
+[Unit]
+Description=Tin Hat Server for Windows: prepare the server under WSL (first start: switch off VM-only parts; every start: the server's name)
+Documentation=file:///usr/local/lib/tinhat-wsl/README
+DefaultDependencies=no
+After=local-fs.target
+Before=avahi-daemon.service tinhat-manager.service docker.service apt-daily.service apt-daily-upgrade.service unattended-upgrades.service
+ConditionVirtualization=wsl
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/tinhat-wsl/boot
+
+[Install]
+WantedBy=multi-user.target

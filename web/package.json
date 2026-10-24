@@ -1,0 +1,33 @@
+{
+  "name": "tinhat-web",
+  "private": true,
+  "version": "12.0.0",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@matrix-org/matrix-sdk-crypto-wasm": "18.9.0",
+    "@sapphi-red/web-noise-suppressor": "0.4.1",
+    "dompurify": "^3.4.15",
+    "livekit-client": "^2.22.3",
+    "marked": "^18.0.14",
+    "matrix-js-sdk": "^42.4.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/dompurify": "^3.2.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
+  }
+}

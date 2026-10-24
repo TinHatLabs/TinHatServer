@@ -1,0 +1,109 @@
+.dim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-sheet);
+  background: var(--th-dialog-overlay-bg);
+}
+.center {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-sheet);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 12px);
+  max-height: calc(100vh - 12px);
+  background: var(--th-dialog-bg);
+  /* Basic draws the frame in palette.dark (= bg → invisible). With the dark D2 veil a bg-coloured
+     dialog would melt into the OLED app, so the frame uses the Kirigami separator colour (Breeze
+     frameContrast) + a soft drop shadow, like the Breeze dialogs a KDE Plasma desktop paints. */
+  box-shadow:
+    inset 0 0 0 1px var(--th-dialog-border),
+    0 6px 24px var(--th-dialog-shadow);
+  color: var(--th-dialog-fg);
+  pointer-events: auto;
+  outline: none;
+}
+.header {
+  flex: none;
+  padding: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+.footer {
+  flex: none;
+  display: flex;
+  gap: 1px;
+  padding: 12px;
+}
+.fbtn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.single {
+  justify-content: flex-end;
+}
+.single .fbtn {
+  flex: 0 0 50%;
+}
+.fbtn > button {
+  width: 100%;
+}
+
+/* ConfirmDialog */
+.confirmBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* the destructive confirm: pal.danger fill, radius 8, bold onAccent; hover = 2 px dangerBright
+   border (the dark fill keeps 4.5:1), pressed = darker ×1.12, keyboard focus = accentBright */
+.dangerBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 40px;
+  padding: 0 8px;
+  border-radius: var(--th-radius);
+  background: var(--th-dialog-button-danger-bg);
+  color: var(--th-dialog-button-danger-fg);
+  font-weight: 700;
+  outline: none;
+  transition: background-color var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dangerBtn:hover {
+  box-shadow: inset 0 0 0 2px var(--th-dialog-button-danger-border-hover);
+}
+.dangerBtn:active {
+  background: var(--th-dialog-button-danger-bg-pressed);
+}
+.dangerBtn:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-dialog-button-danger-border-focus);
+}
+:root[data-touch] .fbtn > button,
+:root[data-touch] button.fbtn,
+:root[data-touch] .dangerBtn {
+  min-height: 44px;
+}

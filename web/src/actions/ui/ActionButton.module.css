@@ -1,0 +1,60 @@
+/* ActionButton.module.css — the sizes of the house ToolButton per scale / style (ActionButton.qml has the same
+   numbers). S = today's tool rows (40 px, 22 px glyph); M = the call bar's size (50 px, 28 px glyph); compact = the
+   room column header (28 px, 16 px glyph). Colours: the ToolButton's tokens + action.*. */
+.tool {
+  gap: 4px;
+}
+.small {
+  min-width: 40px;
+  height: 40px;
+}
+.medium {
+  min-width: 50px;
+  height: 50px;
+  padding: 8px;
+  gap: 6px;
+}
+.compact {
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.labelOnly {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.dimmed {
+  opacity: 0.5;
+}
+/* edit mode: a hidden item is still there (so it can be moved or shown), drawn faint */
+.faint {
+  opacity: 0.25;
+}
+.avatar {
+  display: inline-flex;
+  flex: none;
+}
+/* a small ▴ mark: the call bar's split part lives in the call host; elsewhere the item only hints at it */
+.splitHint {
+  display: none;
+}
+.primary {
+  flex: none;
+}
+/* a status preset's emoji drawn as the glyph (the icon's box, 0.8 of its side) */
+.emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  line-height: 1;
+}
+/* a host's own element while its action does not apply (rowHost Dim): half opacity, no clicks — the generic button's
+   dimmed look, for elements that do not draw an unavailable state themselves */
+.dimWrap {
+  display: inline-flex;
+  flex: none;
+  opacity: 0.5;
+  pointer-events: none;
+}

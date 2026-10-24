@@ -1,0 +1,292 @@
+/* ThemeCard.module.css — THEMES-UI.md §5: the theme card (a live miniature of Tin Hat painted from 15 roles of the
+   CARD's theme — the --m* variables set inline from miniRoles(), never the active theme's), the tiles, the grids. */
+
+/* ---- the card ------------------------------------------------------------------------------------------------ */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 108px;
+  padding: 0;
+  border-radius: var(--th-radius);
+  border: 1px solid var(--th-settings-theme-card-border);
+  background: var(--mw);
+  overflow: hidden;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition:
+    transform var(--th-dur) cubic-bezier(0.33, 1, 0.68, 1),
+    border-color var(--th-dur) linear;
+}
+/* hover only where a pointer hovers (a tap on a phone leaves :hover stuck) */
+@media (hover: hover) {
+  .card:hover:not(.on):not(.bad) {
+    transform: scale(1.03);
+    border-color: var(--ma);
+  }
+  .tile:hover {
+    background: var(--th-settings-theme-tile-bg-hover);
+  }
+}
+/* the selected / keyboard ring: drawn over the card (no layout shift between 1 and 2 px) */
+.card::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  border: 2px solid transparent;
+  pointer-events: none;
+}
+.on::after {
+  border-color: var(--mab);
+}
+.card:focus-visible::after {
+  border-color: var(--th-settings-theme-card-border-focus);
+}
+.bad {
+  cursor: default;
+}
+
+/* the mini window (padding 5; positions per THEMES-UI §5.1) */
+.mini {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.badMini {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--th-settings-theme-tile-bg-hover);
+}
+.dot {
+  position: absolute;
+  left: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.rooms,
+.main {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  border-radius: 4px;
+  background: var(--mi);
+}
+.rooms {
+  left: 18px;
+  width: calc((100% - 23px) * 0.32);
+}
+.main {
+  left: calc(18px + (100% - 23px) * 0.32 + 4px);
+  right: 5px;
+}
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 5px;
+}
+.band {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: -2px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--ms);
+}
+.rowDot {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.rowBar {
+  position: absolute;
+  left: 12px;
+  top: 1px;
+  height: 3px;
+  border-radius: 1.5px;
+  background: var(--mts);
+}
+.header {
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  width: 38%;
+  height: 3px;
+  border-radius: 1.5px;
+  background: var(--mtp);
+}
+.theirs,
+.yours,
+.composer {
+  position: absolute;
+  height: 9px;
+  border-radius: 3px;
+}
+.theirs {
+  left: 5px;
+  top: 13px;
+  width: 46%;
+  background: var(--mr);
+}
+.yours {
+  right: 5px;
+  top: 25px;
+  width: 40%;
+  background: var(--ma);
+}
+.composer {
+  left: 5px;
+  right: 5px;
+  bottom: 5px;
+  box-sizing: border-box;
+  background: var(--mr);
+  border: 1px solid var(--mbs);
+}
+
+/* the caption strip (26 px) */
+.caption {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--mi);
+  border-top: 1px solid var(--mbs);
+  color: var(--mtp);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.on .name {
+  font-weight: 700;
+}
+.badName {
+  color: var(--th-settings-theme-meta-fg);
+}
+.check {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--ma);
+}
+
+/* the ⋯ button of a My-theme card (§5.2): hover/focus on desktop, always on phones */
+.more {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--th-settings-theme-card-menu-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--th-dur) linear;
+}
+.cell:hover .more,
+.cell:focus-within .more,
+.more[aria-expanded="true"],
+:global(html[data-ff="mobile"]) .more,
+:global(html[data-touch]) .more {
+  opacity: 1;
+  pointer-events: auto;
+}
+.more:focus-visible {
+  box-shadow: 0 0 0 2px var(--th-settings-theme-card-border-focus);
+  outline: none;
+}
+
+/* ---- tiles (§5.3) --------------------------------------------------------------------------------------------- */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 108px;
+  padding: 8px;
+  border-radius: var(--th-radius);
+  border: 1px dashed var(--th-settings-theme-tile-border);
+  background: transparent;
+  color: var(--th-settings-theme-tile-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  text-align: center;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur) linear;
+}
+.tile:focus-visible {
+  border: 2px solid var(--th-settings-theme-card-border-focus);
+}
+.tileLabel {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- grids (§5.5) --------------------------------------------------------------------------------------------- */
+.cell {
+  position: relative;
+  min-width: 0;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 8px;
+}
+/* phones: one horizontal row, snapping to cards (§8) */
+.strip {
+  display: flex;
+  gap: 8px;
+  margin: 0 -14px;
+  padding: 2px 14px 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-padding: 0 14px;
+  scrollbar-width: none;
+}
+.strip::-webkit-scrollbar {
+  display: none;
+}
+.strip > .cell {
+  flex: none;
+  width: 150px;
+  scroll-snap-align: start;
+}
+/* phones: two columns on a 390 px phone (names stay readable) */
+:global(html[data-ff="mobile"]) .grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+:global(html[data-ff="mobile"]) .card,
+:global(html[data-ff="mobile"]) .tile {
+  height: 96px;
+}

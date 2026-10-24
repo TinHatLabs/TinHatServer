@@ -1,0 +1,6 @@
+#!/bin/sh
+# hold — keeps the server's WSL distribution running. WSL stops a distribution about 15 seconds after the last
+# Windows program attached to it (a wsl.exe) goes away, even while its services run. TinHatServer.exe keeps one
+#   wsl.exe -d TinHatServer -u root --exec /usr/local/lib/tinhat-wsl/hold
+# running for as long as the server should run.
+exec sleep infinity

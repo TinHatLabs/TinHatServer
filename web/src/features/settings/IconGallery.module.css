@@ -1,0 +1,100 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--th-icon-gallery-bg);
+  color: var(--th-icon-gallery-fg);
+}
+.header {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--th-icon-gallery-header-bg);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wrap {
+  flex-wrap: wrap;
+}
+.info {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-icon-gallery-meta-fg);
+  font-size: var(--th-font-size);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dim {
+  color: var(--th-icon-gallery-meta-fg);
+  font-size: var(--th-font-size);
+}
+.spacer {
+  flex: 1 1 auto;
+}
+.grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 160px);
+  grid-auto-rows: 126px;
+  align-content: start;
+}
+.cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* native spacing 6 overflows the 126 px cell once the "animated" line shows (it overlaps the
+     frame); 4 px keeps name + trigger line inside the frame */
+  gap: 4px;
+  padding: 8px;
+  min-width: 0;
+}
+.frame {
+  position: absolute;
+  inset: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--th-icon-gallery-cell-border);
+  pointer-events: none;
+}
+.frame.animated {
+  border-color: var(--th-icon-gallery-cell-animated-border);
+}
+.frame.hover {
+  background: var(--th-icon-gallery-cell-bg-hover);
+}
+.iconBand {
+  flex: none;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.name {
+  flex: none;
+  text-align: center;
+  color: var(--th-icon-gallery-cell-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.anim {
+  flex: none;
+  text-align: center;
+  color: var(--th-icon-gallery-cell-animated-fg);
+  font-size: calc(var(--th-font-size-small) * 0.9);
+  line-height: 1.2;
+}
+:global(html[data-ff="mobile"]) .grid {
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+}

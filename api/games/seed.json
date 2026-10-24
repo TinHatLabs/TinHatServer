@@ -1,0 +1,206 @@
+[
+  {
+    "name": "League of Legends",
+    "slug": "league-of-legends",
+    "publisher": "Riot Games",
+    "launcher": "Riot Client",
+    "url": "https://www.leagueoflegends.com/",
+    "aliases": [
+      "LoL",
+      "League"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true,
+      "onlineCoop": true
+    }
+  },
+  {
+    "name": "Teamfight Tactics",
+    "slug": "teamfight-tactics",
+    "publisher": "Riot Games",
+    "launcher": "Riot Client",
+    "url": "https://teamfighttactics.leagueoflegends.com/",
+    "aliases": [
+      "TFT"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true
+    }
+  },
+  {
+    "name": "Valorant",
+    "slug": "valorant",
+    "publisher": "Riot Games",
+    "launcher": "Riot Client",
+    "url": "https://playvalorant.com/",
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true
+    }
+  },
+  {
+    "name": "World of Warcraft",
+    "slug": "world-of-warcraft",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://worldofwarcraft.blizzard.com/",
+    "aliases": [
+      "WoW"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlineCoop": true,
+      "onlinePvp": true
+    }
+  },
+  {
+    "name": "World of Warcraft Classic",
+    "slug": "world-of-warcraft-classic",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://worldofwarcraft.blizzard.com/",
+    "aliases": [
+      "WoW Classic"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlineCoop": true,
+      "onlinePvp": true
+    }
+  },
+  {
+    "name": "Hearthstone",
+    "slug": "hearthstone",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://hearthstone.blizzard.com/",
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true
+    }
+  },
+  {
+    "name": "StarCraft II",
+    "slug": "starcraft-ii",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://starcraft2.blizzard.com/",
+    "aliases": [
+      "SC2",
+      "StarCraft 2"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true,
+      "onlineCoop": true
+    }
+  },
+  {
+    "name": "StarCraft: Remastered",
+    "slug": "starcraft-remastered",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://starcraft.blizzard.com/",
+    "aliases": [
+      "Brood War"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true
+    }
+  },
+  {
+    "name": "Diablo II: Resurrected",
+    "slug": "diablo-ii-resurrected",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net / Steam",
+    "url": "https://diablo2.blizzard.com/",
+    "aliases": [
+      "D2R",
+      "Diablo 2"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlineCoop": true
+    },
+    "steamAppId": 2536520
+  },
+  {
+    "name": "Diablo III",
+    "slug": "diablo-iii",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://diablo3.blizzard.com/",
+    "aliases": [
+      "D3",
+      "Diablo 3"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlineCoop": true
+    }
+  },
+  {
+    "name": "Warcraft III: Reforged",
+    "slug": "warcraft-iii-reforged",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://warcraft3.blizzard.com/",
+    "aliases": [
+      "WC3",
+      "Warcraft 3"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true,
+      "onlineCoop": true
+    }
+  },
+  {
+    "name": "Heroes of the Storm",
+    "slug": "heroes-of-the-storm",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net",
+    "url": "https://heroesofthestorm.blizzard.com/",
+    "aliases": [
+      "HotS"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true
+    }
+  },
+  {
+    "name": "Overwatch 2",
+    "slug": "overwatch-2",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net / Steam",
+    "steamAppId": 2357570,
+    "aliases": [
+      "OW2",
+      "Overwatch"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlinePvp": true,
+      "onlineCoop": true
+    }
+  },
+  {
+    "name": "Diablo IV",
+    "slug": "diablo-iv",
+    "publisher": "Blizzard",
+    "launcher": "Battle.net / Steam",
+    "steamAppId": 2344520,
+    "aliases": [
+      "D4",
+      "Diablo 4"
+    ],
+    "flags": {
+      "multiplayer": true,
+      "onlineCoop": true
+    }
+  }
+]

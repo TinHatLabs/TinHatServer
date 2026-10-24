@@ -1,0 +1,336 @@
+/* around/WhosAround.module.css — Who's around (WIDGETS-UI.md §6). */
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.status {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+  text-align: center;
+}
+.empty {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--th-widget-meta-fg);
+  text-align: center;
+}
+.emptyHint {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.group {
+  display: flex;
+  flex-direction: column;
+}
+.label {
+  height: 20px;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 0 8px 2px;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--th-widget-around-group-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- room rows (Playing, In a call): 40 ---- */
+.roomRow {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+}
+.roomRow:hover,
+.person:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.roomRow:focus-visible,
+.person:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.cover {
+  flex: none;
+  width: 24px;
+  height: 36px;
+  border-radius: 3px;
+  background: var(--th-widget-cover-bg);
+}
+.cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--th-widget-cover-border);
+  pointer-events: none;
+}
+.emojiTile {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+.callTile {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--th-widget-around-call-bg);
+}
+.roomText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.roomTitle {
+  font-weight: 600;
+  color: var(--th-widget-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.roomSub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.inRoom {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.faces {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+.face {
+  display: inline-flex;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--th-widget-bg);
+}
+.face + .face {
+  margin-left: -4px;
+}
+.more {
+  margin-left: 4px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 600;
+  background: var(--th-widget-chip-bg);
+  color: var(--th-widget-chip-fg);
+  white-space: nowrap;
+}
+.join {
+  flex: none;
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 10px !important;
+  font-size: calc(var(--th-font-size) * 0.85) !important;
+  font-weight: 600;
+}
+.here {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- person rows: 26 ---- */
+.person {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-widget-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.name[data-away] {
+  color: var(--th-widget-around-away-fg);
+}
+.chip {
+  flex: 0 1 auto;
+  max-width: 50%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* L: statuses in full (two lines allowed) */
+.personFull {
+  height: auto;
+  min-height: 26px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.personFull .chip {
+  max-width: 60%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.state {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+
+/* ---- avatar strip (M, > 3 people) ---- */
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 8px 6px;
+  max-height: 72px;
+  overflow: hidden;
+  align-items: center;
+}
+.stripFace {
+  display: inline-flex;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.stripFace:focus-visible {
+  outline: 1px solid var(--th-widget-ring-focus);
+  outline-offset: 3px;
+}
+.summaryFaces {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 2px;
+}
+/* Small: 20 px faces (16 px avatar in a 2 px ring of the presence colour), 16 px apart, cut by a widget.bg ring */
+.sface {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid;
+  background: var(--th-widget-bg);
+  box-shadow: 0 0 0 1.5px var(--th-widget-bg);
+}
+.sface + .sface {
+  margin-left: -4px;
+}
+.summaryText {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- not sharing (header extra at M / L) ---- */
+.hiddenNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.hiddenDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--th-account-ask-dot);
+}
+.link {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-widget-up-next-tbd-fg);
+  cursor: pointer;
+}
+.link:hover:not(:disabled),
+.link:focus-visible {
+  background: var(--th-widget-up-next-tbd-bg-hover);
+  outline: none;
+}
+.link:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ---- the hover card ---- */
+.card {
+  min-width: 240px;
+}
+.cardBody {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.cardText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cardName {
+  font-weight: 600;
+}
+.cardId {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+
+/* ---- phones ---- */
+.body[data-mobile] .person {
+  height: 44px;
+}
+.body[data-mobile] .roomRow {
+  height: 52px;
+}
+.body[data-mobile] .name,
+.body[data-mobile] .roomTitle {
+  font-size: 15px;
+}
+.body[data-mobile] .roomSub,
+.body[data-mobile] .hidden {
+  font-size: 13px;
+}
+.body[data-mobile] .join {
+  height: 36px !important;
+  min-height: 36px !important;
+}

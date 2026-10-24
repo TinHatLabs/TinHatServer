@@ -1,0 +1,112 @@
+/* features/push — Settings → Notifications → "This device" (REACH §3.2). */
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.indent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 28px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.note {
+  color: var(--th-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.status {
+  color: var(--th-settings-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.bad {
+  color: var(--th-settings-error-fg);
+}
+.err {
+  color: var(--th-settings-error-fg) !important;
+}
+.why {
+  color: var(--th-settings-fg) !important;
+}
+.again {
+  align-self: flex-start;
+}
+
+/* ---- A5.4: the one-time permission card — the same card as the presence question (desktop askCard look) ---- */
+.ask {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: calc(9px + 46px + 8px);
+  z-index: 2;
+  box-sizing: border-box;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--th-account-ask-bg);
+  border: 1px solid var(--th-account-ask-border);
+  animation: askIn var(--th-dur) ease-out;
+}
+@keyframes askIn {
+  from {
+    opacity: 0;
+  }
+}
+.ask[data-mobile] {
+  bottom: calc(max(8px, calc(var(--th-safe-bottom) - 8px)) + 56px + 8px); /* 8 px above the phone footer card (RoomList) */
+}
+
+/* 11.0 (islands C6/C7): above the dock host's account island — its full width, 8 px above its frame (the card was 8 px
+   above the footer card); the containing block is the card's box inside the island (inset --island-inset from the frame) */
+.ask[data-placement="island"] {
+  left: calc(-1 * var(--island-inset, 4px));
+  right: calc(-1 * var(--island-inset, 4px));
+  bottom: calc(100% + var(--island-inset, 4px) + 8px);
+}
+/* the Flat layout style: 8 px above the account card itself (it sits 6 px in, as before islands) */
+.ask[data-placement="flat"] {
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+}
+.askHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.askIcon {
+  flex: none;
+  margin-top: 1px;
+}
+.askText {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-account-ask-fg);
+}
+.askBtns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+.askBtn {
+  height: 30px !important;
+  min-height: 30px !important;
+}
+.allowLine {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--th-settings-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}

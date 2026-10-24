@@ -1,0 +1,132 @@
+#!/bin/bash
+# tinhat — Tin Hat Server on the command line (for the console / SSH; everyday things live in the dashboard).
+#
+#   tinhat status                 phase, name, addresses, the services
+#   tinhat setup-code             the setup code (before setup)
+#   tinhat recovery-code          the one-time code for "Forgot your password?" (after it's asked for in the browser)
+#   tinhat logs [SERVICE]         recent logs of the manager, or of caddy|postgres|synapse|livekit|lk-jwt
+#   tinhat factory-reset --yes-erase-everything
+#                                 delete ALL accounts, messages and settings and start over at the setup wizard
+#   tinhat uninstall [--erase-data]   (installed with install.sh) remove Tin Hat Server from this machine
+#   tinhat adopt-synapse DIR @owner:server
+#                                 bring a Synapse that ran elsewhere under this server's name into this server
+#                                 (its database, media and signing key; everyone keeps their account): docs/ADOPT.md
+set -euo pipefail
+STATE=/var/lib/tinhat
+DC=(docker compose -p tinhat -f /opt/tinhat/compose.yaml --env-file "$STATE/compose.env")
+ED=$(cat /opt/tinhat/EDITION 2>/dev/null || true)
+OWN=0; [ "$ED" = linux ] || [ "$ED" = compose ] && OWN=1  # the owner's own machine (install.sh, or the Compose edition)
+DOCK=0; [ "$ED" = compose ] && DOCK=1  # in the manager's container: no systemd (docker compose runs it)
+
+case "${1:-status}" in
+  status)
+    python3 - <<'PY'
+import json
+try:
+    s = json.load(open("/var/lib/tinhat/state.json"))
+except Exception:
+    s = {}
+print(f"phase:       {s.get('phase', 'unconfigured')}")
+print(f"server name: {s.get('server_name', '-')}")
+print(f"version:     {open('/opt/tinhat/VERSION').read().strip()}")
+PY
+    echo "addresses:   $(hostname -I 2>/dev/null)"
+    [ -f "$STATE/compose.env" ] && "${DC[@]}" ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}' || true
+    ;;
+  setup-code)
+    cat "$STATE/setup-code" 2>/dev/null || echo "This server is already set up (no setup code)."
+    ;;
+  recovery-code)
+    if [ -s /run/tinhat/recovery-code ]; then
+      echo "Recovery code: $(cat /run/tinhat/recovery-code)  (works for 10 minutes from when it was asked for)"
+    else
+      echo "No recovery code right now. In the browser, choose \"Forgot your password?\" and ask for one first."
+    fi
+    ;;
+  logs)
+    if [ -n "${2:-}" ]; then "${DC[@]}" logs --tail 80 --no-color "$2"
+    elif [ "$DOCK" = 1 ]; then echo "The manager's own log: docker logs tinhat-manager (on the host)"; tail -n 80 "$STATE/manager.log" 2>/dev/null || true
+    else journalctl -u tinhat-manager -n 80 --no-pager; fi
+    ;;
+  factory-reset)
+    if [ "$DOCK" = 1 ]; then
+      echo "The Compose edition: on the host, in the folder with its compose file:"
+      echo "  docker compose down && docker compose -p tinhat down --volumes && sudo rm -rf /var/lib/tinhat/* && docker compose up -d"
+      echo "(that deletes every account, message and setting; the server starts over at the setup page)"
+      exit 1
+    fi
+    if [ "${2:-}" != "--yes-erase-everything" ]; then
+      echo "This deletes every account, message, file and setting on this server."
+      echo "To really do it: tinhat factory-reset --yes-erase-everything"
+      exit 1
+    fi
+    systemctl stop tinhat-manager
+    [ -f "$STATE/compose.env" ] && "${DC[@]}" down --remove-orphans --volumes || true
+    rm -rf "${STATE:?}"/*
+    # The Tin Hat relay's tunnel lives in networkd's directory, outside the state (relay.py).
+    rm -f /etc/systemd/network/60-tinhat-relay.netdev /etc/systemd/network/60-tinhat-relay.network /etc/systemd/network/tinhat-relay.key
+    networkctl delete wg-tinhat >/dev/null 2>&1 || true
+    networkctl reload >/dev/null 2>&1 || true
+    if [ "$OWN" = 1 ]; then
+      sed -i '/# tinhat-server$/d' /etc/hosts  # our own line; the machine keeps its name
+    else
+      hostnamectl set-hostname tinhat
+      sed -i -E 's/^127\.0\.1\.1.*/127.0.1.1\ttinhat/' /etc/hosts
+      systemctl restart avahi-daemon || true
+    fi
+    systemctl start tinhat-manager
+    if [ "$OWN" = 1 ]; then
+      sleep 3
+      echo "Done. The server is back at the setup wizard. New setup code: $(cat "$STATE/setup-code" 2>/dev/null || echo "see: tinhat setup-code")"
+    else
+      echo "Done. The server is back at the setup wizard; the new setup code is on its screen."
+    fi
+    ;;
+  adopt-synapse)
+    DIR=${2:-}; OWNER=${3:-}
+    [ -d "$DIR" ] && [ -n "$OWNER" ] || { echo "usage: tinhat adopt-synapse DIR @owner:server   (docs/ADOPT.md)" >&2; exit 2; }
+    systemctl stop tinhat-manager
+    rc=0
+    (cd /opt/tinhat/manager && python3 -m tinhat adopt "$DIR" "$OWNER") || rc=$?
+    systemctl start tinhat-manager
+    exit $rc
+    ;;
+  uninstall)
+    if [ "$DOCK" = 1 ]; then
+      echo "The Compose edition: on the host, in the folder with its compose file: docker compose down && docker compose -p tinhat down"
+      echo "Accounts, messages and settings stay in /var/lib/tinhat (delete that folder to remove them too), the release in /opt/tinhat."
+      exit 1
+    fi
+    if [ "$OWN" != 1 ]; then
+      echo "This is the Tin Hat Server image: the whole machine is the server. To start over, use tinhat factory-reset;"
+      echo "to remove it, delete the virtual machine (or reinstall the computer)."
+      exit 1
+    fi
+    ERASE=0; [ "${2:-}" = --erase-data ] && ERASE=1
+    echo "This removes Tin Hat Server from this machine: its services, its containers and images, /opt/tinhat."
+    if [ "$ERASE" = 1 ]; then
+      echo "It ALSO deletes every account, message, file and setting (/var/lib/tinhat). Make a backup first if you want them."
+    else
+      echo "Accounts, messages and settings stay in /var/lib/tinhat (to delete them too: tinhat uninstall --erase-data)."
+    fi
+    printf 'Type "remove" to go on: '
+    read -r answer
+    [ "$answer" = remove ] || { echo "Nothing was changed."; exit 1; }
+    systemctl disable --now tinhat-manager >/dev/null 2>&1 || true
+    [ -f "$STATE/compose.env" ] && "${DC[@]}" down --remove-orphans || true
+    rm -f /etc/systemd/network/60-tinhat-relay.netdev /etc/systemd/network/60-tinhat-relay.network /etc/systemd/network/tinhat-relay.key
+    networkctl delete wg-tinhat >/dev/null 2>&1 || true
+    sed -i '/# tinhat-server$/d' /etc/hosts
+    for img in $(awk '{print $1}' /opt/tinhat/images.lock 2>/dev/null); do docker image rm "$img" >/dev/null 2>&1 || true; done
+    rm -f /etc/systemd/system/tinhat-manager.service /etc/systemd/system/tinhat-update.service /etc/sysctl.d/90-tinhat-host.conf
+    systemctl daemon-reload
+    rm -rf /opt/tinhat
+    [ "$ERASE" = 1 ] && rm -rf "${STATE:?}"
+    rm -f /usr/local/sbin/tinhat
+    echo "Tin Hat Server is removed. Docker and the other packages it installed stay; remove them with apt if you like."
+    ;;
+  *)
+    sed -n '2,12p' "$0"
+    exit 2
+    ;;
+esac

@@ -1,0 +1,13 @@
+{
+  "name": "tinhat-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "scripts": {
+    "test": "EDGE_PROXY=192.0.2.1 node --test test/*.test.mjs watch.test.mjs"
+  },
+  "description": "The Tin Hat API: the server side of Tin Hat's extras (docs/API.md)"
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the Tin Hat names service every night
+
+[Timer]
+OnCalendar=*-*-* 03:20
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

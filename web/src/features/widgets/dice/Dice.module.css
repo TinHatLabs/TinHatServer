@@ -1,0 +1,305 @@
+/* dice/Dice.module.css — the Dice widget (WIDGETS-UI.md §16). Body: a column, gap 6: the quick dice (7 × 1fr, gap 5,
+   30 high, radius 8), at L the expression row (the house field 34 + "Roll" 52 × 34) with its error line and the
+   Advantage / Disadvantage chips (24, radius 12), the last roll's card (DiceCard), the history rows (24, radius 6:
+   who · expression · total · when) and "Clear private rolls". Header: the Room | Private switch (20, radius 7). */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ---- quick dice ---- */
+.dice {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+.die,
+.rollBtn,
+.chip,
+.d20 {
+  border: none;
+  margin: 0;
+  cursor: pointer;
+  background: var(--th-widget-dice-button-bg);
+  color: var(--th-widget-dice-button-fg);
+  font: inherit;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition: background-color var(--th-dur);
+}
+.die:hover,
+.die:active,
+.rollBtn:hover,
+.rollBtn:active,
+.chip:hover,
+.chip:active,
+.d20:hover,
+.d20:active {
+  background: var(--th-widget-dice-button-bg-hover);
+}
+.die:focus-visible,
+.rollBtn:focus-visible,
+.chip:focus-visible,
+.d20:focus-visible,
+.seg:focus-visible,
+.clear:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.die {
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  border-radius: 8px;
+  font-size: var(--th-font-size);
+}
+.dieMobile {
+  height: 40px;
+  font-size: 15px;
+}
+
+/* ---- the expression (L) ---- */
+.exprBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.exprRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.rollBtn {
+  flex: none;
+  width: 52px;
+  height: 34px;
+  border-radius: 8px;
+  font-size: var(--th-font-size);
+}
+.error {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-dice-error-fg);
+}
+.chips {
+  display: flex;
+  gap: 6px;
+}
+.chip {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 12px;
+  font-size: calc(var(--th-font-size) * 0.75);
+}
+
+/* ---- the card's first line ---- */
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+.cardWho {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--th-widget-fg);
+}
+.cardWhen {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+}
+.whoPrivate {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--th-widget-muted-fg);
+}
+.failed {
+  color: var(--th-widget-dice-error-fg);
+}
+
+/* ---- empty ---- */
+.empty {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--th-widget-meta-fg);
+  text-align: center;
+}
+.emptyHint {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- history: 24, padding 0 8, radius 6 ---- */
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+.row {
+  height: 24px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+}
+.row:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.rowWho {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--th-widget-fg);
+}
+.rowExpr {
+  flex: 0 1 auto;
+  max-width: 40%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+}
+.rowTotal {
+  flex: none;
+  min-width: 26px;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-fg);
+}
+.rowTotal.nat20 {
+  color: var(--th-widget-dice-nat20-fg);
+}
+.rowTotal.nat1 {
+  color: var(--th-widget-dice-nat1-fg);
+}
+.rowWhen {
+  flex: none;
+  width: 54px;
+  text-align: right;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowMobile {
+  height: 44px;
+  font-size: 15px;
+}
+.rowMobile .rowExpr,
+.rowMobile .rowWhen {
+  font-size: 13px;
+}
+
+/* ---- clear ---- */
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  height: 20px;
+  align-items: center;
+}
+.clear {
+  border: none;
+  background: none;
+  padding: 0 8px;
+  height: 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.clear:hover {
+  color: var(--th-widget-meta-fg);
+  text-decoration: underline;
+}
+
+/* ---- header: the Room | Private switch ---- */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 1px;
+  box-sizing: border-box;
+  border-radius: 7px;
+  background: var(--th-widget-dice-target-bg);
+  flex: none;
+}
+.seg {
+  height: 18px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 600;
+  color: var(--th-widget-dice-target-fg);
+}
+.segOn {
+  background: var(--th-widget-dice-target-bg-checked);
+  color: var(--th-widget-dice-target-fg-checked);
+}
+.seg:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---- summary (S / collapsed): the line + the d20 button ---- */
+.summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.summaryText {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.d20 {
+  flex: none;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: calc(var(--th-font-size) * 0.75);
+}
+
+/* ---- phones ---- */
+.body[data-mobile] .cardHead {
+  font-size: 15px;
+}

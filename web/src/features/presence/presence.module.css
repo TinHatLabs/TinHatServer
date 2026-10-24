@@ -1,0 +1,355 @@
+/* features/presence — REACH §2.6/§2.7 + A4 (the dot, the chip, the lines, the switch surfaces, the picker). */
+
+/* ---- the dot: the cut ring (the surface behind) with the coloured dot inside ---- */
+.dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.core {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color var(--th-dur);
+}
+
+/* ---- the status chip (A4.5, the desktop StatusChip.qml): status colour at 14 % alpha behind text in that
+   colour; height = the label + 4, 7 px side padding, smallFont ---- */
+.chip {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+/* ---- the profile card's line (the desktop PresenceLine.qml: 10 px dot, smallFont, textDim) ---- */
+.line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-presence-line-fg);
+}
+.word {
+  white-space: nowrap;
+}
+.tail {
+  min-width: 0;
+  max-width: 260px; /* PresenceLine.qml maxTailWidth */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Settings → Privacy "Your status" ---- */
+/* the promise: three lines in the text colour at the default size, 4 px apart (desktop Settings → Privacy) */
+.promise {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.promise li {
+  color: var(--th-settings-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.small {
+  color: var(--th-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.tzRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 460px;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.seenAs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-settings-fg);
+}
+.seenAsLabel {
+  color: var(--th-settings-label-fg);
+  white-space: nowrap;
+}
+.checking {
+  color: var(--th-settings-label-fg);
+  font-style: italic;
+}
+/* "Others see you as": the line at the default size in the text colour (chip included) */
+.lineNormal,
+.lineNormal .chip {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.lineNormal {
+  color: var(--th-settings-presence-fg);
+}
+.err {
+  color: var(--th-status-error-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+
+/* ---- the footer popover "Your status" (the desktop statusPop: 336 wide, padding 14, panelHi, radius 12,
+   1 px sep border, a soft shadow; phones get the same body in a bottom sheet) ---- */
+.pop {
+  width: 336px;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+  padding: 14px;
+  background: var(--th-status-popover-bg);
+  border: 1px solid var(--th-status-popover-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px var(--th-status-popover-shadow);
+  color: var(--th-status-popover-fg);
+  animation: popIn var(--th-dur) cubic-bezier(0.33, 1, 0.68, 1);
+}
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+:root:not([data-animate]) .pop {
+  animation: none;
+}
+.popBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.popTitle {
+  margin: 0;
+  color: var(--th-status-popover-title-fg);
+}
+.popLine {
+  color: var(--th-status-popover-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.popSep {
+  margin-top: 2px;
+}
+.flatStart {
+  align-self: flex-start;
+}
+
+/* ---- the picker (A4.6): preset chips (28 high, radius 14), Custom…, the inline custom editor ---- */
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border-radius: 14px;
+  border: 1px solid var(--th-status-preset-border);
+  background: var(--th-status-preset-bg);
+  color: var(--th-status-preset-fg);
+  font: inherit;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  cursor: pointer;
+  transition: background-color var(--th-dur);
+}
+.preset:not([data-current]):hover {
+  background: var(--th-status-custom-bg-hover);
+}
+.preset:focus-visible {
+  outline: 2px solid var(--th-status-preset-ring-focus);
+  outline-offset: 1px;
+}
+.presetEmoji {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+}
+.presetDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.presetText {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* "Custom…": label + 22 (the presets are row + 18) */
+.customChip {
+  padding: 0 11px;
+}
+
+/* ---- the custom editor (inline under the chips, like the desktop) ---- */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.editRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.emojiBtn {
+  flex: none;
+  width: 34px;
+  min-width: 34px !important;
+  padding: 0 !important;
+  justify-content: center;
+}
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.clearLabel {
+  flex: none;
+  color: var(--th-status-label-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+/* 12 × 20 + 11 × 5 = 295 px: one row in the 308 px popover body (desktop f0cfde1) */
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.swatch {
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+}
+.swatch[data-on] {
+  border: 2px solid var(--th-status-swatch-border-checked);
+}
+.swatch:focus-visible {
+  outline: 2px solid var(--th-status-swatch-ring-focus);
+  outline-offset: 1px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---- the one-time question card (the desktop askCard: above the footer card, panelHi, radius 12, 1 px sep
+   border, margins 12; the green of "Online" + the question; No thanks · Turn on at 30 px) ---- */
+.ask {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: calc(9px + 46px + 8px);
+  z-index: 2;
+  box-sizing: border-box;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--th-account-ask-bg);
+  border: 1px solid var(--th-account-ask-border);
+  animation: askIn var(--th-dur) ease-out;
+}
+@keyframes askIn {
+  from {
+    opacity: 0;
+  }
+}
+.ask[data-mobile] {
+  bottom: calc(max(8px, calc(var(--th-safe-bottom) - 8px)) + 56px + 8px); /* 8 px above the phone footer card (RoomList) */
+}
+
+/* 11.0 (islands C6/C7): above the dock host's account island — its full width, 8 px above its frame (the card was 8 px
+   above the footer card); the containing block is the card's box inside the island (inset --island-inset from the frame) */
+.ask[data-placement="island"] {
+  left: calc(-1 * var(--island-inset, 4px));
+  right: calc(-1 * var(--island-inset, 4px));
+  bottom: calc(100% + var(--island-inset, 4px) + 8px);
+}
+/* the Flat layout style: 8 px above the account card itself (it sits 6 px in, as before islands) */
+.ask[data-placement="flat"] {
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+}
+.askHead {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.askDot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--th-account-ask-dot); /* the fixed "Online" green (REACH §2.6 — every theme) */
+}
+.askText {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-account-ask-fg);
+}
+.askBtns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+.askBtn {
+  height: 30px !important;
+  min-height: 30px !important;
+}
+
+/* ---- the footer's own status line (A4.5) ---- */
+.footStatus {
+  display: block;
+  max-width: 100%;
+  margin-top: 1px;
+  line-height: 0;
+}
+
+/* the popover's last row: "Profile settings…" and "Privacy settings…" side by side (2026-09-29) */
+.popLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

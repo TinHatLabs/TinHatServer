@@ -1,0 +1,204 @@
+/* Conversation.module.css — ConversationView.qml layout (CV:693-1806). */
+.conv {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  background: var(--th-timeline-bg);
+}
+.tlWrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+/* rows start at x 4 and are viewWidth − 16 wide (measured: own bubbles end at pane x 1188 of 1200 → a
+   12 px bar gutter on the right); rows spacing 4 */
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px 4px 4px;
+  min-height: 100%;
+  box-sizing: border-box;
+  justify-content: flex-end;
+}
+/* ListView header: no `spacing` between it and the first row */
+.startHeader {
+  height: 43px;
+  margin-bottom: -4px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--th-font-size-small);
+  color: var(--th-timeline-start-fg);
+}
+.histSpin {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  margin-left: -13.5px;
+  z-index: 20;
+}
+.emptyWrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.emptyWrap > * {
+  width: min(calc(100% - 108px), 396px);
+}
+
+/* jump chip: 8 px from right/bottom, 36 tall, radius 18 */
+.jump {
+  all: unset;
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 15;
+  height: 36px;
+  min-width: 36px;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: var(--th-timeline-jump-bg);
+  border: 1px solid var(--th-timeline-jump-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.jumpNew {
+  background: var(--th-timeline-jump-bg-unread);
+  border-color: var(--th-timeline-jump-border-unread);
+  padding: 0 10px 0 12px;
+}
+.jumpLabel {
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  color: var(--th-timeline-jump-fg-unread);
+  white-space: nowrap;
+}
+
+/* fox scroll bar (FoxScrollBar.qml): the control is thumb + padding 2 on each side, so it is 10 px wide
+   idle (thumb 6) and 14 px while hovered / dragged (thumb 10); the track (sep @ .45) fills the control
+   with radius width/2 — chat-scrollbar-hover: track x 1546…1559, thumb 1548…1557 */
+.bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 12;
+  transition:
+    opacity var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1),
+    width var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+  touch-action: none;
+}
+.track {
+  position: absolute;
+  inset: 0;
+  border-radius: 5px;
+  background: var(--th-scrollbar-track);
+}
+.thumb {
+  position: absolute;
+  right: 2px;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--th-timeline-scrollbar-thumb);
+  transition:
+    width var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    background-color var(--th-dur);
+}
+.barFat {
+  width: 14px;
+}
+.barFat .track {
+  border-radius: 7px;
+}
+.barFat .thumb {
+  width: 10px;
+  border-radius: 5px;
+}
+.thumbHover {
+  background: var(--th-scrollbar-thumb-hover);
+}
+.thumbDrag {
+  background: var(--th-scrollbar-thumb-pressed);
+}
+
+.sep {
+  flex: none;
+  height: 1px;
+  background: var(--th-timeline-divider);
+}
+
+.mobile .content {
+  padding: 0 8px 4px 2px;
+}
+.mobile .jump {
+  height: 44px;
+  min-width: 44px;
+  border-radius: 22px;
+}
+
+/* phones: quick reactions on top of the long-press message sheet */
+.quickRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px 12px 10px;
+  max-width: 440px;
+  box-sizing: border-box;
+}
+.quickBtn {
+  all: unset;
+  box-sizing: border-box;
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  background: var(--th-bubble-quick-react-bg);
+  cursor: pointer;
+}
+.quickOn {
+  background: var(--th-bubble-quick-react-bg-checked);
+  box-shadow: inset 0 0 0 1px var(--th-bubble-quick-react-ring-checked);
+}
+
+/* touch: thumb-sized jump chip */
+:global(html[data-touch]) .jump {
+  height: 44px;
+  min-width: 44px;
+  border-radius: 22px;
+}
+
+/* 11.0 (islands C6/C7): in the desktop dock host's timeline island — the island draws the fill (island.bg.timeline) */
+.conv.island {
+  background: transparent;
+}

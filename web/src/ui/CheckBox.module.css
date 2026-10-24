@@ -1,0 +1,176 @@
+.row {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-toggle-fg);
+  user-select: none;
+  cursor: default;
+}
+.input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+}
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- ThCheckBox / ThRadioButton: padding 2, spacing 8, 20 px indicator ------------------ */
+.th {
+  padding: 2px;
+  gap: 8px;
+  min-height: 24px;
+}
+.th.disabled .text {
+  color: var(--th-toggle-fg-disabled);
+  opacity: 0.6;
+}
+.box {
+  position: relative;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: var(--th-toggle-indicator-bg);
+  box-shadow: inset 0 0 0 1px var(--th-toggle-indicator-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--th-dur-short) linear;
+}
+.round {
+  border-radius: 50%;
+}
+.th:hover:not(.disabled) .box,
+.th[data-force="hover"] .box {
+  background: var(--th-toggle-indicator-bg-hover);
+}
+.th .input:focus-visible + .box,
+.th[data-force="focus"] .box {
+  box-shadow: inset 0 0 0 2px var(--th-toggle-indicator-border-focus);
+}
+.th.checked .box {
+  box-shadow: inset 0 0 0 1px var(--th-toggle-indicator-border-checked);
+}
+.th.checked .input:focus-visible + .box {
+  box-shadow: inset 0 0 0 2px var(--th-toggle-indicator-border-focus);
+}
+/* the check box fills accent; the radio keeps its bg and grows a dot */
+.th.checked .box:not(.round) {
+  background: var(--th-toggle-indicator-bg-checked);
+}
+.tick {
+  opacity: 0;
+  transition: opacity var(--th-dur-short) linear;
+}
+.checked .tick {
+  opacity: 1;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--th-toggle-indicator-dot);
+  transform: scale(0);
+  transition: transform var(--th-dur-short) cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.checked .dot {
+  transform: scale(1);
+}
+
+/* ---- Basic: padding 6, spacing 6, 28 px indicator -------------------------------------------- */
+.basic {
+  padding: 6px;
+  gap: 6px;
+  min-height: 40px;
+}
+.bbox {
+  position: relative;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  background: var(--th-toggle-basic-bg);
+  box-shadow: inset 0 0 0 1px var(--th-toggle-basic-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.basic:active:not(.disabled) .bbox,
+.basic[data-force="pressed"] .bbox {
+  background: var(--th-toggle-basic-bg-pressed);
+}
+.basic .input:focus-visible + .bbox,
+.basic[data-force="focus"] .bbox {
+  box-shadow: inset 0 0 0 2px var(--th-toggle-basic-border-focus);
+}
+.partial {
+  width: 16px;
+  height: 3px;
+  background: var(--th-toggle-basic-icon);
+}
+.bdot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--th-toggle-basic-icon);
+  display: none;
+}
+.checked .bdot {
+  display: block;
+}
+
+/* Controls.Switch: indicator 56×28; the PaddedRectangle track is inset 6 px top/bottom */
+.sw {
+  position: relative;
+  flex: none;
+  width: 56px;
+  height: 28px;
+}
+.track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 6px;
+  bottom: 6px;
+  border-radius: 8px;
+  background: var(--th-toggle-track);
+}
+.checked .track {
+  /* D2: the Breeze look a KDE Plasma desktop paints — a visible accent track (Basic draws palette.dark = bg) */
+  background: var(--th-toggle-track-checked);
+}
+.knob {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 16px;
+  background: var(--th-toggle-handle-bg);
+  box-shadow: inset 0 0 0 1px var(--th-toggle-handle-border);
+  transition: left var(--th-dur) linear;
+}
+.checked .knob {
+  left: 28px;
+}
+.basic:active:not(.disabled) .knob {
+  background: var(--th-toggle-handle-bg-pressed);
+}
+.basic .input:focus-visible ~ .sw .knob,
+.basic[data-force="focus"] .knob {
+  box-shadow: inset 0 0 0 2px var(--th-toggle-handle-border-focus);
+}
+.basic.disabled .knob {
+  box-shadow: inset 0 0 0 1px var(--th-toggle-handle-border-disabled);
+}
+
+:root[data-touch] .row {
+  min-height: 44px;
+}

@@ -1,0 +1,408 @@
+/* SettingsWindow.module.css — SETTINGS-WINDOW.md §2-§4 (px at 1×; text × --th-text-scale). Colours only through the
+   settings.* element tokens (29 new ones: window / rail / group / search / pane / section / card / row / result /
+   saveBar / danger, plus the existing rail.item.* / list.* / status.* / back.icon). */
+
+.win {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--th-settings-window-bg);
+  color: var(--th-settings-fg);
+}
+
+/* ---- rail: 240 wide, rail bg, 1 px right line, padding 12 */
+.rail {
+  flex: none;
+  width: 240px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 12px 0;
+  background: var(--th-settings-window-rail-bg);
+  box-shadow: inset -1px 0 0 var(--th-settings-window-rail-divider);
+}
+.railList {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 12px;
+  outline: none;
+  scrollbar-width: none;
+}
+.railList::-webkit-scrollbar {
+  display: none;
+}
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* group heading: 11 px, 600, UPPERCASE, letter-spacing 0.6; 16 above / 6 below */
+.groupLabel {
+  margin: 16px 0 6px 10px;
+  font-size: calc(11px * var(--th-text-scale));
+  line-height: calc(15px * var(--th-text-scale));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--th-settings-group-fg);
+  user-select: none;
+}
+/* item: 36 tall, radius 8, icon 18 + 10 + label 13; never truncated */
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  flex: none;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--th-settings-rail-item-fg);
+  font-size: calc(13px * var(--th-text-scale));
+  line-height: calc(18px * var(--th-text-scale));
+  text-align: left;
+  outline: none;
+  user-select: none;
+  transition: background-color var(--th-dur) linear;
+}
+.item:hover {
+  background: var(--th-settings-rail-item-bg-hover);
+}
+.itemOn,
+.itemOn:hover {
+  background: var(--th-settings-rail-item-bg-selected);
+  color: var(--th-settings-rail-item-fg-selected);
+  font-weight: 600;
+}
+.item:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-settings-rail-item-border-focus);
+}
+.itemLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- search: 34 tall, radius 8, 1 px frame (focus colour while focused), magnifier 16 left, ✕ right, text 13 */
+.search {
+  flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 4px 0 10px;
+  border-radius: 8px;
+  background: var(--th-settings-search-bg);
+  box-shadow: inset 0 0 0 1px var(--th-settings-search-border);
+  transition: box-shadow var(--th-dur) linear;
+}
+.search:focus-within {
+  box-shadow: inset 0 0 0 1px var(--th-settings-search-border-focus);
+}
+.searchInput {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--th-settings-search-fg);
+  font: inherit;
+  font-size: calc(13px * var(--th-text-scale));
+}
+.searchInput::placeholder {
+  color: var(--th-settings-search-placeholder-fg);
+  opacity: 1;
+}
+.searchInput::-webkit-search-cancel-button {
+  display: none;
+}
+.searchClear {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+}
+.searchClear:hover {
+  background: var(--th-settings-rail-item-bg-hover);
+}
+
+/* ---- content: one scroll area, a column ≤ 720, left-aligned, padding 28 / 24 top / 32 bottom */
+.content {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-settings-window-bg);
+  container: settings / inline-size;
+}
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.scrollInner {
+  display: flex;
+  flex-direction: column;
+}
+.column {
+  width: 100%;
+  /* the column's content is ≤ 720 wide (+ the 28 px paddings) */
+  max-width: calc(720px + 56px);
+  box-sizing: border-box;
+  padding: 24px 28px 32px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.column > * {
+  flex-shrink: 0;
+}
+.fullPage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+/* pane header: title 22/600, description 13 (4 below), 24 to the first section */
+.paneHead {
+  margin-bottom: 24px;
+}
+.paneTitle {
+  margin: 0;
+  font-size: calc(22px * var(--th-text-scale));
+  line-height: calc(30px * var(--th-text-scale));
+  font-weight: 600;
+  color: var(--th-settings-pane-title-fg);
+}
+.paneDesc {
+  margin: 4px 0 0;
+  font-size: calc(13px * var(--th-text-scale));
+  line-height: calc(18px * var(--th-text-scale));
+  color: var(--th-settings-pane-description-fg);
+}
+
+/* ---- search results: 44 tall, radius 8, label 14 (matched part bold), path 12 */
+.resultsCount {
+  margin: 0 0 12px 12px;
+  font-size: calc(13px * var(--th-text-scale));
+  line-height: calc(18px * var(--th-text-scale));
+  color: var(--th-settings-result-path-fg);
+}
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.result {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 4px 12px;
+  border-radius: 8px;
+  cursor: default;
+  user-select: none;
+}
+.result:hover,
+.resultSel {
+  background: var(--th-settings-result-bg-hover);
+}
+.resultLabel {
+  font-size: calc(14px * var(--th-text-scale));
+  line-height: calc(19px * var(--th-text-scale));
+  color: var(--th-settings-result-fg);
+}
+.resultLabel b {
+  font-weight: 700;
+}
+.resultPath {
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(16px * var(--th-text-scale));
+  color: var(--th-settings-result-path-fg);
+}
+.empty {
+  margin: 8px 12px;
+  font-size: calc(14px * var(--th-text-scale));
+  line-height: calc(20px * var(--th-text-scale));
+  color: var(--th-settings-result-empty-fg);
+}
+
+/* ---- the status strip: bottom of the content (right), the 4 s line */
+.status {
+  position: absolute;
+  right: 28px;
+  bottom: 12px;
+  max-width: min(396px, calc(100% - 56px));
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--th-settings-window-bg);
+  color: var(--th-settings-status-fg);
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(17px * var(--th-text-scale));
+  z-index: 3;
+  pointer-events: none;
+}
+.statusErr {
+  color: var(--th-settings-status-fg-error);
+}
+
+/* ---- phones: full screen, own header (the sheet's 52 px shape), the pane list as grouped cards ------------------ */
+.mWin {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--th-settings-window-bg);
+  color: var(--th-settings-fg);
+}
+.mHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  padding: 0 8px 0 4px;
+  background: var(--th-window-secondary-header-bg);
+  border-bottom: 1px solid var(--th-window-secondary-header-divider);
+}
+.mBack {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+.mTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: calc(17px * var(--th-text-scale));
+  font-weight: 600;
+  color: var(--th-settings-pane-title-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mBody {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  container: settings / inline-size;
+}
+.mScrollInner {
+  -webkit-overflow-scrolling: touch;
+}
+.mColumn {
+  max-width: none;
+  box-sizing: border-box;
+  /* + the on-screen keyboard, so the last field can scroll above it */
+  padding: 12px 14px calc(28px + var(--th-safe-bottom) + var(--th-vv-bottom, 0px));
+}
+.mPaneDesc {
+  margin: 0 2px 16px;
+  font-size: calc(13px * var(--th-text-scale));
+  line-height: calc(18px * var(--th-text-scale));
+  color: var(--th-settings-pane-description-fg);
+}
+.mSearchBar {
+  flex: none;
+  padding: 12px 14px 0;
+}
+.searchPhone {
+  height: 44px;
+  padding-left: 12px;
+}
+.searchPhone .searchInput {
+  font-size: var(--th-input-font, 16px);
+}
+.mGroup + .mGroup {
+  margin-top: 20px;
+}
+.mGroupLabel {
+  margin: 0 0 6px 4px;
+  font-size: calc(11px * var(--th-text-scale));
+  line-height: calc(15px * var(--th-text-scale));
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--th-settings-group-fg);
+}
+.mCard {
+  display: flex;
+  flex-direction: column;
+  background: var(--th-settings-card-bg);
+  box-shadow: inset 0 0 0 1px var(--th-settings-card-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.mItem {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 8px 14px 8px 16px;
+  background: transparent;
+  color: var(--th-settings-list-item-fg);
+  text-align: left;
+}
+.mItem + .mItem {
+  border-top: 1px solid var(--th-settings-card-divider);
+}
+.mItem:active {
+  background: var(--th-settings-list-item-bg-pressed);
+}
+.mItemText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.mItemLabel {
+  font-size: calc(16px * var(--th-text-scale));
+  line-height: calc(21px * var(--th-text-scale));
+  font-weight: 500;
+}
+.mItemDesc {
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(16px * var(--th-text-scale));
+  color: var(--th-settings-row-description-fg);
+}
+.mBody .result {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  min-height: 56px;
+  column-gap: 8px;
+}
+.mBody .result .resultLabel {
+  flex: 1 1 60%;
+}
+.mBody .result .resultPath {
+  order: 3;
+  flex: 1 1 100%;
+}
+.mBody .status {
+  right: 14px;
+  bottom: calc(14px + var(--th-safe-bottom));
+  max-width: calc(100% - 28px);
+}

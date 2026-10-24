@@ -1,0 +1,1145 @@
+/* WatchPartyWindow.qml — tw-spec/media.md §2.2; 11.3 QOL layout (the Media Party QOL spec §1).
+   The window body is a SIZE container and the stage an INLINE-SIZE one, so the video's size is pure CSS:
+     stacked (< 960 px): video height = min(stage width × 9/16, max(200, body height − 160))
+     wide (≥ 960 px):    stage | divider | side panel; the video box starts at stage width × 9/16 and is the only stage
+                         row that shrinks (to ≥ 200 px, then the stage scrolls) — so the stage fits the window
+     theater / fullscreen / mini: the video box fills what the transport leaves
+   and the 16:9 surface is centred in the box (letterbox = watchparty.video.bg). No JS measures heights → no loops. */
+.keyRoot {
+  position: absolute;
+  inset: 0;
+  outline: none;
+  container-type: size;
+  background: var(--th-watchparty-bg);
+}
+.scroll {
+  position: absolute;
+  inset: 0;
+  background: var(--th-watchparty-bg);
+}
+.scroller {
+  position: relative;
+}
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 8px 8px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  container-type: inline-size;
+}
+.sideCol {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* stacked: the side panel is just the rest of the one column (its ScrollArea doesn't scroll on its own) */
+.stacked .side,
+.stacked .sideScroller {
+  overflow: visible;
+}
+/* wide: two columns that each fit the window */
+.wide .layout {
+  position: absolute;
+  inset: 0;
+  flex-direction: row;
+  gap: 0;
+  padding: 0;
+}
+.wide .stage {
+  flex: 1 1 auto;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+}
+.wide .side {
+  flex: none;
+  width: var(--side-w, 380px);
+  height: 100%;
+}
+.wide .sideScroller {
+  padding: 4px 8px 8px;
+  box-sizing: border-box;
+}
+/* the side panel scrolls as one: browse results flow instead of nesting a second scroller */
+.wide .side .results {
+  max-height: none;
+  overflow: visible;
+}
+/* the divider: a 1 px line with a 6 px grab area; drag resizes the side panel, double-click resets it */
+.divider {
+  position: relative;
+  flex: none;
+  width: 1px;
+  align-self: stretch;
+  background: var(--th-watchparty-section-divider);
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+.divider::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
+}
+.heading {
+  flex: none;
+  margin: 0;
+  font-weight: 400;
+}
+.spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dimSmall {
+  color: var(--th-watchparty-meta-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  flex: none;
+}
+.names {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+.hostBtn {
+  flex: none;
+}
+.error {
+  color: var(--th-watchparty-error-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  overflow-wrap: anywhere;
+}
+
+/* ---- the video: a box as wide as the stage, the 16:9 surface centred in it ----------------------------------------- */
+.videoBox {
+  position: relative;
+  flex: none;
+  width: 100%;
+  height: min(calc(100cqw * 9 / 16), max(200px, calc(100cqh - 160px)));
+  container-type: size;
+  display: grid;
+  place-items: center;
+  background: var(--th-watchparty-video-bg);
+  border-radius: 8px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.videoBox::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-video-border);
+  pointer-events: none;
+  z-index: 9;
+}
+.wide .videoBox {
+  flex: 0 1 calc(100cqw * 9 / 16);
+  height: auto;
+  min-height: 200px;
+}
+.surface {
+  position: relative;
+  width: min(100cqw, calc(100cqh * 16 / 9));
+  height: min(100cqh, calc(100cqw * 9 / 16));
+  overflow: hidden;
+  isolation: isolate;
+}
+.player :global(iframe) {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+/* the transparent catcher over the player (the YouTube iframe swallows pointer events): click / double-click / wheel.
+   The overlays that must stay clickable (click-to-start, the error's Retry) sit above it. */
+.catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  cursor: pointer;
+}
+.center {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  z-index: 2;
+  pointer-events: none;
+}
+.failure {
+  pointer-events: auto;
+}
+.centerText {
+  color: var(--th-watchparty-empty-fg);
+  text-align: center;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.errorText {
+  color: var(--th-watchparty-failure-fg);
+  text-align: center;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  overflow-wrap: anywhere;
+}
+.clickToPlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--th-watchparty-click-to-play-bg);
+  color: var(--th-watchparty-click-to-play-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  box-shadow: 0 2px 12px var(--th-watchparty-click-to-play-shadow);
+  cursor: pointer;
+}
+/* the OSD: one pill at the top-centre of the video (QOL §2), 1.2 s then a 200 ms fade (none with reduced motion) */
+.osd {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 5px 12px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: var(--th-watchparty-click-to-play-bg);
+  color: var(--th-watchparty-click-to-play-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  font-weight: 700;
+  box-shadow: 0 2px 12px var(--th-watchparty-click-to-play-shadow);
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 200ms linear;
+}
+.osdOut {
+  opacity: 0;
+}
+.osdText {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---- transport (QOL §3): play · mute · volume · scrub · time · next · theater · mini · fullscreen · keys ------------- */
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-width: 0;
+}
+.tbtn {
+  flex: none;
+}
+.tbtn:disabled {
+  opacity: 0.5;
+}
+.vol {
+  width: 90px;
+  flex: none;
+}
+.scrub {
+  flex: 1 1 auto;
+  min-width: 40px;
+}
+.scrubWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.scrubSlider {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* the time under the pointer while hovering the scrub bar */
+.scrubTip {
+  position: absolute;
+  bottom: calc(100% - 2px);
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--th-tooltip-bg);
+  color: var(--th-tooltip-fg);
+  box-shadow: inset 0 0 0 1px var(--th-tooltip-border);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 6;
+}
+.time {
+  flex: none;
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  color: var(--th-watchparty-time-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.time:hover {
+  color: var(--th-watchparty-fg);
+}
+
+.joinRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.sep {
+  height: 1px;
+  background: var(--th-watchparty-section-divider);
+  flex: none;
+}
+.queueTitle {
+  font-weight: 700;
+  color: var(--th-watchparty-section-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---- queue (QOL §5) -------------------------------------------------------------------------------------------------- */
+.queue {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: max(162px, 38cqh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.queueDragging {
+  user-select: none;
+}
+.qRow {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 43px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--th-watchparty-queue-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border);
+}
+.qRow:hover {
+  background: var(--th-watchparty-queue-row-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border-hover);
+}
+.qNow {
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border-hover);
+}
+/* played rows (above the playing one) */
+.qPlayed {
+  opacity: 0.55;
+}
+/* the dragged row follows the pointer above the others */
+.qDrag {
+  z-index: 3;
+  opacity: 1;
+  background: var(--th-watchparty-queue-row-bg-hover);
+  box-shadow:
+    inset 0 0 0 1px var(--th-watchparty-queue-row-border-hover),
+    0 4px 14px var(--th-watchparty-click-to-play-shadow);
+  cursor: grabbing;
+}
+.dropLine {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--th-watchparty-queue-row-border-hover);
+  pointer-events: none;
+  z-index: 4;
+}
+/* the grip: 2 × 3 dots in the meta colour */
+.grip {
+  flex: none;
+  align-self: stretch;
+  width: 12px;
+  margin: 0 0 0 -2px;
+  color: var(--th-watchparty-meta-fg);
+  background-image: radial-gradient(circle, currentColor 1.1px, transparent 1.6px);
+  background-size: 5px 5px;
+  background-repeat: repeat;
+  background-position: center;
+  -webkit-mask: linear-gradient(transparent 14px, currentColor 14px, currentColor calc(100% - 14px), transparent calc(100% - 14px));
+  mask: linear-gradient(transparent 14px, currentColor 14px, currentColor calc(100% - 14px), transparent calc(100% - 14px));
+  cursor: grab;
+  touch-action: none;
+  opacity: 0.8;
+}
+.qRow:hover .grip {
+  opacity: 1;
+}
+.qNum {
+  color: var(--th-watchparty-meta-fg);
+  flex: none;
+  min-width: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.tagNow,
+.tagNext {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: var(--th-font-size-small);
+  line-height: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+/* "Now playing" = the accent pair the OSD and click-to-start use */
+.tagNow {
+  background: var(--th-watchparty-click-to-play-bg);
+  color: var(--th-watchparty-click-to-play-fg);
+}
+.tagNext {
+  color: var(--th-watchparty-fg);
+  background: var(--th-watchparty-queue-row-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border-hover);
+}
+.qTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-watchparty-queue-row-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qBy {
+  flex: none;
+  display: inline-flex;
+}
+/* the row actions: on hover / keyboard focus they overlay the row's right end (the title keeps its width); on touch
+   they are always there, in the row */
+.qActions {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 6px;
+  border-radius: 5px;
+  background: var(--th-watchparty-queue-row-bg-hover);
+  opacity: 0;
+  pointer-events: none;
+}
+.qRow:hover .qActions,
+.qRow:focus-within .qActions,
+.qDrag .qActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.qTouch .qActions {
+  position: static;
+  transform: none;
+  padding-left: 0;
+  background: none;
+  opacity: 1;
+  pointer-events: auto;
+}
+.qActions .rowBtn {
+  width: 30px !important;
+  min-width: 30px !important;
+  height: 30px !important;
+}
+/* a narrow list (the side panel at its minimum, small windows) drops the source badge before the title shrinks */
+.queue {
+  container-type: inline-size;
+}
+@container (max-width: 400px) {
+  .qRow .badge {
+    display: none;
+  }
+}
+/* touch + a phone-narrow list: Play now + "⋯" stay in the row, Play next / Remove live in the "⋯" menu */
+@container (max-width: 440px) {
+  .qTouch .qOptional {
+    display: none;
+  }
+}
+@END
+.rowBtn {
+  flex: none;
+}
+.rowBtn:disabled {
+  opacity: 0.5;
+}
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.noResults {
+  text-align: center;
+  color: var(--th-watchparty-meta-fg);
+  padding: 4px;
+}
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 216px;
+  overflow-y: auto;
+}
+.rRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 54px;
+  padding: 4px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--th-watchparty-result-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-result-row-border);
+}
+.rRow:hover {
+  background: var(--th-watchparty-result-row-bg-hover);
+}
+.thumb {
+  width: 72px;
+  height: 43px;
+  object-fit: cover;
+  flex: none;
+}
+.rTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-watchparty-result-row-fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  line-height: var(--th-line);
+}
+/* a browse / history row already in the queue (QOL §6) */
+.inQueue {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  color: var(--th-watchparty-meta-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+}
+
+/* ---- theater (T): the stage only, the video fills the window above a transport that stays -------------------------- */
+.theater .chrome,
+.theater .side,
+.theater .divider,
+.fs .chrome,
+.fs .side,
+.fs .divider,
+.mini .chrome,
+.mini .side,
+.mini .divider,
+.mini .transportBar {
+  display: none;
+}
+.theater .layout,
+.fs .layout,
+.mini .layout {
+  position: absolute;
+  inset: 0;
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+}
+.theater .stage,
+.fs .stage,
+.mini .stage {
+  flex: 1 1 auto;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.theater .videoBox,
+.fs .videoBox,
+.mini .videoBox {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+  border-radius: 0;
+}
+.theater .videoBox::after,
+.fs .videoBox::after,
+.mini .videoBox::after {
+  display: none;
+}
+.theater .transportBar {
+  padding: 4px 8px;
+}
+/* ---- fullscreen (F): video only + the transport overlay that fades 2.5 s after the pointer rests ------------------- */
+.fs .transportBar {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--th-watchparty-click-to-play-bg);
+  transition: opacity var(--th-dur) linear;
+  z-index: 8;
+}
+.chromeHidden .transportBar {
+  opacity: 0;
+  pointer-events: none;
+}
+.chromeHidden,
+.chromeHidden .catcher {
+  cursor: none;
+}
+/* ---- the mini player (I): video only; the transport overlays it while hovered ------------------------------------- */
+.miniBar {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: var(--th-watchparty-click-to-play-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--th-dur) linear;
+}
+.miniHover .miniBar {
+  opacity: 1;
+  pointer-events: auto;
+}
+.miniBar .tbtn {
+  width: 32px !important;
+  min-width: 32px !important;
+  height: 32px !important;
+}
+
+/* ---- the keys card (? / the Keys button) --------------------------------------------------------------------------- */
+.keysScrim {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: var(--th-dialog-overlay-bg);
+}
+.keysCard {
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 12px 16px 14px;
+  border-radius: 8px;
+  background: var(--th-dialog-bg);
+  color: var(--th-dialog-fg);
+  box-shadow:
+    inset 0 0 0 1px var(--th-dialog-border),
+    0 8px 32px var(--th-dialog-shadow);
+}
+.keysHead {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.keysTitle {
+  font-weight: 700;
+  font-size: var(--th-font-size);
+}
+.keysGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px 20px;
+}
+.keysGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.keysGroupTitle {
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.keysRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+}
+.keysKeys {
+  flex: none;
+  width: 86px;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.keysSlash {
+  color: var(--th-dialog-hint-fg);
+  margin: 0 3px;
+}
+.kbd {
+  display: inline-block;
+  min-width: 14px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font: inherit;
+  font-size: var(--th-font-size-small);
+  line-height: 18px;
+  text-align: center;
+  color: var(--th-watchparty-fg);
+  background: var(--th-watchparty-queue-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border), inset 0 -1px 0 var(--th-watchparty-queue-row-border);
+}
+.keysLabel {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  min-width: 0;
+}
+.keysNote {
+  margin-top: 10px;
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+
+/* ---- phones: full-screen sheet, thumb-sized transport ------------------------------------------ */
+.mobile .layout {
+  /* + the on-screen keyboard (shell → --th-vv-bottom), so the search field and its results can
+     scroll above it */
+  padding: 0 12px calc(12px + var(--th-safe-bottom, 0px) + var(--th-vv-bottom, 0px));
+  gap: 10px;
+}
+.mobile .stage,
+.mobile .sideCol {
+  gap: 10px;
+}
+.mobile .header {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+.mobile .transport {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mobile .scrub {
+  order: -1;
+  flex: 1 1 100%;
+}
+.mobile .tbtn,
+.mobile .rowBtn {
+  min-width: 44px !important;
+  height: 44px !important;
+}
+.mobile .qRow {
+  height: 52px;
+}
+.mobile .rRow {
+  height: 64px;
+}
+.mobile .queue,
+.mobile .results {
+  max-height: none;
+  overflow: visible;
+}
+.mobile .search input,
+.mobile input.search {
+  font-size: 16px;
+  height: 44px;
+}
+.mobile .names {
+  max-width: 100%;
+}
+.mobile .grip {
+  width: 22px;
+}
+
+/* D2: the Breeze look a KDE Plasma desktop paints — a visible accent fill (the rig's Basic fill is drawn in the bg colour) */
+.vol span[class*="fill"],
+.scrub span[class*="fill"] {
+  background: var(--th-slider-fill);
+}
+
+/* D2: the rig's Basic style paints a grey square behind every ToolButton in the transport; the KDE
+   Plasma Breeze look is flat — the square only shows while hovered / pressed */
+.transport .tbtn::before,
+.miniBar .tbtn::before {
+  opacity: 0;
+  transition: opacity var(--th-dur) linear;
+}
+.transport .tbtn:hover:not(:disabled)::before,
+.miniBar .tbtn:hover:not(:disabled)::before {
+  opacity: 0.5;
+}
+
+/* phones: thumb targets (≥ 44 px) for the push buttons and the sliders too */
+.mobile button {
+  min-height: 44px !important;
+}
+.mobile [role="slider"] {
+  min-height: 44px;
+}
+
+/* ---- 11.4 Media Party (DESIGN §2.3) ------------------------------------------------------------------------------ */
+/* now-playing header: art 48 · title + "artist · duration" · added-by · source badge */
+.nowPlaying {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.npArt {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--th-watchparty-queue-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.npArt img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.npText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.npTitle {
+  font-weight: 700;
+  color: var(--th-watchparty-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.npSub {
+  color: var(--th-watchparty-meta-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-watchparty-meta-fg);
+  background: var(--th-watchparty-queue-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border);
+  white-space: nowrap;
+}
+/* a person: avatar + name (+ the host badge) */
+.user {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-width: 0;
+}
+.userName {
+  color: var(--th-watchparty-meta-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  max-width: 120px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hostBadge {
+  padding: 0 5px;
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 700;
+  color: var(--th-watchparty-fg);
+  background: var(--th-watchparty-queue-row-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border-hover);
+}
+.watching {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* "Queue · 12 · 48 min left" never elides: the buttons wrap to a second line (right-aligned) when the panel is narrow */
+.queueHead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  min-width: 0;
+}
+.queueHead .queueTitle {
+  flex: 1 0 auto;
+}
+.queueBtns {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex: none;
+}
+.headBtn {
+  flex: none;
+  height: 32px !important;
+  min-height: 32px !important;
+}
+.headBtn:disabled {
+  opacity: 0.5;
+}
+/* flat like the transport's (the Basic square only while hovered) */
+.headBtn::before {
+  opacity: 0;
+  transition: opacity var(--th-dur) linear;
+}
+.headBtn:hover:not(:disabled)::before {
+  opacity: 0.5;
+}
+.qArt {
+  width: 32px;
+  height: 24px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex: none;
+}
+.qArtist {
+  color: var(--th-watchparty-meta-fg);
+}
+.rowBtn :global(svg),
+.rowBtn img {
+  flex: none;
+}
+.addNote {
+  white-space: normal;
+}
+.empty {
+  pointer-events: none;
+}
+.buffering {
+  pointer-events: none;
+}
+
+/* ---- 11.4 Browse pane (DESIGN §2.4): tabs · chips · autocomplete · rows · listing ---------------------------------- */
+.browse {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--th-watchparty-section-divider);
+}
+.tab {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--th-watchparty-meta-fg);
+  font: inherit;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  font-weight: 700;
+  padding: 4px 10px 6px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.tab:hover {
+  color: var(--th-watchparty-fg);
+}
+.tabOn {
+  color: var(--th-watchparty-fg);
+  border-bottom-color: var(--th-watchparty-queue-row-border-hover);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chip {
+  appearance: none;
+  border: 0;
+  font: inherit;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  padding: 2px 10px;
+  border-radius: 10px;
+  color: var(--th-watchparty-meta-fg);
+  background: var(--th-watchparty-queue-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border);
+  cursor: pointer;
+}
+.chip:hover {
+  background: var(--th-watchparty-queue-row-bg-hover);
+}
+.chipOn {
+  color: var(--th-watchparty-fg);
+  background: var(--th-watchparty-queue-row-bg-hover);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border-hover);
+}
+.suggest {
+  display: flex;
+  flex-direction: column;
+  border-radius: 5px;
+  background: var(--th-watchparty-result-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-result-row-border);
+  overflow: hidden;
+}
+.suggestRow {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--th-watchparty-result-row-fg);
+  font: inherit;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  text-align: left;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.suggestRow:hover {
+  background: var(--th-watchparty-result-row-bg-hover);
+}
+.bRow {
+  height: auto;
+  min-height: 54px;
+}
+.bText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bMeta {
+  color: var(--th-watchparty-meta-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.thumbSq {
+  width: 43px;
+}
+.thumbRound {
+  width: 43px;
+  border-radius: 50%;
+}
+.listingHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 5px;
+  background: var(--th-watchparty-queue-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-queue-row-border);
+}
+.busyCenter {
+  align-self: center;
+}
+.results {
+  max-height: 324px;
+}
+
+/* Media Party 11.4: a song that stays a card (no YouTube match / an album / a playlist) */
+.songCard {
+  padding: 6px;
+  border-radius: 6px;
+  background: var(--th-watchparty-result-row-bg);
+  box-shadow: inset 0 0 0 1px var(--th-watchparty-result-row-border);
+  flex-wrap: wrap;
+}

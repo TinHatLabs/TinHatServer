@@ -1,0 +1,18 @@
+.busy {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--th-dur-long) linear;
+}
+.running {
+  opacity: 1;
+}
+/* QQuickBasicBusyIndicator's ten circles outlined in the pen colour — at rest (GPU.md §2.5: no loop). A dot is
+   filled (inline background) only as the mark steps on real progress events (BusyIndicator.tsx). */
+.dot {
+  position: absolute;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--dot);
+  background: transparent;
+}

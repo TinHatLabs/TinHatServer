@@ -1,0 +1,177 @@
+/* mentions/Mentions.module.css — the Mentions widget (WIDGETS-UI.md §13). Row 40 (Pinned's): padding 0 8, avatar 20,
+   gap 8, name · room + time over the snippet; a mention not opened yet: the mention wash + a 3 px edge (Up next's soon
+   edge geometry); hover → the ⋯ button takes the time's place. */
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.empty {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 8px;
+  color: var(--th-widget-meta-fg);
+  text-align: center;
+}
+.emptyHint {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.row {
+  position: relative;
+  height: 40px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+}
+.row[data-unseen] {
+  background: var(--th-widget-mentions-unseen-bg);
+}
+.row[data-unseen]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--th-widget-mentions-unseen-edge);
+}
+.row:hover::after,
+.rowOpen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: var(--th-widget-row-bg-hover);
+  pointer-events: none;
+}
+.row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.line1 {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+.name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--th-widget-fg);
+}
+.nameUnseen {
+  font-weight: 600;
+}
+.room {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.when {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+}
+.line2 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.line2[data-quiet] {
+  color: var(--th-widget-muted-fg);
+}
+.kindIcon {
+  flex: none;
+}
+.snip {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.moreBtn {
+  position: absolute;
+  z-index: 1;
+  right: 4px;
+  top: 1px;
+  width: 22px;
+  height: 22px;
+  display: none;
+  place-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.row:hover .moreBtn,
+.row:focus-within .moreBtn,
+.rowOpen .moreBtn {
+  display: grid;
+}
+.body:not([data-mobile]) .row:hover .when,
+.body:not([data-mobile]) .row:focus-within .when,
+.body:not([data-mobile]) .rowOpen .when {
+  visibility: hidden;
+}
+.moreBtn:hover,
+.moreBtn[aria-expanded="true"] {
+  background: var(--th-widget-menu-bg-hover);
+}
+.moreBtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.moreLine {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.headerText {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.body[data-mobile] .row {
+  height: 52px;
+  gap: 10px;
+}
+.body[data-mobile] .name {
+  font-size: 15px;
+}
+.body[data-mobile] .room,
+.body[data-mobile] .when,
+.body[data-mobile] .line2,
+.body[data-mobile] .moreLine {
+  font-size: 13px;
+}

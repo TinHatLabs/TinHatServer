@@ -1,0 +1,96 @@
+.msg {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 5px;
+  border-radius: var(--th-corner);
+  background: var(--tone);
+  color: var(--th-banner-fg);
+  isolation: isolate;
+}
+.information {
+  --tone: var(--th-banner-info-border);
+  --tone-fill: var(--th-banner-info-bg);
+}
+.positive {
+  --tone: var(--th-banner-positive-border);
+  --tone-fill: var(--th-banner-positive-bg);
+}
+.warning {
+  --tone: var(--th-banner-warning-border);
+  --tone-fill: var(--th-banner-warning-bg);
+}
+.error {
+  --tone: var(--th-banner-error-border);
+  --tone-fill: var(--th-banner-error-bg);
+}
+/* 1 px inset: the background tinted 20 % with the tone — banner.<tone>.bg = mix(surface.window, tone, 0.2) (radius × 0.6) */
+.fill {
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  border-radius: 3px;
+  background: var(--tone-fill);
+}
+.header,
+.footer {
+  border-radius: 0;
+}
+.header .fill {
+  inset: 0 0 1px 0;
+  border-radius: 0;
+}
+.footer .fill {
+  inset: 1px 0 0 0;
+  border-radius: 0;
+}
+.icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-left: 4px;
+  display: flex;
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 8px;
+  overflow-wrap: anywhere;
+}
+.actions {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+.close {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  margin-left: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Kirigami InlineMessage: the actions sit beside the text while the text fits on ONE line, otherwise
+   they move to a row of their own below it, right-aligned (shell-nav-narrow-700: the verify banner's
+   "Verify…" drops below at a 700 px window). Desktop only — on a phone the text wraps next to the action
+   (a separate action row would make the banner taller there). */
+:root:not([data-ff="mobile"]) .msg {
+  flex-wrap: wrap;
+  row-gap: 14px; /* only between the text row and a wrapped action row: native's wrapped banner is 86 px */
+}
+:root:not([data-ff="mobile"]) .text {
+  flex: 1 1 max-content;
+  /* never wraps below the icon: at most the line minus the icon (22 + 4) and its own 8 px margin */
+  max-width: calc(100% - 34px);
+}
+:root:not([data-ff="mobile"]) .actions {
+  margin-left: auto;
+}
+/* phones: the banner actions are thumb targets */
+:root[data-ff="mobile"] .actions > * {
+  min-height: 44px;
+}

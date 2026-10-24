@@ -1,0 +1,69 @@
+.pop {
+  position: fixed;
+  z-index: var(--th-z-popup);
+  max-width: calc(100vw - 12px);
+  max-height: calc(100vh - 12px);
+  outline: none;
+}
+.basic {
+  padding: 12px;
+  background: var(--th-popover-bg);
+  box-shadow: inset 0 0 0 1px var(--th-popover-border);
+  overflow: auto;
+}
+.dim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-popup);
+  background: var(--th-popover-overlay-bg);
+}
+.sheetDim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-popup);
+  background: var(--th-sheet-bottom-overlay-bg);
+}
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--th-vv-bottom);
+  z-index: var(--th-z-popup);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-sheet-bottom-bg);
+  color: var(--th-sheet-bottom-fg);
+  border-radius: var(--th-radius-xl) var(--th-radius-xl) 0 0;
+  box-shadow: 0 -1px 0 var(--th-sheet-bottom-edge);
+  padding-bottom: var(--th-safe-bottom);
+  animation: sheetIn var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes sheetIn {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+}
+.grab {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  margin: 8px auto 4px;
+  background: var(--th-sheet-bottom-handle-fill);
+}
+.sheetTitle {
+  flex: none;
+  padding: 8px 16px;
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.sheetBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 16px 12px;
+}

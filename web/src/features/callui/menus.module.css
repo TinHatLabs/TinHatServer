@@ -1,0 +1,85 @@
+.small {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-call-menu-note-fg);
+  white-space: normal;
+}
+.volHead {
+  font-weight: 700;
+  color: var(--th-call-volume-title-fg);
+  padding: 4px;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.volRow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  height: 40px;
+  padding: 0 4px;
+}
+.volLabel {
+  /* native Layout.preferredWidth 118 — but at the rig's 16 px smallFont "Their screen share" / "Their
+     soundboard" are wider than that (native draws them under the slider): grow the column instead of
+     eliding; the menu is max-content, so it widens to fit (D2: menus sized to their content). */
+  width: max(118px, 8.75em);
+  flex: none;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-call-volume-label-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dim {
+  color: var(--th-call-volume-label-fg-muted);
+}
+.volSlider {
+  width: 150px !important;
+  flex: none;
+  /* D2: the Basic-style slider draws its progress + handle in the window colour (invisible on the
+     black menu); show the Breeze look — accent progress, accent handle with a bright ring: the area's tokens
+     call.slider.thumb(.border) restyle the Slider through its own variables (tools/modular/lib.mjs SUBTREE_OVERRIDES). */
+  --th-slider-handle-bg: var(--th-call-slider-thumb);
+  --th-slider-handle-border: var(--th-call-slider-thumb-border);
+}
+.volPct {
+  width: 38px;
+  flex: none;
+  text-align: right;
+  color: var(--th-call-volume-value-fg);
+  font-size: var(--th-font-size-small);
+}
+.volMute {
+  flex: none;
+}
+/* D2: no Basic-style light square behind the mute glyph inside the menu rows */
+.volRow .volMute::before {
+  opacity: 0;
+}
+.volRow .volMute:hover::before {
+  background: var(--th-call-volume-mute-bg-hover);
+  opacity: 1;
+}
+:global(html[data-ff="mobile"]) .volSlider {
+  width: auto !important;
+  flex: 1 1 auto;
+}
+:global(html[data-ff="mobile"]) .volRow {
+  height: 48px;
+  /* line the rows up with the sheet's 16 px item inset */
+  padding: 0 10px 0 16px;
+}
+:global(html[data-ff="mobile"]) .volHead {
+  padding: 10px 16px 4px;
+  max-width: none;
+}
+:global(html[data-ff="mobile"]) .volRow .volMute {
+  width: 44px !important;
+  height: 44px !important;
+}
+.nowrap {
+  white-space: nowrap;
+}

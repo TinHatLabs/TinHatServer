@@ -1,0 +1,77 @@
+.slider {
+  position: relative;
+  flex: none;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+.h {
+  width: 200px;
+  height: 40px;
+}
+.v {
+  width: 40px;
+  height: 200px;
+}
+.groove {
+  position: absolute;
+  border-radius: 3px;
+  background: var(--th-slider-track);
+  overflow: hidden;
+}
+.h .groove {
+  left: 6px;
+  right: 6px;
+  top: 17px;
+  height: 6px;
+}
+.v .groove {
+  top: 6px;
+  bottom: 6px;
+  left: 17px;
+  width: 6px;
+}
+.fill {
+  position: absolute;
+  border-radius: 3px;
+  /* D2: visible accent progress like Breeze (Basic draws palette.dark = bg) */
+  background: var(--th-slider-fill);
+}
+.h .fill {
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+.v .fill {
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+.handle {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--th-slider-handle-bg);
+  box-shadow: inset 0 0 0 1px var(--th-slider-handle-border);
+}
+.h .handle {
+  top: 6px;
+}
+.v .handle {
+  left: 6px;
+}
+.pressed .handle {
+  background: var(--th-slider-handle-bg-pressed);
+}
+.slider:focus-visible .handle,
+.slider[data-force="focus"] .handle {
+  box-shadow: inset 0 0 0 2px var(--th-slider-handle-border-focus);
+}
+.disabled .handle {
+  box-shadow: inset 0 0 0 1px var(--th-slider-handle-border-disabled);
+}
+.disabled .fill,
+.disabled .groove {
+  opacity: 1;
+}

@@ -1,0 +1,167 @@
+/* Frame.module.css — one widget island (WIDGETS-UI.md §2). The 1 px frame is drawn inside the island (border-box),
+   like the account card's Rectangle border: a folded widget is 1 + 30 + 1 = 32 px tall. */
+.frame {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: 12px;
+  background: var(--th-widget-bg);
+  border: 1px solid var(--th-widget-border);
+  color: var(--th-widget-fg);
+  font-size: var(--th-font-size);
+  line-height: normal;
+  overflow: hidden;
+}
+.frame[data-dragging] {
+  z-index: 3;
+  opacity: 0.9;
+  cursor: grabbing;
+}
+.frame[data-preview] {
+  pointer-events: none;
+}
+
+/* ---- header 30 ---- */
+.header {
+  flex: none;
+  position: relative;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 0 9px; /* 10 / 3 from the island's edge, minus its 1 px frame */
+  border-radius: 11px 11px 0 0;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--th-dur);
+}
+.frame[data-folded] > .header {
+  border-radius: 11px;
+}
+.header:hover {
+  background: var(--th-widget-header-bg-hover);
+}
+.headerStatic {
+  cursor: default;
+}
+.headerStatic:hover {
+  background: none;
+}
+.header:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.icon {
+  flex: none;
+}
+.title {
+  flex: none;
+  font-weight: 600;
+  color: var(--th-widget-header-fg);
+  white-space: nowrap;
+}
+.live {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: -1px; /* 5 px after the title */
+  border-radius: 50%;
+  background: var(--th-widget-live-dot);
+}
+.extra {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-summary-fg);
+}
+.extra > * {
+  min-width: 0;
+}
+.menuBtn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  margin-left: -4px; /* 2 px after the extra slot (the header's gap is 6) */
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color var(--th-dur);
+}
+.menuBtn:hover,
+.menuBtn[aria-expanded="true"] {
+  background: var(--th-widget-menu-bg-hover);
+}
+.menuBtn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+
+/* ---- body ---- */
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 5px 5px; /* 6 from the island's edge */
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.body[data-opening] {
+  animation: bodyIn var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes bodyIn {
+  from {
+    opacity: 0;
+  }
+}
+.unknown {
+  padding: 8px 6px 10px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-unknown-fg);
+}
+
+/* ---- settings dialog ---- */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 280px;
+}
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* ---- phones (WIDGETS-UI.md §8): 44 px header, 16 px title ---- */
+.frame[data-mobile] > .header {
+  height: 44px;
+  gap: 8px;
+  padding: 0 0 0 11px;
+}
+.frame[data-mobile] .title {
+  font-size: 16px;
+}
+.frame[data-mobile] .extra {
+  font-size: 13px;
+}
+.frame[data-mobile] .menuBtn {
+  width: 44px;
+  height: 44px;
+  margin-left: 0;
+  border-radius: 12px;
+}
+.frame[data-mobile] .body {
+  font-size: 15px;
+}

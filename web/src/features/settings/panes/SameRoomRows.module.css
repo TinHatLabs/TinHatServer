@@ -1,0 +1,18 @@
+/* SameRoomRows — the remembered-pairs list under Settings › Audio › Same room */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--th-pad);
+}
+.inlineRow {
+  display: flex;
+  align-items: center;
+  gap: var(--th-pad-lg);
+}
+.inlineText {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

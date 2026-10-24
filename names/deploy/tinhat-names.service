@@ -1,0 +1,25 @@
+[Unit]
+Description=Tin Hat names service (<name>.tinhat.me for Tin Hat servers)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/tinhat-names/tinhat-names serve -c /etc/tinhat-names/config.json
+User=tinhat-names
+Group=tinhat-names
+StateDirectory=tinhat-names
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

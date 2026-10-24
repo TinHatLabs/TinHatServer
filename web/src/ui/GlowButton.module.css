@@ -1,0 +1,65 @@
+.glow {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  /* padLg 12 + the RowLayoutShim's two fill Items (spacing 4 each side) — GlowButton.qml:27 +
+     RowLayoutShim.qml; measured: "Next" 62 px wide on the rig (was 53 here). ADDITIVE fix (nav). */
+  padding: 8px 16px;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  font-weight: 700;
+  color: var(--th-button-cta-fg);
+  outline: none;
+  isolation: isolate;
+  user-select: none;
+  white-space: nowrap;
+}
+.glow:disabled {
+  opacity: 0.5;
+}
+.pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--th-radius);
+  background: var(--th-button-cta-bg);
+  box-shadow: 0 2px 12px var(--th-button-cta-glow);
+  transition:
+    background-color var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    box-shadow var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.glow:disabled .pill {
+  box-shadow: none;
+}
+.glow:hover:not(:disabled) .pill,
+.glow[data-force="hover"] .pill {
+  background: var(--th-button-cta-bg-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 18px var(--th-button-cta-glow-hover);
+}
+.glow:active:not(:disabled) .pill,
+.glow[data-force="pressed"] .pill {
+  background: var(--th-button-cta-bg-pressed);
+  transform: none;
+}
+.glow:focus-visible .pill,
+.glow[data-force="focus"] .pill {
+  box-shadow:
+    inset 0 0 0 2px var(--th-button-cta-border-focus),
+    0 2px 12px var(--th-button-cta-glow);
+}
+.content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

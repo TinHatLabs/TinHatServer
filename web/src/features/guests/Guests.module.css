@@ -1,0 +1,75 @@
+/* Guests.module.css — the bar under the Guests room's header (GuestsBar.tsx) and Settings → Guests' link row. The
+   same card as the calm first run's room question (selfhost/asks.module.css: account.ask.* tokens, radius 12, 1 px
+   border, 4 px in from the page like the Media Party banner): text left, buttons right, wrapping on a narrow page. */
+.bar {
+  flex: none;
+  box-sizing: border-box;
+  margin: 4px;
+  padding: 6px 8px 6px 12px;
+  border-radius: 12px;
+  background: var(--th-account-ask-bg);
+  border: 1px solid var(--th-account-ask-border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-height: 32px;
+}
+
+/* a waiting guest: under the state line, with a hairline between */
+.waiter {
+  border-top: 1px solid var(--th-account-ask-border);
+  padding-top: 2px;
+}
+/* the name lines up with the state text (past the 16 px icon and the 12 px gap) */
+.waiter .text {
+  padding-left: 28px;
+}
+
+.icon {
+  flex: none;
+}
+
+.text {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-account-ask-fg);
+  overflow-wrap: anywhere;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.btns {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.btn {
+  height: 30px !important;
+  min-height: 30px !important;
+}
+:global(html[data-touch]) .btn {
+  height: 44px !important;
+  min-height: 44px !important;
+}
+
+/* Settings → Guests: the link as text (to copy by hand when the browser refuses the clipboard) */
+.link {
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-size-small);
+  overflow-wrap: anywhere;
+  user-select: all;
+}

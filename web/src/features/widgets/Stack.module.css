@@ -1,0 +1,83 @@
+/* Stack.module.css — the widget stack (WIDGETS-UI.md §1). Desktop: a flex item under the room list, anchored to the
+   bottom: 6 px side margins like the account card, 6 px apart, 61 px above the panel's bottom (account card 46 + its
+   9 + 6) plus the floating question card's height + 8 (--float-card, set by the room panel). Phones: inside the list. */
+.stack {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 6px calc(61px + var(--float-card, 0px));
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.stack::-webkit-scrollbar {
+  display: none;
+}
+.stack > * {
+  flex: none;
+}
+.stack[data-dragging] {
+  user-select: none;
+}
+.dropLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--th-widget-drop-edge);
+  pointer-events: none;
+}
+.add {
+  height: 22px;
+  margin-top: -2px; /* sits 4 px under the last widget */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 6px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  line-height: normal;
+  font-weight: 600;
+  color: var(--th-widget-add-fg);
+  cursor: pointer;
+  transition:
+    color var(--th-dur),
+    background-color var(--th-dur);
+}
+.add:hover,
+.add:focus-visible {
+  color: var(--th-widget-add-fg-hover);
+  background: var(--th-widget-add-bg-hover);
+  outline: none;
+}
+
+/* ---- phones (§8): part of the list's scroll content ---- */
+.stack[data-mobile] {
+  flex: none;
+  margin: 12px 8px 0;
+  gap: 10px;
+  overflow: visible;
+}
+.stack[data-mobile] .add {
+  height: 44px;
+  margin-top: 0;
+  font-size: 13px;
+  border-radius: 12px;
+}
+
+/* ---- 11.0 (islands C6/C7): the dock host's frameless `widgets` island — the stack sits at the island's bottom (next to
+   the account island), the full island width (every widget is its own card), at most the island's height (it folds
+   to fit, then scrolls) ---- */
+.stack[data-in-island] {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 100%;
+  margin: 0;
+}

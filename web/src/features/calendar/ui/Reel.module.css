@@ -1,0 +1,1046 @@
+/* Reel.module.css — GameReelPanel / ReelCover / TierList / MyGamesEditor / GameNightAdmin /
+   ReelButton (Game Reel files use QML pixel sizes: `font.pixelSize: N` = N px exactly). */
+
+.panel {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--th-reel-bg);
+  display: flex;
+  color: var(--th-reel-fg);
+}
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--th-reel-loading-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ---- header ---- */
+.header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.headTitles {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.title {
+  font-size: 22px;
+  line-height: 30px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subtitle {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--th-reel-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.headRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+.here {
+  font-size: 13px;
+  color: var(--th-reel-meta-fg);
+  white-space: nowrap;
+}
+.avatars {
+  display: flex;
+  align-items: center;
+}
+.avatars > * + * {
+  margin-left: -8px;
+}
+.errorRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.errorText {
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: var(--th-reel-error-fg);
+  overflow-wrap: anywhere;
+}
+
+/* ---- ReelButton ---- */
+.rb {
+  height: 34px;
+  min-width: 72px;
+  padding: 0 14px;
+  border: 1px solid var(--th-reel-button-border);
+  color: var(--th-reel-button-fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.rb[style*="width"] {
+  min-width: 0;
+  padding: 0;
+}
+.rbText {
+  line-height: 1;
+}
+.rbDefault {
+  background: var(--th-reel-button-bg);
+}
+.rbDefault:hover:not(:disabled) {
+  background: var(--th-reel-button-bg-hover);
+}
+.rbQuiet {
+  background: transparent;
+}
+.rbQuiet:hover:not(:disabled) {
+  background: var(--th-reel-button-quiet-bg-hover);
+}
+.rbChecked {
+  background: var(--th-reel-button-bg-checked);
+  border-color: var(--th-reel-button-border-checked);
+}
+.rbPrimary {
+  background: var(--th-reel-button-primary-bg);
+  border-color: transparent;
+  color: var(--th-reel-button-primary-fg);
+  font-weight: 600;
+}
+.rbPrimary:hover:not(:disabled) {
+  background: var(--th-reel-button-primary-bg-hover);
+}
+.rbPrimary:active:not(:disabled) {
+  background: var(--th-reel-button-primary-bg-pressed);
+}
+.rbDisabled {
+  cursor: default;
+  background-clip: padding-box;
+  position: relative;
+}
+.rbDisabled.rbPrimary {
+  background: var(--th-reel-button-primary-bg-disabled);
+}
+.rbDisabled.rbDefault {
+  background: var(--th-reel-button-bg-disabled);
+  border-color: var(--th-reel-button-border-disabled);
+}
+.rbDisabled.rbQuiet {
+  border-color: var(--th-reel-button-border-disabled);
+}
+.rbDisabled .rbText {
+  opacity: 0.6;
+}
+html[data-touch] .rb {
+  min-height: 40px;
+}
+html[data-ff="mobile"] .rb {
+  min-height: 44px;
+}
+
+/* ---- the reel ---- */
+.reelBox {
+  position: relative;
+  height: 292px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--th-reel-strip-bg);
+  border: 1px solid var(--th-reel-strip-border);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.reelEmpty {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  font-size: 14px;
+  line-height: 19px;
+  color: var(--th-reel-meta-fg);
+}
+.viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 14px;
+  bottom: 14px;
+  overflow: visible;
+}
+.strip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  gap: 14px;
+}
+/* a compositor layer only while the reel rolls (a permanent one held a strip-wide layer for nothing) */
+.stripMoving {
+  will-change: transform;
+}
+.marker {
+  position: absolute;
+  left: 50%;
+  width: 3px;
+  height: 10px;
+  margin-left: -1.5px;
+  border-radius: 1.5px;
+  background: var(--th-reel-strip-marker-fill);
+}
+.markerTop {
+  top: 0;
+}
+.markerBottom {
+  bottom: 0;
+}
+
+/* ReelCover 132 × 264 */
+.cover {
+  position: relative;
+  width: 132px;
+  flex: none;
+  box-sizing: border-box;
+  border-radius: 8px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 2px solid transparent;
+  background: transparent;
+  transition: background-color var(--th-dur), border-color var(--th-dur);
+}
+.coverWinner {
+  background: var(--th-reel-cover-bg-selected);
+  border-color: var(--th-reel-cover-border-selected);
+}
+.coverArt {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: -2px -2px 0;
+}
+.coverImg {
+  position: absolute;
+  inset: 0;
+}
+.art {
+  display: block;
+  overflow: hidden;
+  border-radius: 5px;
+  background: var(--th-reel-cover-art-bg);
+}
+.art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.badges {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.badge {
+  height: 18px;
+  border-radius: 7px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.badgeCredit {
+  background: var(--th-reel-cover-badge-credit-bg);
+  color: var(--th-reel-cover-badge-filled-fg);
+}
+.badgeFav {
+  background: var(--th-reel-cover-badge-favorite-bg);
+  color: var(--th-reel-cover-badge-filled-fg);
+}
+.badgeOther {
+  background: var(--th-reel-cover-badge-bg);
+  color: var(--th-reel-cover-badge-fg);
+}
+.coverName {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0 -2px;
+}
+.oddsRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 -2px -2px;
+}
+.bar {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--th-reel-odds-track);
+  overflow: hidden;
+}
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--th-reel-odds-fill);
+  transition: width var(--th-dur-long);
+}
+.pct {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--th-reel-meta-fg);
+}
+.explain {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  z-index: 5;
+  border-radius: 5px;
+  background: var(--th-reel-cover-explain-bg);
+  color: var(--th-reel-cover-explain-fg);
+  font-size: 11px;
+  line-height: 15px;
+  padding: 6px;
+  white-space: pre-wrap;
+}
+
+/* ---- controls ---- */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.fill {
+  flex: 1 1 auto;
+}
+.dim12 {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--th-reel-meta-fg);
+}
+.dim11 {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--th-reel-meta-fg);
+}
+.dim10 {
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--th-reel-meta-fg);
+}
+.err11 {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--th-reel-error-fg);
+}
+.warn12 {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--th-reel-warning-fg);
+}
+.warn11 {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--th-reel-warning-fg);
+}
+.elide {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ---- result ---- */
+.result {
+  height: 118px;
+  flex: none;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: var(--th-reel-result-bg);
+  border: 1px solid var(--th-reel-result-border);
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.resultArt {
+  width: 62px;
+  height: 93px;
+  flex: none;
+  border-radius: 0;
+}
+.resultCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.resultTitle {
+  font-size: 18px;
+  line-height: 25px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- tiers ---- */
+.tier {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.caps {
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--th-reel-section-fg);
+}
+.caps11 {
+  font-size: 11px;
+  line-height: 15px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--th-reel-section-fg);
+}
+.tierSub {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--th-reel-meta-fg);
+}
+.tierFlow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.tcard {
+  position: relative;
+  width: 96px;
+  height: 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tart {
+  position: relative;
+  height: 128px;
+  flex: none;
+  border-radius: 5px;
+  background: var(--th-reel-tier-art-bg);
+  overflow: hidden;
+}
+.tstrip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--th-reel-odds-track);
+}
+.tstripFill {
+  display: block;
+  height: 4px;
+  background: var(--th-reel-odds-fill);
+}
+.tname {
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tsub {
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--th-reel-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.texplain {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 5;
+  border-radius: 5px;
+  background: var(--th-reel-tier-explain-bg);
+  color: var(--th-reel-tier-explain-fg);
+  font-size: 10px;
+  line-height: 14px;
+  padding: 5px;
+  white-space: pre-wrap;
+}
+
+/* ---- log ---- */
+.log {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.logLine {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--th-reel-meta-fg);
+  overflow-wrap: anywhere;
+}
+/* 10.5.2: a log line + (admins) its "Don't count for credit" / "Count for credit" */
+.logRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.logRow > .logLine {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.logBtn {
+  flex: none;
+}
+/* 10.5.2 settings credits.mode "free" */
+.freeChip {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  border: 1px solid var(--th-reel-free-chip-border);
+  font-size: 11px;
+  line-height: 20px;
+  color: var(--th-reel-free-chip-fg);
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+/* ---- My games editor / Tune (shared chrome) ---- */
+.editor,
+.admin {
+  border-radius: 12px;
+  background: var(--th-reel-editor-bg);
+  border: 1px solid var(--th-reel-editor-border);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.admin {
+  border-color: var(--th-reel-admin-border);
+}
+.edHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.edTitle {
+  flex: 1 1 auto;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.unsaved {
+  font-size: 11px;
+  color: var(--th-reel-warning-fg);
+}
+.field36,
+.field34 {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--th-reel-field-bg);
+  border: 1px solid var(--th-reel-field-border);
+  padding: 0 10px;
+  box-sizing: border-box;
+  min-width: 0;
+}
+.field34 {
+  height: 34px;
+  flex: 1 1 auto;
+}
+.fieldFocus {
+  border-color: var(--th-reel-field-border-focus);
+}
+.field36 input,
+.field34 input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--th-reel-field-fg);
+  font: inherit;
+  font-size: 13px;
+}
+.field34 input {
+  font-size: 12px;
+}
+.placeholder {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  pointer-events: none;
+  color: var(--th-reel-field-placeholder);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.placeholder12 {
+  font-size: 12px;
+}
+.results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.resultTile {
+  width: 200px;
+  height: 54px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--th-reel-search-hit-bg);
+  border: 1px solid var(--th-reel-search-hit-border);
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.art28 {
+  width: 28px;
+  height: 42px;
+  flex: none;
+  border-radius: 0;
+}
+.art18 {
+  width: 18px;
+  height: 26px;
+  flex: none;
+  border-radius: 0;
+}
+.rtCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rtName {
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rtMeta {
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--th-reel-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cols3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  column-gap: 12px;
+  row-gap: 6px;
+  align-items: start;
+}
+.listCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.listRow {
+  height: 34px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--th-reel-list-row-bg);
+  border: 1px solid var(--th-reel-list-row-border);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.listRowFav {
+  border-color: var(--th-reel-list-row-favorite-border);
+}
+.rowName {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.check {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  cursor: pointer;
+}
+.check input {
+  position: absolute;
+  opacity: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+.checkBox {
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  flex: none;
+  border-radius: 4px;
+  background: var(--th-reel-checkbox-bg);
+  border: 1px solid var(--th-reel-checkbox-border);
+  color: var(--th-reel-checkbox-fg);
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
+.checkOn {
+  background: var(--th-reel-checkbox-bg-checked);
+  border-color: var(--th-reel-checkbox-border-checked);
+}
+.check input:focus-visible + .checkBox {
+  outline: 2px solid var(--th-reel-checkbox-ring-focus);
+  outline-offset: 1px;
+}
+.checkText {
+  font-size: 12px;
+  line-height: 16px;
+  padding-left: 6px;
+}
+.steamRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.impRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.impRow > span:first-child {
+  flex: 1 1 auto;
+}
+.impFlow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Tune */
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 6px;
+}
+.admRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.admLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.admDef {
+  width: 44px;
+  flex: none;
+  font-size: 10px;
+  color: var(--th-reel-meta-fg);
+}
+.spin {
+  width: 110px;
+  height: 28px;
+  flex: none;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--th-reel-spinbox-bg);
+  border: 1px solid var(--th-reel-spinbox-border);
+  display: flex;
+  align-items: center;
+}
+.spinBad {
+  border-color: var(--th-reel-spinbox-border-error);
+}
+.spinBtn {
+  width: 22px;
+  height: 100%;
+  flex: none;
+  background: transparent;
+  border: 0;
+  color: var(--th-reel-spinbox-button-fg);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+.spinBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.spinVal {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 12px;
+}
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.simCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.simRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.simName {
+  width: 200px;
+  flex: none;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.simBar {
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--th-reel-odds-track);
+  overflow: hidden;
+}
+.simFill {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--th-reel-odds-fill);
+}
+.simPct {
+  width: 40px;
+  flex: none;
+  font-size: 11px;
+  color: var(--th-reel-meta-fg);
+}
+.admActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.admActions:empty {
+  display: none;
+}
+/* 10.5.2 Tune → Credit: the "Spins affect credits" switch + everyone's credit with − / + / Zero */
+.creditCol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.creditHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.creditMode {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.creditRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+}
+.creditVal {
+  width: 22px;
+  flex: none;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.creditNone {
+  color: var(--th-reel-meta-fg);
+  font-weight: 400;
+}
+.creditOff {
+  width: 44px;
+  flex: none;
+  font-size: 10px;
+  color: var(--th-reel-meta-fg);
+  white-space: nowrap;
+}
+
+/* ---- phones: the reel in portrait ---- */
+html[data-ff="mobile"] .body {
+  /* + the on-screen keyboard: My games' search / Steam fields scroll above it */
+  padding: 12px 12px calc(12px + var(--th-safe-bottom, 0px) + var(--th-vv-bottom, 0px));
+}
+html[data-ff="mobile"] .header {
+  flex-wrap: wrap;
+}
+html[data-ff="mobile"] .headRight {
+  flex-wrap: wrap;
+  width: 100%;
+}
+html[data-ff="mobile"] .headRight > .avatars {
+  flex: 1 1 auto;
+}
+html[data-ff="mobile"] .cols3,
+html[data-ff="mobile"] .grid2 {
+  grid-template-columns: minmax(0, 1fr);
+}
+html[data-ff="mobile"] .resultTile {
+  width: 100%;
+}
+html[data-ff="mobile"] .simName {
+  width: 120px;
+}
+html[data-ff="mobile"] .field36 input,
+html[data-ff="mobile"] .field34 input {
+  font-size: 16px;
+}
+html[data-ff="mobile"] .spin {
+  height: 46px; /* − / + inside the 1 px frame are 44 px tall */
+  width: 140px;
+}
+html[data-ff="mobile"] .spinBtn {
+  width: 44px;
+}
+/* phones: 44 px touch targets (fields are <label>s, so the whole box focuses the input) */
+html[data-ff="mobile"] .field36,
+html[data-ff="mobile"] .field34 {
+  height: 44px;
+}
+html[data-ff="mobile"] .field36 input,
+html[data-ff="mobile"] .field34 input {
+  align-self: stretch;
+}
+html[data-ff="mobile"] .check {
+  min-height: 44px;
+}
+/* My games rows: ☆ / – become 44 px squares inside a 52 px row (they were 26 px wide and stuck out of
+   the 34 px row once the touch rule made them 44 tall) */
+html[data-ff="mobile"] .listRow {
+  height: 52px;
+}
+html[data-ff="mobile"] .resultTile .rb,
+html[data-ff="mobile"] .listRow .rb {
+  width: 44px !important;
+  height: 44px !important;
+}
+/* Tune: the title gets its own row (it wrapped into three lines beside rev + two buttons) and the
+   setting names wrap instead of eliding at phone width */
+html[data-ff="mobile"] .admin .edHead {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+html[data-ff="mobile"] .admin .edTitle {
+  flex: 1 1 100%;
+}
+html[data-ff="mobile"] .admLabel {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html[data-ff="mobile"] .controls .rb {
+  min-width: 96px;
+}
+/* 10.5.2: the result's admin "Don't count for credit" goes under the result on phones */
+html[data-ff="mobile"] .result {
+  height: auto;
+  min-height: 118px;
+  flex-wrap: wrap;
+}
+html[data-ff="mobile"] .result > .rb {
+  flex: 1 1 100%;
+}
+html[data-ff="mobile"] .logRow {
+  flex-wrap: wrap;
+}
+/* Tune → Credit rows: − / + / Zero become 44 px touch targets */
+html[data-ff="mobile"] .creditRow {
+  height: 48px;
+}
+html[data-ff="mobile"] .creditRow .rb {
+  min-width: 44px !important;
+  min-height: 44px;
+}
+
+/* phones: the Reset spins confirm is a bottom sheet, like the calendar's destructive confirms
+   (Calendar.module.css .bottomSheet) — in thumb reach, above the on-screen keyboard / home bar */
+.bottomSheet {
+  align-self: flex-end;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  border-radius: 12px 12px 0 0;
+  margin-bottom: var(--th-vv-bottom, 0px);
+  padding-bottom: var(--th-safe-bottom);
+  max-height: calc(100dvh - var(--th-safe-top) - var(--th-vv-bottom, 0px)) !important;
+}

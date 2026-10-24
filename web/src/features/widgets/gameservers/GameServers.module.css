@@ -1,0 +1,500 @@
+/* gameservers/GameServers.module.css — the Game servers widget (docs/GAMESERVERS.md §4; WIDGETS-UI.md type ramp).
+   Sizes are multiples of the body font; colours are the widget tokens (widget.* and widget.servers.*); transitions use
+   the duration token (0 while the motion switch is off). */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.status,
+.summary,
+.extra {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.summary,
+.extra {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-summary-fg);
+}
+.extra {
+  font-variant-numeric: tabular-nums;
+}
+.retry,
+.linkBtn {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-accent-bright);
+  cursor: pointer;
+}
+.retry:disabled,
+.linkBtn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.linkBtn:hover:not(:disabled),
+.retry:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* ---- empty ---- */
+.empty {
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 0;
+}
+.emptyText {
+  font-size: var(--th-font-size);
+  color: var(--th-widget-meta-fg);
+}
+
+/* ---- a card ---- */
+.card {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--th-widget-servers-card-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-servers-card-border);
+}
+.cover {
+  width: 32px;
+  height: 48px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--th-widget-cover-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-cover-border);
+}
+.cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.coverSmall {
+  width: 16px;
+  height: 24px;
+  border-radius: 3px;
+  flex: none;
+}
+.tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.emoji {
+  font-size: 16px;
+  line-height: 1;
+}
+.coverSmall .emoji {
+  font-size: 11px;
+}
+.cardText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+}
+.name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  font-weight: 600;
+  color: var(--th-widget-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.controls {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+}
+.iconBtn {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--th-widget-servers-button-icon);
+  cursor: pointer;
+}
+.iconBtn:hover:not(:disabled),
+.iconBtn:active:not(:disabled) {
+  background: var(--th-widget-servers-button-bg-hover);
+}
+.iconBtn:focus-visible {
+  outline: 1px solid var(--th-widget-ring-focus);
+  outline-offset: -1px;
+}
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chipLine {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+  white-space: nowrap;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  transition: background-color var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.dot[data-tone="online"] {
+  background: var(--th-widget-servers-state-online);
+}
+.dot[data-tone="busy"] {
+  background: var(--th-widget-servers-state-busy);
+}
+.dot[data-tone="offline"] {
+  background: var(--th-widget-servers-state-offline);
+}
+.chipText {
+  flex: none;
+}
+.uptime {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.players {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bars {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+}
+.barBox {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.barLabel {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--th-widget-muted-fg);
+}
+.bar {
+  flex: 1;
+  min-width: 16px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--th-widget-servers-bar-track);
+  overflow: hidden;
+}
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--th-widget-servers-bar-fill);
+  transition: width var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.barFill[data-high] {
+  background: var(--th-widget-servers-bar-fill-high);
+}
+.barValue {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-stats-value-fg);
+  white-space: nowrap;
+}
+.cardFoot {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---- the join row ---- */
+.join {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+}
+.address {
+  min-width: 0;
+  flex: 0 1 auto;
+  color: var(--th-widget-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+.joinGap {
+  flex: 1;
+  min-width: 6px;
+}
+.password {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--th-widget-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.06em;
+}
+.password[data-shown] {
+  letter-spacing: 0;
+  color: var(--th-widget-fg);
+  user-select: text;
+}
+.noPw {
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- info, the LAN chip, next, the schedule ---- */
+.infoLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.info {
+  min-width: 0;
+  flex: 1;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.infoFull {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.lan {
+  flex: none;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--th-widget-servers-lan-bg);
+  color: var(--th-widget-servers-lan-fg);
+}
+.next {
+  align-self: flex-start;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.next:hover:not(:disabled) {
+  color: var(--th-widget-fg);
+  text-decoration: underline;
+}
+.next:disabled {
+  cursor: default;
+}
+.schedule {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- other games ---- */
+.othersHead {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 0 2px;
+}
+.othersToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0 4px;
+  height: 22px;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-widget-meta-fg);
+  cursor: pointer;
+}
+.othersToggle:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.other {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 8px;
+  border-radius: 6px;
+}
+.other:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.otherName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  color: var(--th-widget-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.otherChip {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- the picker and the switch dialog ---- */
+.pickTrail {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+.pickSize {
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-muted-fg);
+}
+.switchBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.switchLead {
+  color: var(--th-widget-fg);
+}
+.switchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.switchBtn {
+  justify-content: flex-start;
+}
+.switchNote {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- phones (WIDGETS-UI.md §8) ---- */
+.body[data-mobile] .iconBtn {
+  width: 36px;
+  height: 36px;
+}
+.body[data-mobile] .join {
+  height: 40px;
+}
+.body[data-mobile] .other {
+  height: 44px;
+}
+.body[data-mobile] .name,
+.body[data-mobile] .otherName {
+  font-size: 15px;
+}
+.body[data-mobile] .chipLine,
+.body[data-mobile] .players,
+.body[data-mobile] .join,
+.body[data-mobile] .info,
+.body[data-mobile] .next {
+  font-size: 13px;
+}
+
+/* ---- the one-line server line (Up next's hero, the calendar card) ---- */
+/* a host (the calendar card) can recolour it: --gs-line-fg (the chip / separator), --gs-line-strong (the address) */
+.serverLine {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 22px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--gs-line-fg, var(--th-widget-meta-fg));
+  white-space: nowrap;
+}
+.serverChip {
+  flex: none;
+}
+.serverSep {
+  flex: none;
+  color: var(--gs-line-fg, var(--th-widget-muted-fg));
+}
+.serverAddr {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+  color: var(--gs-line-strong, var(--th-widget-fg));
+}
+.serverLine .iconBtn {
+  width: 20px;
+  height: 20px;
+  color: var(--gs-line-fg, var(--th-widget-servers-button-icon));
+}

@@ -1,0 +1,255 @@
+/* Card.module.css — CalendarCard.qml (chat card) + the RoomHeaderBar next-up chip. */
+
+/* CalendarCard.qml: implicitWidth = min(maxBubble − 24, 400) — the card is 400 wide whatever its
+   content (the bubble grows to it); a narrower bubble caps it via max-width. */
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  width: 400px;
+  max-width: 100%;
+}
+
+/* the markdown summary shown above a NON-live card (ChatBubble body) */
+.summary {
+  color: var(--th-bubble-other-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  overflow-wrap: anywhere;
+}
+.summary p {
+  margin: 0 0 6px;
+}
+.summary p:last-child {
+  margin-bottom: 0;
+}
+.summary.mine {
+  color: var(--th-bubble-own-fg);
+}
+
+.card {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  background: var(--th-calendar-card-bg);
+  border: 1px solid var(--th-calendar-card-border);
+  transition: border-color var(--th-dur);
+  cursor: pointer;
+  padding: 12px 12px 12px 18px;
+  outline: none;
+  --fg: var(--th-calendar-card-fg);
+  --fg-dim: var(--th-calendar-card-meta-fg);
+}
+.cardMine {
+  background: var(--th-calendar-card-bg-own);
+  --fg: var(--th-calendar-card-fg-own);
+  --fg-dim: var(--th-calendar-card-meta-fg-own);
+}
+.cardHover,
+.card:focus-visible {
+  border-color: var(--th-calendar-card-border-hover);
+}
+.stripe {
+  position: absolute;
+  left: 1px;
+  top: 1px;
+  bottom: 1px;
+  width: 5px;
+  border-radius: 3px;
+}
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.kindRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.cal {
+  font-size: 14px;
+  line-height: 19px;
+}
+.kind {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg-dim);
+  opacity: 0.9;
+  font-weight: bold;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cancelled {
+  color: var(--th-calendar-card-cancelled-fg);
+  font-weight: bold;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.title {
+  color: var(--fg);
+  font-weight: bold;
+  font-size: calc(var(--th-font-pt) + 1pt);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.strike {
+  text-decoration: line-through;
+}
+.when {
+  color: var(--fg);
+  opacity: 0.92;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  overflow-wrap: anywhere;
+}
+.notes {
+  color: var(--fg-dim);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dim {
+  color: var(--fg-dim);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.elide {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.answers {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.openRow {
+  display: flex;
+  justify-content: flex-end;
+}
+.ans {
+  padding: 6px 10px !important;
+}
+.fill {
+  flex: 1 1 auto;
+}
+html[data-touch] .ans {
+  min-height: 44px;
+}
+/* phones: the four answers fit one row of a phone bubble (it wrapped "Open" onto its own line, flush
+   left); if a narrow bubble still wraps it, Open stays at the right edge */
+html[data-ff="mobile"] .answers {
+  gap: 2px;
+}
+html[data-ff="mobile"] .ans {
+  padding: 6px 8px !important;
+}
+html[data-ff="mobile"] .openBtn {
+  margin-left: auto;
+}
+
+/* ---- next-up chip (RoomHeaderBar.qml:153-197) ---- */
+.chipHost {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.nextUp {
+  height: 26px;
+  border-radius: 13px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  background: var(--th-header-next-up-bg);
+  border: 1px solid var(--th-header-next-up-border);
+  transition: background-color var(--th-dur);
+  color: var(--th-header-next-up-fg);
+  font: inherit;
+  max-width: 296px;
+}
+.nextUpHover {
+  background: var(--th-header-next-up-bg-hover);
+}
+.nextUpText {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+html[data-ff="mobile"] .chipHost {
+  display: none;
+}
+
+/* phones: the next-up row in the room header's ⋮ sheet (the sheet lays the button out as a 48 px row and
+   prints its aria-label after the icon); a soft accent wash marks it as the room's upcoming event */
+.nextUpRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--th-header-next-up-border);
+  border-radius: 10px;
+  background: var(--th-header-next-up-bg);
+  color: var(--th-header-next-up-fg);
+  font: inherit;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.nextUpRow:active {
+  background: var(--th-header-next-up-bg-hover);
+}
+/* the sheet prints aria-label after every row button — this row draws its own two-line text instead */
+.nextUpRow.nextUpRow::after {
+  content: none;
+}
+.nextUpRowText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+}
+.nextUpRowTitle {
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nextUpRowSub {
+  font-size: 13px;
+  line-height: 17px;
+  color: var(--th-header-next-up-sub-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the Game servers link (docs/GAMESERVERS.md §5): the card's own colours (an own card sits on the accent) */
+.server {
+  margin-top: 2px;
+  --gs-line-fg: var(--fg-dim);
+  --gs-line-strong: var(--fg);
+}

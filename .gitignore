@@ -1,0 +1,4 @@
+out/
+__pycache__/
+*.pyc
+build/build.local.conf

@@ -1,0 +1,259 @@
+/* EditLayer — edit mode's chrome (EDITMODE-UI §2-§6, §14): only while editing, static (no loops, §15). The z-indices
+   (the layer, each island's chrome, tab chips, gaps, zone, preview, ghost) are set inline from zorder.ts (§20). */
+.layer {
+  position: absolute;
+  inset: 0;
+  outline: none;
+  /* the layer takes the pointer: island contents don't react while editing */
+  touch-action: none;
+}
+.island {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: var(--island-radius, 12px);
+  background: var(--th-editmode-island-veil);
+  box-shadow: inset 0 0 0 1px var(--th-editmode-island-outline);
+  pointer-events: auto;
+}
+.island[data-selected] {
+  box-shadow: inset 0 0 0 2px var(--th-island-border-active);
+}
+/* short islands (h < 72): the chip and ⋯ sit vertically centred at the ends (the placeholder is one line: Placeholder.tsx) */
+.island[data-short] .chip,
+.island[data-short] .more {
+  top: calc(50% - 14px);
+}
+/* the handle chip: top-left, 28 high (EDITMODE-UI §2) */
+.chip {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 8px;
+  max-width: calc(100% - 16px - 36px);
+  border-radius: 8px;
+  border: 1px solid var(--th-editmode-handle-border);
+  background: var(--th-editmode-handle-bg);
+  color: var(--th-editmode-handle-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.chip:hover:not(:disabled) {
+  background: var(--th-editmode-handle-bg-hover);
+}
+.chip:focus-visible,
+.more:focus-visible,
+.gap:focus-visible {
+  outline: 2px solid var(--th-border-focus);
+  outline-offset: 1px;
+}
+.chip:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+/* narrow islands: an icon-only chip, centred at the top; a click opens the island menu */
+.chip[data-narrow] {
+  left: 50%;
+  transform: translateX(-50%);
+  width: 28px;
+  max-width: none;
+  padding: 0;
+  justify-content: center;
+}
+.chipName {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* the grip: 6 dots, 2 columns × 3 rows, 2 px each, 2 px apart */
+.grip {
+  display: inline-grid;
+  grid-template-columns: 2px 2px;
+  grid-auto-rows: 2px;
+  gap: 2px;
+  flex: none;
+}
+.grip > i {
+  display: block;
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--th-editmode-handle-fg);
+}
+.more {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--th-editmode-handle-border);
+  background: var(--th-editmode-handle-bg);
+  padding: 0;
+  cursor: pointer;
+}
+.more:hover:not(:disabled) {
+  background: var(--th-editmode-handle-bg-hover);
+}
+/* gaps: resize handles (hit band ≥ 8 px), a 2 px line while hovered / pressed */
+.gap {
+  position: absolute;
+  outline: none;
+  touch-action: none;
+}
+.gap[data-axis="x"] {
+  cursor: col-resize;
+}
+.gap[data-axis="y"] {
+  cursor: row-resize;
+}
+.gap::after {
+  content: "";
+  position: absolute;
+  background: transparent;
+}
+.gap[data-axis="x"]::after {
+  left: calc(50% - 1px);
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.gap[data-axis="y"]::after {
+  top: calc(50% - 1px);
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+.gap:hover::after,
+.gap:focus-visible::after {
+  background: var(--th-editmode-gap-hover);
+}
+.gap[data-pressed]::after {
+  background: var(--th-editmode-zone-edge);
+}
+/* a move in progress: the hovered zone, the landing preview, the ghost */
+.zone {
+  position: absolute;
+  box-sizing: border-box;
+  background: var(--th-editmode-zone-fill);
+  border-radius: 6px;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bar {
+  position: absolute;
+  background: var(--th-editmode-zone-edge);
+}
+.bar[data-side="left"] {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+}
+.bar[data-side="right"] {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+}
+.bar[data-side="top"] {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+}
+.bar[data-side="bottom"] {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+}
+.preview {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--th-editmode-ghost-border);
+  background: var(--th-editmode-ghost-bg);
+  border-radius: var(--island-radius, 12px);
+  pointer-events: none;
+}
+.ghost {
+  position: fixed;
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 8px;
+  border-radius: 8px;
+  border: 2px solid var(--th-editmode-ghost-border);
+  background: var(--th-editmode-handle-bg);
+  color: var(--th-editmode-handle-fg);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* a stack's tabs in edit mode: chips over the strip (click = show that tab, drag = move that island) */
+.tabChips {
+  position: absolute;
+  /* covers the host's own strip while editing (the chips are the tabs then) */
+  background: var(--th-dock-tab-bg);
+  border-radius: var(--island-radius, 12px) var(--island-radius, 12px) 0 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+.tabChip {
+  height: 24px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--th-editmode-handle-border);
+  background: var(--th-editmode-handle-bg);
+  color: var(--th-editmode-handle-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  min-width: 0;
+}
+.tabChip[data-active] {
+  box-shadow: inset 0 0 0 1px var(--th-island-border-active);
+}
+.tabChip:hover:not(:disabled) {
+  background: var(--th-editmode-handle-bg-hover);
+}
+.tabChip:focus-visible {
+  outline: 2px solid var(--th-border-focus);
+  outline-offset: 1px;
+}

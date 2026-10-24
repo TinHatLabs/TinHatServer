@@ -1,0 +1,38 @@
+/* RoleBadge.qml — the ONE role chip: pill, 1 px border in the role colour, 18 % tint fill, bold
+   smallFont label in the role colour (max 160 px, elided), compact 18 px / normal 20 px tall,
+   width = label + 10 (compact) / + 8. On the rig the 16 px bold text overfills the 18 px pill —
+   that is the reference look (text overflows the box, centred). */
+.badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  box-sizing: border-box;
+  height: 20px;
+  /* width = label + 8 INCLUDING the 1 px border (QML Rectangle borders are drawn inside) */
+  padding: 0 3px;
+  border-radius: 10px;
+  border: 1px solid var(--tone);
+  background: color-mix(in srgb, var(--tone) 18%, transparent);
+  vertical-align: middle;
+  overflow: visible;
+}
+.compact {
+  height: 18px;
+  padding: 0 4px; /* label + 10 incl. border */
+  border-radius: 9px;
+}
+.label {
+  display: block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tone);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  /* the line box is taller than the pill on the rig (22 vs 18/20): flex centring overflows it evenly */
+  flex: none;
+}

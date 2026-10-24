@@ -1,0 +1,100 @@
+# The Docker Compose edition's image (ghcr.io/<owner>/tinhat-server), built from a published release's own files so
+# it carries exactly what the release does: the signed manifest (stable.json) is checked with the release key in
+# this repository, then the bundle and our images' tarballs against the checksums it lists.
+# - A published release (pre-release or not) gets its version tag, once: a version tag is never rebuilt over unless a
+#   manual run asks for it (`replace`), so the image that was tried stays the image under that tag.
+# - `latest` never moves by itself. A manual run with `action: promote` moves it, given the tried image's digest, and
+#   only when that release is GitHub's latest release right now and the version tag still is exactly that digest
+#   (docs/RELEASING.md "Go live").
+name: Compose edition image
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag: { description: "The release tag (vX.Y.Z)", required: true }
+      action: { description: "build (the version tag) or promote (move latest)", required: true, default: build, type: choice, options: [build, promote] }
+      digest: { description: "promote: the tried image's digest (sha256:…)", required: false }
+      replace: { description: "build: rebuild over an existing version tag", required: false, default: false, type: boolean }
+permissions:
+  contents: read
+  packages: write
+jobs:
+  image:
+    if: github.event_name == 'release' || inputs.action == 'build'
+    concurrency: { group: compose-image, cancel-in-progress: false }  # one build at a time
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (pinned by commit)
+      - name: The release's files, checked
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q && sudo apt-get install -y -q minisign jq
+          mkdir -p rel && cd rel
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'stable.json*' --pattern 'tinhat-server-*.update.tar.gz' --pattern 'tinhat-*.tar.gz'
+          ok=0
+          for k in ../appliance/rootfs/opt/tinhat/manager/tinhat/keys/*.pub; do minisign -Vq -p "$k" -m stable.json && ok=1 && break || true; done
+          [ "$ok" = 1 ] || { echo "stable.json isn't signed with a key this repository trusts" >&2; exit 1; }
+          VER=$(jq -r .version stable.json); [ "v$VER" = "$TAG" ] || { echo "the manifest is $VER, not $TAG" >&2; exit 1; }
+          echo "$(jq -r .bundle.sha256 stable.json)  tinhat-server-$VER.update.tar.gz" | sha256sum -c -
+          for ref in $(jq -r '.images | keys[]' stable.json); do
+            f=$(basename "$(jq -r --arg r "$ref" '.images[$r].url' stable.json)")
+            echo "$(jq -r --arg r "$ref" '.images[$r].sha256' stable.json)  $f" | sha256sum -c -
+          done
+          cd .. && mkdir -p ctx/release/images && tar -C ctx/release -xzf "rel/tinhat-server-$VER.update.tar.gz"
+          for ref in $(jq -r '.images | keys[]' rel/stable.json); do cp "rel/$(basename "$(jq -r --arg r "$ref" '.images[$r].url' rel/stable.json)")" ctx/release/images/; done
+          cp build/compose/Dockerfile ctx/
+          echo "VER=$VER" >> "$GITHUB_ENV"
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0 (pinned by commit)
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ github.token }}" }
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr A-Z a-z)/tinhat-server
+          # Build only over a tag the registry says is missing; a lookup that fails any other way stops here (an
+          # outage must not let a rebuild replace the image that was tried).
+          if [ "${{ inputs.replace }}" != true ]; then
+            if seen=$(docker buildx imagetools inspect "$IMG:$VER" 2>&1); then
+              echo "$IMG:$VER exists already: not rebuilt (a manual run with replace: true does)" >&2; exit 1
+            elif ! grep -qiE 'not found|manifest unknown|name unknown' <<<"$seen"; then
+              echo "couldn't tell whether $IMG:$VER exists ($seen): not built. Run again; if the registry keeps answering" >&2
+              echo "like this and nothing was ever pushed under $VER, a manual run with replace: true builds it." >&2
+              exit 1
+            fi
+          fi
+          docker build -t "$IMG:$VER" ctx
+          docker push "$IMG:$VER"
+          docker image inspect -f '{{index .RepoDigests 0}}' "$IMG:$VER" | tee -a "$GITHUB_STEP_SUMMARY"
+  promote:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'promote'
+    concurrency: { group: compose-latest, cancel-in-progress: false }
+    runs-on: ubuntu-24.04
+    steps:
+      - name: The release is GitHub's latest right now
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "digest must be sha256:<64 hex>" >&2; exit 1; }
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          [ "$latest" = "$TAG" ] || { echo "GitHub's latest release is $latest, not $TAG: not promoted" >&2; exit 1; }
+          pre=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .prerelease)
+          [ "$pre" = false ] || { echo "$TAG is a pre-release: not promoted" >&2; exit 1; }
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0 (pinned by commit)
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ github.token }}" }
+      - name: Point latest at the tried image
+        env:
+          TAG: ${{ inputs.tag }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          set -euo pipefail
+          IMG=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr A-Z a-z)/tinhat-server
+          now=$(docker buildx imagetools inspect "$IMG:${TAG#v}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          [ "$now" = "$DIGEST" ] || { echo "$IMG:${TAG#v} is $now, not the tried $DIGEST: not promoted" >&2; exit 1; }
+          docker buildx imagetools create -t "$IMG:latest" "$IMG@$DIGEST"
+          docker buildx imagetools inspect "$IMG:latest" | head -3 | tee -a "$GITHUB_STEP_SUMMARY"

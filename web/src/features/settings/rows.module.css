@@ -1,0 +1,273 @@
+/* rows.module.css — SETTINGS-WINDOW.md §3 content shapes (px at 1×, text scaled with --th-text-scale). Colours only
+   through the settings.* element tokens. The content column is a size container named `settings` (SettingsWindow);
+   below 560 px every row but a switch row stacks. */
+
+/* ---- section: heading 14/600, hint 12 (2 below), 8 to its card; 24 between sections */
+.section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.section + .section {
+  margin-top: 24px;
+}
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+.sectionTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: calc(14px * var(--th-text-scale));
+  line-height: calc(20px * var(--th-text-scale));
+  font-weight: 600;
+  color: var(--th-settings-section-title-fg);
+}
+.sectionActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: -6px 0;
+}
+.sectionHint {
+  margin: 2px 0 0;
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(17px * var(--th-text-scale));
+  color: var(--th-settings-section-hint-fg);
+}
+.sectionHead + .card,
+.sectionHead + .bare,
+.sectionHint + .card,
+.sectionHint + .bare {
+  margin-top: 8px;
+}
+
+/* ---- card: radius 10, 1 px frame, clipped; 1 px divider between rows (full card width) */
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--th-settings-card-bg);
+  box-shadow: inset 0 0 0 1px var(--th-settings-card-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.card > * + * {
+  border-top: 1px solid var(--th-settings-card-divider);
+}
+.bare {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ---- row: padding 14/16, min height 56; label 14/500, description 12 (2 below); control right, 16 gap */
+.row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 14px 16px;
+  box-sizing: border-box;
+  min-width: 0;
+  transition: background-color 0s;
+}
+.main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+.icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  margin-right: -4px;
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.label {
+  font-size: calc(14px * var(--th-text-scale));
+  line-height: calc(20px * var(--th-text-scale));
+  font-weight: 500;
+  color: var(--th-settings-row-label-fg);
+  overflow-wrap: anywhere;
+}
+label.label {
+  cursor: default;
+}
+.labelDanger {
+  color: var(--th-settings-error-fg);
+}
+.desc {
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(17px * var(--th-text-scale));
+  color: var(--th-settings-row-description-fg);
+  overflow-wrap: anywhere;
+}
+.control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  max-width: 60%;
+}
+.stackBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.disabled .text {
+  opacity: 0.55;
+}
+/* the web Switch is the Basic one (56×28 indicator, 6 px padding): no padding inside a row */
+.switch {
+  padding: 0 !important;
+  min-height: 28px !important;
+}
+.combo {
+  width: 240px;
+  flex: none;
+}
+.comboAfter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* the search jump's flash: settingsFlash.css (global — any [data-setting] anchor, not only rows) */
+
+/* ---- in-card notes, chips, hints */
+.note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(17px * var(--th-text-scale));
+  color: var(--th-settings-row-description-fg);
+}
+/* the optional icon (first of two children) keeps its size; the text wraps */
+.note > span:first-child:not(:last-child) {
+  flex: none;
+}
+.note > span:last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.noteDanger {
+  color: var(--th-settings-error-fg);
+}
+.noteWarning {
+  color: var(--th-settings-error-fg);
+}
+.noteOk {
+  color: var(--th-settings-success-fg);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 0 8px;
+  height: 20px;
+  border-radius: 10px;
+  vertical-align: 1px;
+  font-size: calc(11px * var(--th-text-scale));
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--th-settings-session-fg-own);
+  box-shadow: inset 0 0 0 1px var(--th-settings-session-fg-own);
+}
+.hint {
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(17px * var(--th-text-scale));
+  color: var(--th-settings-row-description-fg);
+  overflow-wrap: anywhere;
+}
+.hintDanger {
+  color: var(--th-settings-error-fg);
+}
+.hintOk {
+  color: var(--th-settings-success-fg);
+}
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- narrow content (< 560 px, every phone): every row stacks but switch rows */
+@container settings (max-width: 559px) {
+  .row:not(.inline) .main {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .row:not(.inline) .control {
+    justify-content: flex-start;
+    max-width: none;
+    flex-wrap: wrap;
+  }
+  .row:not(.inline) .icon {
+    display: none;
+  }
+  .combo {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+  .control > .combo,
+  .control > .comboAfter {
+    width: 100%;
+  }
+  .comboAfter > .combo {
+    flex: 1 1 auto;
+    width: auto;
+  }
+}
+
+/* phones: ≥ 44 px targets */
+:global(html[data-ff="mobile"]) .row {
+  min-height: 60px;
+}
+:global(html[data-ff="mobile"]) .control :global(button),
+:global(html[data-ff="mobile"]) .stackBody :global(button) {
+  min-height: var(--th-touch-min, 44px);
+}
+
+/* a search field inside a row (Join sound's sound-effect search, Shortcuts' action search): the house text field's
+   shape and colours (34 tall, radius 8) instead of the Basic square — it sits among rounded controls */
+.stackBody :global(span:has(> input[type="search"])) {
+  border-radius: 8px;
+  overflow: hidden;
+}
+.stackBody :global(input[type="search"]) {
+  height: 34px;
+  border-radius: 8px;
+  background: var(--th-input-bg);
+  box-shadow: inset 0 0 0 1px var(--th-input-border);
+}
+.stackBody :global(input[type="search"]:focus) {
+  box-shadow: inset 0 0 0 2px var(--th-input-border-focus);
+}
+:global(html[data-ff="mobile"]) .stackBody :global(input[type="search"]) {
+  height: 44px;
+}

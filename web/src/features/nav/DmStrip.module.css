@@ -1,0 +1,65 @@
+/* DmStrip.tsx — REACH §1.2: the DM strip's slots (the bubbles reuse SpaceRail.module.css). */
+.slot {
+  position: relative;
+  flex: none;
+  height: 52px;
+  transform-origin: 50% 50%;
+}
+/* entering: fade + grow over the rail's dur */
+.enter {
+  overflow: hidden;
+  animation: dmIn var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1) both;
+}
+@keyframes dmIn {
+  from {
+    height: 0;
+    margin-bottom: -4px; /* the column's 4 px gap collapses with the slot */
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+/* leaving: fade + shrink, then gone (DmStrip drops it after dur) */
+.leave {
+  overflow: hidden;
+  height: 0;
+  margin-bottom: -4px;
+  opacity: 0;
+  transform: scale(0.5);
+  pointer-events: none;
+  transition:
+    height var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    margin-bottom var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    opacity var(--th-dur),
+    transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .enter {
+    animation: none;
+  }
+  .leave {
+    transition: none;
+  }
+}
+/* presence dot bottom-left (the badge owns bottom-right): the 12 px dot sits in the avatar's corner (disc
+   12..56 × 4..48 → dot 12..24 × 36..48) and its 2 px cut ring in the rail colour goes outside it — the desktop
+   Avatar.qml presenceLeft */
+.presence {
+  position: absolute;
+  left: 10px;
+  top: 34px;
+  pointer-events: none;
+}
+/* "+N": a meta disc's text */
+.more {
+  color: var(--th-dm-more-fg);
+  font-weight: 700;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: -0.2px;
+  user-select: none;
+}
+
+/* 11.0: the strip in a row (the Side monitor preset, SpaceRail.module.css [data-orient="h"]) */
+[data-orient="h"] .slot {
+  width: 68px;
+}

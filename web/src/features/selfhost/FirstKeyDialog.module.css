@@ -1,0 +1,77 @@
+/* FirstKeyDialog.module.css — the calm first run's Security Key step (FirstKeyDialog.tsx). The verify dialog's box
+   (dialogs.module.css: 468 px, dialog.* tokens, 8 px column); the key in the input field's colours, monospace, groups
+   never broken across lines. Phones: the full-screen sheet of the verify dialog, 48 px buttons. */
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lead {
+  margin: 0;
+  color: var(--th-dialog-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.hint {
+  margin: 0;
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+/* groups are inline, separated by real spaces: a line can only break between two groups, and a copy by hand keeps
+   the spaces ("EsTx 1a2B …") */
+.key {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--th-input-bg);
+  color: var(--th-input-fg);
+  box-shadow: inset 0 0 0 1px var(--th-input-border);
+  font-family: var(--th-font-mono);
+  font-size: 15px;
+  line-height: 26px;
+  word-spacing: 0.35em;
+  text-align: center;
+  user-select: all;
+  -webkit-user-select: all;
+  cursor: text;
+}
+/* three rows of four: four groups + three spaces are 16ch + 3 × (1ch + 0.35em) ≈ 20.8ch, five ≈ 26.3ch */
+.keyText {
+  display: inline-block;
+  max-width: 23ch;
+}
+.group {
+  white-space: nowrap;
+  word-spacing: normal;
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+.row > * {
+  flex: 1 1 0;
+}
+
+/* phones: the verify sheet's full-screen box (dialogs.module.css .mobileDialog) */
+.mobile {
+  width: 100vw !important;
+  max-width: 100vw !important;
+  height: calc(100dvh - var(--th-vv-bottom, 0px));
+  max-height: calc(100dvh - var(--th-vv-bottom, 0px)) !important;
+  margin-bottom: var(--th-vv-bottom, 0px);
+  padding: var(--th-safe-top) var(--th-safe-right) var(--th-safe-bottom) var(--th-safe-left);
+}
+.mobile .lead,
+.mobile .hint {
+  font-size: 16px;
+  line-height: 22px;
+}
+.mobile .key {
+  font-size: 17px;
+  line-height: 30px;
+}
+.mobile button {
+  min-height: 48px;
+}

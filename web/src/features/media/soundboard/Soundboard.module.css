@@ -1,0 +1,335 @@
+/* SoundboardPopover.qml — geometry in SoundboardPopover.tsx; numbers from tw-spec/media.md §2.1 */
+.panel {
+  position: fixed;
+  z-index: var(--th-z-popup);
+  display: flex;
+  flex-direction: column;
+  background: var(--th-soundboard-bg);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--th-soundboard-border);
+  color: var(--th-soundboard-title-fg);
+  overflow: hidden;
+  outline: none;
+}
+
+.headWrap {
+  flex: none;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 14px 8px;
+}
+.title {
+  flex: none;
+  font-weight: 700;
+  font-size: calc(var(--th-font-pt) + 2pt);
+  line-height: 1.36;
+  white-space: nowrap;
+}
+.search {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.search input {
+  height: 38px;
+}
+.search input:focus {
+  box-shadow: inset 0 0 0 1px var(--th-soundboard-search-border-focus);
+}
+.addBtn,
+.closeBtn {
+  flex: none;
+}
+.addBtn :global(svg),
+.addBtn img {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.msg {
+  margin: 0 14px 6px;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.msgError {
+  color: var(--th-soundboard-status-fg-error);
+}
+.msgNote {
+  /* Kirigami.Theme.neutralTextColor is not themed → the Kirigami default */
+  color: var(--th-soundboard-status-fg);
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bodyScroll {
+  overflow-y: auto;
+}
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sectionHead {
+  /* native SectionHead = RowLayout(title, hint): the hint Label is always laid out (22 px even when
+     empty) and RowLayout centres both vertically — so every head is 22 px tall, title centred */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 14px 0;
+  min-width: 0;
+  min-height: var(--th-line-small);
+}
+.sectionTitle {
+  flex: none;
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-soundboard-section-fg);
+  white-space: nowrap;
+}
+.sectionHint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-soundboard-section-hint-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.empty {
+  margin: 0 14px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-soundboard-empty-fg);
+  overflow-wrap: anywhere;
+}
+.footer {
+  margin: 0 14px 12px;
+  text-align: right;
+  color: var(--th-soundboard-footer-fg);
+  opacity: 0.7;
+  font-size: calc(var(--th-font-size-small) * 0.9);
+  line-height: 1.36;
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 14px;
+}
+
+/* ---- SoundCard ---------------------------------------------------------------------------------- */
+.card {
+  position: relative;
+  width: 108px;
+  height: 92px;
+  flex: none;
+  border-radius: 12px;
+  background: var(--th-soundboard-card-bg);
+  box-shadow: inset 0 0 0 1px var(--th-soundboard-card-border);
+  transition:
+    background-color var(--th-dur) linear,
+    transform var(--th-dur-short);
+  user-select: none;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.card:hover {
+  background: var(--th-soundboard-card-bg-hover);
+}
+.card:active {
+  transform: scale(0.96);
+}
+.card:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-soundboard-card-border-focus);
+}
+.card.playing {
+  background: var(--th-soundboard-card-bg-active);
+  box-shadow: inset 0 0 0 2px var(--th-soundboard-card-border-active);
+}
+.emojiBox {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.emoji {
+  font-size: calc(var(--th-font-pt) * 1.6);
+  line-height: 1;
+  font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", var(--th-font);
+}
+/* the rig draws the colour emoji ≈ 16 px even at the 19.2 px font size */
+:global(html:not([data-ff="mobile"])) .emoji {
+  font-size: 16px;
+}
+.ring {
+  position: absolute;
+  inset: 0;
+}
+.stopGlyph {
+  position: relative;
+}
+.name {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  text-align: center;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-soundboard-card-fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.badge {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--th-soundboard-hotkey-bg);
+  box-shadow: inset 0 0 0 1px var(--th-soundboard-hotkey-border);
+  color: var(--th-soundboard-hotkey-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: 18px;
+  text-align: center;
+}
+.remove {
+  position: absolute !important;
+  top: 2px;
+  right: 2px;
+  z-index: 1;
+  min-width: 22px !important;
+  width: 22px;
+  height: 22px !important;
+  padding: 0 !important;
+  display: none !important;
+}
+.card:hover .remove {
+  display: inline-flex !important;
+}
+/* native: a 22 px Basic ToolButton (6 px padding) → a 10 px edit-delete-remove glyph (media-sb-hover-root) */
+.remove :global(svg),
+.remove img {
+  width: 10px !important;
+  height: 10px !important;
+}
+
+.drop {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  background: var(--th-soundboard-drop-bg);
+  box-shadow: inset 0 0 0 2px var(--th-soundboard-drop-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--th-soundboard-drop-fg);
+  font-weight: 700;
+  font-size: 14pt;
+  pointer-events: none;
+}
+
+/* ---- phones: a bottom sheet with big buttons --------------------------------------------------- */
+.sheetDim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-popup);
+  background: var(--th-soundboard-scrim-bg);
+}
+.grab {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--th-soundboard-handle-fill);
+  opacity: 0.5;
+  margin: 8px auto 0;
+}
+.mobile {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: calc(100dvh - 48px - var(--th-safe-top, 0px));
+  height: 78dvh;
+  border-radius: 16px 16px 0 0;
+  padding-bottom: var(--th-safe-bottom, 0px);
+}
+.mobile .header {
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 12px 8px;
+}
+.mobile .title {
+  flex: 1 1 auto;
+}
+.mobile .search {
+  order: 3;
+  flex: 1 1 100%;
+}
+.mobile .search input {
+  height: 44px;
+  font-size: 16px;
+}
+.mobile .addBtn,
+.mobile .closeBtn {
+  min-height: 44px;
+  min-width: 44px;
+}
+.mobile .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+  margin: 0 12px;
+}
+.mobile .card {
+  width: auto;
+  height: 96px;
+}
+.mobile .emoji {
+  font-size: 26px;
+}
+.mobile .sectionHead,
+.mobile .empty,
+.mobile .footer,
+.mobile .msg {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+.mobile .footer {
+  margin-bottom: 16px;
+}
+
+/* phones: the search field's clear glyph is a thumb target too */
+.mobile button[aria-label="Clear search"] {
+  min-width: 44px !important;
+  min-height: 44px !important;
+}
+
+/* tablets (desktop layout + touch): ≥ 40 px targets (ARCHITECTURE "Form factor") */
+:global(html[data-touch]) .search input {
+  height: 40px;
+}
+:global(html[data-touch]) .panel button[aria-label="Clear search"] {
+  min-width: 40px !important;
+  min-height: 40px !important;
+}

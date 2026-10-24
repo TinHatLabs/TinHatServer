@@ -1,0 +1,191 @@
+/* ---- ThButton ------------------------------------------------------------------------------
+ * implicitHeight 34, padding 0 14, spacing 6, radius 8, default font; border drawn INSIDE the rect
+ * (inset box-shadow = a Qt Rectangle border). Colours per ThButton.qml; 100 ms colour fade. */
+.th {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  height: 34px;
+  min-width: 0;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  flex: none;
+  outline: none;
+  transition: background-color var(--th-dur-short) linear;
+  user-select: none;
+}
+.th:disabled {
+  opacity: 0.55;
+}
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.plain {
+  background: var(--th-button-secondary-bg);
+  color: var(--th-button-secondary-fg);
+  box-shadow: inset 0 0 0 1px var(--th-button-secondary-border);
+}
+.plain:hover:not(:disabled),
+.plain[data-force="hover"] {
+  background: var(--th-button-secondary-bg-hover);
+}
+.plain:active:not(:disabled),
+.plain[data-force="pressed"] {
+  background: var(--th-button-secondary-bg-pressed);
+}
+
+.highlighted {
+  background: var(--th-button-primary-bg);
+  color: var(--th-button-primary-fg);
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.highlighted:hover:not(:disabled),
+.highlighted[data-force="hover"] {
+  background: var(--th-button-primary-bg-hover);
+}
+.highlighted:active:not(:disabled),
+.highlighted[data-force="pressed"] {
+  background: var(--th-button-primary-bg-pressed);
+}
+
+.danger {
+  background: var(--th-button-danger-bg);
+  color: var(--th-button-danger-fg);
+  box-shadow: inset 0 0 0 1px transparent;
+}
+.danger:hover:not(:disabled),
+.danger[data-force="hover"] {
+  background: var(--th-button-danger-bg-hover);
+}
+.danger:active:not(:disabled),
+.danger[data-force="pressed"] {
+  background: var(--th-button-danger-bg-pressed);
+}
+
+.flat {
+  background: transparent;
+  color: var(--th-button-ghost-fg);
+}
+.flat:hover:not(:disabled),
+.flat[data-force="hover"] {
+  background: var(--th-button-ghost-bg-hover);
+}
+.flat:active:not(:disabled),
+.flat[data-force="pressed"] {
+  background: var(--th-button-ghost-bg-pressed);
+}
+
+/* activeFocus: accentBright border (1 px; a flat button gets a 2 px ring — TH-A11Y-09) */
+.plain:focus,
+.highlighted:focus,
+.danger:focus,
+.plain[data-force="focus"],
+.highlighted[data-force="focus"],
+.danger[data-force="focus"] {
+  box-shadow: inset 0 0 0 1px var(--th-button-border-focus);
+}
+.flat:focus,
+.flat[data-force="focus"] {
+  box-shadow: inset 0 0 0 2px var(--th-button-border-focus);
+}
+
+/* ---- Controls.Button (Basic) -----------------------------------------------------------------
+ * background implicit 100×40; padding 6, horizontalPadding 8, spacing 6; fill =
+ * blend(checked||highlighted ? palette.dark : palette.button, palette.mid, down ? .5 : 0);
+ * 2 px palette.highlight border on visualFocus; label palette.buttonText (brightText when on). */
+.basic {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 100px;
+  height: 40px;
+  padding: 6px 8px;
+  background: var(--th-button-basic-bg);
+  color: var(--th-button-basic-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  flex: none;
+  outline: none;
+  user-select: none;
+}
+.basic:active:not(:disabled),
+.basic[data-force="pressed"] {
+  background: var(--th-button-basic-bg-pressed);
+}
+.basicOn {
+  background: var(--th-button-basic-on-bg);
+  color: var(--th-button-basic-on-fg);
+}
+.basicOn:active:not(:disabled) {
+  background: var(--th-button-basic-on-bg-pressed);
+}
+.basicFlat:not(:active):not(.basicOn):not([data-force="pressed"]) {
+  background: transparent;
+}
+.basic:focus-visible,
+.basic[data-force="focus"] {
+  box-shadow: inset 0 0 0 2px var(--th-button-basic-border-focus);
+}
+
+/* ---- Controls.ToolButton (Basic) chrome, used by ThToolButton ------------------------------
+ * background implicit 40×40, padding 6, spacing 6 (ThToolButton's row: 4); fill palette.button
+ * at opacity 0.5, palette.mid at full opacity while down (and while checked, at 0.5). */
+.tool {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 40px;
+  height: 40px;
+  padding: 6px;
+  color: var(--th-button-tool-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  flex: none;
+  outline: none;
+  isolation: isolate;
+  user-select: none;
+}
+.tool::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--th-button-tool-bg);
+  opacity: 0.5;
+}
+.toolOn::before {
+  background: var(--th-button-tool-bg-checked);
+}
+.tool:active:not(:disabled)::before,
+.tool[data-force="pressed"]::before {
+  background: var(--th-button-tool-bg-pressed);
+  opacity: 1;
+}
+.tool:focus-visible,
+.tool[data-force="focus"] {
+  box-shadow: inset 0 0 0 2px var(--th-button-tool-border-focus);
+}
+.toolLabel {
+  font-weight: 700;
+}
+.basicTool {
+  gap: 6px;
+}
+.basicTool:focus-visible {
+  color: var(--th-button-tool-fg-focus);
+}

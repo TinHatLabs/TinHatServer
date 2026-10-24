@@ -1,0 +1,96 @@
+.wrapLine {
+  flex: none;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+  height: 64px;
+  min-width: 0;
+}
+.bar {
+  height: 64px;
+  border-radius: 32px;
+  background: var(--th-callbar-bg);
+  border: 1px solid var(--th-callbar-border);
+  padding: 0 7px;
+  display: flex;
+  align-items: center;
+  transform-origin: 50% 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--th-dur) linear, transform var(--th-dur) cubic-bezier(0.33, 1, 0.68, 1);
+}
+.shown {
+  opacity: 1;
+  pointer-events: auto;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cell {
+  display: flex;
+  align-items: center;
+}
+.sep {
+  width: 1px;
+  height: 30px;
+  background: var(--th-callbar-divider);
+  flex: none;
+}
+.nowPlaying {
+  height: 34px;
+  border-radius: 17px;
+  background: var(--th-callbar-now-playing-bg);
+  border: 1px solid var(--th-callbar-now-playing-border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 10px;
+}
+.npName {
+  font-weight: 700;
+  color: var(--th-callbar-now-playing-fg);
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.npStop {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px;
+}
+.bubble {
+  position: absolute;
+  bottom: calc(100% + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  background: var(--th-callbar-muted-bubble-bg);
+  border: 1px solid var(--th-callbar-muted-bubble-border);
+  border-radius: 12px;
+  white-space: nowrap;
+  z-index: 30;
+  cursor: default;
+}
+.bubbleText {
+  font-weight: 700;
+  color: var(--th-callbar-muted-bubble-fg);
+  padding: 9px 0;
+}
+.bubbleX {
+  color: var(--th-callbar-muted-bubble-close-fg);
+  cursor: pointer;
+}
+.bubbleX:hover {
+  color: var(--th-callbar-muted-bubble-close-fg-hover);
+}
+/* a registered item (or the now-playing fallback) that renders nothing takes no slot/gap */
+.cell:empty {
+  display: none;
+}

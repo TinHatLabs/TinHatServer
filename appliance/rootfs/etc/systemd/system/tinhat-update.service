@@ -1,0 +1,14 @@
+[Unit]
+Description=Tin Hat Server update (install a staged release, check it, roll back if it isn't healthy)
+Documentation=file:///opt/tinhat/README
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# The copy of the manager that was installed when the update started (updates.start_install makes it), so the
+# release being installed can't break its own rollback.
+WorkingDirectory=/var/lib/tinhat/updates/runner
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m tinhat.updater apply
+TimeoutStartSec=2h

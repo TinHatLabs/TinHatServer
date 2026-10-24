@@ -1,0 +1,101 @@
+#!/usr/bin/python3
+"""tinhat-relay — run a Tin Hat relay, or look at one (on the relay machine). See docs/RELAY.md.
+
+  tinhat-relay init [-c CONFIG]     first time: make the WireGuard key, the control API's certificate and its token
+                                    (kept if they exist); prints the public key and the certificate's fingerprint
+  tinhat-relay serve [-c CONFIG]    the control API + upkeep (systemd: tinhat-relay.service)
+  tinhat-relay status [-c CONFIG]   this relay's places: name, ports, tunnel address, last handshake, traffic
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from tinhat_relay import config as config_mod  # noqa: E402
+
+
+def sh(*args, input=None):
+    return subprocess.run(list(args), input=input, capture_output=True, text=True, check=True).stdout
+
+
+def init(cfg):
+    os.makedirs(os.path.dirname(cfg["wg_key_file"]), mode=0o700, exist_ok=True)
+    os.makedirs(os.path.dirname(cfg["state_file"]), mode=0o700, exist_ok=True)
+    old = os.umask(0o077)
+    try:
+        if not os.path.exists(cfg["wg_key_file"]):
+            with open(cfg["wg_key_file"], "w") as f:
+                f.write(sh("wg", "genkey"))
+        if not os.path.exists(cfg["token_file"]):
+            with open(cfg["token_file"], "w") as f:
+                f.write(os.urandom(32).hex() + "\n")
+        if not os.path.exists(cfg["control_cert"]):
+            san = f"IP:{cfg['public_ip']}" + (f",DNS:{cfg['control_name']}" if cfg.get("control_name") else "")
+            cn = cfg.get("control_name") or cfg["public_ip"]
+            sh("openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+               "-days", "3650", "-subj", f"/CN={cn}", "-addext", f"subjectAltName={san}",
+               "-addext", "basicConstraints=critical,CA:true", "-addext", "keyUsage=critical,digitalSignature,keyCertSign",
+               "-addext", "extendedKeyUsage=serverAuth",
+               "-keyout", cfg["control_key"], "-out", cfg["control_cert"])
+            os.chmod(cfg["control_cert"], 0o644)
+    finally:
+        os.umask(old)
+    with open(cfg["wg_key_file"]) as f:
+        pub = sh("wg", "pubkey", input=f.read()).strip()
+    fp = sh("openssl", "x509", "-in", cfg["control_cert"], "-noout", "-fingerprint", "-sha256").strip().split("=", 1)[1]
+    print(f"relay {cfg['relay_id']}: WireGuard public key {pub}, endpoint {cfg['public_ip']}:{cfg['wg_port']}")
+    print(f"control API https://{cfg.get('control_name') or cfg['public_ip']}:{cfg['control_listen'].rsplit(':', 1)[1]}"
+          f"  certificate sha256 {fp}")
+    print(f"(token in {cfg['token_file']}; give it and {cfg['control_cert']} to the names service)")
+
+
+def status(cfg):
+    try:
+        st = json.load(open(cfg["state_file"]))
+    except (FileNotFoundError, ValueError):
+        st = {"places": [], "usage": {}}
+    peers = {}
+    try:
+        for line in sh("wg", "show", cfg["wg_if"], "dump").splitlines()[1:]:
+            f = line.split("\t")
+            peers[f[0]] = (int(f[4] or 0), int(f[5] or 0), int(f[6] or 0))
+    except subprocess.CalledProcessError:
+        pass
+    print(f"{len(st['places'])}/{cfg['capacity']} places on {cfg['relay_id']} ({cfg['public_ip']})")
+    now = time.time()
+    for p in st["places"]:
+        hs, rx, tx = peers.get(p["public_key"], (0, 0, 0))
+        u = st["usage"].get(p["name"], {})
+        seen = f"{int(now - hs)} s ago" if hs else "never"
+        state = "web+calls" if p.get("web") and p.get("calls") else "web only" if p.get("web") else "paused"
+        print(f"  {p['name']:20} {p['tunnel_ip']:15} port {p['port']}  {state:9}  handshake {seen:12} "
+              f"total {(int(u.get('rx', 0)) + int(u.get('tx', 0))) / 1e6:.1f} MB")
+
+
+def main():
+    args = sys.argv[1:]
+    path = os.environ.get("TINHAT_RELAY_CONFIG", "/etc/tinhat-relay/config.json")
+    if "-c" in args:
+        i = args.index("-c")
+        path = args[i + 1]
+        del args[i:i + 2]
+    cmd = args[0] if args else "help"
+    if cmd == "serve":
+        from tinhat_relay.app import main as serve
+        sys.argv = [sys.argv[0], "-c", path]
+        serve()
+        return
+    cfg = config_mod.load(path)
+    if cmd == "init":
+        init(cfg)
+    elif cmd == "status":
+        status(cfg)
+    else:
+        print(__doc__.strip())
+        sys.exit(0 if cmd in ("help", "-h", "--help") else 2)
+
+
+if __name__ == "__main__":
+    main()

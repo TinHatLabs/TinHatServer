@@ -1,0 +1,209 @@
+/* Toolbar — edit mode's bar (EDITMODE-UI §3): a 52 px strip above the dock host, the 44 px bar centred in it, radius =
+   the island radius, static shadow */
+.strip {
+  flex: none;
+  height: 52px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  min-width: 0;
+}
+.bar {
+  position: relative;
+  height: 44px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: var(--island-radius, 12px);
+  background: var(--th-editmode-toolbar-bg);
+  border: 1px solid var(--th-editmode-toolbar-border);
+  box-shadow: 0 4px 16px var(--th-editmode-toolbar-shadow);
+  white-space: nowrap;
+  pointer-events: auto;
+  max-width: calc(100% - 16px);
+}
+.name {
+  font-size: 13px;
+  color: var(--th-text-secondary);
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.name b {
+  color: var(--th-text-primary);
+  font-weight: 600;
+}
+.sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--th-editmode-toolbar-sep);
+  flex: none;
+}
+.btn {
+  position: relative;
+  height: 32px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--th-text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  flex: none;
+}
+.btn:hover:not(:disabled) {
+  background: var(--th-surface-hover);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--th-border-focus);
+  outline-offset: 1px;
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.iconOnly {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+.accent {
+  background: var(--th-accent-base);
+  color: var(--th-text-on-accent);
+  font-weight: 600;
+  min-width: 72px;
+  justify-content: center;
+}
+.accent:hover:not(:disabled) {
+  background: var(--th-accent-base);
+  filter: none;
+  box-shadow: inset 0 0 0 1px var(--th-accent-bright);
+}
+.danger {
+  color: var(--th-state-danger-bright);
+  font-weight: 600;
+}
+.badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--th-badge-bg);
+  color: var(--th-text-on-accent);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+.confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--th-text-primary);
+}
+.confirmRow {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.drawer {
+  width: 320px;
+  max-height: 60vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.row {
+  height: 44px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px 0 10px;
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.row:hover,
+.row:focus-visible {
+  background: var(--th-surface-hover);
+  outline: none;
+}
+.rowText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.rowText b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--th-text-primary);
+}
+.rowText span {
+  font-size: 12px;
+  color: var(--th-text-secondary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--th-text-secondary);
+  white-space: normal;
+}
+/* preset thumbnails (EDITMODE-UI §8): static rects */
+.thumb {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  border-radius: 4px;
+  background: var(--th-editmode-preset-bg);
+  overflow: hidden;
+  margin-left: 12px;
+}
+.ti {
+  position: absolute;
+  border-radius: 2px;
+  background: var(--th-editmode-preset-island);
+}
+.tiMain {
+  background: var(--th-editmode-preset-main);
+}
+.presetRow {
+  height: 72px;
+  cursor: pointer;
+  touch-action: auto;
+}
+.presetRow .thumb {
+  margin-left: 0;
+}
+.check {
+  width: 20px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+}
+.presetRow .rowText span {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}

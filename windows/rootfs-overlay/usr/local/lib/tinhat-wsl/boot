@@ -1,0 +1,51 @@
+#!/bin/bash
+# tinhat-wsl-boot — runs at every start of Tin Hat Server for Windows (WSL), before mDNS and the manager.
+#   First start only: switch off what makes no sense under WSL, and keep kernel/boot-loader updates away.
+#   Every start: give the server its own name (WSL would otherwise reset it at each start).
+set -u
+MARK=/var/lib/tinhat-wsl/firstboot-done
+log() { echo "tinhat-wsl-boot: $*"; }
+
+if [ ! -e "$MARK" ]; then
+  # Grow-root (WSL sizes the disk), the VM guest agent, systemd-networkd (WSL configures the network: mirrored
+  # mode gives the server the PC's own address), the consoles (there is no screen to show the setup code on: the
+  # installer and the tray icon show it instead), and GRUB's boot record. The drop-ins in
+  # /etc/systemd/system/*.d/90-tinhat-wsl.conf already kept them from starting; masking makes it permanent. A unit
+  # whose file lives in /etc/systemd/system (the appliance's own grow-root) can't be masked, so it is disabled.
+  for u in tinhat-growroot.service qemu-guest-agent.service systemd-networkd.service systemd-networkd.socket \
+           systemd-networkd-wait-online.service systemd-network-generator.service getty@.service \
+           serial-getty@.service console-getty.service grub-common.service; do
+    if [ -f "/etc/systemd/system/$u" ] && [ ! -L "/etc/systemd/system/$u" ]; then
+      systemctl disable --no-reload "$u" >/dev/null 2>&1 || log "couldn't disable $u (its drop-in still applies)"
+    else
+      systemctl mask --no-reload "$u" >/dev/null 2>&1 || log "couldn't mask $u (its drop-in still applies)"
+    fi
+  done
+  # No kernel or boot loader runs inside WSL (Windows supplies the kernel). Hold their packages so no update tries
+  # to install a kernel or a boot loader here, and let other updates skip rebuilding an initramfs.
+  pkgs=$(dpkg-query -W -f '${db:Status-Abbrev} ${Package}\n' 'linux-image-*' 'linux-headers-*' 'grub*' 'shim*' \
+         'initramfs-tools*' 'cloud-initramfs-*' 2>/dev/null | awk '$1 == "ii" {print $2}')
+  [ -n "$pkgs" ] && apt-mark hold $pkgs >/dev/null 2>&1 || true
+  if [ -f /etc/initramfs-tools/update-initramfs.conf ]; then
+    sed -i -E 's/^update_initramfs=.*/update_initramfs=no/' /etc/initramfs-tools/update-initramfs.conf
+  fi
+  mkdir -p /var/lib/tinhat-wsl
+  date -u +%FT%TZ > "$MARK"
+  log "first start under WSL done"
+fi
+
+# The name: "tinhat" until setup, then the short name chosen there (crew for crew.local / crew.tinhat.me).
+name=$(python3 -I - <<'PY'
+import json, re
+try:
+    s = json.load(open("/var/lib/tinhat/state.json"))
+except Exception:
+    s = {}
+n = (s.get("server_name") or "").split(".")[0] if s.get("phase") == "ready" else ""
+print(n if re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?", n or "") else "tinhat")
+PY
+)
+if [ "$(hostname)" != "$name" ]; then
+  hostname "$name" && echo "$name" > /etc/hostname && log "named the server $name"
+fi
+exit 0

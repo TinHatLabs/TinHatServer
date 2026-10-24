@@ -1,0 +1,262 @@
+/* ThSpaceRail.qml — 68 px, bg pal.bg, 1 px right separator (Kirigami separator @ 0.5). */
+.rail {
+  position: relative;
+  flex: none;
+  width: 68px;
+  height: 100%;
+  background: var(--th-rail-bg);
+  user-select: none;
+}
+.rail::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 1px;
+  background: var(--th-rail-edge);
+  opacity: 0.5;
+}
+.col {
+  position: absolute;
+  inset: 4px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.divider {
+  flex: none;
+  align-self: center;
+  width: 28px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--th-rail-divider);
+}
+.list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.list::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---- SpaceBubble 68 × 52 ---- */
+.bubble {
+  position: relative;
+  flex: none;
+  width: 68px;
+  height: 52px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  touch-action: pan-y;
+  transition: transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.bubble[data-dragging] {
+  cursor: grabbing;
+}
+.bubble:focus-visible {
+  outline: none;
+}
+.bubble:focus-visible .disc {
+  box-shadow: 0 0 0 2px var(--th-rail-ring-focus);
+}
+.pill {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--th-rail-pill-bg);
+  transform: translateY(-50%);
+  transition: height var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.disc {
+  position: absolute;
+  left: 12px;
+  top: 4px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition:
+    border-radius var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    background-color var(--th-dur);
+}
+.disc > span {
+  transition: border-radius var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.disc[data-meta] {
+  background: var(--th-rail-nav-bg);
+}
+.disc[data-meta][data-lit] {
+  background: var(--th-rail-nav-bg-active);
+}
+.bubble[data-selected] .disc[data-meta] {
+  box-shadow: inset 0 0 0 2px var(--th-rail-nav-border-selected);
+}
+.ring {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  width: 52px;
+  height: 52px;
+  box-sizing: border-box;
+  border: 2px solid var(--th-space-ring-selected);
+  pointer-events: none;
+  transition: border-radius var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.inviteRing {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  pointer-events: none;
+}
+.inviteDot {
+  position: absolute;
+  left: 48px;
+  top: 0;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--th-space-invite-dot);
+  border: 2px solid var(--th-space-invite-dot-border);
+}
+.badge {
+  position: absolute;
+  right: 10px; /* disc right edge (56) + 3 */
+  bottom: 1px; /* disc bottom (48) + 3 */
+  /* Qt Rectangle borders are drawn INSIDE the 17 px badge (the coloured disc shows 13 px) */
+  border: 2px solid var(--th-space-badge-border);
+  box-sizing: border-box;
+  background-clip: padding-box;
+  padding: 0 2px !important; /* smallSpacing 4 minus the inside border */
+  line-height: calc(15px - 2 * 2px) !important;
+}
+
+/* ---- "+" 46 × 46 ring ---- */
+.addRow {
+  flex: none;
+  height: 52px;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.add {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 23px;
+  background: transparent;
+  border: 2px solid var(--th-space-add-border);
+  cursor: pointer;
+  transition:
+    border-radius var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    background-color var(--th-dur);
+}
+.add:hover {
+  background: var(--th-space-add-bg-hover);
+  border-color: transparent;
+  border-radius: 14px;
+}
+.sectionName {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- phones: bubbles are already ≥ 44 px targets; clear the home indicator ---- */
+.rail[data-mobile] .col {
+  /* the band behind the translucent iOS status bar is the rail's own (Shell --th-top-inset, 0 with a banner) */
+  inset: calc(6px + var(--th-top-inset, 0px)) 0 calc(6px + var(--th-safe-bottom)) 0;
+}
+
+/* ---- 11.0 (islands C6/C7): the rail's three islands in the dock host (nav · dms · spaces, each its own frame 68 wide,
+   content inset 4): a column like the rail's, the 68 px bubbles centred in the 60 px content box — they overhang it by
+   4 px on each side, so they sit where they sat in the rail (the desktop's SpaceBubble, AlignHCenter) ---- */
+.islandCol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.islandSpaces {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+.islandSpaces > .list {
+  align-self: center;
+  width: 68px;
+}
+
+/* ---- 11.0 (decision 6, the Side monitor preset): nav · dms · spaces laid out in a ROW (`opts.<ref>.orient = "h"`) —
+   the bubbles left→right, the selection pill UNDER the bubble, the spaces scroll sideways (no drag-to-reorder) ---- */
+.islandCol[data-orient="h"] {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  width: max-content;
+  height: 100%;
+}
+.islandSpaces[data-orient="h"] {
+  flex-direction: row;
+  align-items: center;
+}
+.islandSpaces[data-orient="h"] > .list {
+  flex-direction: row;
+  align-self: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  height: 52px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+[data-orient="h"] .divider {
+  width: 2px;
+  height: 28px;
+}
+[data-orient="h"] .bubble {
+  touch-action: pan-x;
+}
+[data-orient="h"] .pill {
+  left: 50%;
+  top: auto;
+  bottom: -4px;
+  height: 4px !important;
+  width: var(--pill-len, 0px);
+  transform: translateX(-50%);
+  transition: width var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+[data-orient="h"] .addRow {
+  height: 52px;
+  width: 52px;
+  margin-bottom: 0;
+}

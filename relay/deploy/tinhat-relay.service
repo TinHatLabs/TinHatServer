@@ -1,0 +1,18 @@
+[Unit]
+Description=Tin Hat relay (WireGuard tunnels from home servers, SNI pass-through, call ports; control API)
+After=network-online.target haproxy.service
+Wants=network-online.target haproxy.service
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/tinhat-relay/tinhat-relay serve -c /etc/tinhat-relay/config.json
+Restart=on-failure
+RestartSec=3
+# It manages the WireGuard interface and the firewall, so it runs as root; nothing else is allowed.
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/etc/tinhat-relay /var/lib/tinhat-relay /run
+
+[Install]
+WantedBy=multi-user.target

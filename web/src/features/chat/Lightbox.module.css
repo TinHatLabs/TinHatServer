@@ -1,0 +1,59 @@
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-sheet);
+  background: var(--th-lightbox-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+  touch-action: none;
+  overflow: hidden;
+}
+.img {
+  object-fit: contain;
+  transition: transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+  user-select: none;
+  image-orientation: from-image;
+}
+.caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(24px + var(--th-safe-bottom));
+  text-align: center;
+  font-size: var(--th-font-size);
+  color: var(--th-lightbox-caption-fg);
+  pointer-events: none;
+}
+.close {
+  all: unset;
+  position: absolute;
+  top: calc(16px + var(--th-safe-top));
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  box-sizing: border-box;
+  border-radius: 18px;
+  background: var(--th-lightbox-close-bg);
+  border: 1px solid var(--th-lightbox-close-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color var(--th-dur);
+}
+.close:hover {
+  background: var(--th-lightbox-close-bg-hover);
+}
+:global(html[data-touch]) .close {
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+}
+
+/* a floating chat's own lightbox covers only that chat (CHAT-120) */
+.contained {
+  position: absolute;
+  z-index: 60;
+}

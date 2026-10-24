@@ -1,0 +1,104 @@
+/* the dock host (ISLANDS-ARCH §2.4, §2.8): its own stacking context and the containing block of what the islands
+   position against the page (the file-drop veil) — layout containment; every island absolutely positioned inside it */
+.host {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  contain: layout;
+}
+/* no paint containment and no overflow: it would clip focus rings, shadows, hit bands and the question card that floats
+   above the account island (§2.8) */
+.frame {
+  position: absolute;
+  outline: none;
+}
+/* the island look (§3.4): the fill under the content, the 1 px frame above it, the theme's radius (Island.qml) */
+/* the host's shape: --island-radius / --island-border (DockHost sets them: the theme's, or 0 / 0 in the Flat style) */
+.bg {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--island-radius, 12px);
+  pointer-events: none;
+}
+.line {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: var(--island-border, 1px) solid var(--th-island-border);
+  border-radius: var(--island-radius, 12px);
+  pointer-events: none;
+}
+/* the content box: inset from the frame (IslandFrame sets the edges); a measured island's is as tall as its content */
+.content {
+  position: absolute;
+  min-width: 0;
+}
+/* the composer island draws the message box: its frame takes the composer's focus colour (ConversationView.qml
+   composerFocused → the island's borderColor) */
+.frame[data-island="composer"] > .line {
+  transition: border-color var(--th-dur);
+}
+.frame[data-island="composer"]:has([data-composer-focus]) > .line {
+  border-color: var(--th-composer-border-focus);
+}
+/* islands in a drawer panel (z band 20) ride the panel's fade + slide (ThDock: opacity + 16 px from the docked edge) */
+.frame[data-drawer] {
+  opacity: 0;
+  transform: translateX(-16px);
+  transition:
+    opacity var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.frame[data-drawer][data-open] {
+  opacity: 1;
+  transform: none;
+  animation: drawerIn var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.frame[data-drawer]:not([data-open]) {
+  pointer-events: none;
+}
+@keyframes drawerIn {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+/* 11.0: a stack's tab strip (EDITMODE-UI §4.4) — static, above the stack's islands' band */
+.tabs {
+  position: absolute;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  box-sizing: border-box;
+  border-radius: var(--island-radius, 12px) var(--island-radius, 12px) 0 0;
+  background: var(--th-dock-tab-bg);
+  overflow: hidden;
+}
+.tab {
+  flex: none;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--th-dock-tab-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.tab:hover {
+  background: var(--th-dock-tab-bg-hover);
+}
+.tab[aria-selected="true"] {
+  background: var(--th-dock-tab-bg-active);
+  color: var(--th-dock-tab-fg-active);
+}
+.tab:focus-visible {
+  outline: 2px solid var(--th-border-focus);
+  outline-offset: -2px;
+}

@@ -1,0 +1,256 @@
+/* panes.module.css — the pane-specific bits inside the Settings window's cards (SETTINGS-WINDOW.md §5); the shared
+   shapes (section / card / row) are rows.module.css. Colours only through settings.* element tokens. */
+
+.fill {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* a text field / combo with its buttons, full width in a stacked row */
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.okText {
+  color: var(--th-settings-success-fg);
+  font-size: calc(13px * var(--th-text-scale));
+  font-weight: 600;
+}
+.errText {
+  color: var(--th-settings-error-fg);
+}
+
+/* ---- header cards (Profile, About & help): avatar / mark, name 17/600, a 12 px line, buttons on the right */
+.headCard {
+  margin-bottom: 24px;
+}
+.headRow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  min-width: 0;
+}
+.headText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.headName {
+  font-size: calc(17px * var(--th-text-scale));
+  line-height: calc(23px * var(--th-text-scale));
+  font-weight: 600;
+  color: var(--th-settings-row-label-fg);
+  overflow-wrap: anywhere;
+}
+.headSub {
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(17px * var(--th-text-scale));
+  color: var(--th-settings-row-description-fg);
+  overflow-wrap: anywhere;
+}
+.headButtons {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.mark {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  display: block;
+}
+@container settings (max-width: 559px) {
+  .headRow {
+    flex-wrap: wrap;
+  }
+  .headButtons {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ---- Profile: colour swatches (28 px dots, a 3 px ring when chosen), the join-sound results, the save bar */
+.swatches {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.swatch {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  box-sizing: border-box;
+  border: 1px solid var(--th-settings-swatch-border);
+  cursor: pointer;
+  padding: 0;
+}
+.swatchOn {
+  border: 3px solid var(--th-settings-swatch-border-selected);
+}
+.swatch:disabled {
+  cursor: default;
+}
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  flex: none;
+}
+.resRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 41.4px;
+  padding: 0 4px 0 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--th-settings-sound-row-fg);
+}
+.resRow:hover {
+  background: var(--th-settings-sound-row-bg-hover);
+}
+.resPlaying,
+.resPlaying:hover {
+  background: var(--th-settings-sound-row-bg-active);
+}
+.resName {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: calc(13px * var(--th-text-scale));
+}
+.emailAddr {
+  font-size: calc(13px * var(--th-text-scale));
+  line-height: 34px;
+  color: var(--th-settings-row-label-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* the save bar: 48 tall, radius 10, saveBar.bg + 1 px saveBar.border, text saveBar.fg; floats at the bottom of the
+   scrolled content while anything differs from the server */
+.saveBar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  box-sizing: border-box;
+  margin-top: 24px;
+  padding: 0 7px 0 16px;
+  border-radius: 10px;
+  background: var(--th-settings-save-bar-bg);
+  box-shadow: inset 0 0 0 1px var(--th-settings-save-bar-border);
+}
+.saveText {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-settings-save-bar-fg);
+  font-size: calc(13px * var(--th-text-scale));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.saveTextErr {
+  color: var(--th-settings-status-fg-error);
+}
+
+/* ---- Devices & security */
+.sessCurrent {
+  color: var(--th-settings-session-fg-own);
+}
+
+/* ---- Invites: the code in the mono font (TH- prefix dimmed), used-up / expired rows dimmed */
+.invInactive {
+  opacity: 0.55;
+}
+.code {
+  font-family: var(--th-font-mono);
+  font-weight: 700;
+  font-size: calc(14px * var(--th-text-scale));
+}
+.codePrefix {
+  color: var(--th-settings-invite-code-prefix-fg);
+  opacity: 0.7;
+}
+.codeOn {
+  color: var(--th-settings-invite-code-fg);
+}
+.codeOff {
+  color: var(--th-settings-invite-code-fg-off);
+}
+.revoke {
+  color: var(--th-settings-invite-code-revoke-fg);
+}
+
+/* ---- Notifications: the volume slider + its % */
+.sliderCtl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 240px;
+  min-width: 0;
+}
+@container settings (max-width: 559px) {
+  .sliderCtl {
+    width: 100%;
+  }
+}
+.pct {
+  flex: none;
+  width: 40px;
+  text-align: right;
+  color: var(--th-settings-label-fg);
+  font-size: calc(13px * var(--th-text-scale));
+}
+
+/* ---- About & help */
+.flashWrap {
+  display: inline-flex;
+  border-radius: 8px;
+}
+/* Sign out: label settings.danger.fg, 1 px settings.danger.border (§5) */
+.signOut.signOut {
+  color: var(--th-settings-danger-fg);
+  box-shadow: inset 0 0 0 1px var(--th-settings-danger-border);
+}
+.footer {
+  margin: 24px 2px 0;
+  font-size: calc(12px * var(--th-text-scale));
+  line-height: calc(17px * var(--th-text-scale));
+  color: var(--th-settings-section-hint-fg);
+}
+
+/* phones: colour swatches get a 44 px hit box around a 32 px dot (the ring moves to an inset shadow) */
+:global(html[data-ff="mobile"]) .swatches {
+  gap: 2px;
+}
+:global(html[data-ff="mobile"]) .swatch {
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  border: 6px solid transparent;
+  background-clip: padding-box;
+  box-shadow: inset 0 0 0 1px var(--th-settings-swatch-border);
+}
+:global(html[data-ff="mobile"]) .swatchOn {
+  box-shadow: inset 0 0 0 3px var(--th-settings-swatch-border-selected);
+}
+:global(html[data-ff="mobile"]) .resRow {
+  height: 48px;
+}

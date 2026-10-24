@@ -1,0 +1,80 @@
+.label {
+  color: var(--th-label-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.dim {
+  color: var(--th-label-dim-fg);
+}
+.small {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.bold {
+  font-weight: 700;
+}
+.elide {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.heading {
+  margin: 0;
+  color: var(--th-label-heading-fg);
+  font-weight: 400;
+}
+.h1 {
+  font-size: var(--th-font-h1);
+  line-height: var(--th-line-h1);
+}
+.h2 {
+  font-size: var(--th-font-h2);
+  line-height: var(--th-line-h2);
+}
+.h3 {
+  font-size: var(--th-font-h3);
+  line-height: var(--th-line-h3);
+}
+.h4 {
+  font-size: var(--th-font-h4);
+  line-height: var(--th-line-h4);
+}
+.h5 {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+
+.section {
+  color: var(--th-label-section-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  letter-spacing: 0.4px;
+}
+.hint {
+  color: var(--th-label-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hsep {
+  flex: none;
+  height: 1px;
+  align-self: stretch;
+  background: var(--th-separator-fill);
+}
+.vsep {
+  flex: none;
+  width: 1px;
+  align-self: stretch;
+  background: var(--th-separator-fill);
+}

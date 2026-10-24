@@ -1,0 +1,132 @@
+/* CallIsland.qml mpCell: the Media Party button + now-playing strip in the action's own cell (the soundboard's pill
+   shape: 34 tall, radius 17, padding ≈10, callbar.nowPlaying.* tokens) */
+.cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.btnWrap {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+}
+/* the live dot: 12 px at the top-right, the now-playing icon colour on a 2 px border ring */
+.dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--th-callbar-now-playing-icon);
+  box-shadow: 0 0 0 2px var(--th-callbar-now-playing-border);
+  pointer-events: none;
+}
+/* ONE pulse on the rising edge (CallButton.qml cbPulse: scale 1 → 2.4, opacity .9 → 0, durVeryLong, OutCubic) */
+.dotPulse {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--th-callbar-now-playing-icon);
+  animation: mp-dot-pulse var(--th-dur-verylong) cubic-bezier(0.33, 1, 0.68, 1) 1 forwards;
+}
+@keyframes mp-dot-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+.strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: 17px;
+  background: var(--th-callbar-now-playing-bg);
+  box-shadow: inset 0 0 0 1px var(--th-callbar-now-playing-border);
+  flex: none;
+  max-width: 100%;
+  cursor: pointer;
+  outline: none;
+}
+.strip:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-callbar-button-border-focus);
+}
+.art {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--th-callbar-now-playing-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+.title {
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  color: var(--th-callbar-now-playing-fg);
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.by {
+  font-size: var(--th-font-size-small);
+  color: var(--th-callbar-now-playing-fg);
+  opacity: 0.75;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.play {
+  min-width: 26px !important;
+  width: 26px;
+  height: 26px !important;
+  padding: 0 !important;
+}
+.play :global(svg),
+.play img {
+  width: 14px !important;
+  height: 14px !important;
+}
+/* phones: a full-width strip above the tiles (DESIGN §2.2 "the strip above the tiles") */
+.phone {
+  display: flex;
+  margin: 6px 12px 0;
+  height: 44px;
+  border-radius: 22px;
+}
+.phone .title,
+.phone .by {
+  max-width: none;
+}
+.phone .text {
+  flex: 1 1 auto;
+}
+.phone .play {
+  min-width: 36px !important;
+  width: 36px;
+  height: 36px !important;
+}

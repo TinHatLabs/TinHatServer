@@ -1,0 +1,12 @@
+# Tin Hat Server: every wired network card gets its address from the home router (DHCP).
+# (en* = most hypervisors and PCs, eth* = Hyper-V and some others. Docker's own interfaces are left alone.)
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+LinkLocalAddressing=ipv6
+
+[DHCPv4]
+UseDomains=yes

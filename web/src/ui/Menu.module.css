@@ -1,0 +1,192 @@
+/* ---- Controls.Menu (Basic) ------------------------------------------------------------------- */
+.menu {
+  position: fixed;
+  z-index: var(--th-z-popup);
+  max-height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--th-menu-bg);
+  box-shadow: inset 0 0 0 1px var(--th-menu-border);
+  outline: none;
+  scrollbar-width: none;
+  user-select: none;
+}
+.dim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-popup);
+  background: var(--th-menu-overlay-bg);
+}
+
+.item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 6px;
+  color: var(--th-menu-item-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  cursor: default;
+}
+/* the Basic background Rectangle sits 1 px inside the item */
+.item::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  z-index: -1;
+  background: transparent;
+}
+.menu,
+.sheetBody {
+  isolation: isolate;
+}
+.hl::before {
+  background: var(--th-menu-item-bg-hover);
+}
+.down::before {
+  background: var(--th-menu-item-bg-pressed);
+}
+.indicator {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--th-menu-item-icon);
+}
+.icon {
+  flex: none;
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* MenuItem `trailing` (the ☰ Theme menu's swatch, THEMES-UI §12): at the row's right end, the item's gap before it */
+.trailing {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+.shortcut {
+  flex: none;
+  color: var(--th-menu-item-shortcut-fg);
+  padding-left: 12px;
+}
+.arrow {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--th-menu-item-icon);
+}
+
+.sep {
+  height: 13px;
+  padding: 6px 2px;
+}
+.sep::after {
+  content: "";
+  display: block;
+  height: 1px;
+  background: var(--th-menu-divider);
+}
+
+/* MenuSectionLabel.qml: leftPadding largeSpacing, top smallSpacing, bottom 2, bold dim smallFont */
+.section {
+  padding: 4px 0 2px 8px;
+  color: var(--th-menu-section-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- phones: bottom sheet ---------------------------------------------------------------------- */
+.sheetDim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-popup);
+  background: var(--th-sheet-bottom-overlay-bg);
+}
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--th-z-popup);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-sheet-bottom-bg);
+  border-radius: var(--th-radius-xl) var(--th-radius-xl) 0 0;
+  box-shadow: 0 -1px 0 var(--th-sheet-bottom-edge);
+  padding-bottom: var(--th-safe-bottom);
+  animation: sheetIn var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes sheetIn {
+  from {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+}
+.grab {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  margin: 8px auto 4px;
+  background: var(--th-sheet-bottom-handle-fill);
+}
+.sheetTitle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  color: var(--th-sheet-bottom-fg);
+}
+.back {
+  width: 44px;
+  height: 44px;
+  margin-left: -12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sheetBody {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 0 8px;
+}
+.mItem {
+  height: 48px;
+  padding: 6px 16px;
+  gap: 12px;
+  font-size: 15px;
+  line-height: 20px;
+}
+.mItem:active::before {
+  background: var(--th-sheet-bottom-item-bg-pressed);
+}
+.mSep {
+  padding: 6px 16px;
+}
+.mSection {
+  padding: 10px 16px 4px;
+  font-size: 13px;
+  line-height: 18px;
+}

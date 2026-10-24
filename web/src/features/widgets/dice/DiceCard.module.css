@@ -1,0 +1,192 @@
+/* dice/DiceCard.module.css — a roll as a card (WIDGETS-UI.md §16.3): radius 10, `widget.dice.card.bg` + a 1 px
+   `widget.dice.card.border`, padding 8 10; the total (widget 2.0 × body, chat 1.8 × body, 700, tabular) in a column
+   44 wide, gap 10, then the lines: widget = who · when / the faces / the expression; chat = "rolled <expr>" / the
+   faces (wrapping). Faces: widget 20 × 20 radius 5, chat 18 × 18 radius 4; numbers 0.75 × body 600 tabular. */
+.card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--th-widget-dice-card-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-dice-card-border);
+  color: var(--th-widget-dice-meta-fg);
+  min-width: 0;
+  box-sizing: border-box;
+}
+.widget {
+  width: 100%;
+}
+.chat {
+  margin-top: 2px;
+  margin-bottom: 2px;
+  min-width: 200px;
+  width: max-content;
+  max-width: 100%;
+}
+.total {
+  flex: none;
+  min-width: 44px;
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--th-widget-dice-total-fg);
+}
+.widget .total {
+  font-size: calc(var(--th-font-size) * 2);
+}
+.chat .total {
+  font-size: calc(var(--th-font-size) * 1.8);
+}
+.total.nat20 {
+  color: var(--th-widget-dice-nat20-fg);
+}
+.total.nat1 {
+  color: var(--th-widget-dice-nat1-fg);
+}
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-dice-meta-fg);
+}
+.expr {
+  font-variant-numeric: tabular-nums;
+}
+.natChip {
+  flex: none;
+  height: 14px;
+  padding: 0 5px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.natChip20 {
+  color: var(--th-widget-dice-nat20-fg);
+  background: var(--th-widget-dice-nat20-bg);
+}
+.natChip1 {
+  color: var(--th-widget-dice-nat1-fg);
+  background: var(--th-widget-dice-nat1-bg);
+}
+
+/* ---- the faces ---- */
+.faces {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.facesWrap {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+.faceBox {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.face {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  background: var(--th-widget-dice-face-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-dice-face-border);
+  color: var(--th-widget-dice-face-fg);
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.chat .face {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+.face.dropped {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--th-widget-dice-face-dropped-border);
+  color: var(--th-widget-dice-face-dropped-fg);
+  text-decoration: line-through;
+}
+.face.face20 {
+  background: var(--th-widget-dice-nat20-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-dice-nat20-fg);
+  color: var(--th-widget-dice-nat20-fg);
+}
+.face.face1 {
+  background: var(--th-widget-dice-nat1-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-dice-nat1-fg);
+  color: var(--th-widget-dice-nat1-fg);
+}
+/* diceTumble (WIDGETS-UI.md §16.5): a roll I just made lands once — the duration token's step, 0 while motion is off */
+.face[data-land] {
+  animation: diceLand var(--th-dur-verylong) cubic-bezier(0.215, 0.61, 0.355, 1) both;
+}
+.face[data-land="l"] {
+  --dice-land-turn: -12deg;
+}
+.face[data-land="r"] {
+  --dice-land-turn: 12deg;
+}
+@keyframes diceLand {
+  from {
+    opacity: 0;
+    transform: rotate(var(--dice-land-turn, -12deg)) scale(0.7);
+  }
+}
+.total[data-land] {
+  animation: diceLandTotal var(--th-dur-verylong) cubic-bezier(0.215, 0.61, 0.355, 1) both;
+}
+@keyframes diceLandTotal {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+}
+.minus,
+.mod,
+.more {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-dice-meta-fg);
+}
+.more {
+  font-size: calc(var(--th-font-size) * 0.75);
+}
+
+/* ---- phones (WIDGETS-UI.md §8) ---- */
+.mobile .meta {
+  font-size: 13px;
+}
+.mobile .face {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}

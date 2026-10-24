@@ -1,0 +1,13 @@
+/* ButtonsSettings.module.css — Settings → Appearance → Buttons / Your button islands. Since 2026-09-29 the rows are the
+   Settings window's card rows (features/settings/rows.tsx); only the "Add a button island" line is laid out here. */
+.addRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.place {
+  flex: 1 1 200px;
+  min-width: 0;
+}

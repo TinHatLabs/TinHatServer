@@ -1,0 +1,193 @@
+/* QuickSwitcher.qml — 432 × 378 centred (over the banner strip too), radius 8, panel, 1 px sep,
+   shadow 24 px rgba(0,0,0,.5) y+6; column margins 4, spacing 4. Grey Controls veil. */
+.dim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-popup);
+  background: var(--th-popover-overlay-bg);
+}
+.box {
+  position: fixed;
+  z-index: var(--th-z-popup);
+  left: 50%;
+  top: 50%;
+  width: 432px;
+  height: 378px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: var(--th-switcher-bg);
+  border: 1px solid var(--th-switcher-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px var(--th-switcher-shadow);
+  color: var(--th-switcher-item-fg);
+}
+/* pick mode (Share to a room…): the title over the field */
+.pickTitle {
+  flex: none;
+  padding: 4px 8px 0 8px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.field {
+  flex: 1 1 auto;
+  display: block;
+}
+.field input {
+  background: var(--th-switcher-field-bg) !important;
+  box-shadow: inset 0 0 0 2px var(--th-switcher-field-border-focus) !important;
+}
+.list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--th-switcher-scrollbar-thumb) transparent;
+}
+.row {
+  height: 44px;
+  padding: 2px;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.inner {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: 5px;
+}
+.row[data-current] .inner {
+  background: var(--th-switcher-item-bg-selected);
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--th-switcher-empty-fg);
+  font-size: var(--th-font-size);
+}
+.back {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  color: var(--th-switcher-back-icon);
+}
+
+/* phones: full-screen search */
+.box[data-mobile] {
+  inset: 0;
+  left: 0;
+  top: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  transform: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--th-switcher-page-bg);
+  padding: calc(6px + var(--th-safe-top)) calc(6px + var(--th-safe-right)) var(--th-safe-bottom) calc(6px + var(--th-safe-left));
+}
+.box[data-mobile] .row {
+  height: 56px;
+}
+.box[data-mobile] .name {
+  font-size: 16px;
+  line-height: 22px;
+}
+.box[data-mobile] .row[data-current] .inner {
+  background: transparent;
+}
+.box[data-mobile] .row:active .inner {
+  background: var(--th-switcher-item-bg-pressed);
+}
+
+/* ---- the palette (ACTIONS.md §10): action rows, hints, stage 2 ---------------------------------------------------- */
+/* an action's / choice's glyph box, the size of a room's avatar */
+.icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* an action's first default key, right-aligned */
+.hint {
+  flex: none;
+  color: var(--th-action-palette-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line);
+  white-space: nowrap;
+}
+/* an unavailable action or choice: listed after the rest, does nothing */
+.row[data-off] .name {
+  color: var(--th-action-palette-item-fg-disabled);
+}
+.row[data-off] {
+  cursor: default;
+}
+/* stage 2: the action whose target is being picked, before the field; clicking it goes back */
+.stage {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--th-action-palette-stage-bg);
+  color: var(--th-action-palette-stage-fg);
+  font-size: var(--th-font-size);
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* an invite row's marker: the room list's "Invited" pill (RoomList.module.css .pill + .pillInvite; the desktop's
+   QuickSwitcher.qml draws RoomsIsland.qml's pill — label + 12 × 4 px, radius height / 2, the small font) */
+.invitePill {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  box-sizing: border-box;
+  background: var(--th-rooms-pill-invite-bg);
+  color: var(--th-rooms-pill-invite-fg);
+}
+/* a status preset's emoji in the glyph box */
+.emoji {
+  font-size: 18px;
+  line-height: 1;
+}

@@ -1,0 +1,1229 @@
+/* SpaceSettingsWindow.qml — rig metrics (gridUnit 18, smallSpacing 4, largeSpacing 8, radiusSm 5,
+   radius 8, radiusLg 12). Colours only through tokens. */
+
+.win {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--th-space-settings-bg);
+  color: var(--th-space-settings-fg);
+}
+.fill {
+  flex: 1 1 auto;
+}
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 0;
+}
+.fillArea {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.center {
+  text-align: center;
+}
+.mt2 {
+  margin-top: 2px;
+}
+.mt4 {
+  margin-top: 4px;
+}
+.mt8 {
+  margin-top: 8px;
+}
+.max720 {
+  max-width: 720px;
+}
+
+/* ---- rail */
+.rail {
+  flex: none;
+  width: 198px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--th-space-settings-rail-bg);
+  min-height: 0;
+}
+.railAvatar {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+}
+.railName {
+  /* measured on the rig: the wrapped Heading's lines are 20 px apart here (1 px taller than a
+     single-line L3 box) — "Gate Space" caption 26 px below the name, RBAC demo 2 lines +2 px */
+  line-height: 20px !important;
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+.railCaption {
+  text-align: center;
+  color: var(--th-space-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.railSep {
+  margin: 4px 0;
+}
+.tabList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  outline: none;
+}
+.railItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 6px 6px 6px 8px;
+  border-radius: var(--th-radius-sm);
+  box-shadow: inset 0 0 0 0 transparent;
+  transition: background-color var(--th-dur) linear;
+  user-select: none;
+}
+.railItem:hover {
+  background: var(--th-space-settings-rail-item-bg-hover);
+}
+.railItemOn,
+.railItemOn:hover {
+  background: var(--th-space-settings-rail-item-bg-selected);
+}
+.tabList:focus-visible .railItemOn,
+.tabList:focus .railItemOn {
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-rail-item-border-focus);
+}
+.railLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.railItemOn .railLabel {
+  font-weight: 700;
+}
+.leave {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  color: var(--th-space-settings-leave-fg);
+  font-weight: 700;
+  outline: none;
+}
+.leave:hover {
+  background: var(--th-button-ghost-bg-hover);
+}
+.leave:active {
+  background: var(--th-button-ghost-bg-pressed);
+}
+.leave:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-button-border-focus);
+}
+
+/* ---- page */
+.page {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+}
+.headerRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.titleCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pageTitle {
+  margin: 0;
+}
+.pageDesc {
+  color: var(--th-space-settings-hint-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.strip {
+  flex: none;
+  max-width: 396px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--th-space-settings-strip-bg);
+  border: 1px solid var(--th-space-settings-strip-border);
+  color: var(--th-space-settings-strip-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+}
+.strip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.stripError {
+  background: var(--th-space-settings-strip-bg-error);
+  border-color: var(--th-space-settings-strip-border-error);
+  color: var(--th-space-settings-strip-fg-error);
+}
+.stack {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+}
+.tabPane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.tabPane[hidden] {
+  display: none;
+}
+
+/* ---- Overview */
+.tabScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.topRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 720px;
+}
+.photoBox {
+  position: relative;
+  flex: none;
+  width: 96px;
+  height: 96px;
+}
+.photoLive {
+  cursor: pointer;
+}
+.photoHover {
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  background: var(--th-space-settings-photo-overlay);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--th-space-settings-photo-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  transition: opacity var(--th-dur) linear;
+  pointer-events: none;
+  text-align: center;
+}
+.photoRemove {
+  position: absolute !important;
+  top: -8px;
+  right: -8px;
+  width: 26px;
+  height: 26px;
+  min-width: 26px !important;
+  padding: 0 !important;
+}
+.fieldsCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.topicArea {
+  min-height: 82.8px;
+}
+.saveRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+.linkRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.stats {
+  color: var(--th-space-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: pre; /* "  ·  " keeps its two spaces each side */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Members */
+.membersTab {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+}
+.search {
+  width: 288px;
+  flex: none;
+}
+.pills {
+  display: flex;
+  gap: 2px;
+}
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 15px;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: background-color var(--th-dur) linear;
+  outline: none;
+}
+.pill:hover {
+  background: var(--th-space-settings-filter-bg-hover);
+}
+.pillOn,
+.pillOn:hover {
+  background: var(--th-space-settings-filter-bg-selected);
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-filter-border-selected);
+}
+.pill:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-space-settings-filter-border-focus);
+}
+.pillLabel {
+  color: var(--th-space-settings-filter-fg);
+}
+.pillOn .pillLabel {
+  color: var(--th-space-settings-filter-fg-selected);
+  font-weight: 700;
+}
+.pillCount {
+  color: var(--th-space-settings-filter-count-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.memberScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.memberList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sectionHeader {
+  height: 32.4px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 0 3px 4px;
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+.mRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 50px;
+  padding: 0 4px;
+  border-radius: 8px;
+  transition: background-color var(--th-dur) linear;
+  outline: none;
+}
+.mRow + .mRow {
+  margin-top: 2px;
+}
+.mRow:hover,
+.mRowTarget {
+  background: var(--th-space-settings-member-row-bg-hover);
+}
+.mRow:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-member-row-border-focus);
+}
+.mRowText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.mRowLine1 {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+.mRowName {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.you {
+  flex: none;
+  color: var(--th-space-settings-hint-fg);
+  font-style: italic;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.mRowSub {
+  color: var(--th-space-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: pre; /* "mxid  ·  reason" keeps its double spaces */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chips {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.statePill {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--th-space-settings-member-invited-bg);
+  color: var(--th-space-settings-member-invited-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.statePillBan {
+  background: var(--th-space-settings-member-banned-bg);
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-member-banned-border);
+  color: var(--th-space-settings-member-banned-fg);
+}
+.more {
+  opacity: 0.35;
+  transition: opacity var(--th-dur) linear;
+}
+.mRow:hover .more,
+.more:hover,
+.moreOn,
+:root[data-touch] .more {
+  opacity: 1;
+}
+.rolesFor {
+  display: block;
+  max-width: 244px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0.2px;
+}
+
+/* ---- Invite popover */
+.invitePop {
+  box-sizing: border-box;
+  width: 440px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--th-invite-popover-bg);
+  /* the Qt background's 1 px border doesn't eat into the 416 px content (padding only) */
+  border: none;
+  box-shadow:
+    inset 0 0 0 1px var(--th-invite-popover-border),
+    0 4px 18px var(--th-invite-popover-shadow);
+  color: var(--th-invite-popover-fg);
+}
+/* native's custom-background Controls.Popup veil is grey rgba(40,40,42,.5) — on the black OLED app that
+   LIGHTENS the window (black → rgb 20). D2: every modal scrim is dark, so this popup keeps the house
+   prompt veil (black .3) like every other Popover (fix/polish item 4). */
+:global(*):has(+ .invitePop) {
+  background: var(--th-popover-overlay-bg) !important;
+}
+.inviteCol {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.inviteTitle {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inviteList {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.inviteEmpty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  text-align: center;
+  color: var(--th-invite-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.hitList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hit {
+  height: 43.2px;
+  border-radius: var(--th-radius-sm);
+  cursor: pointer;
+  transition: background-color var(--th-dur) linear;
+}
+.hit:hover {
+  background: var(--th-invite-result-bg-hover);
+}
+.hitTaken {
+  cursor: default;
+}
+.hitTaken:hover {
+  background: transparent;
+}
+.hitInner {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+}
+.hitText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.hitName {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hitMxid {
+  color: var(--th-invite-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hitTakenLabel {
+  flex: none;
+  color: var(--th-invite-hint-fg);
+  font-style: italic;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.inviteFooter {
+  display: flex;
+  margin-top: 4px;
+}
+
+/* ---- Roles */
+.rolesTab {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rolesRow {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+}
+.vsep {
+  flex: none;
+  width: 1px;
+  background: var(--th-space-settings-divider);
+}
+.roleListCol {
+  flex: none;
+  width: 234px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+.roleList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.roleRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 6px 6px 6px 8px;
+  border-radius: var(--th-radius-sm);
+  transition: background-color var(--th-dur) linear;
+  outline: none;
+  cursor: default;
+}
+.roleRowEveryone {
+  height: 30px;
+}
+.roleRow:hover {
+  background: var(--th-roles-list-item-bg-hover);
+}
+.roleRowOn,
+.roleRowOn:hover {
+  background: var(--th-roles-list-item-bg-selected);
+}
+.roleRow:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-roles-list-item-border-focus);
+}
+.roleDot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--th-roles-dot-border);
+}
+.roleName {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.roleRowOn .roleName {
+  font-weight: 700;
+}
+.roleCount {
+  color: var(--th-space-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.newRole {
+  width: 100%;
+  flex: none;
+}
+.newRoleOn {
+  background: var(--th-roles-new-role-bg-active) !important;
+}
+.editorCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.formDisabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.nameRankRow {
+  display: flex;
+  gap: 8px;
+}
+.nameCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rankCol {
+  flex: none;
+  width: 162px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rankRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+}
+.rankField {
+  width: 72px;
+  text-align: center;
+}
+.rankFixed {
+  font-weight: 700;
+  padding-left: 4px;
+}
+.rankFixedNote {
+  color: var(--th-space-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.colourRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.swatches {
+  display: flex;
+  gap: 6px;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  box-shadow: inset 0 0 0 1px var(--th-roles-swatch-border);
+  cursor: pointer;
+  transition: box-shadow var(--th-dur) linear;
+  outline: none;
+}
+.swatch:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 2px var(--th-roles-swatch-border-hover);
+}
+.swatchOn,
+.swatchOn:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 3px var(--th-roles-swatch-border-selected);
+}
+.swatch:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-roles-swatch-border-focus);
+}
+.swatch:disabled {
+  cursor: default;
+}
+.hexField {
+  width: 108px;
+  flex: none;
+}
+.preview {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px var(--th-roles-preview-border);
+}
+.permGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.groupLabel {
+  margin-top: 4px;
+  color: var(--th-roles-perm-group-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  letter-spacing: 0.6px;
+}
+.permRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px;
+  border-radius: var(--th-radius-sm);
+}
+.permRow:hover {
+  background: var(--th-roles-perm-bg-hover);
+}
+.permCheck {
+  flex: none;
+  display: flex;
+  /* an empty-text ThCheckBox still reserves its 8 px spacing (Qt CheckLabel leftPadding) */
+  margin-right: 8px;
+}
+.permText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.permLabel {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.enfChip {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+}
+.enfHonour {
+  background: var(--th-roles-enforcement-honour-bg);
+  box-shadow: inset 0 0 0 1px var(--th-roles-enforcement-honour-border);
+  color: var(--th-roles-enforcement-honour-fg);
+}
+.enfServer {
+  background: var(--th-roles-enforcement-server-bg);
+  box-shadow: inset 0 0 0 1px var(--th-roles-enforcement-server-border);
+  color: var(--th-roles-enforcement-server-fg);
+}
+.actionBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 42px;
+  padding: 4px 4px 4px 8px;
+  border-radius: 8px;
+  background: var(--th-roles-action-bar-bg);
+  box-shadow: inset 0 0 0 1px var(--th-roles-action-bar-border);
+  transition:
+    background-color var(--th-dur) linear,
+    box-shadow var(--th-dur) linear;
+}
+.actionBarDirty {
+  background: var(--th-roles-action-bar-bg-active);
+  box-shadow: inset 0 0 0 1px var(--th-roles-action-bar-border-active);
+}
+.actionText {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-roles-action-bar-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actionTextDirty {
+  color: var(--th-roles-action-bar-fg-active);
+}
+.deleteRole {
+  color: var(--th-roles-delete-fg) !important;
+}
+.footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 4px 4px 4px 8px;
+  border-radius: 8px;
+  background: var(--th-roles-footer-bg);
+  box-shadow: inset 0 0 0 1px var(--th-roles-footer-border);
+}
+.footerText {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-space-settings-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.warnPill {
+  flex: none;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--th-space-settings-sync-chip-stale-bg);
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-sync-chip-stale-border);
+  color: var(--th-space-settings-sync-chip-stale-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+}
+.btn28 {
+  height: 28px !important;
+}
+.setupWrap {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+.setupCard {
+  width: min(calc(100% - 36px), 504px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--th-roles-setup-bg);
+  box-shadow: inset 0 0 0 1px var(--th-roles-setup-border);
+}
+.setupTitle {
+  font-size: var(--th-font-h3);
+  line-height: var(--th-line-h3);
+  text-align: center;
+}
+.setupText {
+  color: var(--th-space-settings-hint-fg);
+  text-align: center;
+}
+.setupBtn {
+  margin-top: 4px;
+}
+
+/* ---- Rooms */
+.roomsTab {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.roomsHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 34px;
+}
+.roomsHeadText {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-space-settings-hint-fg);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.roomList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.roomRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 47px;
+  padding: 0 4px;
+  border-radius: 8px;
+  transition: background-color var(--th-dur) linear;
+}
+.roomRow:hover {
+  background: var(--th-space-settings-room-row-bg-hover);
+}
+.roomName {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.roomNameDim {
+  color: var(--th-space-settings-room-name-fg-off);
+}
+.notJoined {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--th-space-settings-room-not-joined-bg);
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-room-not-joined-border);
+  color: var(--th-space-settings-room-not-joined-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.syncChip {
+  flex: none;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+}
+.syncOk {
+  background: var(--th-space-settings-sync-chip-ok-bg);
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-sync-chip-ok-border);
+  color: var(--th-space-settings-sync-chip-ok-fg);
+}
+.syncWarn {
+  background: var(--th-space-settings-sync-chip-stale-bg);
+  box-shadow: inset 0 0 0 1px var(--th-space-settings-sync-chip-stale-border);
+  color: var(--th-space-settings-sync-chip-stale-fg);
+}
+
+/* ---- phones (AppWindow = full-screen sheet) */
+.mWin {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  /* the AppWindow sheet is inset 0: keep the tab page + action bar above the on-screen keyboard (iOS) */
+  padding-bottom: var(--th-vv-bottom);
+  background: var(--th-space-settings-bg);
+  color: var(--th-space-settings-fg);
+}
+.mHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 6px;
+}
+.mHeadText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mHeadName {
+  font-weight: 700;
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mHeadCaption {
+  color: var(--th-space-settings-hint-fg);
+  font-size: 13px;
+}
+.mTabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--th-space-settings-tab-bar-divider);
+  overflow-x: auto;
+}
+.mTab {
+  flex: 1 1 0;
+  min-width: 72px;
+  height: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+.mTabOn {
+  background: var(--th-space-settings-rail-item-bg-selected);
+  font-weight: 700;
+}
+.mStrip {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding: 0 12px;
+}
+.mStrip:empty {
+  display: none;
+}
+.mPage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px 0;
+}
+.mLeave {
+  flex: none;
+  justify-content: center;
+  height: 48px;
+  margin: 8px 0 calc(8px + var(--th-safe-bottom));
+  border: 1px solid var(--th-space-settings-leave-border);
+}
+.photoBadge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 30px;
+  height: 30px;
+  border-radius: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--th-space-settings-photo-badge-bg);
+  box-shadow: 0 0 0 2px var(--th-space-settings-photo-badge-ring);
+}
+.mMembers .mRow .chips {
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.mOverview .topRow {
+  flex-direction: column;
+  align-items: center;
+}
+.mOverview .fieldsCol {
+  width: 100%;
+}
+.mMembers .toolbar {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.mMembers .search {
+  width: 100%;
+}
+.mMembers .pill {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 20px;
+}
+.mMembers .mRow {
+  height: auto;
+  min-height: 64px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.mMembers .more {
+  width: 44px;
+  height: 44px;
+}
+.mRolesTab .rolesRow {
+  flex-direction: column;
+}
+.mRoleListCol {
+  width: 100%;
+  flex: 1 1 auto;
+}
+.mRoleListCol .roleRow {
+  height: 52px;
+  padding: 8px 12px;
+}
+.mRoleListCol .newRole {
+  height: 48px;
+}
+.mBackToRoles {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 8px;
+  color: var(--th-roles-back-fg);
+  font-weight: 700;
+}
+.mRolesTab .nameRankRow {
+  flex-direction: column;
+}
+.mRolesTab .rankCol {
+  width: 100%;
+}
+.mRolesTab .swatches {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.mRolesTab .swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+}
+.mRolesTab .permRow {
+  padding: 8px 4px;
+}
+.mRolesTab .actionBar {
+  padding: 4px 4px 4px 10px;
+}
+/* phones: the state text wraps beside the buttons instead of taking a row of its own (the editor's
+   scroll area was left with ~300 px on an iPhone 15) */
+.mRolesTab .actionText {
+  flex: 1 1 0;
+  white-space: normal;
+}
+.mRolesTab .actionBar button {
+  min-height: 44px;
+}
+.mRolesTab .footer:has(.warnPill) > :not(.warnPill):not(button) {
+  display: none;
+}
+.mRolesTab .footer:has(.warnPill) .warnPill {
+  margin-right: auto;
+}
+/* swatches stay 36 px discs, but the tap area is 44 px */
+.mRolesTab .swatch {
+  position: relative;
+}
+.mRolesTab .swatch::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+}
+.mRolesTab .footer[hidden] {
+  display: none;
+}
+.mRolesTab .footer {
+  flex-wrap: wrap;
+}
+.mRoomsTab .roomRow {
+  height: 60px;
+}
+/* touch: long-press opens the member menu — no iOS callout / text selection underneath */
+:root[data-touch] .mRow {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* phones: push / tool buttons in the sheet are ≥ 44 px thumb targets (fix round 2026-09-23 — the header
+   Refresh was 40, the filter pills 40, Invite 35, Copy / Sync all 34, Sync now / Sync 28) */
+.mHead button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.mWin .btn28,
+.mMembers .toolbar button,
+.mOverview .linkRow button,
+.mRoomsTab .roomsHead button {
+  min-height: 44px;
+}
+.mMembers .pill {
+  height: 44px;
+  border-radius: 22px;
+}
+/* the invite popover is a bottom sheet on phones: its buttons are thumb targets too */
+:root[data-ff="mobile"] .inviteCol button {
+  min-height: 44px;
+}
+/* phones, on-screen keyboard up: header + tabs + roles footer step aside (see useKeyboardUp) */
+.mKb .mHead,
+.mKb .mTabs,
+.mKb .mRolesTab .footer {
+  display: none;
+}

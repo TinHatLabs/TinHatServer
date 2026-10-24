@@ -1,0 +1,173 @@
+.screen {
+  position: fixed;
+  inset: 0;
+  background: var(--th-startup-backdrop-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+.card {
+  position: relative;
+  width: 320px;
+  height: 440px;
+  margin-top: -60px; /* y = centred − 30 */
+  background: var(--th-startup-bg);
+  overflow: hidden;
+  font-family: var(--th-font);
+  animation: fadeIn var(--th-dur-slow) linear;
+}
+.out {
+  animation: fadeOut var(--th-dur-slow) linear forwards;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes fadeOut {
+  to {
+    opacity: 0;
+  }
+}
+.wash {
+  position: absolute;
+  left: 50%;
+  top: -70px;
+  width: 360px;
+  height: 360px;
+  margin-left: -180px;
+  border-radius: 50%;
+  opacity: 0.14;
+  background: linear-gradient(var(--th-startup-wash-glow), transparent);
+}
+.frame {
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 1px var(--th-startup-border);
+}
+.strip {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 1px;
+  height: 3px;
+  background: linear-gradient(90deg, var(--th-startup-stripe-start-fill), var(--th-startup-stripe-end-fill));
+}
+.mascot {
+  position: absolute;
+  left: 96px;
+  top: 46px;
+  width: 128px;
+  height: 128px;
+}
+.mascot svg {
+  position: relative;
+  display: block;
+}
+.glow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 179.2px;
+  height: 179.2px;
+  margin: -89.6px 0 0 -89.6px;
+  border-radius: 50%;
+  opacity: 0.35;
+  background: linear-gradient(var(--th-startup-mark-glow), transparent);
+}
+.wordmark {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 192px;
+  text-align: center;
+  color: var(--th-startup-fg);
+  font-size: 26px;
+  line-height: 36px;
+  font-weight: 700;
+}
+.version {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 230px;
+  text-align: center;
+  color: var(--th-startup-hint-fg);
+  font-size: 12px;
+  line-height: 17px;
+}
+.track {
+  position: absolute;
+  left: 44px;
+  top: 318px;
+  width: 232px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--th-startup-progress-track);
+  overflow: hidden;
+}
+.fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--th-startup-progress-fill);
+  transition: width var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.sweep {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 90px;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--th-startup-progress-highlight), transparent);
+  /* GPU.md §2.5: still (it swept the track every 1.4 s, forever) */
+}
+.stage {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 338px;
+  text-align: center;
+  color: var(--th-startup-fg);
+  font-size: 15px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.detail {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 361px;
+  text-align: center;
+  color: var(--th-startup-hint-fg);
+  font-size: 12px;
+  line-height: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.extra {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--th-startup-hint-fg);
+}
+.percent {
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  text-align: center;
+  color: var(--th-startup-hint-fg);
+  font-size: 11px;
+  line-height: 15px;
+}

@@ -1,0 +1,15 @@
+/* Basic ToolTip: padding 6, 1 px palette.dark border, toolTipBase fill, 12 px toolTipText. */
+.tip {
+  position: fixed;
+  z-index: var(--th-z-tooltip);
+  max-width: calc(100vw - 12px);
+  padding: 6px;
+  background: var(--th-tooltip-bg);
+  border: 1px solid var(--th-tooltip-border);
+  color: var(--th-tooltip-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}

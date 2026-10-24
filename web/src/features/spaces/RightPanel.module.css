@@ -1,0 +1,400 @@
+/* RightPanel.qml — metrics from the rig (gridUnit 18, smallSpacing 4, largeSpacing 8). */
+
+/* In-flow slot at the right end of the room page's body row: its width is the docked width (0 when
+   overlaying); the clip box is anchored to its right edge and animates 0 ↔ 324 (140 ms OutCubic). */
+.dock {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+  height: auto;
+  transition: width var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+  /* above the timeline's own layers (read receipts 4–5, jump pill 15, history spinner 20) so the OVERLAY
+     panel (room page < 844 px) covers them; below the composer popup / call bar (30) */
+  z-index: 25;
+}
+:root:not([data-animate]) .dock,
+:root:not([data-animate]) .clip {
+  transition: none;
+}
+.clip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  transition: width var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  background: var(--th-panel-bg);
+  box-shadow: inset 1px 0 0 var(--th-panel-edge);
+  color: var(--th-panel-fg);
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 8px;
+}
+.tabBtn {
+  min-width: 100px;
+}
+.fill {
+  flex: 1 1 auto;
+}
+
+.fillArea {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ---- Info */
+.infoContent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 8px;
+}
+.infoAvatar {
+  display: flex;
+  justify-content: center;
+}
+.roomName {
+  text-align: center;
+  font-weight: 700;
+  font-size: calc(var(--th-font-size) * 1.15);
+  line-height: 1.36;
+  overflow-wrap: anywhere;
+}
+.alias {
+  text-align: center;
+  color: var(--th-panel-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.smallBold {
+  color: var(--th-panel-section-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.editorButtons {
+  display: flex;
+  gap: 4px;
+}
+.basicArea {
+  min-height: 40px;
+  padding: 6px 10px;
+  background: var(--th-input-basic-bg);
+  color: var(--th-input-fg);
+  border: 1px solid var(--th-input-basic-border);
+  resize: vertical;
+  outline: none;
+  font: inherit;
+  font-size: var(--th-input-font, var(--th-font-size));
+}
+.basicArea:focus {
+  border: 2px solid var(--th-input-basic-border-focus);
+  padding: 5px 9px;
+}
+.encRow {
+  display: flex;
+  justify-content: center;
+}
+.encPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 27px;
+  padding: 0 4px;
+  border-radius: 13.5px;
+  border: 1px solid var(--th-panel-encryption-border);
+  color: var(--th-panel-encryption-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+}
+.encOn {
+  border-color: var(--th-panel-encryption-border-active);
+  background: var(--th-panel-encryption-bg-active);
+  color: var(--th-panel-encryption-fg-active);
+}
+.topic {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  overflow-wrap: anywhere;
+}
+.topic a {
+  color: var(--th-panel-link-fg);
+  cursor: pointer;
+}
+.gameRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+.gameIcon {
+  margin-top: 1px;
+}
+.gameText {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-panel-activity-fg);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap; /* "  ·  setter" keeps its two spaces */
+}
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.growField {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 0;
+}
+
+/* ---- Members */
+.statusBox {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 8px;
+}
+/* native 57.6 px shows "3" + the Basic spin arrows (a clipped-text artefact): wide enough for "30m" */
+.ttl {
+  /* gridUnit × 3.2 like native; the rig's Basic combo clips "30m" to "3" — show the intended text
+     (DECISIONS D2): tighter padding + indicator so the value fits */
+  width: 57.6px !important;
+  min-width: 0 !important;
+  padding: 0 18px 0 7px !important;
+  flex: none;
+}
+.ttl > svg,
+.ttl > span:last-child {
+  right: 2px !important;
+}
+.inviteRow {
+  flex: none;
+  margin: 0 8px;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.secHeader {
+  height: 28.8px;
+  display: flex;
+  align-items: flex-end;
+  padding-bottom: 2px;
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 46.8px;
+  padding: 0 8px;
+  cursor: pointer;
+  outline: none;
+  isolation: isolate;
+}
+.row + .row {
+  margin-top: 2px;
+}
+.rowBg {
+  position: absolute;
+  inset: 0 4px;
+  border-radius: 5px;
+  z-index: -1;
+}
+.row:hover .rowBg,
+.row:focus-visible .rowBg {
+  background: var(--th-members-row-bg-hover);
+}
+/* REACH §2.6: a member's presence dot is cut in the colour behind it (panel, panelHi under the hover) */
+.row {
+  --row-surface: var(--th-members-presence-ring);
+}
+.row:hover,
+.row:focus-visible {
+  --row-surface: var(--th-members-presence-ring-hover);
+}
+.rowText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rowName {
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowSub {
+  color: var(--th-members-meta-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowStatus {
+  color: var(--th-members-status-fg);
+  font-style: italic;
+}
+.more {
+  display: none !important;
+}
+.row:hover .more,
+.rowMenuOpen .more,
+:root[data-touch] .more {
+  display: inline-flex !important;
+}
+
+.loading {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+.loadingText {
+  color: var(--th-panel-hint-fg);
+  text-align: center;
+}
+
+/* ---- phones: full-screen sheet */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--th-z-window) - 1); /* under AppWindow sheets: the gear opens Space settings on top */
+  display: flex;
+  flex-direction: column;
+  background: var(--th-panel-bg);
+  color: var(--th-panel-fg);
+  padding: var(--th-safe-top) var(--th-safe-right) 0 var(--th-safe-left);
+  /* ends above the on-screen keyboard (iOS keeps innerHeight; the shell publishes the inset) */
+  bottom: var(--th-vv-bottom);
+  animation: slideIn var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+@keyframes slideIn {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+.sheetHeader {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 52px;
+  padding: 0 8px 0 4px;
+  border-bottom: 1px solid var(--th-panel-header-divider);
+}
+.back {
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+}
+.back:active {
+  background: var(--th-panel-back-bg-pressed);
+}
+.sheetTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 17px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheetBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--th-safe-bottom);
+}
+.mColumn .row {
+  height: 60px;
+  padding: 0 12px;
+}
+.mColumn .rowBg {
+  inset: 0 6px;
+}
+.mColumn .header {
+  margin: 8px 12px;
+}
+.mColumn .tabBtn {
+  flex: 1 1 0;
+  height: 44px;
+}
+.mColumn .statusBox,
+.mColumn .inviteRow {
+  margin: 0 12px;
+}
+.mColumn .secHeader {
+  padding-left: 12px;
+  height: 34px;
+}
+.mColumn .infoContent {
+  padding: 0 16px 16px;
+}
+/* touch: long-press opens the member menu — no iOS callout / text selection underneath */
+:root[data-touch] .row {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+/* phones: tool buttons (gear, invite, the rows' "…", edit room info) are 44 px thumb targets, not 40 */
+.mColumn button:not(.tabBtn) {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* 11.0 (islands C6/C7): the desktop dock host's `panel` island — its content box; the island draws fill and frame */
+.islandPanel {
+  position: absolute;
+  inset: 0;
+  color: var(--th-panel-fg);
+}
+/* the Flat layout style: the panel's own fill and left edge again (the island is flat) */
+.islandPanelFramed {
+  background: var(--th-panel-bg);
+  box-shadow: inset 1px 0 0 var(--th-panel-edge);
+}

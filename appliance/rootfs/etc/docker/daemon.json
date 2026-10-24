@@ -1,0 +1,6 @@
+{
+  "bip": "198.18.0.1/24",
+  "default-address-pools": [{"base": "198.18.16.0/20", "size": 24}],
+  "log-driver": "json-file",
+  "log-opts": {"max-size": "10m", "max-file": "3"}
+}

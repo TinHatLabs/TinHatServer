@@ -1,0 +1,121 @@
+/* The nav's PromptDialog contents (Main.qml newDmDialog / newRoomDialog / inviteDialog /
+   joinOrCreateDialog / shortcuts). Widths are content-driven: the unwrapped 16 px hint lines
+   decide the box (New chat 643, Join 678, New room 697 at 1560×960). */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px; /* ColumnLayout { spacing: 8 } (Main.qml newDmDialog / newRoomDialog …) */
+  min-width: 360px;
+  margin-top: -1px; /* measured: the field's top edge lands on the native row (New chat 447, Join 419) */
+}
+.label {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-dialog-fg);
+}
+.field {
+  width: 100%;
+  min-width: 360px;
+  box-sizing: border-box;
+}
+.hint {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-dialog-hint-fg);
+}
+.pre {
+  white-space: pre-wrap;
+}
+
+/* one action → right-aligned at its natural width (Kirigami footer) */
+.oneAction > :last-child {
+  justify-content: flex-end;
+}
+.oneAction > :last-child > * {
+  flex: 0 0 auto;
+}
+
+/* keyboard shortcuts: 2-column grid, the standard Close button fills the RIGHT half */
+.shortcuts > :last-child::before {
+  content: "";
+  flex: 1 1 0;
+}
+.grid {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  column-gap: 8px;
+  row-gap: 4px;
+  margin-top: -1px;
+}
+.gridRow {
+  display: contents;
+}
+.shortcutsBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* the D13 browser note wraps inside the grid's width — it never widens the native-sized dialog */
+.shortcutsNote {
+  width: 0;
+  min-width: 100%;
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: normal;
+}
+.key {
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+}
+.desc {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: pre;
+}
+
+:global(html[data-ff="mobile"]) .body,
+:global(html[data-ff="mobile"]) .field {
+  min-width: 0;
+}
+:global(html[data-ff="mobile"]) .grid {
+  grid-template-columns: max-content 1fr;
+}
+:global(html[data-ff="mobile"]) .desc {
+  white-space: normal;
+}
+
+/* What's new / About (Kirigami OverlaySheets) */
+.notes {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-sheet-fg);
+  white-space: pre-wrap;
+}
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-sheet-fg);
+}
+.aboutHead {
+  display: flex;
+  flex-direction: column;
+}
+.dim {
+  color: var(--th-sheet-hint-fg);
+}
+.dimSmall {
+  color: var(--th-sheet-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.aboutRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}

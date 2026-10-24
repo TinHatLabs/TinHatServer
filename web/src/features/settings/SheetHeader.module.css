@@ -1,0 +1,19 @@
+/* SheetHeader.module.css — the Kirigami.OverlaySheet header of the settings area's own sheets (the noise test): a
+   level-1 Heading and the separator under the header (was part of the old Settings sheet's module). */
+.title {
+  font-size: var(--th-font-h1);
+  line-height: var(--th-line-h1);
+  color: var(--th-sheet-title-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.headerRule {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: var(--th-sheet-divider);
+  pointer-events: none;
+}

@@ -1,0 +1,26 @@
+# Tin Hat Server — the Docker Compose edition. Put this file (and .env, if you need it) in a folder of its own, then:
+#   docker compose up -d
+#   docker logs tinhat-manager        # shows the address of the setup page and the setup code
+# Updates: docker compose pull && docker compose up -d   (it checks the new version and goes back by itself if needed)
+#
+# Tin Hat Server runs its parts (chat server, database, calls, web server, extras) as containers of their own, which
+# it starts through the Docker socket. It needs this machine's ports 80, 443, TCP 7881 and UDP 7882 — or, behind your
+# own reverse proxy, port 8080 instead of 80/443 (TINHAT_BEHIND_PROXY=1 in .env; docs: REVERSE-PROXY.md).
+name: tinhat-server
+services:
+  manager:
+    image: ghcr.io/tinhatlabs/tinhat-server:${TINHAT_VERSION:-latest}
+    container_name: tinhat-manager
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TINHAT_BEHIND_PROXY: ${TINHAT_BEHIND_PROXY:-0}
+      # 1 = try a version again that didn't start properly here before (TINHAT_RETRY_UPDATE=1 docker compose up -d)
+      TINHAT_RETRY_UPDATE: ${TINHAT_RETRY_UPDATE:-0}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The same paths inside and outside: the parts Tin Hat starts mount folders from here.
+      - /var/lib/tinhat:/var/lib/tinhat
+      - /opt/tinhat:/opt/tinhat
+      # Optional, for a home-network server (<name>.local) on a machine that runs avahi-daemon:
+      # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket

@@ -1,0 +1,3 @@
+# Tin Hat Server for Windows: WSL mounts the server's disk itself, and there is nothing else to mount.
+# (The VM image's fstab names the VM's own partitions and a boot partition; under WSL those don't exist, and
+# waiting for them would stall every start.)

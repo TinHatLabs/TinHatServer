@@ -1,0 +1,13 @@
+[Unit]
+Description=Grow the system disk's partition and filesystem to fill the (virtual) disk
+DefaultDependencies=no
+After=local-fs.target
+Before=tinhat-manager.service docker.service
+ConditionPathExists=/usr/bin/growpart
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tinhat-growroot
+
+[Install]
+WantedBy=multi-user.target

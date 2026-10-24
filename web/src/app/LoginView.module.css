@@ -1,0 +1,142 @@
+.view {
+  position: fixed;
+  inset: 0;
+  /* the native sign-in page lays out 21 px short of the window's right and bottom edges (the
+     Kirigami page of the logged-out ColumnView); the card centres in that area */
+  right: var(--th-login-inset, 21px);
+  bottom: var(--th-login-inset, 21px);
+  overflow: auto;
+  background: var(--th-login-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--th-safe-top) var(--th-safe-right) var(--th-safe-bottom) var(--th-safe-left);
+}
+/* Soft top glow: a huge, very faint disc hanging from the top edge (vertical gradient). */
+.glow {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  border-radius: 50%;
+  opacity: 0.1;
+  background: linear-gradient(var(--th-login-wash-glow), transparent);
+  pointer-events: none;
+}
+.cardWrap {
+  position: relative;
+  width: min(calc(100% - 54px), 450px);
+  margin: auto;
+}
+.card {
+  position: relative;
+  border-radius: var(--th-radius-xl);
+  background: var(--th-login-card-bg);
+  /* 1 px lighter(sep, 1.1) frame (inside) + the three stacked 6 px shadow rings: the token, then its colour at the
+     web's alphas 0.08 / 0.053 (the site map's alpha(login.card.shadow, …); LoginView.qml divides the token's alpha by
+     index + 1 — CSS can't do that exactly: `alpha` of an rgba() is 8-bit in Chromium, calc(alpha / 2) ≠ 0.08) */
+  box-shadow:
+    inset 0 0 0 1px var(--th-login-card-border),
+    0 0 0 3px var(--th-login-card-shadow),
+    0 0 0 6px rgb(from var(--th-login-card-shadow) r g b / 0.08),
+    0 0 0 9px rgb(from var(--th-login-card-shadow) r g b / 0.053);
+}
+.topLight {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 1px;
+  height: var(--th-radius-xl);
+  border-radius: var(--th-radius-xl) var(--th-radius-xl) 0 0;
+  background: linear-gradient(var(--th-login-card-highlight), transparent);
+  pointer-events: none;
+}
+.col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 27px;
+}
+.mark {
+  position: relative;
+  align-self: center;
+  width: 64px;
+  height: 64px;
+}
+.mark svg {
+  position: relative;
+  display: block;
+}
+.markGlow {
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  opacity: 0.35;
+  background: linear-gradient(var(--th-login-mark-glow), transparent);
+}
+.heading {
+  margin: 0;
+  text-align: center;
+  color: var(--th-login-title-fg);
+  font-size: var(--th-font-h1);
+  line-height: var(--th-line-h1);
+  font-weight: 400;
+}
+.subtitle {
+  margin-top: -8px;
+  text-align: center;
+  color: var(--th-login-subtitle-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.spacer {
+  height: 4px;
+  flex: none;
+}
+.wide {
+  width: 100%;
+}
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.small {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  overflow-wrap: anywhere;
+}
+.center {
+  text-align: center;
+}
+.dim {
+  color: var(--th-login-hint-fg);
+}
+/* the quiet text links: dim, accentBright + underline on hover */
+.link {
+  display: block;
+  width: 100%;
+  text-align: center;
+  color: var(--th-login-link-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  cursor: pointer;
+}
+.link:hover:not(:disabled) {
+  color: var(--th-login-link-fg-hover);
+  text-decoration: underline;
+}
+.link:disabled {
+  cursor: default;
+}
+.link:focus-visible {
+  outline: 2px solid var(--th-login-link-ring-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:root[data-ff="mobile"] .view {
+  --th-login-inset: 0px;
+}

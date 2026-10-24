@@ -1,0 +1,19 @@
+/* ButtonsIsland.module.css — your own button island (ButtonsIsland.qml has the same numbers): 4 px around the buttons
+   (the frame's inset comes on top), the buttons left-aligned and wrapping when the island is narrow; the empty state is
+   one line — a hint and "Add buttons…". Colours: the label and button tokens. */
+.island {
+  box-sizing: border-box;
+  padding: 4px;
+}
+.empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.emptyText {
+  color: var(--th-label-hint-fg);
+  font-size: var(--th-font-size-small);
+}

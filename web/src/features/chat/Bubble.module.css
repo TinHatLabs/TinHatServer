@@ -1,0 +1,1004 @@
+/* Emoji inside message text measure like Qt's (glyph ≈ the pixel size): the system colour-emoji font
+   through a size-adjusted face that sits right after Noto Sans in the bubble's stack. */
+@font-face {
+  font-family: "TH Chat Emoji";
+  src: local("Noto Color Emoji"), local("NotoColorEmoji"), local("Apple Color Emoji"), local("Segoe UI Emoji");
+  size-adjust: 84%;
+  /* EMOJI CODEPOINTS ONLY. Colour-emoji fonts also carry the space, digits, # and * (keycap bases) with very wide
+     advances. Where "Noto Sans" isn't installed (iPhone, Windows, most Macs) this face is the next in the bubble's
+     stack, so without a range every space in a message came from Apple Color Emoji → the stretched, "justified"
+     look seen on an iPhone (2026-09-23). Text-default symbols (© ® ™ arrows) stay with the text font. */
+  unicode-range: U+200D, U+20E3, U+231A-231B, U+23E9-23EC, U+23F0, U+23F3, U+25FD-25FE, U+2600-27BF, U+2B1B-2B1C,
+    U+2B50, U+2B55, U+3030, U+303D, U+3297, U+3299, U+FE0F, U+1F000-1FAFF, U+E0020-E007F;
+}
+
+/* Bubble.module.css — ChatBubble.qml + the row delegate (CV:960-1094). Rig px in comments; every
+   font through --th-font-size (B) / --th-font-size-small (S). */
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+  position: relative;
+}
+.grouped {
+  padding-top: 1px;
+}
+
+/* day pill: height = pill + 4 (30), pill 26 tall, padding 10/2, panelHi, radius 13 */
+.day {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dayPill {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-timeline-day-pill-fg);
+  background: var(--th-timeline-day-pill-bg);
+  padding: 2px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* NEW divider: 18 tall, 1 px warning @ .8 line, bold S·0.85 label at the right */
+.newDiv {
+  height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 4px;
+}
+.newLine {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--th-timeline-new-line-divider);
+}
+.newLabel {
+  font-weight: 700;
+  font-size: round(calc(var(--th-font-size-small) * 0.85), 0.1px);
+  color: var(--th-timeline-new-line-fg);
+  line-height: 1;
+}
+
+/* the ChatBubble item: row layout, spacing 4 */
+.line {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 4px;
+  -webkit-touch-callout: none;
+}
+.mine {
+  flex-direction: row-reverse;
+}
+
+/* wash: ±4 px, radius 6 — warning @ .10 (mention, + a 3 px bar) or accentBright @ .22 (flash, 260 ms) */
+.wash {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  right: -4px;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--th-dur-long);
+}
+.mention > .wash {
+  opacity: 1;
+  background: var(--th-timeline-row-bg-mention);
+}
+.mention > .wash::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 1.5px;
+  background: var(--th-timeline-row-stripe-mention);
+}
+.flashing > .wash {
+  opacity: 1;
+  background: var(--th-timeline-row-bg-active);
+}
+.flashing > .wash::before {
+  display: none;
+}
+
+.gutter {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  margin-left: 4px;
+}
+.grouped .gutter {
+  height: 1px;
+}
+.avatar {
+  cursor: pointer;
+  transition: transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.avatar:hover {
+  transform: scale(1.08);
+}
+
+.col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 4px;
+  min-width: 0;
+  transition: opacity var(--th-dur-long);
+}
+.grouped .col {
+  margin-top: 1px;
+}
+.mine .col {
+  align-items: flex-end;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.name {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.name:hover {
+  text-decoration: underline;
+}
+
+/* bubble box: content + 24 × content + 16, radius 12, corner tuck 4 */
+.bubbleWrap {
+  position: relative;
+  max-width: 100%;
+}
+.bubble {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: var(--th-radius-lg, 12px);
+  min-width: 0;
+  box-sizing: border-box;
+}
+.bubbleIn {
+  background: var(--th-bubble-other-bg);
+  border: 1px solid var(--th-bubble-other-border);
+  padding: 7px 11px;
+  box-shadow: 0 2px 10px var(--th-bubble-other-shadow);
+  color: var(--th-bubble-other-fg);
+}
+.bubbleMine {
+  background: linear-gradient(to bottom, var(--th-bubble-own-top-bg), var(--th-bubble-own-bottom-bg));
+  color: var(--th-bubble-own-fg);
+  box-shadow: 0 2px 10px var(--th-bubble-own-shadow);
+}
+.tuckL {
+  border-top-left-radius: 4px;
+}
+.tuckR {
+  border-top-right-radius: 4px;
+}
+.bubbleFailed {
+  border: 1px solid var(--th-bubble-border-error);
+  padding: 7px 11px;
+}
+
+/* body text: B, selectable; own = onAccent */
+.body {
+  font-family: var(--th-font-chat), "TH Chat Emoji", system-ui, "Segoe UI", sans-serif; /* ENGINE.md §10 type.chat */
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.plain {
+  white-space: pre-wrap;
+}
+.emote {
+  font-style: italic;
+}
+.jumbo {
+  font-size: calc(var(--th-font-size) * 2.6); /* emoji scaled by the TH Chat Emoji face */
+  /* measured on chat-open: the jumbo bubble is 90×71 → a 30 px line box for the 31.2 px line */
+  line-height: 0.962;
+  margin-top: -2px;
+  padding-bottom: 5px;
+}
+.rich :global(p),
+.rich :global(ul),
+.rich :global(ol),
+.rich :global(blockquote),
+.rich :global(pre),
+.rich :global(table) {
+  margin: 12px 0;
+}
+.rich > :first-child {
+  margin-top: 0 !important;
+}
+.rich :global(h1),
+.rich :global(h2),
+.rich :global(h3),
+.rich :global(h4),
+.rich :global(h5),
+.rich :global(h6) {
+  font-weight: 700;
+  margin: 12px 0;
+  line-height: normal;
+}
+.rich :global(h1) {
+  font-size: calc(var(--th-font-size) * 2);
+  margin-top: 18px;
+}
+.rich :global(h2) {
+  font-size: calc(var(--th-font-size) * 1.5);
+  margin-top: 16px;
+}
+.rich :global(h3) {
+  font-size: calc(var(--th-font-size) * 1.2);
+  margin-top: 14px;
+}
+.rich :global(h4) {
+  font-size: var(--th-font-size);
+}
+.rich :global(h5) {
+  font-size: calc(var(--th-font-size) * 0.8);
+}
+.rich :global(h6) {
+  font-size: calc(var(--th-font-size) * 0.7);
+}
+.rich :global(ul),
+.rich :global(ol) {
+  padding-left: 40px;
+}
+.rich :global(blockquote) {
+  margin-left: 40px;
+  margin-right: 40px;
+  padding: 0;
+}
+.rich :global(pre),
+.rich :global(code) {
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-size);
+}
+.rich :global(pre) {
+  white-space: pre-wrap;
+}
+.rich :global(a) {
+  color: var(--th-bubble-other-link-fg);
+  text-decoration: underline;
+}
+.bubbleMine .rich :global(a) {
+  color: var(--th-bubble-own-link-fg);
+}
+.rich :global(a[data-mention]) {
+  cursor: pointer;
+}
+.rich :global(.tw-spoiler-tag) {
+  color: var(--th-bubble-spoiler-tag-fg);
+}
+.rich :global(.tw-spoiler) {
+  background: var(--th-bubble-spoiler-bg);
+  color: var(--th-bubble-spoiler-bg);
+}
+.rich :global(.tw-spoiler)::selection {
+  color: var(--th-bubble-selection-fg);
+  background: var(--th-bubble-selection-bg);
+}
+.rich :global(table) {
+  border-collapse: collapse;
+}
+.rich :global(td),
+.rich :global(th) {
+  padding: 2px 6px;
+}
+
+.redacted {
+  font-style: italic;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-bubble-other-meta-fg);
+  opacity: 0.8;
+}
+.bubbleMine .redacted {
+  color: var(--th-bubble-own-meta-fg);
+}
+.locked {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-style: italic;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-bubble-other-meta-fg);
+  opacity: 0.8;
+}
+.locked > :first-child {
+  margin-top: 1px;
+  flex: none;
+}
+
+/* timestamp: round(S·0.92) (15), opacity .7, right-aligned, line 21 */
+.stamp {
+  align-self: stretch;
+  text-align: right;
+  font-size: round(calc(var(--th-font-size-small) * 0.92), 1px);
+  /* Qt's Label line box: 21 px at 15 px (rig) / 14 px at 10 px (Plasma); Chromium's "normal" gave 20, so
+     every bubble was 1 px short of chat-*.png and a screenful of rows drifted ~5 px */
+  line-height: 1.4;
+  color: var(--th-bubble-other-meta-fg);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.stamp > span {
+  cursor: default;
+}
+.stampFailed {
+  color: var(--th-bubble-fg-error);
+  opacity: 1;
+}
+
+/* reply quote */
+.quote {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 6px 4px 10px;
+  border-radius: 6px;
+  background: var(--th-bubble-other-quote-bg);
+  cursor: pointer;
+  min-width: 0;
+  transition: background-color var(--th-dur);
+}
+.quote:hover {
+  background: var(--th-bubble-other-quote-bg-hover);
+}
+.quoteMine {
+  background: var(--th-bubble-own-quote-bg);
+}
+.quoteMine:hover {
+  background: var(--th-bubble-own-quote-bg-hover);
+}
+.quoteBar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 1.5px;
+  background: var(--th-bubble-other-quote-stripe);
+}
+.quoteMine .quoteBar {
+  background: var(--th-bubble-own-quote-stripe);
+}
+.quoteName {
+  font-weight: 700;
+  font-size: round(calc(var(--th-font-size-small) * 0.95), 1px);
+  line-height: normal;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quoteBody {
+  font-size: round(calc(var(--th-font-size-small) * 0.95), 1px);
+  line-height: normal;
+  color: var(--th-bubble-other-quote-fg);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.quoteMine .quoteBody {
+  color: var(--th-bubble-own-quote-fg);
+}
+
+/* failed row */
+.failedRow {
+  display: flex;
+  gap: 8px;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.failReason {
+  color: var(--th-bubble-fg-error);
+}
+.retry {
+  font-weight: 700;
+  color: var(--th-bubble-retry-fg);
+  cursor: pointer;
+}
+.del {
+  color: var(--th-bubble-discard-fg);
+  cursor: pointer;
+}
+.retry:hover,
+.del:hover {
+  text-decoration: underline;
+}
+
+/* reactions */
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* Flow layoutDirection RightToLeft under own bubbles: the first chip sits at the right */
+.mine .reactions {
+  flex-direction: row-reverse;
+}
+.chip {
+  all: unset;
+  box-sizing: border-box;
+  height: 22px;
+  border-radius: 11px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--th-bubble-reaction-bg);
+  border: 1px solid var(--th-bubble-reaction-border);
+  cursor: pointer;
+  transition:
+    background-color var(--th-dur),
+    transform var(--th-dur) cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.chip:hover {
+  background: var(--th-bubble-reaction-bg-hover);
+}
+.chip:active {
+  transform: scale(0.94);
+}
+.chipMine {
+  background: var(--th-bubble-reaction-own-bg);
+  border-color: var(--th-bubble-reaction-own-border);
+}
+.chipMine:hover {
+  background: var(--th-bubble-reaction-own-bg-hover);
+}
+.chipKey,
+.chipCount {
+  font-size: var(--th-font-size-small);
+  line-height: 1;
+}
+/* Qt draws colour emoji with the glyph ≈ the pixel size; Chromium's Noto Color Emoji advance is
+   ≈ 1.19 em — scale standalone emoji by 0.84 so they measure like the desktop (chip 😂 = 16 px) */
+.chipKey {
+  font-size: calc(var(--th-font-size-small) * 0.84);
+}
+.chipCount {
+  color: var(--th-bubble-reaction-count-fg);
+}
+
+/* receipts */
+.receipts {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 1px;
+}
+.receiptAv {
+  position: relative;
+}
+.receiptMore {
+  font-size: round(calc(var(--th-font-size-small) * 0.85), 1px);
+  color: var(--th-bubble-receipts-fg);
+  margin-left: 3px;
+}
+
+/* hover bar: 28 tall, radius 8, panelHi, 1 px sep, shadow; straddles the bubble top (−14) */
+.hoverBar {
+  position: absolute;
+  top: -14px;
+  left: 6px;
+  height: 28px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--th-bubble-hover-bar-bg);
+  border: 1px solid var(--th-bubble-hover-bar-border);
+  box-shadow: 0 2px 10px var(--th-bubble-hover-bar-shadow);
+  z-index: 6;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--th-dur-short);
+  white-space: nowrap;
+}
+.hoverBarMine {
+  left: auto;
+  right: 6px;
+}
+.hoverTuck {
+  top: 4px;
+}
+.line:hover .hoverBar {
+  opacity: 1;
+  pointer-events: auto;
+  animation: hoverBarIn var(--th-dur-short) linear;
+}
+@keyframes hoverBarIn {
+  from {
+    opacity: 0;
+  }
+}
+.barBtn {
+  all: unset;
+  width: 26px;
+  height: 24px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.barBtn:hover {
+  background: var(--th-bubble-hover-bar-button-bg-hover);
+}
+.barBtnOn {
+  background: var(--th-bubble-hover-bar-button-bg-checked);
+}
+.barEmoji {
+  font-size: calc(15px * 0.84);
+  line-height: 1;
+}
+
+/* ---- media ------------------------------------------------------------------------------------ */
+.imgBox {
+  position: relative;
+  margin-top: 2px;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+}
+.imgBox > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  image-orientation: from-image;
+  transition: opacity var(--th-dur);
+}
+.imgLoading {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: var(--th-bubble-image-loading-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.imgError {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: var(--th-font-size-small);
+  text-align: center;
+  padding: 0 8px;
+}
+.imgPlaceholder {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--th-font-size);
+}
+.videoCard {
+  position: relative;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--th-bubble-video-bg);
+  border: 1px solid var(--th-bubble-video-border);
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--th-bubble-video-fg);
+}
+.videoEl {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--th-bubble-video-surface-bg);
+  display: block;
+}
+.posterRow {
+  position: absolute;
+  inset: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fileCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.fileName {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fileMeta {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-bubble-other-meta-fg);
+  white-space: pre;
+}
+/* the video card's size · duration line (the same span class as a file card's size) */
+.posterRow .fileMeta {
+  color: var(--th-bubble-video-meta-fg);
+}
+.fileCard {
+  box-sizing: border-box;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--th-bubble-other-file-bg);
+  border: 1px solid var(--th-bubble-file-border);
+}
+.fileCardMine {
+  background: var(--th-bubble-own-file-bg);
+}
+.fileCardMine .fileMeta {
+  color: var(--th-bubble-own-meta-fg);
+}
+.audio {
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.audioRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.audioSlider {
+  flex: 1 1 auto;
+  min-width: 40px;
+}
+.audioTime,
+.audioName {
+  font-size: var(--th-font-size-small);
+  color: var(--th-bubble-other-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.audioChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--th-font-size);
+  cursor: pointer;
+}
+
+/* ---- embed card (LEC) ------------------------------------------------------------------------- */
+.embedWrap {
+  margin-top: 4px;
+}
+.embed {
+  position: relative;
+  box-sizing: border-box;
+  max-width: 100%;
+  border-radius: 12px;
+  background: var(--th-embed-bg);
+  border: 1px solid var(--th-embed-border);
+  overflow: hidden;
+}
+.embedIdle {
+  cursor: pointer;
+}
+.embedGif {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  cursor: pointer;
+}
+.embedPoster,
+.embedGrad,
+.embedScrim,
+.embedSurface {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.embedPoster {
+  object-fit: cover;
+}
+.embedGrad {
+  background: linear-gradient(to bottom, var(--th-embed-poster-top-bg), var(--th-embed-poster-bottom-bg));
+}
+.embedScrim {
+  background: var(--th-embed-poster-overlay);
+}
+.embedSurface {
+  background: var(--th-embed-surface-bg);
+}
+.embedPlay {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  margin: -27px 0 0 -27px;
+  box-sizing: border-box;
+  border-radius: 27px;
+  border: 2px solid var(--th-embed-overlay-fg);
+  background: var(--th-embed-play-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 2px;
+  transition:
+    transform var(--th-dur) cubic-bezier(0.215, 0.61, 0.355, 1),
+    background-color var(--th-dur);
+}
+.embed:hover .embedPlay {
+  transform: scale(1.08);
+  background: var(--th-embed-play-bg-hover);
+}
+.embedChip {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--th-embed-chip-bg);
+  color: var(--th-embed-overlay-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.embedCtl {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+}
+.embedBtn {
+  all: unset;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--th-embed-control-bg);
+  color: var(--th-embed-overlay-fg);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    transform var(--th-dur),
+    background-color var(--th-dur);
+}
+.embedBtn:hover {
+  background: var(--th-embed-control-bg-hover);
+  transform: scale(1.1);
+}
+
+/* ---- link preview (LPC) ----------------------------------------------------------------------- */
+.lp {
+  position: relative;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin-top: 4px;
+  border-radius: 8px;
+  background: var(--th-link-preview-bg);
+  border: 1px solid var(--th-link-preview-border);
+  padding: 7px 7px 7px 11px;
+}
+.lpMine {
+  background: var(--th-link-preview-bg-own);
+}
+.lpBar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 1.5px;
+  background: var(--th-link-preview-stripe);
+  opacity: 0.9;
+}
+.lpMine .lpBar {
+  background: var(--th-link-preview-stripe-own);
+}
+.lpRow {
+  display: flex;
+  gap: 10px;
+}
+.lpCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lpSite {
+  font-size: calc(var(--th-font-size-small) * 0.85);
+  letter-spacing: 0.8px;
+  color: var(--th-link-preview-site-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lpTitle {
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-link-preview-title-fg);
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lpTitle:hover {
+  text-decoration: underline;
+}
+.lpDesc {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-link-preview-desc-fg);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.lpMine .lpSite,
+.lpMine .lpTitle,
+.lpMine .lpDesc {
+  color: var(--th-link-preview-title-fg-own);
+}
+.lpImage {
+  margin-top: 6px;
+  display: block;
+  object-fit: contain;
+  object-position: left;
+  cursor: pointer;
+  align-self: flex-start;
+}
+.lpThumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  flex: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+/* ---- phones ----------------------------------------------------------------------------------- */
+:global(html[data-ff="mobile"]) .line {
+  user-select: none;
+  -webkit-user-select: none;
+}
+:global(html[data-ff="mobile"]) .body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* phones: swipe-to-reply */
+:global(html[data-touch]) .line {
+  touch-action: pan-y;
+  transition: transform var(--th-dur-slow) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.swipeHint {
+  position: absolute;
+  top: 50%;
+  margin-top: -11px;
+  width: 22px;
+  height: 22px;
+  pointer-events: none;
+}
+
+/* touch: reaction chips big enough for a thumb */
+:global(html[data-touch]) .chip {
+  height: 32px;
+  border-radius: 16px;
+  padding: 0 10px;
+}
+:global(html[data-touch]) .reactions {
+  gap: 6px;
+}
+
+/* phones: a long-press opens the message sheet (Copy text is in it) instead of starting a text selection */
+:global(html[data-ff="mobile"]) .body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* touch: every card control is a 44 px thumb target (file / video / audio cards: Open, Save as…, Play here,
+   play/pause — 40 px Basic ToolButtons on the desktop) */
+:global(html[data-touch]) .fileCard button,
+:global(html[data-touch]) .posterRow button,
+:global(html[data-touch]) .audioRow button {
+  min-width: 44px;
+  min-height: 44px;
+}
+/* touch: the reaction chip keeps its 32 px look but takes a 44 px tall tap (the extra lands in the gap) */
+:global(html[data-touch]) .chip {
+  position: relative;
+}
+:global(html[data-touch]) .chip::after {
+  content: "";
+  position: absolute;
+  inset: -6px -3px;
+}
+/* touch: the 34 px sender avatar opens the profile from a 44 px tap */
+:global(html[data-touch]) .avatar::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+}
+
+/* Media Party 11.4: "Add to Media Party" + ▶ on a music / video card while I'm in the room's call (bottom-right,
+   the chip's look) */
+.embedParty {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 4;
+}
+.embedPartyBtn {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--th-embed-chip-bg);
+  color: var(--th-embed-overlay-fg);
+  font-weight: 700;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  cursor: pointer;
+  transition: background-color var(--th-dur);
+}
+.embedPartyBtn:hover {
+  background: var(--th-embed-control-bg-hover);
+}
+.embedPartyBtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

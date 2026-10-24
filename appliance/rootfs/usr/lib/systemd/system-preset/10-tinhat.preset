@@ -1,0 +1,12 @@
+# Tin Hat Server: the units a first boot must leave as they are (systemd applies presets on first boot).
+enable tinhat-manager.service
+enable tinhat-growroot.service
+enable docker.service
+enable containerd.service
+enable avahi-daemon.service
+enable systemd-networkd.service
+enable systemd-resolved.service
+enable qemu-guest-agent.service
+enable unattended-upgrades.service
+disable ssh.service
+disable ssh.socket

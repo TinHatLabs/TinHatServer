@@ -1,0 +1,10 @@
+// Tin Hat Server for Windows: Windows supplies the kernel and there is no boot loader inside WSL, so automatic
+// updates leave these alone (tinhat-wsl-boot.service also puts them on hold on the first start).
+Unattended-Upgrade::Package-Blacklist {
+    "linux-image-";
+    "linux-headers-";
+    "grub";
+    "shim-";
+    "initramfs-tools";
+    "cloud-initramfs-";
+};

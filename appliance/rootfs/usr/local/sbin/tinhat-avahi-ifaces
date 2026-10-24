@@ -1,0 +1,17 @@
+#!/bin/bash
+# tinhat-avahi-ifaces — set avahi's allow-interfaces to the machine's real network cards (the ones backed by a
+# device: not lo, docker0, br-*, veth*; nor WSL's mirrored loopback adapter, loopback0). Runs before avahi-daemon starts.
+conf=/etc/avahi/avahi-daemon.conf
+ifs=$(for d in /sys/class/net/*; do
+  case "${d##*/}" in lo | loopback*) continue ;; esac
+  [ -e "$d/device" ] && basename "$d"
+done | paste -sd, -)
+[ -f "$conf" ] || exit 0
+if [ -n "$ifs" ]; then
+  if grep -qE '^#?allow-interfaces=' "$conf"; then
+    sed -i -E "s/^#?allow-interfaces=.*/allow-interfaces=$ifs/" "$conf"
+  else
+    sed -i -E "s/^\[server\]/[server]\nallow-interfaces=$ifs/" "$conf"
+  fi
+fi
+exit 0

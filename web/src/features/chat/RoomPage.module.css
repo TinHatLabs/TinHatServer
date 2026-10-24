@@ -1,0 +1,225 @@
+/* RoomPage.module.css — the room page frame, RoomHeaderBar (RHB:75-148), banners, drop veil. */
+.page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--th-timeline-bg);
+}
+/* header column: spacing 4 */
+.head {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.head:empty {
+  display: none;
+}
+.body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+/* 58 px gradient bar lighter(panelHi,1.12) → panel (header.top.bg → header.bottom.bg; phones: header.mobile.top.bg);
+   1 px accentBright @ .30 hairline */
+.header {
+  position: relative;
+  flex: none;
+  height: 58px;
+  box-sizing: border-box;
+  padding-right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  --header-top: var(--th-header-top-bg);
+  background: linear-gradient(to bottom, var(--header-top), var(--th-header-bottom-bg));
+  container-type: inline-size;
+  container-name: roomheader;
+}
+.hairline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--th-header-divider), transparent);
+  pointer-events: none;
+}
+.titleCol {
+  flex: 1 1 auto;
+  min-width: 108px;
+  display: flex;
+  flex-direction: column;
+}
+.title {
+  font-weight: 700;
+  font-size: calc(var(--th-font-size) * 1.08);
+  line-height: normal;
+  color: var(--th-header-title-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-header-subtitle-fg);
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* active-call banner: margins 4, radius 8, accent @ .16 fill, accent @ .45 border */
+.callBanner {
+  margin: 0 4px;
+  padding: 4px 4px 4px 8px;
+  border-radius: 8px;
+  background: var(--th-call-join-banner-bg);
+  border: 1px solid var(--th-call-join-banner-border);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.head > .callBanner:first-child {
+  margin-top: 4px;
+}
+.bannerText {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  color: var(--th-call-join-banner-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* drop veil: whole window rgba(0,0,0,.45); card min(window−80, 520)×150, radius 16 */
+.veil {
+  position: fixed;
+  inset: 0;
+  z-index: var(--th-z-sheet);
+  background: var(--th-drop-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.veilCard {
+  width: min(calc(100vw - 80px), 520px);
+  height: 150px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  background: var(--th-drop-card-bg);
+  border: 2px solid var(--th-drop-card-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.veilTitle {
+  font-weight: 700;
+  font-size: 18.67px;
+  color: var(--th-drop-card-fg);
+}
+.veilSub {
+  font-size: var(--th-font-size);
+  color: var(--th-drop-card-hint-fg);
+}
+
+/* ---- phones ----------------------------------------------------------------------------------- */
+.mobile .header,
+.mHeader {
+  --header-top: var(--th-header-mobile-top-bg);
+  height: calc(56px + var(--th-top-inset, 0px));
+  padding: var(--th-top-inset, 0px) 4px 0 0;
+  border-bottom: 1px solid var(--th-header-mobile-divider);
+}
+.back {
+  all: unset;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+.mHeader .titleCol {
+  min-width: 0;
+  cursor: pointer;
+}
+.mHeader .title {
+  font-size: 16px;
+}
+.mHeader .sub {
+  font-size: 12px;
+  line-height: 16px;
+}
+/* phones: the header's other actions as a labelled list in the ⋮ sheet (label = the button's tooltip) */
+.moreRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 12px;
+}
+.moreRow > button {
+  display: flex !important;
+  align-items: center;
+  width: 100% !important;
+  gap: 14px;
+  padding: 0 12px !important;
+  height: 48px !important;
+  border-radius: 10px;
+}
+.moreRow > button > span:nth-child(-n + 3) {
+  border-radius: 10px;
+}
+.moreRow > button > span:nth-child(2) {
+  display: none;
+}
+.moreRow > button > span:nth-child(4) {
+  position: relative;
+  left: auto;
+  top: auto;
+  margin: 0;
+  flex: none;
+}
+.moreRow > button::after {
+  content: attr(aria-label);
+  font-size: 16px;
+  color: var(--th-header-more-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* phones: every header action button (ours or another feature's) is a 44 px touch target */
+.mHeader > button {
+  width: 44px !important;
+  height: 44px !important;
+}
+
+/* ---- 11.0 (islands C6/C7): the desktop dock host's room islands ---- */
+/* header: the head column's parts spaced 4 px; the island insets nothing — the bar's gradient takes its radius (inline) */
+.headerIsland {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+/* timeline: the conversation fills the island's content box */
+.timelineIsland {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}

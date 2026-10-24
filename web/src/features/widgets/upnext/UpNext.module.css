@@ -1,0 +1,501 @@
+/* upnext/UpNext.module.css — Up next (WIDGETS-UI.md §4). Sizes are multiples of the body font; colours are the
+   widget tokens; transitions use the duration token (0 while the motion switch is off). */
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.status,
+.summary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status {
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- the countdown ring ---- */
+.ringBox {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.ring {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.sweep {
+  transition: stroke-dashoffset var(--th-dur-long) cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.dow {
+  position: relative;
+  font-size: calc(var(--th-font-size) * 0.7);
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--th-widget-up-next-date-label-fg);
+}
+.dom {
+  position: relative;
+  margin-top: 1px;
+  font-size: calc(var(--th-font-size) * 1.1);
+  line-height: 1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-up-next-date-fg);
+}
+
+/* ---- the hero ---- */
+.hero {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 8px 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+}
+.hero:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.hero[data-soon] {
+  background: var(--th-widget-up-next-soon-bg);
+}
+.hero:focus-visible,
+.compact:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.edge {
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--th-widget-up-next-soon-edge);
+  opacity: 0;
+  transition: opacity var(--th-dur);
+}
+.hero[data-soon] > .edge,
+.compact[data-soon] > .edge {
+  opacity: 1;
+}
+.compact > .edge {
+  top: 6px;
+  bottom: 6px;
+}
+.heroText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.title {
+  min-width: 0;
+  font-weight: 600;
+  color: var(--th-widget-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.when {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.when[data-live] {
+  color: var(--th-widget-up-next-live-fg);
+}
+.line3 {
+  margin-top: 6px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+.people {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+.face {
+  display: inline-flex;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--th-widget-bg);
+}
+.hero[data-soon] .face {
+  box-shadow: none;
+}
+.face + .face {
+  margin-left: -4px;
+}
+.face[data-maybe] {
+  opacity: 0.6;
+}
+.more {
+  margin-left: 4px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 600;
+  background: var(--th-widget-chip-bg);
+  color: var(--th-widget-chip-fg);
+}
+.noReplies {
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+  white-space: nowrap;
+}
+.tbd {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--th-widget-up-next-tbd-border);
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-widget-up-next-tbd-fg);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--th-dur);
+}
+.tbd:hover,
+.tbd:focus-visible {
+  background: var(--th-widget-up-next-tbd-bg-hover);
+  outline: none;
+}
+.line4 {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.join {
+  flex: 1 1 auto;
+  height: 24px !important;
+  min-height: 24px !important;
+  padding: 0 8px !important;
+  font-size: calc(var(--th-font-size) * 0.85) !important;
+}
+/* an event more than 24 h away: a 6 px dot in the ring's track colour in the mini ring's 16 px slot */
+.far {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+}
+.far::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--th-widget-up-next-ring-track);
+}
+.inCall {
+  flex: 1 1 auto;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.cover {
+  flex: none;
+  width: 32px;
+  height: 48px;
+  border-radius: 4px;
+  background: var(--th-widget-cover-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-cover-border);
+}
+.cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--th-widget-cover-border);
+  pointer-events: none;
+}
+.coverBlank {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---- RSVP ---- */
+.q {
+  font-weight: 700;
+  font-family: var(--th-font);
+}
+.rsvp {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+.seg {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 6px;
+  background: var(--th-widget-up-next-rsvp-bg);
+  color: var(--th-widget-up-next-rsvp-fg);
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--th-dur),
+    color var(--th-dur);
+}
+.seg:hover:not(:disabled),
+.seg:focus-visible:not(:disabled) {
+  background: var(--th-widget-up-next-rsvp-bg-hover);
+  outline: none;
+}
+.seg:disabled {
+  cursor: default;
+}
+/* a read-only calendar: the answers show but can't be changed (the gallery preview is disabled but not dimmed) */
+.rsvp[data-readonly] > .seg {
+  opacity: 0.5;
+}
+.seg[data-checked][data-answer="yes"] {
+  background: var(--th-widget-up-next-rsvp-yes-bg-checked);
+  color: var(--th-widget-up-next-rsvp-yes-fg-checked);
+}
+.seg[data-checked][data-answer="maybe"] {
+  background: var(--th-widget-up-next-rsvp-maybe-bg-checked);
+  color: var(--th-widget-up-next-rsvp-maybe-fg-checked);
+}
+.seg[data-checked][data-answer="no"] {
+  background: var(--th-widget-up-next-rsvp-no-bg-checked);
+  color: var(--th-widget-up-next-rsvp-no-fg-checked);
+}
+.rsvpIcons {
+  flex: none;
+}
+.rsvpIcons > .seg {
+  flex: none;
+  width: 24px;
+}
+.rsvpMini {
+  flex: none;
+  display: none;
+}
+.rsvpMini > .seg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+/* ---- compact rows ---- */
+.divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--th-widget-divider);
+}
+.compact {
+  position: relative;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--th-dur);
+}
+.compact:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.compact[data-soon] {
+  background: var(--th-widget-up-next-soon-bg);
+}
+.day {
+  flex: none;
+  width: 52px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-widget-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctime {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+}
+.glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.glyph[data-answer="yes"] {
+  color: var(--th-widget-up-next-rsvp-yes-fg-checked);
+}
+.glyph[data-answer="maybe"] {
+  color: var(--th-widget-up-next-rsvp-maybe-fg-checked);
+}
+.glyph[data-answer="no"] {
+  color: var(--th-widget-up-next-rsvp-no-fg-checked);
+}
+/* desktop hover: the time + answer glyph make way for the three mini buttons */
+:global(html:not([data-touch])) .compact:hover > .ctime,
+:global(html:not([data-touch])) .compact:hover > .glyph,
+:global(html:not([data-touch])) .compact:focus-within > .ctime,
+:global(html:not([data-touch])) .compact:focus-within > .glyph,
+.showButtons > .glyph {
+  display: none;
+}
+:global(html:not([data-touch])) .compact:hover > .rsvpMini,
+:global(html:not([data-touch])) .compact:focus-within > .rsvpMini,
+.showButtons > .rsvpMini {
+  display: flex;
+}
+/* L (agenda): the day is the section label, the 52 px column shows the time */
+.agenda > .day {
+  font-variant-numeric: tabular-nums;
+}
+.section {
+  height: 20px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 8px 2px;
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- empty ---- */
+.empty {
+  min-height: 64px;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.emptyText {
+  color: var(--th-widget-meta-fg);
+}
+.newEvent {
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-widget-up-next-tbd-fg);
+  cursor: pointer;
+}
+.newEvent:hover,
+.newEvent:focus-visible {
+  background: var(--th-widget-up-next-tbd-bg-hover);
+  outline: none;
+}
+
+/* phones: the compact row's title over "Tmrw · 8:00 PM" */
+.cstack {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cstack > .ctitle {
+  flex: none;
+}
+.csub {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- phones (§8) ---- */
+.body[data-mobile] .title,
+.body[data-mobile] .ctitle {
+  font-size: 15px;
+}
+.body[data-mobile] .when,
+.body[data-mobile] .day,
+.body[data-mobile] .ctime,
+.body[data-mobile] .noReplies,
+.body[data-mobile] .tbd {
+  font-size: 13px;
+}
+.body[data-mobile] .dow {
+  font-size: 11px;
+}
+.body[data-mobile] .dom {
+  font-size: 17px;
+}
+.body[data-mobile] .seg {
+  height: 36px;
+  font-size: 13px;
+}
+.body[data-mobile] .rsvpIcons > .seg {
+  width: 36px;
+}
+.body[data-mobile] .compact {
+  height: 44px;
+}
+.body[data-mobile] .rsvpMini > .seg {
+  width: 32px;
+  height: 32px;
+}
+.body[data-mobile] .join {
+  height: 36px !important;
+  min-height: 36px !important;
+}
+.body[data-mobile] .line3 {
+  height: 24px;
+}
+.body[data-mobile] .day {
+  width: 58px;
+}
+
+/* the Game servers link (docs/GAMESERVERS.md §5): the state dot of a compact row's linked server */
+.cdot {
+  margin-right: 6px;
+}

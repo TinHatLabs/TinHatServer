@@ -1,0 +1,247 @@
+/* themes.module.css — THEMES-UI.md §3, §4, §6, §11: the Theme section of Settings → Appearance, the gallery page, the
+   import dialog, the Sounds and icons rows. Colours: settings.theme* tokens (§9) + the house controls' own. */
+
+/* ---- §3.2 the summary --------------------------------------------------------------------------------------- */
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  min-width: 0;
+}
+.themeName {
+  flex: none;
+  max-width: 50%;
+  color: var(--th-settings-theme-name-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta {
+  min-width: 0;
+  color: var(--th-settings-theme-meta-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spacer {
+  flex: 1 1 auto;
+}
+/* Settings window: search can jump to the Customize… button (the flash paints this wrapper) */
+.flashWrap {
+  display: inline-flex;
+  border-radius: 8px;
+}
+.overrideCard {
+  margin-top: 8px;
+}
+.note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--th-settings-theme-note-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.pending {
+  color: var(--th-settings-theme-meta-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  font-style: italic;
+}
+.subLabel {
+  margin-top: 4px;
+  color: var(--th-settings-theme-meta-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+
+/* ---- §4 the gallery page -------------------------------------------------------------------------------------- */
+.page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.toolbar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--th-settings-divider);
+  background: var(--th-settings-theme-gallery-toolbar-bg);
+}
+.toolRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.title {
+  color: var(--th-settings-theme-name-fg);
+  font-size: var(--th-font-h2);
+  line-height: var(--th-line-h2);
+  white-space: nowrap;
+}
+.search {
+  flex: none;
+  width: 280px;
+}
+.filter {
+  flex: none;
+  display: inline-flex;
+}
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 16px;
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.section + .section {
+  margin-top: 8px;
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 0;
+}
+
+/* §5.4 the drop overlay (gallery body, import dialog) */
+.drop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--th-radius);
+  border: 2px dashed var(--th-settings-theme-import-drop-border-active);
+  background: var(--th-settings-theme-import-drop-bg-active);
+  color: var(--th-settings-theme-name-fg);
+  font-size: var(--th-font-h4);
+  line-height: var(--th-line-h4);
+  pointer-events: none;
+}
+
+/* ---- §6 import ---------------------------------------------------------------------------------------------------- */
+.importBody {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.importText {
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  min-height: calc(8 * var(--th-line) + 20px);
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+.fileRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.fileName {
+  min-width: 0;
+  color: var(--th-settings-theme-meta-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+/* the card at 1.5× (a 160 × 108 card → 240 × 162) */
+.previewCard {
+  flex: none;
+  width: 240px;
+  height: 162px;
+  pointer-events: none;
+}
+.previewInner {
+  width: 160px;
+  transform: scale(1.5);
+  transform-origin: 0 0;
+}
+.previewCol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fieldLabel {
+  color: var(--th-settings-label-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+
+/* ---- §11 sounds and icons --------------------------------------------------------------------------------------- */
+.packRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.packLabel {
+  flex: none;
+  width: 96px;
+  color: var(--th-settings-label-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+
+/* ---- phones (§8) ---------------------------------------------------------------------------------------------------- */
+:global(html[data-ff="mobile"]) .summary {
+  flex-wrap: wrap;
+}
+:global(html[data-ff="mobile"]) .themeName {
+  max-width: 100%;
+}
+:global(html[data-ff="mobile"]) .search {
+  width: 100%;
+}
+:global(html[data-ff="mobile"]) .packRow {
+  flex-wrap: wrap;
+}
+:global(html[data-ff="mobile"]) .packLabel {
+  width: 100%;
+}
+:global(html[data-ff="mobile"]) .preview {
+  flex-direction: column;
+}
+:global(html[data-ff="mobile"]) .previewCard {
+  width: 100%;
+  height: auto;
+}
+:global(html[data-ff="mobile"]) .previewInner {
+  width: 100%;
+  transform: none;
+}

@@ -1,0 +1,4 @@
+# Contract files are compared byte for byte with the desktop repo (tables, library, test vectors):
+# never convert their line endings.
+*.json -text
+testvectors/** -text

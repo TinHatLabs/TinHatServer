@@ -1,0 +1,548 @@
+/* The theme editor (THEMES-UI.md §13.6–§13.9): a non-modal panel docked to the window's right edge (phones: a bottom
+   sheet over the lower 60 %), the Simple and Advanced bodies, the colour popover. Metrics are the contract's. */
+
+.panel {
+  position: fixed;
+  /* above the app and its in-app windows, below dialogs / sheets / popovers (the ones the editor opens included) */
+  z-index: calc(var(--th-z-sheet) - 1);
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: min(400px, calc(100vw - 16px));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-settings-theme-editor-bg);
+  border: 1px solid var(--th-settings-theme-editor-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px var(--th-settings-theme-editor-shadow);
+  color: var(--th-settings-fg);
+  font-family: var(--th-font);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  overflow: hidden;
+}
+.panel[data-mobile] {
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 60vh;
+  border-radius: 12px 12px 0 0;
+  border: none;
+  border-top: 1px solid var(--th-settings-theme-editor-border);
+}
+
+/* ---- header (52), mode row, footer */
+.header {
+  flex: none;
+  height: 52px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--th-settings-theme-editor-divider);
+}
+.titles {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.title {
+  font-size: var(--th-font-h4);
+  line-height: var(--th-line-h4);
+  font-weight: 600;
+  color: var(--th-settings-fg);
+}
+.meta {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-settings-hint-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.iconBtn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--th-settings-fg);
+  cursor: pointer;
+  padding: 0;
+}
+.iconBtn:hover:not(:disabled) {
+  background: var(--th-settings-theme-editor-row-bg-hover);
+}
+.iconBtn[aria-pressed="true"] {
+  background: var(--th-settings-theme-editor-row-bg-selected);
+}
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.iconBtn:focus-visible {
+  outline: 2px solid var(--th-settings-theme-card-border-focus);
+  outline-offset: -2px;
+}
+.mirror {
+  transform: scaleX(-1);
+  display: grid;
+}
+.modeRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 8px 12px;
+}
+.modeRow .spacer {
+  flex: 1 1 auto;
+}
+/* THEMES-UI §13.6: the Simple / Advanced ToolButtons are 32 high (the Basic ToolButton's own 40 is the Changed toggle's) */
+.modeRow > button {
+  height: 32px;
+}
+.dirty {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-settings-hint-fg);
+}
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bodyInner {
+  padding: 0 12px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.footer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--th-settings-theme-editor-divider);
+}
+.footerButtons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---- simple mode */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+.rowLabel {
+  flex: none;
+  width: 112px;
+  color: var(--th-settings-label-fg);
+}
+.rowControl {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.value {
+  flex: none;
+  min-width: 48px;
+  color: var(--th-settings-hint-fg);
+  font-variant-numeric: tabular-nums;
+}
+.slider {
+  width: 200px;
+  max-width: 100%;
+}
+.hex {
+  font-family: var(--th-font-mono);
+  color: var(--th-settings-fg);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* swatches and chips */
+.swatch {
+  flex: none;
+  position: relative;
+  box-sizing: border-box;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  background-color: transparent;
+  background-image:
+    linear-gradient(45deg, var(--th-settings-theme-editor-swatch-checker) 25%, transparent 25%, transparent 75%, var(--th-settings-theme-editor-swatch-checker) 75%),
+    linear-gradient(45deg, var(--th-settings-theme-editor-swatch-checker) 25%, transparent 25%, transparent 75%, var(--th-settings-theme-editor-swatch-checker) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 6px 6px;
+  overflow: hidden;
+}
+.swatch::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--sw);
+  box-shadow: inset 0 0 0 1px var(--th-settings-theme-editor-swatch-border);
+}
+.swatch:focus-visible {
+  outline: 2px solid var(--th-settings-theme-card-border-focus);
+  outline-offset: 1px;
+}
+.swatchBtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+.chip {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+}
+.chip[aria-checked="true"]::after {
+  box-shadow: inset 0 0 0 2px var(--th-settings-fg);
+}
+.chipCheck {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.chipCustom {
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--th-settings-theme-editor-swatch-border);
+  background: transparent;
+  color: var(--th-settings-fg);
+  cursor: pointer;
+  padding: 0;
+  box-sizing: border-box;
+}
+.chipCustom:hover {
+  background: var(--th-settings-theme-editor-row-bg-hover);
+}
+
+/* readability */
+.issues {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.issue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--th-settings-theme-editor-warn-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.issue span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--th-settings-theme-note-fg);
+}
+
+/* ---- advanced mode */
+.advTop {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 8px 12px;
+}
+.advTop > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.advBody {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.list {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--th-scrollbar-thumb) transparent;
+}
+.item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+}
+.sectionHead {
+  height: 28px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 12px 4px 12px;
+  font-weight: 600;
+  color: var(--th-settings-theme-editor-group-fg);
+}
+.groupHead {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  border: 0;
+  width: 100%;
+  background: transparent;
+  color: var(--th-settings-theme-editor-group-fg);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.groupHead:hover {
+  background: var(--th-settings-theme-editor-row-bg-hover);
+}
+.groupHead:focus-visible {
+  outline: 2px solid var(--th-settings-theme-card-border-focus);
+  outline-offset: -2px;
+}
+.groupCount {
+  color: var(--th-settings-hint-fg);
+}
+.groupChanged {
+  margin-left: auto;
+  color: var(--th-settings-theme-editor-edited-dot);
+  font-size: var(--th-font-size-small);
+}
+.colourRow {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 20px;
+  border: 0;
+  width: 100%;
+  background: transparent;
+  color: var(--th-settings-fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.colourRow:hover {
+  background: var(--th-settings-theme-editor-row-bg-hover);
+}
+.colourRow[data-selected] {
+  background: var(--th-settings-theme-editor-row-bg-selected);
+}
+.colourRow:focus-visible {
+  outline: 2px solid var(--th-settings-theme-card-border-focus);
+  outline-offset: -2px;
+}
+.rowSwatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  cursor: inherit;
+}
+.rowText {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rowName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowId {
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-settings-hint-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--th-settings-theme-editor-edited-dot);
+}
+.badge {
+  flex: none;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--th-settings-theme-editor-swatch-border);
+  color: var(--th-settings-hint-fg);
+}
+.empty {
+  padding: 24px 12px;
+  color: var(--th-settings-hint-fg);
+  text-align: center;
+}
+
+/* ---- the colour popover */
+/* THEMES-UI §13.9: the popover is 280 wide with its padding 12 — the content (the colour field, the bars) is 256 */
+.pop {
+  width: 256px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.popTitle {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.popId {
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-settings-hint-fg);
+  margin-top: -6px;
+}
+.svField {
+  position: relative;
+  width: 256px;
+  height: 160px;
+  border-radius: 4px;
+  touch-action: none;
+  cursor: crosshair;
+}
+.bar {
+  position: relative;
+  width: 256px;
+  height: 12px;
+  border-radius: 6px;
+  touch-action: none;
+  cursor: pointer;
+}
+.barChecker {
+  background-image:
+    linear-gradient(45deg, var(--th-settings-theme-editor-swatch-checker) 25%, transparent 25%, transparent 75%, var(--th-settings-theme-editor-swatch-checker) 75%),
+    linear-gradient(45deg, var(--th-settings-theme-editor-swatch-checker) 25%, transparent 25%, transparent 75%, var(--th-settings-theme-editor-swatch-checker) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 6px 6px;
+}
+.barFill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--th-settings-theme-editor-picker-ring);
+  box-shadow: 0 0 0 1px var(--th-settings-theme-editor-picker-ring-outline), inset 0 0 0 1px var(--th-settings-theme-editor-picker-ring-outline);
+  pointer-events: none;
+}
+.barHandle {
+  top: 50%;
+}
+.popRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.popLabel {
+  flex: none;
+  color: var(--th-settings-label-fg);
+}
+.hexField {
+  width: 110px;
+}
+.alphaField {
+  width: 64px;
+}
+.expr {
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-settings-hint-fg);
+  overflow-wrap: anywhere;
+}
+.error {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-settings-error-fg);
+}
+.popFooter {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ---- the Pick tool (§15.3) */
+.pickOutline {
+  position: fixed;
+  z-index: calc(var(--th-z-sheet) - 2);
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid var(--th-settings-theme-editor-pick-outline);
+  background: var(--th-settings-theme-editor-pick-fill);
+  border-radius: 4px;
+}
+.pickCatcher {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--th-z-sheet) - 2);
+  cursor: crosshair;
+}
+
+/* the Pick tool's probe pass (pick.ts): nothing may transition from or to a probe colour */
+:global(html.th-probing) *,
+:global(html.th-probing) *::before,
+:global(html.th-probing) *::after {
+  transition: none !important;
+  animation-play-state: paused !important;
+}

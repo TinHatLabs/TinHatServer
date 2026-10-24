@@ -1,0 +1,162 @@
+diff --git a/dist/livekit-client.e2ee.worker.mjs b/dist/livekit-client.e2ee.worker.mjs
+index ad55a83819c0e24fde8a65784395b2f797bab99f..a0b81064aa97cbb764e20b50bebff67334545a82 100644
+--- a/dist/livekit-client.e2ee.worker.mjs
++++ b/dist/livekit-client.e2ee.worker.mjs
+@@ -6744,6 +6744,88 @@ class BaseFrameCryptor extends eventsExports.EventEmitter {
+  * Cryptor is responsible for en-/decrypting media frames.
+  * Each Cryptor instance is responsible for en-/decrypting a single mediaStreamTrack.
+  */
++
++// ---- PATCH (Tin Hat Web) AV1 E2EE receive: tinhat-av1-e2ee-v2 --------------------------------------------
++// Tin Hat natives (patched libwebrtc, av1-e2ee-wrapper-obu.patch) encrypt the WHOLE AV1 frame
++// (0 unencrypted bytes, empty AAD) and wrap ciphertext||IV||[ivLength,keyIndex] in ONE synthetic OBU_FRAME
++// header 0x30 (no size field); keyframes lead with an EMPTY sequence-header OBU 0x0a 0x00. A stock AV1
++// depacketizer re-emits every OBU header with obu_has_size_field=1 + LEB128, so a receiver sees
++// [0x0a 0x00] 0x32 <leb128> ciphertext... . The IV and trailer are located from the END of the buffer.
++const TINHAT_AV1_STAMP = 'tinhat-av1-e2ee-v2';
++function tinhatAv1CiphertextOffset(data) {
++  let off = 0;
++  for (let n = 0; n < 4; n++) {
++    if (off + 1 >= data.length) return 0;
++    const h = data[off];
++    if (h & 0x80) return 0; // obu_forbidden_bit
++    const type = (h >> 3) & 0xf;
++    let pos = off + 1;
++    if (h & 0x04) pos += 1; // obu_extension_flag
++    let size = 0;
++    const hasSize = (h & 0x02) !== 0;
++    if (hasSize) {
++      let leb = 0;
++      for (;;) {
++        if (pos >= data.length || leb >= 8) return 0;
++        const b = data[pos++];
++        size += (b & 0x7f) * Math.pow(2, 7 * leb);
++        leb++;
++        if (!(b & 0x80)) break;
++      }
++    }
++    if (type === 6) return pos < data.length ? pos : 0; // the FRAME wrapper: ciphertext follows
++    if (type === 1) { // the synthetic (empty) keyframe sequence header: skip it
++      if (!hasSize || pos + size >= data.length) return 0;
++      off = pos + size;
++      continue;
++    }
++    return 0; // nothing a Tin Hat sender emits
++  }
++  return 0;
++}
++/** Tin Hat AV1 wire frame -> encoder output. Resolves null for a frame that is not in the wrapper form;
++ *  REJECTS (WebCrypto OperationError) when GCM authentication fails. */
++async function tinhatAv1Decrypt(data, key) {
++  const off = tinhatAv1CiphertextOffset(data);
++  if (off === 0) return null;
++  const ivLength = data[data.length - 2];
++  // IV + 2-byte trailer + 16-byte GCM tag must fit after the wrapper
++  if (ivLength === 0 || data.length < off + ivLength + 2 + 16) return null;
++  const iv = data.slice(data.length - 2 - ivLength, data.length - 2);
++  const ct = data.subarray(off, data.length - 2 - ivLength);
++  return crypto.subtle.decrypt({ name: ENCRYPTION_ALGORITHM, iv, additionalData: new Uint8Array(0) }, key, ct);
++}
++/** Worker self-test: native-format encrypt -> depacketizer form -> tinhatAv1Decrypt must give the bytes back,
++ *  and a one-bit tamper must fail GCM. */
++async function tinhatAv1SelfTest() {
++  try {
++    const key = await crypto.subtle.importKey('raw', crypto.getRandomValues(new Uint8Array(16)), ENCRYPTION_ALGORITHM, false, ['encrypt', 'decrypt']);
++    const plain = new Uint8Array(300);
++    plain.set([0x12, 0x00, 0x0a, 0x0b, 0x00, 0x00, 0x00, 0x24, 0xc6, 0xab, 0xdf, 0x3e, 0xfe, 0x24, 0x04]);
++    for (let i = 15; i < plain.length; i++) plain[i] = (i * 37) & 0xff;
++    const iv = crypto.getRandomValues(new Uint8Array(12));
++    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: ENCRYPTION_ALGORITHM, iv, additionalData: new Uint8Array(0) }, key, plain));
++    const body = ct.length + iv.length + 2; // what the depacketizer puts in the wrapper's LEB128 size
++    const leb = [];
++    let v = body;
++    do { let b = v & 0x7f; v = Math.floor(v / 128); if (v) b |= 0x80; leb.push(b); } while (v);
++    const wire = new Uint8Array(3 + leb.length + body);
++    wire.set([0x0a, 0x00, 0x32].concat(leb));
++    let o = 3 + leb.length;
++    wire.set(ct, o); o += ct.length;
++    wire.set(iv, o); o += iv.length;
++    wire.set([12, 7], o);
++    const out = new Uint8Array(await tinhatAv1Decrypt(wire, key));
++    if (out.length !== plain.length || out.some((b, i) => b !== plain[i])) return false;
++    const bad = wire.slice();
++    bad[8] ^= 1;
++    try { await tinhatAv1Decrypt(bad, key); return false; } catch (e) { /* expected: GCM refused the tampered frame */ }
++    return true;
++  } catch (e) {
++    return false;
++  }
++}
++// ---- end PATCH ---------------------------------------------------------------------------------------------
+ class FrameCryptor extends BaseFrameCryptor {
+   constructor(opts) {
+     var _a;
+@@ -6756,6 +6838,8 @@ class FrameCryptor extends BaseFrameCryptor {
+     this.hasFrameMetadata = false;
+     this.frameMetadataFrameId = 0;
+     this.errorLimiter = new ErrorRateLimiter();
++    // PATCH (Tin Hat Web) AV1 receive counters, posted to the page as {kind:'tinhat-av1'}
++    this.tinhatAv1 = { ok: 0, authFail: 0, malformed: 0, lastPost: 0 };
+     /** grace period for a teardown or a resubscribe to land before we report a stalled track */
+     this.UNDECRYPTED_TRACK_GRACE_MS = 2000;
+     /**
+@@ -7224,6 +7308,10 @@ class FrameCryptor extends BaseFrameCryptor {
+         if (!ratchetOpts.encryptionKey && !keySet) {
+           throw new TypeError("no encryption key found for decryption of ".concat(_this.participantIdentity));
+         }
++        // PATCH (Tin Hat Web): AV1 in the Tin Hat wrapper form -> decrypt the whole frame (see tinhatAv1Decrypt)
++        if (isVideoFrame(encodedFrame) && (_this.getVideoCodec(encodedFrame) ?? _this.videoCodec) === 'av1') {
++          return yield _this.tinhatDecryptAv1(encodedFrame, (_a = ratchetOpts.encryptionKey) !== null && _a !== void 0 ? _a : keySet.encryptionKey);
++        }
+         let frameInfo = _this.getUnencryptedBytes(encodedFrame);
+         // Construct frame trailer. Similar to the frame header described in
+         // https://tools.ietf.org/html/draft-omara-sframe-00#section-4.2
+@@ -7410,6 +7498,37 @@ class FrameCryptor extends BaseFrameCryptor {
+   /**
+    * inspects frame mimetype if available. falls back to payloadtype and maps it to the codec specified in rtpMap
+    */
++  // PATCH (Tin Hat Web) AV1 E2EE receive. Returns the frame with the decoder-ready bytes, or undefined
++  // (frame dropped) when it is not in the wrapper form; GCM auth failure throws InvalidKey (dropped too).
++  tinhatDecryptAv1(encodedFrame, key) {
++    return __awaiter(this, void 0, void 0, function* () {
++      let plain;
++      try {
++        plain = yield tinhatAv1Decrypt(new Uint8Array(encodedFrame.data), key);
++      } catch (error) {
++        this.tinhatAv1.authFail++;
++        this.tinhatAv1Post();
++        throw new CryptorError("AV1 decryption failed: ".concat(getErrorDescription(error, 'decryption')), CryptorErrorReason.InvalidKey, this.participantIdentity);
++      }
++      if (!plain) {
++        this.tinhatAv1.malformed++;
++        this.tinhatAv1Post();
++        return undefined;
++      }
++      this.tinhatAv1.ok++;
++      this.tinhatAv1Post();
++      encodedFrame.data = plain;
++      return encodedFrame;
++    });
++  }
++  tinhatAv1Post() {
++    const now = Date.now();
++    const c = this.tinhatAv1;
++    // every failure up to the page at once for the first few, then at most once per second
++    if (now - c.lastPost < 1000 && (c.ok > 0 || c.authFail + c.malformed > 5)) return;
++    c.lastPost = now;
++    postMessage({ kind: 'tinhat-av1', data: { participantIdentity: this.participantIdentity, trackId: this.trackId, ok: c.ok, authFail: c.authFail, malformed: c.malformed } });
++  }
+   getVideoCodec(frame) {
+     const metadata = frame.getMetadata();
+     if (metadata.mimeType) {
+@@ -7671,6 +7790,10 @@ onmessage = ev => {
+       case 'setLogLevel':
+         workerLogger.setLevel(data.level);
+         break;
++      case 'tinhat-av1-probe':
++        // PATCH (Tin Hat Web): capability probe for the page's dev.tinhat.client marker
++        postMessage({ kind: 'tinhat-av1-probe', data: { stamp: TINHAT_AV1_STAMP, selfTest: yield tinhatAv1SelfTest() } });
++        break;
+       case 'enable':
+         setEncryptionEnabled(data.enabled, data.participantIdentity);
+         workerLogger.info("updated e2ee enabled status for ".concat(data.participantIdentity, " to ").concat(data.enabled));

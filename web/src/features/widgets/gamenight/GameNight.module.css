@@ -1,0 +1,264 @@
+/* gamenight/GameNight.module.css — the Game night widget (WIDGETS-UI.md §23). The hero: the 48 × 72 cover (or the "Game
+   TBD" tile that opens the Game Reel), gap 10, the text column (title, game, when, going faces + Pick / Spin, the game's
+   server line); under it Up next's RSVP segments (full width) and the credit line. L: the next two nights as 28 px
+   rows. No tokens of its own: the cover is the widgets' cover (widget.cover.*), the TBD pill Up next's
+   (widget.upNext.tbd.*), the RSVP / faces / answer glyphs Up next's own pieces, the rest the widget body tokens. */
+.body {
+  display: flex;
+  flex-direction: column;
+}
+.heroBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 2px 0;
+}
+.hero {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+}
+.hero:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.hero:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.cover {
+  flex: none;
+  width: 48px;
+  height: 72px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--th-widget-cover-bg);
+  box-shadow: inset 0 0 0 1px var(--th-widget-cover-border);
+}
+.coverBlank {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.tbdTile {
+  border: 0;
+  padding: 0;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.tbdTile:hover:not(:disabled) {
+  background: var(--th-widget-up-next-tbd-bg-hover);
+}
+.tbdTile:disabled {
+  cursor: default;
+}
+.tbdGlyph {
+  font-size: 18px;
+  line-height: 22px;
+}
+.tbdText {
+  font-size: calc(var(--th-font-size) * 0.75);
+  font-weight: 600;
+  line-height: 1.15;
+  text-align: center;
+  color: var(--th-widget-up-next-tbd-fg);
+  padding: 0 2px;
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.title {
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--th-widget-fg);
+}
+.game,
+.when {
+  font-size: calc(var(--th-font-size) * 0.85);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--th-widget-meta-fg);
+}
+.when {
+  font-variant-numeric: tabular-nums;
+}
+.when[data-live] {
+  color: var(--th-widget-up-next-live-fg);
+}
+.people {
+  margin-top: 4px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pick {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  border: 1px solid var(--th-widget-up-next-tbd-border);
+  background: none;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-widget-up-next-tbd-fg);
+  white-space: nowrap;
+  cursor: pointer;
+  margin-left: auto;
+}
+.pick:hover:not(:disabled),
+.pick:focus-visible {
+  background: var(--th-widget-up-next-tbd-bg-hover);
+  outline: none;
+}
+.pick:disabled {
+  cursor: default;
+}
+.server {
+  margin-top: 4px;
+}
+.rsvp {
+  padding: 0 6px;
+  display: flex;
+}
+.rsvp > * {
+  flex: 1 1 auto;
+}
+.credit {
+  padding: 0 8px 2px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+
+/* ---- L: the next nights ---- */
+.divider {
+  height: 1px;
+  margin: 6px 8px 4px;
+  background: var(--th-widget-divider);
+}
+.row {
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  min-width: 0;
+}
+.row:hover {
+  background: var(--th-widget-row-bg-hover);
+}
+.row:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--th-widget-ring-focus);
+}
+.day {
+  flex: none;
+  width: 44px;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.rowTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--th-widget-fg);
+}
+.rowGame {
+  flex: 0 1 auto;
+  max-width: 34%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-meta-fg);
+}
+.rowTime {
+  flex: none;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-widget-meta-fg);
+}
+
+/* ---- states ---- */
+.status {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: calc(var(--th-font-size) * 0.85);
+  color: var(--th-widget-muted-fg);
+}
+.empty {
+  min-height: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--th-widget-meta-fg);
+}
+.linkBtn {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  font-size: calc(var(--th-font-size) * 0.85);
+  font-weight: 600;
+  color: var(--th-accent-bright);
+  cursor: pointer;
+}
+.linkBtn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.linkBtn:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- phones (WIDGETS-UI.md §8) ---- */
+.body[data-mobile] .cover {
+  width: 56px;
+  height: 84px;
+}
+.body[data-mobile] .title {
+  font-size: 15px;
+}
+.body[data-mobile] .game,
+.body[data-mobile] .when,
+.body[data-mobile] .credit,
+.body[data-mobile] .day,
+.body[data-mobile] .rowGame,
+.body[data-mobile] .rowTime {
+  font-size: 13px;
+}
+.body[data-mobile] .row {
+  height: 44px;
+}

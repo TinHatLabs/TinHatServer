@@ -1,0 +1,13 @@
+#!/bin/bash
+# tinhat-growroot — at every boot, grow the root partition + ext4 filesystem into any extra disk space (people
+# give the VM a bigger disk than the image's). A no-op when there's nothing to grow.
+set -u
+root=$(findmnt -no SOURCE /) || exit 0
+part=$(basename "$(readlink -f "$root")")
+disk=$(lsblk -no PKNAME "/dev/$part" 2>/dev/null | head -1)
+num=$(cat "/sys/class/block/$part/partition" 2>/dev/null)
+[ -n "$disk" ] && [ -n "$num" ] || exit 0
+if growpart "/dev/$disk" "$num" >/dev/null 2>&1; then
+  resize2fs "/dev/$part" >/dev/null 2>&1 && echo "grew /dev/$part to fill /dev/$disk"
+fi
+exit 0

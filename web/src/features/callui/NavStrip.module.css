@@ -1,0 +1,51 @@
+/* ThRoomList.qml:470-600 — participant rows under a room row: left gridUnit*2 (36), right 4, spacing 1 */
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 4px 0 36px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  border-radius: var(--th-radius-sm);
+  cursor: pointer;
+  transition: background-color var(--th-dur) linear;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+.row:hover {
+  background: var(--th-rooms-caller-bg-hover);
+}
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--th-rooms-caller-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.glyph {
+  display: flex;
+  flex: none;
+}
+.srv {
+  position: relative;
+  display: flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.shield {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  display: flex;
+}
+:global(html[data-touch]) .row {
+  min-height: 36px;
+}

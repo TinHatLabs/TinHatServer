@@ -1,0 +1,35 @@
+{
+ "_about": "written by hand",
+ "cap": 3,
+ "memoryBudgetMB": 20480,
+ "hostCores": 8,
+ "v": 1,
+ "space": "!space:example.org",
+ "announceRoom": null,
+ "joinHost": "games.example.org",
+ "panel": {
+  "url": "https://panel.example.org",
+  "wings": "wss://node.example.org:8080",
+  "origin": "https://panel.example.org"
+ },
+ "servers": [
+  {
+   "uuid": "11111111-2222-3333-4444-555555555555",
+   "kind": "valheim",
+   "game": "Valheim",
+   "steamAppId": 892970,
+   "emoji": "x",
+   "calendar": false,
+   "info": "Be nice",
+   "outside": true
+  },
+  {
+   "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+   "kind": "other",
+   "game": "Terraria",
+   "info": "",
+   "outside": false,
+   "joinPasswordText": "sample-join-pw"
+  }
+ ]
+}

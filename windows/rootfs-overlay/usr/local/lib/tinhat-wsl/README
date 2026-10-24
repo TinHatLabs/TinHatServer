@@ -1,0 +1,24 @@
+Tin Hat Server for Windows (WSL 2 edition)
+==========================================
+
+This is the Tin Hat Server appliance (the same Debian 13 system as the VM image), running as a WSL 2 distribution
+called "TinHatServer" on someone's Windows PC. windows/build-rootfs.sh made it from the sealed VM image and added
+only these files:
+
+  /etc/wsl.conf                       systemd on, root, own hostname, no Windows interop, no drive mounts
+  /etc/wsl-distribution.conf          no Start-menu shortcut or Terminal profile
+  /etc/fstab                          empty (WSL mounts the disk)
+  /etc/systemd/system/*.d/90-tinhat-wsl.conf
+                                      keep VM-only units off under WSL: grow-root, the guest agent, networkd, the
+                                      consoles (the setup-code banner), GRUB's boot record
+  /etc/systemd/system/tinhat-wsl-boot.service + /usr/local/lib/tinhat-wsl/boot
+                                      first start: mask those units for good, hold kernel/boot-loader packages;
+                                      every start: set the server's name (WSL resets it)
+  /etc/apt/apt.conf.d/52tinhat-wsl   automatic updates leave kernel and boot-loader packages alone
+  /usr/local/lib/tinhat-wsl/hold      what TinHatServer.exe runs to keep the distribution alive
+  /usr/local/lib/tinhat-wsl/ctl       status / setup-code / recovery-code / wait-ready / stop / host-disk, for the
+                                      Windows side (host-disk: the real free space of the PC's drive, in
+                                      /run/tinhat-wsl/host-disk.json)
+
+Networking: WSL's mirrored mode gives the server the PC's own network address; the installer adds Hyper-V
+firewall rules (private networks only) so other devices at home can reach it.

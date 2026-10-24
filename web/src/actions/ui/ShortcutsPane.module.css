@@ -1,0 +1,101 @@
+/* ShortcutsPane.module.css — Settings → Shortcuts: since 2026-09-29 the Settings window's cards of rows
+   (features/settings/rows.tsx; glyph 16, label + clash lines, key chips, ↺, Change…); a key chip is a 22 px rounded
+   box in the mono font; the recorder dialog is 440 wide with a 64 px capture box. Colours: the dialog's tokens, the
+   surface roles and state.warning for a clash (the web uses the same roles as the desktop). */
+.search {
+  width: 100%;
+  min-width: 0;
+}
+.clash {
+  display: block;
+  color: var(--th-state-warning);
+}
+.keys {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  max-width: 45%;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 5px;
+  border: 1px solid var(--th-dialog-border);
+  background: var(--th-surface-sunken);
+  color: var(--th-dialog-fg);
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-size-small);
+  white-space: nowrap;
+}
+.chipClash {
+  border-color: var(--th-state-warning);
+}
+.browserMark {
+  color: var(--th-dialog-hint-fg);
+}
+.none {
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+}
+.undoGap {
+  flex: none;
+  width: 30px;
+}
+/* a long list: compact rows (the settings row's 14 px padding → 8, min height 48) and a 30 px ↺ */
+.item.item {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  min-height: 48px;
+}
+.undo.undo {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+}
+.recBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.recBox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 64px;
+  border-radius: 8px;
+  border: 1px solid var(--th-dialog-border);
+  background: var(--th-surface-sunken);
+  outline: none;
+}
+.recBox:focus-visible,
+.recBox:focus {
+  border-color: var(--th-border-focus);
+}
+.recHint {
+  color: var(--th-dialog-hint-fg);
+}
+.recKey {
+  color: var(--th-dialog-fg);
+  font-family: var(--th-font-mono);
+  font-size: var(--th-font-h4);
+  font-weight: 700;
+}
+.recKeyBad {
+  color: var(--th-dialog-error-fg);
+}
+.recError {
+  color: var(--th-dialog-error-fg);
+  font-size: var(--th-font-size-small);
+}
+.recClash {
+  color: var(--th-state-warning);
+  font-size: var(--th-font-size-small);
+}
+.recDefault {
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+}

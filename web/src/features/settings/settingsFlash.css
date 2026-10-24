@@ -1,0 +1,20 @@
+/* settingsFlash.css — the Settings window's search jump (SETTINGS-WINDOW.md §4): the row a result opened flashes
+   settings.row.bg.highlight and fades out over 1.2 s. Global on purpose: any [data-setting] anchor can be the target
+   (rows, the Customize… button, the About header), and a CSS-module keyframe name would not reach a :global rule.
+   With Reduce motion (or an unfocused window, where every CSS animation snaps — tokens.css) SettingsWindow uses the
+   static class instead and removes it after 1.2 s: no fade. */
+[data-setting].th-flash {
+  animation: th-settings-row-flash 1200ms ease-out forwards;
+}
+@keyframes th-settings-row-flash {
+  0%,
+  25% {
+    background-color: var(--th-settings-row-bg-highlight);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+[data-setting].th-flash-static {
+  background-color: var(--th-settings-row-bg-highlight);
+}

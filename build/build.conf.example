@@ -1,0 +1,22 @@
+# build/build.local.conf — this Proxmox VE host's settings for build.sh (copy this file; build.local.conf stays out of git).
+# The host also needs zerofree (apt install zerofree): build.sh seal zeroes the sealed disk's free blocks with it.
+# The build VM gets a static address on BUILD_BRIDGE with internet access (it installs Debian packages and pulls the
+# container images), only while it's being built.
+BUILD_IP_AMD64=192.168.1.199      # the amd64 build VM's address
+BUILD_IP_ARM64=192.168.1.198      # the arm64 build VM's address (ARCH=arm64)
+BUILD_GATEWAY=192.168.1.1
+#BUILD_DNS=192.168.1.1            # default: the gateway
+#BUILD_PREFIX=24
+#BUILD_BRIDGE=vmbr0
+#BUILD_STORAGE=local-zfs
+#BUILD_VMID_AMD64=9190            # build.sh only ever destroys a VM with this id when it's named tinhat-build
+#BUILD_VMID_ARM64=9191
+#BUILD_BASE_DIR=/var/lib/vz/template/cloud   # holds debian-13-generic-amd64.qcow2 (and -arm64) from cloud.debian.org
+
+# Tin Hat Web, self-host flavor: a checkout of the web app; `build.sh web` builds it into $WEB_DIR/tmp/selfhost-dist.
+WEB_DIR=/path/to/tinhat-web
+# Optional: run commands in the checkout some other way (a container, another user):
+#web_run() { (cd "$WEB_DIR" && "$@"); }
+
+# release.sh: the signing key (minisign). Never commit it.
+#TINHAT_RELEASE_KEY=/path/to/minisign.key
