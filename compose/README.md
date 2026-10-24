@@ -21,7 +21,8 @@ computer or phone on the same network and follow the steps. Later: `docker exec 
   paths unchanged; not tested yet.
 - This machine's ports **80, 443, TCP 7881 and UDP 7882** — or, if your own reverse proxy on **this** machine (or in
   a container on it: Nginx Proxy Manager, Traefik, Caddy) keeps 80 and 443, set `TINHAT_BEHIND_PROXY=1` in `.env`
-  (see `.env.example` and REVERSE-PROXY.md): setup then answers on port 8080. A proxy on another computer doesn't
+  (every setting is described in [`.env.example`](.env.example), which each release also carries as
+  `default.env.example`; see REVERSE-PROXY.md too): setup then answers on port 8080. A proxy on another computer doesn't
   need it: leave it out and choose My own domain → My own reverse proxy at setup (Tin Hat's parts check sign-ins at
   your domain, which then has to lead to a proxy on this machine — or, without the setting, to Tin Hat itself).
 - Folders `/var/lib/tinhat` (your server: accounts, messages, files, keys) and `/opt/tinhat` (the installed release).
