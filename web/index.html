@@ -17,6 +17,11 @@
       // Before any bundle: the theme shown last (pref "theme", the theme store's mirror) so the first paint is already
       // right — the built-ins through the generated rules below; any other theme from the boot variables the runtime
       // cached for it (pref "theme-boot" = {id, variant, vars}, ui/themes.ts).
+      // An iPhone/iPad Home Screen app: tokens.css "iOS Home Screen app" + core/device.ts keyboardInset() keep the page
+      // screen-tall and its text clear of the system's fade under the clock (iOS 26/27).
+      try {
+        if (navigator.standalone === true) document.documentElement.setAttribute("data-ios-pwa", "");
+      } catch (e) {}
       try {
         var t = localStorage.getItem("tinhat.pref.theme");
         var de = document.documentElement;

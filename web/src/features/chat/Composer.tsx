@@ -197,7 +197,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const focus = useCallback(() => {
     const el = field.current;
     if (!el) return;
-    el.focus();
+    el.focus({ preventScroll: true }); // the composer is always on screen; on iOS a scroll here pans the page (App)
     const n = el.value.length;
     el.setSelectionRange(n, n);
   }, []);
@@ -219,7 +219,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const v = el.value.slice(0, a) + t + el.value.slice(b);
     // write the DOM at once (keys typed before React re-renders must not be clobbered)
     el.value = v;
-    el.focus();
+    el.focus({ preventScroll: true });
     el.setSelectionRange(a + t.length, a + t.length);
     setText(v);
   }, []);
@@ -282,7 +282,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (it.mention && !it.mention.room) picked.current.push({ name: it.mention.name, userId: it.mention.userId });
     const pos = pp.start + ins.length;
     el.value = v;
-    el.focus();
+    el.focus({ preventScroll: true });
     el.setSelectionRange(pos, pos);
     setText(v);
     setPopup(null);
