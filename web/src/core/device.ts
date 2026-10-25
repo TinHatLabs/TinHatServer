@@ -114,6 +114,17 @@ export function useIsTouch(): boolean {
   );
 }
 
+/** How much of the page the on-screen keyboard covers, in px (App mirrors it into --th-vv-bottom). Browsers keep the
+ *  layout viewport and shrink the visual one: the covered part is below the visual viewport. An iPhone/iPad Home
+ *  Screen app (<html data-ios-pwa>) shrinks both and pans the screen-tall body instead (tokens.css): the covered
+ *  part is the body's height minus what is visible. A pinch-zoom is not a keyboard there. */
+export function keyboardInset(vv: VisualViewport): number {
+  if (document.documentElement.hasAttribute("data-ios-pwa")) {
+    return vv.scale > 1.01 ? 0 : Math.max(0, Math.round(document.body.offsetHeight - vv.height));
+  }
+  return Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+}
+
 /** Non-React subscription (fires when the form factor or touch capability changes). */
 export function onFormFactorChange(cb: () => void): () => void {
   return subscribe(cb);

@@ -1852,6 +1852,29 @@ body {
   overscroll-behavior: none;
 }
 
+/* ---- iPhone/iPad Home Screen app (index.html sets data-ios-pwa; measured on iOS 27.0.1, 2026-10-25) ----------
+   1. iOS hands a Home Screen app a viewport one status bar SHORTER than the screen (894 of 956 pt on a 440-pt
+      iPhone) and clips the page there: a dead band at the bottom. A page taller than that short viewport gets the
+      whole screen back, so the page is the screen's height (100lvh) and the body is pinned over it.
+   2. With the keyboard up iOS pans the page instead of resizing it; App moves the body back by that pan, measured
+      from where the body really is (--th-vv-top), and --th-vv-bottom = what the keyboard covers
+      (core/device.ts keyboardInset), so everything that already sits above the keyboard keeps doing so.
+   3. iOS fades the page into the clock about half a status bar below the safe area it reports (to ~95 pt on that
+      iPhone): text placed right under the safe area came out smeared. A quarter of a status bar more keeps titles
+      clear of the strong part (1.4 looked "overly safe"). Backgrounds still reach the top edge. */
+:root[data-ios-pwa] {
+  height: 100lvh;
+  --th-safe-top: calc(env(safe-area-inset-top, 0px) * 1.25);
+}
+:root[data-ios-pwa] body {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100lvh;
+  transform: translateY(var(--th-vv-top, 0px));
+}
+
 button,
 input,
 textarea,

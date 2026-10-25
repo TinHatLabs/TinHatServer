@@ -2,6 +2,7 @@
 // popover) centre on the WINDOW like a Qt Dialog/Popup parented to it (SSW:…) instead of on the page.
 // Phones: the window is a full-screen sheet → nothing to do.
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { keyboardInset } from "@/core/device";
 import type { Rect } from "@/ui";
 
 let winEl: HTMLElement | null = null;
@@ -33,14 +34,14 @@ export function useCenterOnWindow(open: boolean): CSSProperties | undefined {
 
 /** Phones: is the on-screen keyboard up? (visualViewport shorter than the layout viewport by > 120 px —
  *  iOS keeps innerHeight when the keyboard opens; Android with interactive-widget=resizes-content shrinks
- *  both, so this stays false there and nothing needs to move.) */
+ *  both, so this stays false there and nothing needs to move; an iOS Home Screen app: see keyboardInset.) */
 export function useKeyboardUp(enabled: boolean): boolean {
   const [up, setUp] = useState(false);
   useLayoutEffect(() => {
     const vv = window.visualViewport;
     if (!enabled || !vv) return setUp(false);
     // a pinch-zoom shrinks the visual viewport too — only an unzoomed one counts as "keyboard"
-    const on = () => setUp(vv.scale < 1.01 && window.innerHeight - vv.height - vv.offsetTop > 120);
+    const on = () => setUp(vv.scale < 1.01 && keyboardInset(vv) > 120);
     on();
     vv.addEventListener("resize", on);
     return () => vv.removeEventListener("resize", on);
