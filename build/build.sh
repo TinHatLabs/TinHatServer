@@ -22,6 +22,11 @@
 # sealed image uses DHCP.
 # ARCH=arm64 build.sh …   the same for Apple silicon Macs (UTM, Parallels, VMware Fusion) and other ARM machines
 #                         (emulated on an x86 host, so everything takes several times longer).
+# REUSE_IMAGES_FROM=DIR build.sh …   our own images (tinhat/api, tinhat/caddy) unchanged since the release in DIR (its
+#                         out/github/vX.Y.Z/): the VM loads those exact images instead of building new ones (the API
+#                         tagged with this version; a tag doesn't change an image's id), so servers on that release
+#                         already have every image this one names and download only the bundle (0.3.2: a 0.3.0/0.3.1
+#                         server can't fetch an image from GitHub at all). Only when api/ and build/caddy didn't change.
 set -euo pipefail
 HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 web_run() { (cd "$WEB_DIR" && "$@"); }  # runs a command in the Tin Hat Web checkout; build.local.conf may replace it
@@ -113,6 +118,20 @@ stage() {
   cp -a "$HERE/api/Dockerfile" "$HERE/api/tinhat-api" "$HERE/api/games" "$P/rootfs/opt/tinhat/build/api/"
   rm -rf "$P/rootfs/opt/tinhat/build/api/tinhat-api/test" "$P/rootfs/opt/tinhat/build/api/tinhat-api/node_modules" "$P/rootfs/opt/tinhat/build/api/games/node_modules"
   install -m 0644 "$HERE/api/guest/index.html" "$P/web/call/"
+  # REUSE_IMAGES_FROM (see the top): this processor's tarball of each of our images from that release, exactly one each
+  if [ -n "${REUSE_IMAGES_FROM:-}" ]; then
+    mkdir -p "$P/reuse"
+    local name f sfx=""
+    [ "$ARCH" = arm64 ] && sfx="-arm64"
+    for name in api caddy; do
+      f=$(find "$REUSE_IMAGES_FROM" -maxdepth 1 -regextype posix-extended -regex ".*/tinhat-$name-[0-9a-f]{12}$sfx\.tar\.gz" -print)
+      [ -n "$f" ] && [ "$(printf '%s\n' "$f" | wc -l)" = 1 ] || { echo "REUSE_IMAGES_FROM: not exactly one tinhat-$name-<id>$sfx.tar.gz in $REUSE_IMAGES_FROM" >&2; exit 1; }
+      cp "$f" "$P/reuse/tinhat-$name.tar.gz"
+      # the id its name carries (release.sh names each tarball by the image's id): provision.sh checks the loaded image
+      basename "$f" | sed -E "s/^tinhat-$name-([0-9a-f]{12}).*/\1/" > "$P/reuse/tinhat-$name.id"
+      echo "reusing $(basename "$f") as tinhat/$name"
+    done
+  fi
   local hash
   hash=$(web_run git rev-parse --short=8 HEAD | tr -d '\r')
   local ver

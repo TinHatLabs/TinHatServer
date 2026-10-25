@@ -35,15 +35,44 @@ step "container images (baked in, so first boot needs no internet)"
 # move to 198.18.0.0/15, away from home networks, and LiveKit leaves that range out of its call addresses).
 systemctl enable docker
 systemctl restart docker
+# build.sh REUSE_IMAGES_FROM: an earlier release's exact image instead of a new build (same id: servers on that release
+# already have it). Prints the loaded reference, or nothing when there's no tarball for NAME.
+load_reused() {
+  [ -f "$P/reuse/tinhat-$1.tar.gz" ] || return 0
+  local ref id arch got
+  ref=$(docker load -q -i "$P/reuse/tinhat-$1.tar.gz" | sed -n 's/^Loaded image: //p' | head -1)
+  id=$(cat "$P/reuse/tinhat-$1.id") arch=$(dpkg --print-architecture)
+  got=$(docker image inspect -f '{{.Id}} {{.Architecture}}' "$ref" 2>/dev/null) || got=""
+  # the very image that release shipped, for this processor (its id begins with what the file's name says)
+  case "$id" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    *) echo "reused tinhat-$1: no image id in its name" >&2; exit 1 ;; esac
+  case "$got" in
+    "sha256:$id"*" $arch") echo "$ref" ;;
+    *) echo "reused tinhat-$1: loaded '$ref' = '$got', expected sha256:$id… $arch" >&2; exit 1 ;;
+  esac
+}
 # Our own Caddy (stock + DNS modules) is built here; everything else is pulled at its pinned tag.
-docker build -q -t tinhat/caddy:2.10.2-dns /opt/tinhat/build/caddy
+CADDY_REF=$(load_reused caddy)
+if [ -n "$CADDY_REF" ]; then
+  [ "$CADDY_REF" = tinhat/caddy:2.10.2-dns ] || docker tag "$CADDY_REF" tinhat/caddy:2.10.2-dns
+  echo "caddy: reused $CADDY_REF ($(docker image inspect -f '{{.Id}}' tinhat/caddy:2.10.2-dns))"
+else
+  docker build -q -t tinhat/caddy:2.10.2-dns /opt/tinhat/build/caddy
+fi
 for m in acmedns cloudflare porkbun desec duckdns; do
   docker run --rm tinhat/caddy:2.10.2-dns caddy list-modules | grep -q "^dns.providers.$m\$" || { echo "caddy is missing dns.providers.$m" >&2; exit 1; }
 done
 docker image rm -f caddy:2.10.2-builder >/dev/null 2>&1 || true
 # The Tin Hat API (api/ in the repository: the soundboard, GIFs, presence, push, game servers, the games catalogue).
 API_TAG="tinhat/api:$(cat "$P/VERSION")"
-docker build -q -t "$API_TAG" /opt/tinhat/build/api
+API_REF=$(load_reused api)
+if [ -n "$API_REF" ]; then
+  docker tag "$API_REF" "$API_TAG"
+  [ "$API_REF" = "$API_TAG" ] || docker image rm "$API_REF" >/dev/null  # the old tag only: the image stays as $API_TAG
+  echo "api: reused $API_REF as $API_TAG ($(docker image inspect -f '{{.Id}}' "$API_TAG"))"
+else
+  docker build -q -t "$API_TAG" /opt/tinhat/build/api
+fi
 docker run --rm "$API_TAG" node -e 'import("express").then(() => console.log("api image: express ok"))'
 docker run --rm "$API_TAG" python3 -c 'import urllib.request; print("api image: python ok")'
 docker run --rm "$API_TAG" ffmpeg -version | head -1

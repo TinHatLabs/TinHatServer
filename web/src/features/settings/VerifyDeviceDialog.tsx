@@ -28,6 +28,7 @@ import {
   SAS_START_BUTTON,
   setUpRecovery,
   startDeviceVerification,
+  startOver,
   startSasComparison,
   useCryptoStatus,
   useSession,
@@ -36,6 +37,7 @@ import {
 import { bus, toast, useBus } from "@/core/bus";
 import { isGuestAccount } from "@/core/server";
 import { keyFirst } from "@/core/matrix/moved";
+import { START_OVER } from "@/core/matrix/startOver";
 import { FirstKeyDialog } from "@/features/selfhost/FirstKeyDialog";
 import { BasicButton, BasicCheckBox, BasicTextField, BusyIndicator, Button, Dialog, Icon, TextArea, cx, useIsMobile } from "@/ui";
 import s from "./dialogs.module.css";
@@ -107,8 +109,9 @@ export function VerifyDeviceHost() {
 
   // F2 the first device's new Security Key opens the dialog (?noverify too: the key is shown once, never skipped)
   useEffect(() => {
-    if (v.firstDevice && v.sasState === "recovery-done" && !ui.open) vset({ open: true });
-  }, [v.firstDevice, v.sasState, ui.open]);
+    // (12.0.1: and any other new key — Start over's, Set up recovery's — if the dialog was closed meanwhile)
+    if ((v.firstDevice || !!v.recoveryKey) && v.sasState === "recovery-done" && !ui.open) vset({ open: true });
+  }, [v.firstDevice, v.recoveryKey, v.sasState, ui.open]);
 
   // SET-88 incoming self-verification opens the dialog
   useEffect(() => {
@@ -170,10 +173,15 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
   const [key, setKey] = useState("");
   const [pw, setPw] = useState("");
   const [saved, setSaved] = useState(false);
+  // 12.0.1: "Lost your Security Key? Start over" (crypto.ts startOver)
+  const [soOpen, setSoOpen] = useState(false);
+  const [soPw, setSoPw] = useState("");
   useEffect(() => {
     if (!open) {
       setKey("");
       setPw("");
+      setSoPw("");
+      setSoOpen(false);
       setSaved(false);
     }
   }, [open]);
@@ -284,6 +292,34 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
               onClick={() => void verifyKey()}
             />
             {ui.status && <span className={cx(s.text, !ui.busy && !/^Verified/.test(ui.status) && s.neg)}>{ui.status}</span>}
+            {/* 12.0.1: no Security Key and no other signed-in device — the way out (crypto.ts startOver; the desktop's
+                VerifyDeviceDialog.qml has the same panel and words). Before this such an account was stuck for good. */}
+            <BasicButton className={s.full} flat text={soOpen ? START_OVER.back : START_OVER.link} disabled={ui.busy} onClick={() => setSoOpen(!soOpen)} />
+            {soOpen && (
+              <div className={s.col4} data-start-over>
+                <span className={s.text}>
+                  <b>{START_OVER.title}</b>
+                </span>
+                <span className={s.dim}>{START_OVER.hint}</span>
+                <BasicTextField
+                  className={s.full}
+                  type="password"
+                  autoComplete="current-password"
+                  aria-label={START_OVER.placeholder}
+                  placeholder={START_OVER.placeholder}
+                  value={soPw}
+                  disabled={ui.busy}
+                  onChange={(e) => setSoPw(e.target.value)}
+                  onAccepted={() => soPw && void startOver(soPw)}
+                />
+                <BasicButton className={s.full} text={START_OVER.button} disabled={ui.busy || !soPw} onClick={() => void startOver(soPw)} />
+                {v.startOverNote && (
+                  <span className={cx(s.text, s.neg)} data-start-over-note>
+                    {v.startOverNote}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
         {(st === "waiting" || st === "confirming") && (

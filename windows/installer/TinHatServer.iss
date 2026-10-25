@@ -136,6 +136,7 @@ var
   ChoicePage, UninstallPage: TWizardPage;
   InstallButton, RepairButton, UninstallButton: TNewButton;
   KeepDataCheck: TNewCheckBox;
+  KeepDataText: TNewStaticText;
   UninstallText: TNewStaticText;
 
 function IsUninstallMode: Boolean;
@@ -562,9 +563,20 @@ begin
   KeepDataCheck.Parent := UninstallPage.Surface;
   KeepDataCheck.Top := UninstallText.Top + UninstallText.Height + ScaleY(12);
   KeepDataCheck.Width := UninstallPage.SurfaceWidth;
-  KeepDataCheck.Height := ScaleY(36);
-  KeepDataCheck.Caption := 'Keep my server''s data (accounts, rooms and messages) on this PC, so installing Tin Hat Server again can bring it back';
+  KeepDataCheck.Height := ScaleY(20);
+  // A checkbox caption is one line (no word wrap): a long one was cut off at the page's edge (0.3.1). Short caption,
+  // the rest as wrapped text under it.
+  KeepDataCheck.Caption := 'Keep my server''s data on this PC';
   KeepDataCheck.Checked := ExpandConstant('{param:REMOVEDATA|0}') <> '1';
+  KeepDataText := TNewStaticText.Create(UninstallPage);
+  KeepDataText.Parent := UninstallPage.Surface;
+  KeepDataText.AutoSize := False;
+  KeepDataText.WordWrap := True;
+  KeepDataText.Left := ScaleX(18);
+  KeepDataText.Top := KeepDataCheck.Top + KeepDataCheck.Height + ScaleY(2);
+  KeepDataText.Width := UninstallPage.SurfaceWidth - ScaleX(18);
+  KeepDataText.Height := ScaleY(32);
+  KeepDataText.Caption := 'Accounts, rooms and messages stay here, so installing Tin Hat Server again can bring them back.';
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

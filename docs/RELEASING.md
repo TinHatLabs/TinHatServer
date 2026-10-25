@@ -10,12 +10,23 @@ refused, and the newest *signed* version among the sources wins.
   `https://github.com/TinHatLabs/TinHatServer/releases/latest/download/stable.json https://updates.tinhat.dev/server/stable.json`.
   `latest` is the newest release that isn't a prerelease. GitHub answers with two redirects (to the tag, then to a
   short-lived signed URL on release-assets.githubusercontent.com); servers and install.sh follow them.
-- The manifest names its files by URLs pinned to the tag (`…/releases/download/vX.Y.Z/…`), so a release that lands
-  mid-update can't swap a file under a server. A signature that fails because "latest" moved between the two
-  requests is fetched once more.
-- The mirror normally holds only `stable.json`, its `.minisig`, `install.sh` and its `.minisig` (the manifest points
-  at GitHub). If GitHub ever goes away: `release.sh VERSION` without `--github` writes a manifest with relative
-  names, and the mirror carries the files too. Servers keep updating without a change on their side.
+- The manifest names our images by URLs pinned to the tag (`…/releases/download/vX.Y.Z/…`) and, since 0.3.2, the
+  update bundle by its bare name, relative to wherever the server read the manifest: GitHub (the tag, or
+  `releases/latest/download/`) or the mirror. The bundle's name carries its version and the manifest its sha256, so
+  a release that lands mid-update can't swap a file under a server. A signature that fails because "latest" moved
+  between the two requests is fetched once more.
+- The mirror holds `stable.json`, its `.minisig`, `install.sh`, its `.minisig` and the bundle (~14 MB; its static
+  host takes files up to 25 MiB, which release.sh checks). Why the bundle: servers before 0.3.2 couldn't read
+  GitHub at all (GitHub's release downloads send a ~9.2 KB header, over aiohttp's default 8190), so they update from
+  the mirror alone; a newer server reads both and prefers GitHub on a tie. If GitHub ever goes away: `release.sh
+  VERSION` without `--github` writes a manifest with relative names for every file, and the mirror carries them all.
+- Our images (tinhat/api, tinhat/caddy) come from GitHub only for a server that lacks one (by id). A release that
+  doesn't change `api/` or `build/caddy` builds with `REUSE_IMAGES_FROM=out/github/vPREVIOUS` (and the same with
+  `ARCH=arm64`): the VM loads that release's exact images (the API tagged with the new version), so servers download
+  only the bundle — the only way a 0.3.0/0.3.1 server can take an update on a day GitHub's header is too big for it.
+  provision.sh checks each reused image's id (from its file name) and processor; only reuse when `git diff
+  vPREVIOUS -- api appliance/rootfs/opt/tinhat/build` is empty. Servers whose Docker names loaded images its own way
+  (the containerd store: install.sh on Docker 29+) don't find the ids and still fetch the images from GitHub.
 
 ## One-time setup
 1. The repository (github.com/TinHatLabs/TinHatServer), and `gh auth login` on the machine that publishes.
@@ -29,7 +40,8 @@ refused, and the newest *signed* version among the sources wins.
 
 ## Each release
 1. `build/bump.sh X.Y.Z` (the version is written in appliance/VERSION and in compose.yaml's tinhat/api images;
-   build.sh refuses to start while they disagree). Build: `build/build.sh all` (and `ARCH=arm64 build/build.sh all`), the Windows installer
+   build.sh refuses to start while they disagree). Build: `build/build.sh all` (and `ARCH=arm64 build/build.sh all`;
+   with `REUSE_IMAGES_FROM=…` when our images didn't change, see above), the Windows installer
    (`windows/build-windows.sh`). Commit, tag `vX.Y.Z`, push the code and the tag.
 2. `TINHAT_RELEASE_KEY=/path/tinhat-release.key build/release.sh X.Y.Z --github TinHatLabs/TinHatServer --prerelease --publish
    --note "What changed, in the owner's words"` (`--security` for a fix servers should install the next night,
@@ -64,8 +76,10 @@ refused, and the newest *signed* version among the sources wins.
    with `--channel`, the latest's use plain `install.sh`). The Compose workflow built `:X.Y.Z` once when the release
    was published; `latest` moves only by hand, after that image was tried: `gh workflow run compose-image.yml -f
    tag=vX.Y.Z -f action=promote -f digest=sha256:…` (it refuses unless vX.Y.Z is GitHub's latest release now and the
-   version tag still is that digest). Then **copy** `stable.json`, `stable.json.minisig`, `install.sh`, `install.sh.minisig` from
-   `out/github/vX.Y.Z/` to the mirror (the site repo's `public/server/`): the very files GitHub has, never regenerated.
+   version tag still is that digest). Then **copy** `stable.json`, `stable.json.minisig`, `install.sh`, `install.sh.minisig` and
+   `tinhat-server-X.Y.Z.update.tar.gz` from `out/github/vX.Y.Z/` to the mirror (the site repo's `public/server/`;
+   `release.sh … --mirror DIR` does it, keeping the newest three bundles): the very files GitHub has, never
+   regenerated.
    Not before: the mirror's signed manifest counts for servers whatever GitHub's pre-release flag says.
 5. The download page (tinhat.dev) follows: its version chips and "What's new" read the release; check the copy too.
 

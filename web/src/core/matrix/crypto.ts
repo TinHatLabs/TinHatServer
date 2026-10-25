@@ -28,6 +28,7 @@ import {
   type Verifier,
 } from "matrix-js-sdk/lib/crypto-api/index.js";
 import { onClientChanged, peekClient, secretStorageKeyCache } from "./client";
+import { afterFirstTry, afterSecondTry, NOT_ASKED, START_OVER, stopNote, type StartOverStop } from "./startOver";
 import {
   FIRST_DEVICE_MAX_WAIT_MS,
   FIRST_DEVICE_NOTE,
@@ -430,6 +431,10 @@ export async function restoreFromSecurityKey(
   if (!securityKey.trim()) throw new Error("Verification failed: enter your Security Key");
   try {
     const { keyId, key } = await keyFromInput(client, securityKey);
+    // The account's identity as the server has it NOW (a fresh keys query for our own user). Right after a sign-in this
+    // device may not have fetched it yet, and importing the keys from secret storage then failed with
+    // "importCrossSigningKeys failed" — a key pasted the moment the sign-in finished (start-over-gate, 2026-10-25).
+    await crypto.userHasCrossSigningKeys(client.getSafeUserId(), true);
     await withSecretStorageKey(keyId, key, async () => {
       await crypto.bootstrapCrossSigning({});
       try {
@@ -491,6 +496,9 @@ export interface VerificationInfo {
   sasCanStart: boolean;
   /** F2: the recovery-done screen is the first device's new Security Key (title FIRST_DEVICE_TITLE). */
   firstDevice: boolean;
+  /** "Lost your Security Key? Start over" stopped before anything changed: why ("" = nothing to say). Desktop twin:
+   *  the `startOverNote` qproperty. */
+  startOverNote: string;
 }
 
 const IDLE: VerificationInfo = {
@@ -503,6 +511,7 @@ const IDLE: VerificationInfo = {
   recoveryKey: "",
   sasCanStart: false,
   firstDevice: false,
+  startOverNote: "",
 };
 
 export const useVerificationStore = create<VerificationInfo>()(() => IDLE);
@@ -1174,6 +1183,93 @@ function passwordUia(client: MatrixClient, password: string) {
       });
     }
   };
+}
+
+/** The account password, asked with a request that changes nothing (startOver.ts: deleting an empty list of devices
+ *  asks for it and deletes nothing). null = it's right. */
+async function checkPassword(client: MatrixClient, password: string): Promise<StartOverStop | null> {
+  let session: string | undefined;
+  try {
+    await client.deleteMultipleDevices([]);
+    // the server didn't ask ("recently signed in"): it can't confirm the password, so stop (Astra review 2)
+    return { kind: "before", error: NOT_ASKED };
+  } catch (e) {
+    const first = afterFirstTry(e);
+    if (!("ask" in first)) return first;
+    session = first.ask;
+  }
+  try {
+    await client.deleteMultipleDevices([], {
+      type: "m.login.password",
+      identifier: { type: "m.id.user", user: client.getSafeUserId() },
+      password,
+      session,
+    } as never);
+    return null;
+  } catch (e) {
+    return afterSecondTry(e);
+  }
+}
+
+/**
+ * "Lost your Security Key? Start over" (2026-10-25; desktop start_over.rs, same steps and words): for someone with no
+ * Security Key and no other signed-in device. The password first (startOver.ts; a wrong one changes nothing), then
+ * the SDK's reset and a new secret storage, whose Security Key lands in `recoveryKey` ONCE. Any stop leaves the dialog
+ * on the Security Key page with `startOverNote` (after the check: "didn't finish", safe to run again).
+ * One run at a time; a result for a client that has gone meanwhile is dropped.
+ */
+let startOverRunning = false;
+export async function startOver(password: string): Promise<void> {
+  const client = peekClient();
+  const crypto = client?.getCrypto();
+  if (!client || !crypto || startOverRunning) return;
+  if (!password) {
+    vset({ startOverNote: START_OVER.empty });
+    return;
+  }
+  startOverRunning = true;
+  const live = () => peekClient() === client;
+  const stopped = (stop: StartOverStop) => {
+    log.info(`[start-over] stopped: ${stop.kind}`);
+    if (live()) vset({ sasState: "", sasNote: "", startOverNote: stopNote(stop) });
+  };
+  vset({ startOverNote: "", sasState: "recovery-working", sasNote: START_OVER.working });
+  try {
+    // 1. the password (nothing changes)
+    let stop: StartOverStop | null;
+    try {
+      stop = await checkPassword(client, password);
+    } catch (e) {
+      stop = { kind: "before", error: (e as Error)?.message ?? String(e) };
+    }
+    if (stop) return stopped(stop);
+    // 2. the reset (old backup + secret storage go, a new identity published with the password, a new key backup), then
+    // a new secret storage holding the new identity and the new backup's key (no second backup: Astra 5). After the
+    // check above anything that stops this is "didn't finish" — running Start over again completes it.
+    try {
+      await crypto.resetEncryption(passwordUia(client, password) as never);
+      if (!live()) return;
+      let generated: GeneratedSecretStorageKey | null = null;
+      await crypto.bootstrapSecretStorage({
+        createSecretStorageKey: async () => (generated = await crypto.createRecoveryKeyFromPassphrase()),
+        setupNewSecretStorage: true,
+      });
+      await crypto.checkKeyBackupAndEnable();
+      const key = (generated as GeneratedSecretStorageKey | null)?.encodedPrivateKey ?? "";
+      if (!key) throw new Error("no key was made");
+      const verified = await isDeviceVerified(client);
+      log.info(`[start-over] done; device_verified=${verified}`);
+      if (!live()) return;
+      vset({ recoveryKey: key, sasState: "recovery-done", sasNote: START_OVER.done });
+      void refreshCryptoStatus(0);
+    } catch (e) {
+      log.warn("[start-over] didn't finish", e);
+      return stopped({ kind: "after", error: (e as Error)?.message ?? String(e) });
+    }
+  } finally {
+    startOverRunning = false;
+    if (live()) secretStorageKeyCache.clear();
+  }
 }
 
 /**

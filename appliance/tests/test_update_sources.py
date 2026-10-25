@@ -18,11 +18,12 @@ GH = "https://github.com/OWNER/REPO/releases/latest/download/stable.json"
 MIRROR = "https://updates.tinhat.dev/server/stable.json"
 STORE = {}
 ENV = {"updates_url": f"{GH} {MIRROR}"}
+SESSIONS = []  # the keyword arguments every ClientSession was opened with
 
 
 class Session:
-    def __init__(self, **_):
-        pass
+    def __init__(self, **kw):
+        SESSIONS.append(kw)
 
     async def __aenter__(self):
         return self
@@ -158,6 +159,44 @@ class Sources(unittest.TestCase):
         channel({GH: [(release("0.2.13"), True)], MIRROR: [(release("0.2.12"), True)]})
         st = self.run_check()
         self.assertEqual(st["phase"], "current")
+
+    def test_github_sized_headers(self):
+        """0.3.2: GitHub's release downloads carry a ~9.2 KB header; the check (and the download, same helper) opens its
+        session with room for it (aiohttp's default 8190 refused every GitHub answer in 0.3.0/0.3.1)."""
+        SESSIONS.clear()
+        channel({GH: [(release("0.3.0"), True)]})
+        self.run_check()
+        self.assertTrue(SESSIONS)
+        self.assertGreaterEqual(SESSIONS[-1].get("max_line_size", 0), 32768)
+        self.assertGreaterEqual(SESSIONS[-1].get("max_field_size", 0), 32768)
+
+    def test_latest_is_pinned_to_its_tag(self):
+        """A manifest from GitHub's moving `latest` keeps its tag as the base for the (nightly) download; the mirror
+        keeps its own address."""
+        channel({GH: [(release("0.3.2"), True)]})
+        ENV["updates_url"] = GH
+        self.run_check()
+        saved = STORE[str(updates.MANIFEST)]
+        self.assertEqual(saved["url"], GH)
+        self.assertEqual(saved["base"], "https://github.com/OWNER/REPO/releases/download/v0.3.2/stable.json")
+        channel({MIRROR: [(release("0.3.2"), True)]})
+        ENV["updates_url"] = MIRROR
+        self.run_check()
+        self.assertEqual(STORE[str(updates.MANIFEST)]["base"], MIRROR)
+        self.assertEqual(updates.pinned("https://github.com/O/R/releases/download/v0.3.1/stable.json", "0.3.2"),
+                         "https://github.com/O/R/releases/download/v0.3.1/stable.json")
+        self.assertEqual(updates.pinned("https://example.org/releases/latest/download/stable.json", "0.3.2"),
+                         "https://example.org/releases/latest/download/stable.json")
+
+    def test_bundle_relative_to_where_the_manifest_came_from(self):
+        """0.3.2: release.sh names the bundle relative to the manifest, so a server that could only read the mirror (a
+        0.3.1 server, see above) downloads it from the mirror too; one from GitHub, from that release."""
+        from urllib.parse import urljoin
+        name = "tinhat-server-0.3.2.update.tar.gz"
+        self.assertEqual(urljoin(MIRROR, name), "https://updates.tinhat.dev/server/" + name)
+        self.assertEqual(urljoin(GH, name), "https://github.com/OWNER/REPO/releases/latest/download/" + name)
+        self.assertEqual(urljoin("https://github.com/OWNER/REPO/releases/download/v0.3.2/stable.json", name),
+                         "https://github.com/OWNER/REPO/releases/download/v0.3.2/" + name)
 
 
 if __name__ == "__main__":

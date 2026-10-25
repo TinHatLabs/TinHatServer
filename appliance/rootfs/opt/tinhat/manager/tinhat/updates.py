@@ -38,6 +38,16 @@ JOB = DIR / "job.json"
 KEYS = Path(__file__).with_name("keys")
 NIGHT = (3, 5)  # installs start between 3 and 5 AM, the owner's time
 CHECK_EVERY = 24 * 3600
+# GitHub answers release downloads with a content-security-policy header of about 9.2 KB (seen 2026-10-24); aiohttp's
+# default limit is 8190 bytes per header line, so 0.3.0 and 0.3.1 never got a file from GitHub and kept updating only
+# through the mirror. 64 KiB leaves room.
+HEADER_LIMIT = 1 << 16
+IMAGE_MAX = 2 << 30  # an image of our own without a size in its manifest (before 0.3.2): ~300 MB today
+
+
+def _session(**timeout) -> aiohttp.ClientSession:
+    return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(**timeout), max_line_size=HEADER_LIMIT,
+                                 max_field_size=HEADER_LIMIT)
 
 
 # ---- versions, status ---------------------------------------------------------------------------------------------
@@ -107,10 +117,14 @@ async def _get(session: aiohttp.ClientSession, url: str, limit: int = 1 << 20) -
     async with session.get(url, ssl=environment.ssl_context()) as r:
         if r.status != 200:
             raise RuntimeError(f"{url}: HTTP {r.status}")
-        body = await r.content.read(limit + 1)
-        if len(body) > limit:
-            raise RuntimeError(f"{url}: too big")
-        return body
+        # read() returns what has arrived so far, not the whole body: read to the end (a manifest that came in two
+        # TLS records used to fail its signature check), never more than the limit
+        body = bytearray()
+        async for chunk in r.content.iter_chunked(1 << 16):
+            body += chunk
+            if len(body) > limit:
+                raise RuntimeError(f"{url}: too big")
+        return bytes(body)
 
 
 def channel_urls() -> list[str]:
@@ -121,6 +135,17 @@ def channel_urls() -> list[str]:
 
 class Unsigned(Exception):
     pass
+
+
+def pinned(url: str, version: str) -> str:
+    """Where a manifest's files are, for the download that may come hours later (at night). The manifest names the
+    bundle relative to itself (0.3.2), and GitHub's `latest` moves: by then it may be a newer release that lacks this
+    version's bundle. So a manifest read at …/releases/latest/download/ counts as read at its tag (release.sh tags every
+    release vVERSION). The mirror's and any other address stay as they are."""
+    pre, sep, name = url.partition("/releases/latest/download/")
+    if sep and pre.startswith("https://github.com/") and version and "/" not in name:
+        return f"{pre}/releases/download/v{version}/{name}"
+    return url
 
 
 async def _signed(session: aiohttp.ClientSession, url: str) -> dict:
@@ -140,7 +165,7 @@ async def _signed(session: aiohttp.ClientSession, url: str) -> dict:
 async def check() -> dict:
     """Ask the channel what's newest. Never downloads the bundle; only the small signed manifests."""
     found, unsigned = [], False
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s:
+    async with _session(total=30) as s:
         for u in channel_urls():
             try:
                 found.append((u, await _signed(s, u)))
@@ -166,7 +191,7 @@ async def check() -> dict:
     if m.get("min_from") and newer(m["min_from"], config.VERSION):
         return set_status(**base, phase="blocked", available=None,
                           message=f"Tin Hat Server {latest} can't be installed straight from {config.VERSION}.")
-    state.write_json(MANIFEST, {"url": url, "manifest": m}, 0o644)
+    state.write_json(MANIFEST, {"url": url, "base": pinned(url, latest), "manifest": m}, 0o644)
     if status().get("phase") == "staged" and (status().get("available") or {}).get("version") == latest:
         return set_status(**base)
     return set_status(**base, phase="available", available={
@@ -179,7 +204,7 @@ async def download() -> Path:
     saved = state.read_json(MANIFEST)
     if not saved:
         raise RuntimeError("No update to download.")
-    m, url = saved["manifest"], saved["url"]
+    m, url = saved["manifest"], saved.get("base") or saved["url"]  # a manifest saved by 0.3.1 has no base
     b = m["bundle"]
     ver = m["version"]
     dl = DIR / "download"
@@ -187,8 +212,11 @@ async def download() -> Path:
     target = dl / Path(b["url"]).name
     set_status(phase="downloading", message=None)
     h, size = hashlib.sha256(), 0
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=1800, sock_read=120)) as s:
+    async with _session(total=1800, sock_read=120) as s:
         async with s.get(urljoin(url, b["url"]), ssl=environment.ssl_context()) as r:
+            if r.status == 404:  # a newer release replaced it (the mirror keeps only the newest): check again soon
+                set_status(checked=0)
+                raise RuntimeError("bundle: no longer there (a newer release is out); checking again")
             if r.status != 200:
                 raise RuntimeError(f"bundle: HTTP {r.status}")
             with open(target, "wb") as f:
@@ -203,11 +231,21 @@ async def download() -> Path:
             if subprocess.run(["docker", "image", "inspect", img["id"]], capture_output=True).returncode == 0:
                 continue
             p = dl / Path(img["url"]).name
+            # streamed to disk and hashed on the way (an image is ~300 MB: it used to be held in memory twice), never
+            # more than the manifest's size (0.3.2+ manifests name it) or IMAGE_MAX
+            cap, ih, got = int(img.get("size") or IMAGE_MAX), hashlib.sha256(), 0
             async with s.get(urljoin(url, img["url"]), ssl=environment.ssl_context()) as r:
                 if r.status != 200:
                     raise RuntimeError(f"{ref}: HTTP {r.status}")
-                p.write_bytes(await r.read())
-            if hashlib.sha256(p.read_bytes()).hexdigest() != img["sha256"]:
+                with open(p, "wb") as f:
+                    async for chunk in r.content.iter_chunked(1 << 16):
+                        got += len(chunk)
+                        if got > cap:
+                            raise RuntimeError(f"{ref}: bigger than the manifest says")
+                        ih.update(chunk)
+                        f.write(chunk)
+            if ih.hexdigest() != img["sha256"] or (img.get("size") and got != int(img["size"])):
+                p.unlink(missing_ok=True)
                 raise RuntimeError(f"{ref}: checksum mismatch")
             extras.append(p)
     if size != int(b["size"]) or h.hexdigest() != b["sha256"]:

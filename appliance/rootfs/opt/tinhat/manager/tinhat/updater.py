@@ -150,6 +150,12 @@ def _local_id(lock: Path, ref: str, old: str, new: str) -> None:
                             for l in lock.read_text().splitlines()))
 
 
+def loaded_refs(out) -> set[str]:
+    """The tags `docker load` says it loaded ("Loaded image: repo:tag" per line)."""
+    text = out.decode(errors="replace") if isinstance(out, bytes) else (out or "")
+    return {l.split(":", 1)[1].strip() for l in text.splitlines() if l.startswith("Loaded image:")}
+
+
 def compose_images(compose: Path) -> set[str]:
     """The images a compose file runs (`image: repo:tag` lines)."""
     try:
@@ -167,20 +173,26 @@ def fetch_images(lock: Path, staged: Path) -> bool:
         if repo.startswith("tinhat/"):
             if not present(digest):
                 tars = sorted((staged / "images").glob("*.tar*")) if (staged / "images").exists() else []
+                loaded = set()
                 for t in tars:
-                    if sh("docker", "load", "-i", str(t), timeout=900).returncode != 0:
+                    r = sh("docker", "load", "-i", str(t), timeout=900, stdout=subprocess.PIPE)
+                    if r.returncode != 0:
                         say(f"  couldn't load {t.name}")
                         return False  # never fall back to whatever image happens to carry that tag
+                    loaded |= loaded_refs(r.stdout)
                 if not present(digest):
                     # A store that names images its own way: the tarball was checked against the signed manifest,
-                    # so the tag it brought is our image; note this machine's id for it.
-                    local = image_id(ref) if tars else None
+                    # so the tag it brought is our image; note this machine's id for it. Only a tag one of these
+                    # tarballs brought: an older image that merely carries the tag never counts (0.3.2).
+                    local = image_id(ref) if ref in loaded else None
                     if not local:
                         say(f"  missing our image {ref} ({digest[:19]})")
                         return False
                     _local_id(lock, ref, digest, local)
                     digest = local
-            sh("docker", "tag", digest, ref)
+            if sh("docker", "tag", digest, ref).returncode != 0:
+                say(f"  couldn't tag our image {ref}")
+                return False
             continue
         pinned = f"{repo}@{digest}"
         if not present(pinned) and _lab() and present(ref):

@@ -8,8 +8,11 @@
 #                                        releases come from filled in), signed too
 # Without --github everything lands in out/channel/, named relative to the manifest: a plain web folder (a test
 # channel, or a mirror that carries the files itself).
-# --github OWNER/REPO: the manifest names its files at https://github.com/OWNER/REPO/releases/download/vVERSION/…
-#   (pinned to this release: a newer "latest" can't swap a file under a server mid-update). out/github/vVERSION/ holds
+# --github OWNER/REPO: the manifest names our images at https://github.com/OWNER/REPO/releases/download/vVERSION/…
+#   (pinned to this release) and the bundle by its bare name, relative to wherever the server read the manifest (GitHub
+#   or the mirror; the name carries the version and the manifest its sha256, so nothing can be swapped under a
+#   server mid-update — since 0.3.2, so 0.3.0/0.3.1 servers, which can't read GitHub, update from the mirror).
+#   out/github/vVERSION/ holds
 #   the release's assets: the above, plus this version's VM images (qcow2, and the amd64 disk zipped as .vhdx.zip and
 #   .vmdk.zip: GitHub takes no file of 2 GiB or more; each with its .sha256) and Windows installer when they were
 #   built, each also under a name without the version (tinhat-server-amd64.qcow2, TinHatServer-Setup.exe, …: the site
@@ -18,10 +21,11 @@
 #   out/github/vVERSION.notes.md. --publish creates the GitHub release with gh (the tag vVERSION must be pushed
 #   first); --prerelease keeps it out of "latest", so servers don't see it until
 #   `gh release edit vVERSION --repo OWNER/REPO --prerelease=false --latest`.
-#   The mirror (https://updates.tinhat.dev/server/) then only needs stable.json(.minisig) and install.sh(.minisig):
-#   the manifest points at GitHub. If GitHub ever goes away, a release without --github puts the files there too.
-# --mirror DIR: copy those four small signed files into DIR (the mirror's folder: public/server/ in the site
-#   repository, which deploys to updates.tinhat.dev when pushed).
+#   The mirror (https://updates.tinhat.dev/server/) then needs stable.json(.minisig), install.sh(.minisig) and the
+#   bundle (~14 MB; its static host takes files up to 25 MiB). If GitHub ever goes away, a release without --github
+#   puts every file there.
+# --mirror DIR: copy those five files into DIR (the mirror's folder: public/server/ in the site repository, which
+#   deploys to updates.tinhat.dev when pushed, all files at once); the mirror keeps the newest three bundles.
 # Needs the working tree at VERSION and out/release-VERSION/ (build.sh artifacts, from that version's image build).
 # Key: $TINHAT_RELEASE_KEY (minisign secret key; build/build.local.conf may set it). See docs/RELEASING.md.
 set -euo pipefail
@@ -156,6 +160,8 @@ printf '# Tin Hat Server: bigger UDP buffers for the call server (LiveKit asks f
   > "$B/b/host/etc/sysctl.d/90-tinhat-host.conf"
 BUNDLE=tinhat-server-$VER.update.tar.gz
 tar -C "$B/b" --owner=0 --group=0 --numeric-owner -czf "$C/$BUNDLE" .
+# the mirror carries the bundle (servers that can't read GitHub update from it) and its host takes files up to 25 MiB
+[ "$(stat -c %s "$C/$BUNDLE")" -lt $((24 * 1024 * 1024)) ] || { echo "$BUNDLE is over 24 MiB: the mirror can't carry it" >&2; exit 1; }
 # Every image of our own (tinhat/caddy, tinhat/api): each one's tarball from the build's artifacts, by its id, and
 # per processor. The manifest's `images` (and `images_arm64`) map ref → {id, url, sha256}; servers load what they lack.
 OWN_IMAGES=() OWN_IMAGES_ARM=()
@@ -190,10 +196,15 @@ def images(spec):
     out = {}
     for item in spec.split():
         ref, cid, tar = item.split("|")
-        out[ref] = {"id": cid, "url": base + tar, "sha256": sha(os.path.join(c, tar))}
+        # size (0.3.2+ servers stream the download and stop past it; older ones ignore it)
+        out[ref] = {"id": cid, "url": base + tar, "sha256": sha(os.path.join(c, tar)), "size": os.path.getsize(os.path.join(c, tar))}
     return out
 m = {"channel": "stable", "version": ver, "published": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-     "bundle": {"url": base + bundle, "sha256": sha(os.path.join(c, bundle)), "size": os.path.getsize(os.path.join(c, bundle))},
+     # the bundle by its bare name (0.3.2): relative to wherever the server read this manifest — GitHub (the tag, or
+     # releases/latest/download/) or the mirror, which carries the bundle too. A 0.3.0/0.3.1 server can't read GitHub
+     # (its header limit) and gets everything from the mirror; a newer one prefers GitHub (the first source on a tie).
+     # Our images stay pinned to the tag: only a server that lacks one fetches it.
+     "bundle": {"url": bundle, "sha256": sha(os.path.join(c, bundle)), "size": os.path.getsize(os.path.join(c, bundle))},
      "min_from": minfrom or None, "security": sec == "true", "notes": notes,
      "images": images(own)}
 if own_arm:  # servers on arm64 read images_arm64 (and the bundle's images.lock.arm64); older ones never look
@@ -205,7 +216,10 @@ rm -f "$C/stable.json.minisig"
 sign "$C/stable.json" "tinhat-server stable $VER"
 minisign -V -p "${KEY%.key}.pub" -m "$C/stable.json" >/dev/null || { echo "$C/stable.json doesn't verify" >&2; exit 1; }
 echo "signed and verified: $C/stable.json"
-cp "$HERE/compose/docker-compose.yml" "$HERE/compose/.env.example" "$C/"  # the Compose edition (compose/README.md)
+cp "$HERE/compose/docker-compose.yml" "$C/"  # the Compose edition (compose/README.md)
+# its settings example as GitHub shows it: an asset named ".env.example" became "default.env.example" there, and the
+# SHA256SUMS line kept the old name (0.3.1); so the file has that name from the start
+cp "$HERE/compose/.env.example" "$C/default.env.example"
 PUB=$(sed -n 2p "${KEY%.key}.pub")
 sed -e "s|__TINHAT_RELEASE_PUBKEY__|$PUB|" -e "s|__TINHAT_CHANNELS__|$CHANNELS|" -e "s|__TINHAT_INSTALL_URL__|$INSTALL_URL|" \
   "$HERE/build/install-linux.sh" > "$C/install.sh"
@@ -278,6 +292,11 @@ if [ -n "$GH" ]; then
 fi
 if [ -n "$MIRRORDIR" ]; then
   [ -d "$MIRRORDIR" ] || { echo "--mirror: no folder $MIRRORDIR" >&2; exit 1; }
-  for f in stable.json stable.json.minisig install.sh install.sh.minisig; do cp "$C/$f" "$MIRRORDIR/$f"; done
+  # the bundle too (0.3.2: the manifest names it relative to itself), first, so the manifest never names a file the
+  # mirror lacks; the two before it stay (a server that read an older manifest still finds its bundle), older ones go
+  cp "$C/$BUNDLE" "$MIRRORDIR/$BUNDLE"
+  find "$MIRRORDIR" -maxdepth 1 -name 'tinhat-server-*.update.tar.gz' -printf '%f\n' | sort -t- -k3,3V | head -n -3 \
+    | while read -r old; do rm -f "$MIRRORDIR/$old"; done
+  for f in install.sh install.sh.minisig stable.json.minisig stable.json; do cp "$C/$f" "$MIRRORDIR/$f"; done
   echo "mirror files in $MIRRORDIR: commit and push the site repository to put them on updates.tinhat.dev"
 fi
