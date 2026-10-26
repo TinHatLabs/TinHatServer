@@ -51,6 +51,11 @@
   background: var(--th-soundboard-card-bg-active);
   box-shadow: inset 0 0 0 2px var(--th-soundboard-card-border-active);
 }
+/* the Pad screen (features/pad): a press waiting for the PC's answer — pad.sound.pending.ring (default = the card's focus
+   ring), then the playing ring once it answers */
+.pending {
+  box-shadow: inset 0 0 0 2px var(--th-pad-sound-pending-ring);
+}
 .pad:disabled,
 .chip:disabled {
   cursor: default;

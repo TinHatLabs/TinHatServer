@@ -1,5 +1,6 @@
 // alertrules.ts — when an incoming-call alert may fire (native callwatch.rs `should_announce`, 10.5.1).
 // Pure (no DOM / SDK imports) so `alertrules.test.ts` runs under plain Node.
+import { padTargets } from "./pad/rules";
 //
 // A field report: alerts every few minutes while in a call. A room whose call keeps
 // starting and stopping (test clients in a test room, a client that keeps
@@ -26,4 +27,17 @@ export function shouldAnnounce(last: number | undefined, now: number, isDm = fal
  *  is past too once the group window is). */
 export function pruneAnnounced(announced: Map<string, number>, now: number): void {
   for (const [id, t] of announced) if (now - t >= REANNOUNCE_MS) announced.delete(id);
+}
+
+/**
+ * Answered elsewhere (Pad phase 3, 2026-10-26): one of MY OTHER devices has a live, well-formed session in the room's
+ * call — the call was taken on another device, so this device's incoming card goes and its ring stops (the room's
+ * banner / the room-list bar then offer Pad · Join). The same liveness and ownership rule as Pad's discovery
+ * (padTargets: the state key belongs to the sender and that device; created_ts + expires), whatever the device's trust
+ * or caps. `events` = the room's raw `org.matrix.msc3401.call.member` state events ({sender, state_key,
+ * origin_server_ts, content}). The desktop's callwatch.rs `answered_elsewhere` is the same rule (the same cases).
+ */
+export function answeredElsewhere(me: string, myDevice: string, now: number, events: readonly unknown[]): boolean {
+  if (!me || !myDevice) return false;
+  return padTargets(me, myDevice, now, false, [], events).length > 0;
 }

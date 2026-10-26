@@ -18,6 +18,7 @@ import { runAction } from "@/actions/run";
 import { setActionKeyHook, setDefaultLiveCheck } from "@/core/shortcuts";
 import { installProviders } from "./providers";
 import { installHandlers } from "./exec";
+import { getFormFactor } from "@/core/device";
 
 /**
  * A person's own keys (ACTIONS.md §8.7): the page's one keydown listener asks here first. A key given to an action in
@@ -57,7 +58,8 @@ export const feature: FeatureModule = {
     installProviders();
     installKeys();
     // Settings → Shortcuts (after Overlay, before the operators' Invites)
-    r.settingsPanes.add({ id: "shortcuts", title: "Shortcuts", icon: "input-keyboard-symbolic", order: 85, component: ShortcutsPane });
+    // not on a phone: key bindings need a keyboard (a 7,700-pt list there: iPhone/iPad sweep, 2026-10-25)
+    r.settingsPanes.add({ id: "shortcuts", title: "Shortcuts", icon: "input-keyboard-symbolic", order: 85, component: ShortcutsPane, visible: () => getFormFactor() !== "mobile" });
     r.overlays.add({ id: "actions.confirm", order: 90, component: ActionsConfirmHost });
     r.overlays.add({ id: "actions.state", order: 91, component: ActionsStateBridge });
     r.overlays.add({ id: "actions.rowEditor", order: 92, component: RowEditorHost });

@@ -223,3 +223,10 @@
   min-height: 0;
   min-width: 0;
 }
+
+/* touch, desktop layout (iPad; M5, iPhone/iPad sweep 2026-10-25): the 36 px header buttons sit 8 apart and each hits
+   4 px wider on both sides and 44 tall, so they hit at 44 × 44 without overlapping */
+:root[data-touch]:not([data-ff="mobile"]) .header {
+  gap: 8px;
+  --th-hit-x: 4px;
+}

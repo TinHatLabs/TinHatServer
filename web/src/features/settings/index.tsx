@@ -149,7 +149,8 @@ export const feature: FeatureModule = {
       { id: "calls", title: "Calls & video", icon: "call-start-symbolic", component: CallsPane, order: 50 },
       { id: "appearance", title: "Appearance", icon: "contrast-symbolic", component: AppearancePane, order: 60 },
       { id: "notifications", title: "Notifications", icon: "notifications", component: NotificationsPane, order: 70 },
-      { id: "overlay", title: "Overlay", icon: "window-pin-symbolic", component: OverlayPane, order: 90 },
+      // not on a phone: an always-on-top window over a game is a computer thing (iPhone/iPad sweep, 2026-10-25)
+      { id: "overlay", title: "Overlay", icon: "window-pin-symbolic", component: OverlayPane, order: 90, visible: () => getFormFactor() !== "mobile" },
       { id: "about", title: "About & help", icon: "help-about-symbolic", component: AboutPane, order: 100 },
     ];
     panes.forEach((p) => r.settingsPanes.add(p));

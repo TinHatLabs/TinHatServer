@@ -9,6 +9,7 @@ import { useBus } from "@/core/bus";
 import { onSessionEnding } from "@/core/matrix";
 import { setPref } from "@/core/prefs";
 import { useServerFeature } from "@/core/server";
+import { useIsTouch } from "@/core/device";
 import { Button, GlowButton, Icon, OverlaySheet } from "@/ui";
 import s from "./Tour.module.css";
 
@@ -54,10 +55,25 @@ const FIRST_CARD_NO_MEMORIES =
 /** The chat card on a server without the GIF picker (docs/SELFHOST.md): the same words minus the GIFs. */
 const CHAT_CARD_NO_GIFS = "Markdown, reactions, replies and @mentions — plus drag-and-drop files right into the composer. Hit Ctrl+K any time for the quick room switcher.";
 
+/** On a touch screen (a phone, a tablet without a mouse) the cards that talk about dragging, Ctrl+K and right-clicks
+ *  say what works there instead (iPhone/iPad sweep, 2026-10-25). Card title → text: keyed by title, an index put the
+ *  spaces text on the theme card and left "Drag the space bubbles" on the spaces card (verify pass, 2026-10-25). */
+const TOUCH_TEXT: Record<string, string> = {
+  "Find your way around": "Your spaces sit in the bar next to your rooms: tap one to see its rooms, and long-press any space or room for its options.",
+  "Two people, one corner": "Long-press anyone in a call (or tap the ⋯ on their tile) → Pull aside: just the two of you, everyone else drops to 10 %.",
+};
+const TOUCH_CHAT = "Markdown, reactions, replies, @mentions, and GIFs — plus files right from the composer. Long-press a message to reply, react or copy it.";
+const TOUCH_CHAT_NO_GIFS = "Markdown, reactions, replies and @mentions — plus files right from the composer. Long-press a message to reply, react or copy it.";
+
 /** The cards for this server: without Memories, the first card doesn't promise them; without GIFs, the chat card
- *  doesn't either. */
-export function tourCards(on: { memories: boolean; gifs: boolean }): Array<[string, string, string]> {
-  return CARDS.map((c, i): [string, string, string] => (i === 0 && !on.memories ? [c[0], c[1], FIRST_CARD_NO_MEMORIES] : i === 4 && !on.gifs ? [c[0], c[1], CHAT_CARD_NO_GIFS] : c));
+ *  doesn't either; on touch, the touch wording. */
+export function tourCards(on: { memories: boolean; gifs: boolean; touch?: boolean }): Array<[string, string, string]> {
+  return CARDS.map((c, i): [string, string, string] => {
+    if (i === 0 && !on.memories) return [c[0], c[1], FIRST_CARD_NO_MEMORIES];
+    if (i === 4) return on.touch ? [c[0], c[1], on.gifs ? TOUCH_CHAT : TOUCH_CHAT_NO_GIFS] : on.gifs ? c : [c[0], c[1], CHAT_CARD_NO_GIFS];
+    if (on.touch && TOUCH_TEXT[c[1]]) return [c[0], c[1], TOUCH_TEXT[c[1]]];
+    return c;
+  });
 }
 
 const useTour = create<{ open: boolean; step: number }>()(() => ({ open: false, step: 0 }));
@@ -74,7 +90,7 @@ export function TourHost() {
   // never left up while the account is going away (fix/polish item 2)
   useEffect(() => onSessionEnding(() => useTour.setState({ open: false })), []);
 
-  const cards = tourCards({ memories: useServerFeature("memories"), gifs: useServerFeature("gifs") });
+  const cards = tourCards({ memories: useServerFeature("memories"), gifs: useServerFeature("gifs"), touch: useIsTouch() });
   const close = () => {
     setPref("tour_seen", "1");
     useTour.setState({ open: false });

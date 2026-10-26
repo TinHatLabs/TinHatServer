@@ -276,7 +276,7 @@ export function CalendarWindow(props: CalendarWindowProps) {
         </div>
       )}
       <div className={s.body}>
-        <div className={s.stack} style={tab === "month" && !mobile ? undefined : undefined}>
+        <div className={s.stack} data-tab={tab} style={tab === "month" && !mobile ? undefined : undefined}>
           {tab === "month" && <MonthView />}
           {tab === "upcoming" && <UpcomingView />}
           {tab === "games" && <GamesView />}

@@ -1,0 +1,77 @@
+/* Entry.module.css — Pad's entry points: the "Pad" button beside Join, its greyed line, the room-list bar.
+   The bar is Pad's own element, pad.listBar.* (defaults = the join banner's call.joinBanner.*, 0 px); the button is
+   the house Button. */
+.padBtn {
+  flex: none;
+}
+.compact {
+  min-height: 0;
+}
+/* greyed but still focusable/tappable: a tap on "Verify this device" opens Devices & security */
+.greyed {
+  opacity: 0.5;
+}
+.reason {
+  flex: 1 1 100%;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-call-join-banner-fg);
+  opacity: 0.8;
+}
+
+.bar {
+  margin: 4px 8px 6px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 8px;
+  background: var(--th-pad-list-bar-bg);
+  border: 1px solid var(--th-pad-list-bar-border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.barText {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  color: var(--th-pad-list-bar-fg);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.barText b {
+  font-weight: 700;
+}
+/* the greyed Pad's line inside the bar (phones) is the bar's text */
+.bar .reason {
+  color: var(--th-pad-list-bar-fg);
+}
+.barText:hover {
+  text-decoration: underline;
+}
+.barButtons {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.barMobile {
+  margin: 6px 10px 8px;
+  padding: 8px 8px 8px 12px;
+}
+.barMobile .barText {
+  font-size: 15px;
+  line-height: 20px;
+  /* the whole first row, the buttons below it (the desktop's PadBar): next to them the device's name was cut off */
+  flex-basis: 100%;
+}

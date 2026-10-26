@@ -44,6 +44,7 @@ import { rnnoiseAvailable as rnnoiseAvailableProbe } from "./mic";
 import { installCallResume, resumeFromTap } from "./resume";
 import { eventKeyName } from "@/core/shortcuts";
 import { pttKeys } from "@/actions/shortcutsStore";
+import { installWebCallBridge } from "@/features/native";
 
 export type * from "./contract";
 export { useCallStore } from "./store";
@@ -208,6 +209,30 @@ function install() {
     if (st.micMuted !== prev.micMuted) noteMute(st.micMuted);
   });
   bus.on("startCall", ({ roomId }) => engine.switchCall(roomId));
+  // A Tin Hat app that follows the WEB's call (Android: no "calls" cap) — our call's state → tinhatNative.webCall, its
+  // notification's Mute / Leave → the call UI's own actions. A no-op everywhere else (features/native/webCall.ts).
+  installWebCallBridge({
+    subscribe: (cb) => useCallStore.subscribe(cb),
+    snapshot: () => {
+      const s = getCall();
+      const real = !s.fake; // callui's QA fake call is no call
+      return { inCall: real && s.inCall, connecting: real && s.connecting, reconnecting: real && s.reconnecting, roomId: s.callRoomId, muted: s.micMuted, camera: s.cameraOn };
+    },
+    roomName: (id) => peekClient()?.getRoom(id)?.name ?? "",
+    actions: {
+      inCall: () => {
+        const s = getCall();
+        return !s.fake && (s.inCall || s.connecting);
+      },
+      toggleMute: () => {
+        const s = getCall();
+        // the call bar's mic button (callui CallBar / Mobile, actions call.mic.toggle): a server mute stays and says so
+        if (s.serverMuted) toast(`${s.serverMutedBy || "A moderator"} muted your mic for everyone — ask them to unmute you`, { timeoutMs: 3000 });
+        else engine.toggleMic();
+      },
+      leave: () => engine.leaveCall(),
+    },
+  });
   // A killed tab's ghost membership: sweep again once the first NETWORK sync is in (the IndexedDB
   // cache the onReady sweep sees can predate the ghost), and once more 20 s later.
   useSessionStore.subscribe((s, p) => {

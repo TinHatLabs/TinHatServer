@@ -7,7 +7,7 @@ import { useMemberRole, RoleBadge } from "@/features/spaces";
 import { openUserProfile } from "@/core/bus";
 import { useCryptoStatus, useIsFirstDevice, useMember } from "@/core/matrix";
 import { findTimelineRenderer } from "@/core/registry";
-import { Avatar, Icon, cx, senderColor, useTip, useContentInk } from "@/ui";
+import { Avatar, Icon, cx, holdTextSelection, senderColor, useTip, useContentInk } from "@/ui";
 import { fmtClock, fmtFull } from "./lib/format";
 import { isJumbo, renderFormatted, renderPlain } from "./lib/html";
 import { utdText } from "./lib/utd";
@@ -129,6 +129,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
   const canSwipe = p.touch && !noBar;
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.pointerType !== "touch") return;
+    holdTextSelection();
     const x = e.clientX;
     const y = e.clientY;
     if (canSwipe) swipe.current = { x0: x, y0: y, on: false, dx: 0 };
@@ -138,6 +139,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
         lp.current = null;
         navigator.vibrate?.(10);
         swallowReleaseClick();
+        window.getSelection?.()?.removeAllRanges(); // iOS had started selecting under the finger
         h.onMenu(row, { x, y });
       }, 500),
       x,

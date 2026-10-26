@@ -108,7 +108,7 @@ export function OverlaySheet({
         >
           {(header || title || showCloseButton) && (
             <div className={s.header}>
-              <div className={s.headerContent}>{header ?? <div className={s.title}>{title}</div>}</div>
+              <div className={cx(s.headerContent, !showCloseButton && s.headerNoClose)}>{header ?? <div className={s.title}>{title}</div>}</div>
               {showCloseButton && (
                 <button
                   type="button"

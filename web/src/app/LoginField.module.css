@@ -134,3 +134,8 @@
 :root[data-ff="mobile"] .frame {
   height: 46px;
 }
+
+/* touch (M6, iPhone/iPad sweep 2026-10-25): the show-password eye is 44 wide (it can't grow over the field) */
+:root[data-touch] .eye {
+  width: 44px;
+}

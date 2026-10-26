@@ -70,7 +70,8 @@ export interface BusEvents {
   openNavDialog: { kind: "newChat" | "newRoom" | "newSpace" | "invite" | "joinSpace"; roomId?: string; mxid?: string };
   /** Session lifecycle notifications (core emits). */
   sessionReady: { userId: string; deviceId: string };
-  loggedOut: { status?: string };
+  /** userId = who was signed in; byUser = a sign-out the person chose (not a dead token / another device ending it) */
+  loggedOut: { status?: string; userId?: string; byUser?: boolean };
   // ---- settings feature (additive, features/settings/CORE-CHANGES.md) ----
   /** Sign out, with the backup-aware "Sign out?" confirm (☰ "Sign out"). */
   requestSignOut: Record<string, never>;

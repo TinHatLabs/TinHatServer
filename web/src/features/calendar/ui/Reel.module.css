@@ -827,6 +827,7 @@ html[data-ff="mobile"] .rb {
   width: 22px;
   height: 100%;
   flex: none;
+  text-align: center; /* − and + sat at the left of their 44 px phone buttons (iPhone/iPad sweep L12) */
   background: transparent;
   border: 0;
   color: var(--th-reel-spinbox-button-fg);
@@ -1043,4 +1044,18 @@ html[data-ff="mobile"] .creditRow .rb {
   margin-bottom: var(--th-vv-bottom, 0px);
   padding-bottom: var(--th-safe-bottom);
   max-height: calc(100dvh - var(--th-safe-top) - var(--th-vv-bottom, 0px)) !important;
+}
+
+/* touch (M6, iPhone/iPad sweep 2026-10-25): Reel buttons (34 tall) hit at 44 (tokens.css "touch: 44-pt hit areas");
+   the error's ✕ (26 wide) also sideways: it has the line's 8 px gap on one side and the edge on the other */
+:root[data-touch] .rb {
+  position: relative;
+}
+:root[data-touch] .rb::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc(50% - 22px)) max(calc(0px - var(--th-hit-x, 0px)), min(0px, calc(50% - 22px)));
+}
+:root[data-touch] .errorRow {
+  --th-hit-x: 9px;
 }

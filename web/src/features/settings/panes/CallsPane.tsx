@@ -26,6 +26,7 @@ import { useFormFactor } from "@/core/device";
 import { setCallBarPinned, useCallBarPinned } from "@/features/callui/chrome";
 import { pttKeys } from "@/actions/shortcutsStore";
 import { ComboRow, Hint, Row, Section, SwitchRow } from "../rows";
+import { PAD_PREF } from "@/features/calls/pad/prefs";
 
 export const SHARE_RES = [
   { label: "Auto", w: 0, h: 0, base: 12000 },
@@ -73,6 +74,7 @@ export function CallsPane() {
   const pinned = useCallBarPinned();
   const phone = useFormFactor() === "mobile";
   const av1Receive = usePref("av1-receive", true);
+  const padOn = usePref(PAD_PREF, true);
   const [conn, setConn] = useState(localConn);
   useEffect(() => {
     refreshDeviceLists();
@@ -126,14 +128,14 @@ export function CallsPane() {
   return (
     <>
       <Section title="Talking">
-        <SwitchRow
+        {!phone && <SwitchRow
           id="calls.push-to-talk"
           label="Push to talk"
           // one text node, like 10.8's static text
           description={`Hold ${pttKeys()[0] ?? "Ctrl"} to speak while Tin Hat is the focused tab. Browsers can't do push to talk while you're in a game.`}
           checked={ptt}
           onToggled={applyPushToTalk}
-        />
+        />}
         <SwitchRow
           id="calls.muted-sound"
           label="Sound when I talk while muted"
@@ -152,6 +154,18 @@ export function CallsPane() {
             onToggled={setCallBarPinned}
           />
         )}
+      </Section>
+
+      {/* Pad (docs/PAD.md, both apps): my other verified devices may control this device's calls (default on). Off =
+          no `pad1` cap in the call membership and every Pad command refused with "off". */}
+      <Section title="Pad">
+        <SwitchRow
+          id="calls.pad"
+          label="Let my other verified devices control my calls here"
+          description="While this device is in a call, your phone (or another device of yours) can play sounds, mute you and set people's volumes here. Only your own verified devices can; the call bar shows a chip while one does."
+          checked={padOn !== false}
+          onToggled={(on) => setPref(PAD_PREF, on)}
+        />
       </Section>
 
       <Section title="Camera">

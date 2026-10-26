@@ -17,6 +17,9 @@ SYSTEM_ROOTS = "/etc/ssl/certs/ca-certificates.crt"
 
 DEFAULTS = {
     "names_url": "https://names.tinhat.dev",
+    # The Tin Hat phone apps' notification relay (docs/PHONE-PUSH.md): the API's PUSH_RELAY. It only ever carries
+    # ciphertext; the owner can switch phone notifications off (api.phone_push = false). "" = none.
+    "push_relay": "https://push.tinhat.dev",
     "zone": "tinhat.me",
     "acme_directory": "https://acme-v02.api.letsencrypt.org/directory",
     # Releases come from GitHub, then our mirror if GitHub doesn't answer (the newest signed version wins: updates.py).

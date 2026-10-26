@@ -406,3 +406,8 @@
   bottom: calc(14px + var(--th-safe-bottom));
   max-width: calc(100% - 28px);
 }
+
+/* touch, desktop layout (iPad; M5, iPhone/iPad sweep 2026-10-25): the rail's rows are 44 tall */
+:root[data-touch] .item {
+  height: 44px;
+}

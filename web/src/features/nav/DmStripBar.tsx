@@ -1,4 +1,4 @@
-// DmStrip.tsx — REACH §1.2/§1.3 + A2.14: the rail's DM strip between the meta bubbles and the divider above
+// DmStripBar.tsx — REACH §1.2/§1.3 + A2.14: the rail's DM strip between the meta bubbles and the divider above
 // the real spaces. Unread DMs + DM invites (model.ts → dmstrip.ts), newest first, ≤ 5 bubbles + "+N".
 //
 //   bubble   52 px slot, 44 px CIRCLE (a DM never morphs — people aren't places), the room avatar → the
@@ -10,6 +10,8 @@
 //            its row with Accept / Decline scrolled into view (no flash — the desktop just selects People)
 //   menu     right-click / 500 ms long-press: Open · Mark as read  |  Accept · Decline
 //   motion   bubbles fade + resize in and out over the rail's dur (none with reduced motion)
+// (Not "DmStrip.tsx": next to dmstrip.ts, a case-insensitive disk (macOS, Windows) resolved "./DmStrip" to the model
+// and the app stopped at "Starting up 5%"; src/app/casefold.test.ts keeps that from coming back.)
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { Avatar, Menu, MenuItem, MenuSectionLabel, UnreadBadge, avatarSeed, cx, durMs, hideTooltip, useAnimate, useTip } from "@/ui";
 import { PresenceDot, usePresence, viewOf } from "@/features/presence";

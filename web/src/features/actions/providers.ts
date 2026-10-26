@@ -17,11 +17,13 @@ import { getFormFactor, onFormFactorChange } from "@/core/device";
 import { canSendState, getCryptoStatus, getState, getStateAll, peekClient, onClientChanged, recordEnabled, useSessionStore } from "@/core/matrix";
 import { isRecorder } from "@/core/server";
 import { useCallStore, roomCall } from "@/features/calls";
+import { targetsIn, usePadDevices } from "@/features/pad/runtime";
 import { useCallUi } from "@/features/callui/store";
 import { callBarPinned } from "@/features/callui/chrome";
 import { useNavStore, getNavMode, useUpdate, type RoomRow } from "@/features/nav";
 import { usePresenceStore } from "@/features/presence";
 import { usePushStore } from "@/features/push";
+import { inTinHatApp, onNativeCall } from "@/features/native";
 import { useCal } from "@/features/calendar";
 import { useGames } from "@/features/calendar/gamesStore";
 import { useSoundboard, useWatchParty, isSoundboardOpen, onSoundboardOpenChange } from "@/features/media";
@@ -54,6 +56,21 @@ function rowsById(): Map<string, RoomRow> {
   return m;
 }
 
+/** 12.0.2 Pad: one of my other devices is in this room's call and this device is not in (or joining) it — the rooms where
+ *  the Pad button shows beside Join (features/pad usePadTargets; the desktop: ActionsHost.qml with Main.qml padTargetIn). */
+function padTargetIn(id: string, membership: string): boolean {
+  const c = useCallStore.getState();
+  return membership === "join" && !((c.inCall || c.connecting) && c.callRoomId === id) && targetsIn(id).length > 0;
+}
+/** The rooms whose latest snapshot says room.padTarget = true (kept by padTargetValue, re-checked by onPadTargetsAging). */
+const padTrueInSnapshot = new Set<string>();
+function padTargetValue(id: string, membership: string): boolean {
+  const on = padTargetIn(id, membership);
+  if (on) padTrueInSnapshot.add(id);
+  else padTrueInSnapshot.delete(id);
+  return on;
+}
+
 function roomValues(id: string, row: RoomRow | undefined, full: boolean): Record<string, Json> {
   const c = useCallStore.getState();
   const room = peekClient()?.getRoom(id);
@@ -67,6 +84,7 @@ function roomValues(id: string, row: RoomRow | undefined, full: boolean): Record
     "room.hasUnread": (row?.unread ?? 0) > 0,
     "room.callLive": roomCall(id).active === true,
     "room.inCall": c.inCall && c.callRoomId === id,
+    "room.padTarget": padTargetValue(id, membership),
     "room.inSpace": useNavStore.getState().roomSpace?.has(id) === true,
     "room.hasActivity": !!row?.activity,
     "room.hasJoinCode": !!row?.activity?.code,
@@ -228,7 +246,7 @@ function presencePart(): SnapshotPart {
       "presence.sharing": p.share && !p.turningOff,
       "presence.busy": p.busy,
       "presence.hasStatus": p.status !== null,
-      "push.available": push.support?.ok === true,
+      "push.available": push.support?.ok === true && !inTinHatApp(), // no Web Push in the Tin Hat apps' web views
       "push.enabled": push.phase === "on",
     },
   };
@@ -304,6 +322,26 @@ function soundPart(): SnapshotPart {
   return { subjects: { sound }, lists: { sound: order } };
 }
 
+/** 12.0.2 Pad: a target appears through an event (a call membership arriving, this device leaving the call), but a
+ *  membership can also age out without one (a device that crashed). Every 30 s (the Pad button's own cadence) re-check
+ *  the rooms the snapshot holds `room.padTarget = true` for and poke when one no longer is — as the desktop's value
+ *  drops with its 3 s target refresh. Nothing to do (no scan) while no room has a target. */
+function onPadTargetsAging(cb: () => void): () => void {
+  const iv = window.setInterval(() => {
+    if (!padTrueInSnapshot.size) return;
+    const client = peekClient();
+    let stale = false;
+    for (const id of [...padTrueInSnapshot]) {
+      if (!padTargetIn(id, client?.getRoom(id)?.getMyMembership() ?? "")) {
+        padTrueInSnapshot.delete(id);
+        stale = true;
+      }
+    }
+    if (stale) cb();
+  }, 30_000);
+  return () => window.clearInterval(iv);
+}
+
 /** Room state events (power levels, pins, recording) — the nav store does not rebuild on them. Follows
  *  the client across sign-in / sign-out. */
 function onRoomState(cb: () => void): () => void {
@@ -330,7 +368,7 @@ export function installProviders(): void {
   };
   const prefSubs = PREFS.map((k) => (cb: () => void) => onPrefChange(k, cb));
   registerSnapshotProvider("calls", callPart, both([useCallStore.subscribe, useCallUi.subscribe, useSoundboard.subscribe, onFormFactorChange, onSoundboardOpenChange as never, ...prefSubs]));
-  registerSnapshotProvider("nav", navPart, both([useNavStore.subscribe, useChatStore.subscribe, useCallStore.subscribe, useSessionStore.subscribe, useUpdate.subscribe, useRightPanelStore.subscribe, onFormFactorChange, onRoomState, ...prefSubs]));
+  registerSnapshotProvider("nav", navPart, both([useNavStore.subscribe, useChatStore.subscribe, useCallStore.subscribe, useSessionStore.subscribe, useUpdate.subscribe, useRightPanelStore.subscribe, usePadDevices.subscribe, onNativeCall, onPadTargetsAging, onFormFactorChange, onRoomState, ...prefSubs]));
   registerSnapshotProvider("prefs", prefsPart, both(prefSubs));
   registerSnapshotProvider("presence", presencePart, both([usePresenceStore.subscribe, usePushStore.subscribe]));
   registerSnapshotProvider("calendar", calendarPart, both([useCal.subscribe, useGames.subscribe, useWatchParty.subscribe]));

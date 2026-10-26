@@ -13,7 +13,7 @@ import { shortName } from "../shared/format";
 import { enqueue, enqueueItem, enqueueItems, fmtTime, playUrl, type QueueItem } from "./engine";
 import { parseMediaLink } from "./links";
 import { youTubeId } from "./player";
-import { BUDGET_MESSAGE, SEARCH_TYPES, TRENDING_CATS, HISTORY_EVENT, clearListing, clearSuggestions, fmtViews, loadListing, loadTrending, normHistory, queueItemOf, searchYouTube, setTab, useBrowse, type BrowseItem, type BrowseTab, type SearchType } from "./browse";
+import { BUDGET_MESSAGE, SEARCH_TYPES, TRENDING_CATS, HISTORY_EVENT, clearListing, clearSuggestions, fmtViews, loadListing, loadTrending, normHistory, queueItemOf, searchYouTube, setTab, useBrowse, type BrowseItem, type BrowseTab, type SearchType } from "./browseStore";
 import s from "./WatchParty.module.css";
 
 const TABS: readonly { id: BrowseTab; label: string }[] = [

@@ -25,8 +25,10 @@ import {
   validateRegistration,
 } from "@/core/matrix";
 import { GlowButton, TinHatLoader } from "@/ui";
+import { isTouch } from "@/core/device";
 import { readMove } from "@/core/server/move";
 import { askPasswordReset } from "@/core/server/store";
+import { chooseServer, hasNativeCap } from "@/features/native";
 import { LoginField } from "./LoginField";
 import { inviteFieldValue } from "./invite";
 import { navigate, useRoute } from "./router";
@@ -142,6 +144,8 @@ export function LoginView() {
     else userRef.current?.focus();
   }, [face, linkCode]);
   useEffect(() => {
+    // not on touch: the keyboard would come up at once and cover Password and Sign in (iPhone/iPad sweep, 2026-10-25)
+    if (isTouch) return;
     const t = window.setTimeout(focusFirst, 0);
     return () => window.clearTimeout(t);
   }, [focusFirst]);
@@ -352,6 +356,12 @@ export function LoginView() {
                 <button type="button" className={s.link} disabled={busy} onClick={() => setFace("create")}>
                   New here? Create an account
                 </button>
+                {/* a Tin Hat app (bridge "servers"): its own server chooser — features/native */}
+                {hasNativeCap("servers") && (
+                  <button type="button" className={s.link} disabled={busy} onClick={chooseServer}>
+                    Switch server
+                  </button>
+                )}
               </>
             )}
             {face === "create" && (

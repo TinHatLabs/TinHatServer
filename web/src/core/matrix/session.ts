@@ -270,6 +270,7 @@ function onSessionLoggedOut() {
   const go = () =>
     logout({
       server: false,
+      byUser: false, // the server ended this session (dead token, signed out elsewhere, deactivated): not the person's choice
       status: "You were signed out: this session expired or was ended from another device. Sign in again.",
     });
   if (starting) void starting.catch(() => undefined).then(go);
@@ -474,7 +475,7 @@ export async function loginWithPassword(o: { homeserver: string; username: strin
  * then stop the client, delete this device's crypto + sync databases and the account's
  * `tinhat.*` keys (device prefs stay). `status` = the line the sign-in card shows.
  */
-export async function logout(opts: { server?: boolean; status?: string } = {}): Promise<void> {
+export async function logout(opts: { server?: boolean; status?: string; byUser?: boolean } = {}): Promise<void> {
   if (loggingOut) return loggingOut;
   loggingOut = doLogout(opts).finally(() => {
     loggingOut = null;
@@ -482,8 +483,9 @@ export async function logout(opts: { server?: boolean; status?: string } = {}): 
   return loggingOut;
 }
 
-async function doLogout(opts: { server?: boolean; status?: string }): Promise<void> {
+async function doLogout(opts: { server?: boolean; status?: string; byUser?: boolean }): Promise<void> {
   syncWatchFrom = 0; // widgets W2: no session, no sync age
+  const userId = getSession().userId; // (for the loggedOut event: the session store forgets it below)
   const c = peekClient();
   if (!c && getSession().otherTab && !holdsTabLock()) {
     // Another tab owns this session and its databases: wiping them from here would corrupt it.
@@ -516,7 +518,9 @@ async function doLogout(opts: { server?: boolean; status?: string }): Promise<vo
     },
     true,
   );
-  bus.emit("loggedOut", { status: opts.status });
+  // byUser: the person chose to sign out (every caller but the dead-token path below; a chosen local-only sign-out
+  // would pass byUser: true explicitly). The phone apps sign their own device out only then (features/native).
+  bus.emit("loggedOut", { status: opts.status, userId, byUser: opts.byUser ?? opts.server !== false });
 }
 
 // ---- registration (invite codes) -------------------------------------------------------------

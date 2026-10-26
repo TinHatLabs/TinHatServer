@@ -26,14 +26,17 @@ network (`tinhat_backend`'s gateway, e.g. 198.18.16.1): the one address a contai
 at. The gateway listens there only, and Synapse's ip_range_whitelist names only that address (templates.homeserver_yaml),
 so the pusher URL a device registers can't make Synapse talk to anything else on the box.
 """
+import ipaddress
 import json
 import logging
 import os
+import re
 import subprocess
 import time
+import urllib.parse
 from pathlib import Path
 
-from . import config, state
+from . import config, environment, state
 
 log = logging.getLogger("tinhat.api")
 
@@ -58,7 +61,49 @@ def settings(st: dict | None = None) -> dict:
     a = st.get("api") or {}
     turn = a.get("turn") if isinstance(a.get("turn"), dict) else None
     web = str(a.get("web") or "") if st.get("mode") == "domain" else ""
-    return {"memories": bool(a.get("memories")), "recorder": str(a.get("recorder") or ""), "turn": turn, "web": web}
+    return {"memories": bool(a.get("memories")), "recorder": str(a.get("recorder") or ""), "turn": turn, "web": web,
+            # notifications to the Tin Hat phone apps through the relay (docs/PHONE-PUSH.md): on unless the owner says no
+            "phone_push": a.get("phone_push") is not False}
+
+
+def relay_origin(raw) -> str:
+    """A relay address as the API will take it (webpush.mjs relayOrigin): https://host[:port] (http only for a loopback
+    lab relay), nothing else, in canonical form; "" for anything else. It goes into the env file, so no whitespace or
+    control characters can ever pass (a newline would smuggle another assignment)."""
+    if not isinstance(raw, str):
+        return ""
+    v = raw.strip()
+    if not v or any(ord(c) <= 0x20 or ord(c) == 0x7F for c in v):
+        return ""
+    try:
+        u = urllib.parse.urlsplit(v)
+        port = u.port
+    except ValueError:
+        return ""
+    host = (u.hostname or "").lower()
+    loopback = host in ("127.0.0.1", "localhost", "::1")
+    if not (u.scheme == "https" or (u.scheme == "http" and loopback)):
+        return ""
+    if u.username or u.password or u.path not in ("", "/") or u.query or u.fragment or "?" in v or "#" in v or port == 0:
+        return ""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    # a host name, or a real IPv4/IPv6 address. A name whose last label is a number (999.999.999.999, 127.1, 0x7f.1) is
+    # an IPv4 address to the API's URL parser (WHATWG "ends in a number"), read differently or refused: never pass one
+    last = host.rstrip(".").rsplit(".", 1)[-1]
+    if ip is None and (not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host) or re.fullmatch(r"[0-9]+|0x[0-9a-f]*", last)):
+        return ""
+    default = 443 if u.scheme == "https" else 80
+    shown = f"[{ip.compressed}]" if ip is not None and ip.version == 6 else host
+    return f"{u.scheme}://{shown}" + (f":{port}" if port and port != default else "")
+
+
+def push_relay(st: dict | None = None) -> str:
+    """The relay the API sends phone pushes through (PUSH_RELAY), checked; "" when phone notifications are off here or
+    the configured address isn't a valid relay origin (then the API refuses phone pushers and the apps are told so)."""
+    return relay_origin(environment.env().get("push_relay")) if settings(st)["phone_push"] else ""
 
 
 def docker_gateway() -> str:
@@ -113,6 +158,7 @@ def features(st: dict | None = None, s: dict | None = None) -> dict:
         "gameservers": gameservers_configured(),
         "presence": True,
         "push": True,
+        "phone_push": bool(push_relay(st)),  # the Tin Hat phone apps can get notifications from this server
         "memories": a["memories"],
         "reports": True,
         "guests": True,  # the guest room (docs/GUESTS.md): off until a manager turns it on, but always offered
@@ -125,7 +171,7 @@ def recorder(st: dict | None = None) -> str:
     return a["recorder"] if a["memories"] else ""
 
 
-def env_text(server_name: str, s: dict, gateway: str, web: str = "") -> str:
+def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str = "") -> str:
     base = f"https://{server_name}"
     gw = gateway or "127.0.0.1"
     lines = {
@@ -148,6 +194,8 @@ def env_text(server_name: str, s: dict, gateway: str, web: str = "") -> str:
         "PUSH_SUBJECT": base,  # VAPID's contact: an https URL is allowed, and it names nobody's mailbox
         "GAMES_DATA_DIR": "/conf/games",
     }
+    if relay:
+        lines["PUSH_RELAY"] = relay  # the phone apps' relay (docs/PHONE-PUSH.md); absent = phone pushers refused
     return "".join(f"{k}={v}\n" for k, v in lines.items())
 
 
@@ -176,7 +224,7 @@ def write(st: dict | None = None, s: dict | None = None) -> bool:
         return False
     changed = False
     files = {
-        "env": env_text(sn, s, docker_gateway(), settings(st)["web"]),
+        "env": env_text(sn, s, docker_gateway(), settings(st)["web"], push_relay(st)),
         "synapse-admin.token": s.get("system_token") or "",
         "synapse.secret": s.get("registration_shared_secret") or "",
         "livekit.secret": s.get("livekit_secret") or "",
@@ -264,6 +312,8 @@ def doc(st: dict | None = None, s: dict | None = None) -> dict:
     a = settings(st)
     return {"keys": {k.replace("_key", ""): bool(s.get(k)) for k in KEY_FILES},
             "memories": a["memories"], "recorder": a["recorder"],
+            # phone notifications through the Tin Hat relay: the owner's choice, and the relay's host when it's on
+            "phonePush": a["phone_push"], "phoneRelay": urllib.parse.urlsplit(push_relay(st)).hostname or "",
             "web": a["web"], "webOffered": st.get("mode") == "domain", "serverName": st.get("server_name") or "",
             "turn": {k: v for k, v in (a["turn"] or {}).items() if k != "credential"} if a["turn"] else None,
             "gameservers": gameservers_configured(), "vodsDir": str(VODS_DIR), "apiDir": str(DIR),

@@ -546,3 +546,13 @@
   transition: none !important;
   animation-play-state: paused !important;
 }
+
+/* touch (M6, iPhone/iPad sweep 2026-10-25): the toolbar's icon buttons and the Simple / Advanced tabs are 44 tall
+   (side by side with no gap, so they can't just hit larger) */
+:root[data-touch] .iconBtn {
+  width: 44px;
+  height: 44px;
+}
+:root[data-touch] .modeRow > button {
+  height: 44px;
+}

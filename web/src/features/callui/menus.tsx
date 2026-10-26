@@ -1,7 +1,7 @@
 // menus.tsx — the call's menus (house Menu primitives; modal with the window dim like the rig):
 //   LayoutMenu (Main.qml:5661-5683), HiddenMenu (5577-5609), StreamMenu (7106-7236),
 //   ParticipantVolumeMenu (ParticipantVolumeMenu.qml) and DevicesMenu (Main.qml:4600-4816).
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Menu, MenuItem, CheckMenuItem, MenuSeparator, MenuSectionLabel, SubMenu, Slider, ToolButton, ConfirmDialog, Dialog, TextField, useTip, useIsMobile, type Rect } from "@/ui";
 import { openRoom, openSettings, toast, bus } from "@/core/bus";
 import { getPref, setPref, usePref } from "@/core/prefs";
@@ -62,47 +62,75 @@ export function HiddenMenu({ anchor, onClose, hidden }: { anchor: HTMLElement | 
   );
 }
 
-// ---- volume row (stream menu, per-person menu) -------------------------------------------------
+// ---- volume row (stream menu, per-person menu, the Pad's volume sheet) ---------------------------
+
+/** One volume row as drawn (label · 0–200 % slider · value · mute), controlled. The per-person menu wires it to this
+ *  device's audio prefs (VolumeRow below); the Pad's volume sheet (features/pad) wires it to the commands it sends to
+ *  the device in the call — the same sheet on both. `pending` = the Pad's press is waiting for its answer. */
+export function VolumeSliderRow({
+  label,
+  value,
+  muted,
+  pending,
+  onMoved,
+  onRelease,
+  onMute,
+}: {
+  label?: string;
+  value: number;
+  muted: boolean;
+  pending?: boolean;
+  onMoved: (v: number) => void;
+  onRelease: (v: number) => void;
+  onMute: () => void;
+}) {
+  const muteRef = useRef<HTMLButtonElement>(null);
+  const cap = label ?? "";
+  return (
+    <div className={s.volRow} data-pending={pending ? "" : undefined} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+      {label !== undefined && <span className={`${s.volLabel} ${muted ? s.dim : ""}`}>{label}</span>}
+      <Slider className={s.volSlider} value={value} from={0} to={2} stepSize={0.01} disabled={muted} onMoved={onMoved} onRelease={onRelease} />
+      <span className={s.volPct}>{Math.round(value * 100)}%</span>
+      <ToolButton
+        ref={muteRef}
+        iconName={muted ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"}
+        iconSize={16}
+        className={s.volMute}
+        tip={label !== undefined ? (muted ? `Unmute ${cap}` : `Mute ${cap}`) : muted ? "Unmute this stream" : "Mute this stream (just for you)"}
+        onClick={onMute}
+      />
+    </div>
+  );
+}
+
+/** The per-person menu's header line ("Volume — name  (only for you)"). */
+export function VolumeHead({ children }: { children: ReactNode }) {
+  return <div className={s.volHead}>{children}</div>;
+}
 
 function VolumeRow({ identity, category, label, onChange }: { identity: string; category: CallCategory; label?: string; onChange?: () => void }) {
   const [v, setV] = useState(() => act("volumeFor")(identity, category));
   const [m, setM] = useState(() => act("mutedFor")(identity, category));
-  const muteRef = useRef<HTMLButtonElement>(null);
-  const cap = label ?? "";
   return (
-    <div className={s.volRow} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-      {label !== undefined && <span className={`${s.volLabel} ${m ? s.dim : ""}`}>{label}</span>}
-      <Slider
-        className={s.volSlider}
-        value={v}
-        from={0}
-        to={2}
-        stepSize={0.01}
-        disabled={m}
-        onMoved={(x) => {
-          setV(x);
-          act("pushVolume")(identity, category, x);
-        }}
-        onRelease={(x) => {
-          setV(x);
-          act("setVolume")(identity, category, x);
-          onChange?.();
-        }}
-      />
-      <span className={s.volPct}>{Math.round(v * 100)}%</span>
-      <ToolButton
-        ref={muteRef}
-        iconName={m ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"}
-        iconSize={16}
-        className={s.volMute}
-        tip={label !== undefined ? (m ? `Unmute ${cap}` : `Mute ${cap}`) : m ? "Unmute this stream" : "Mute this stream (just for you)"}
-        onClick={() => {
-          act("setMuted")(identity, category, !m);
-          setM(!m);
-          onChange?.();
-        }}
-      />
-    </div>
+    <VolumeSliderRow
+      label={label}
+      value={v}
+      muted={m}
+      onMoved={(x) => {
+        setV(x);
+        act("pushVolume")(identity, category, x);
+      }}
+      onRelease={(x) => {
+        setV(x);
+        act("setVolume")(identity, category, x);
+        onChange?.();
+      }}
+      onMute={() => {
+        act("setMuted")(identity, category, !m);
+        setM(!m);
+        onChange?.();
+      }}
+    />
   );
 }
 
@@ -305,7 +333,7 @@ export function ParticipantVolumeMenu(p: ParticipantVolumeMenuProps) {
       )}
       <MemberRows items={rows} ctx={ctx} from={50} to={Infinity} />
       {notMe && <MenuSeparator />}
-      <div className={s.volHead}>Volume — {name}{"  "}(only for you)</div>
+      <VolumeHead>Volume — {name}{"  "}(only for you)</VolumeHead>
       <VolumeRow identity={id} category="mic" label="Their mic" onChange={() => bump((n) => n + 1)} />
       <VolumeRow identity={id} category="screenshare" label="Their screen share" onChange={() => bump((n) => n + 1)} />
       <VolumeRow identity={id} category="music" label="Their soundboard" onChange={() => bump((n) => n + 1)} />

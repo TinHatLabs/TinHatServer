@@ -1,5 +1,5 @@
 // SpaceRail.tsx — ThSpaceRail.qml: the 68 px spaces rail. Meta bubbles (Home, Favourites,
-// People, Rooms) pinned at the top, the DM strip (REACH §1: unread DMs + DM invites, DmStrip.tsx — it
+// People, Rooms) pinned at the top, the DM strip (REACH §1: unread DMs + DM invites, DmStripBar.tsx — it
 // pushes the spaces down and is not rendered at all while empty), a divider, the user's real spaces in their saved drag order
 // (scrolls when it overflows), invited spaces after them, a divider and the "+" disc pinned at the
 // foot. Selection pill + squircle, hover morph, rollup badges, drag-to-reorder (≥ 6 px vertical),
@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as RPoi
 import { Avatar, Icon, Menu, MenuItem, MenuSectionLabel, UnreadBadge, avatarSeed, hideTooltip, useIsland, useTip } from "@/ui";
 import { selectSpace, setDragging, setSpaceOrder, useNavStore, type SpaceEntry } from "./model";
 import { SpaceMenu } from "./menus";
-import { DmStrip } from "./DmStrip";
+import { DmStrip } from "./DmStripBar";
 import { acceptInvite, rejectInvite } from "./actions";
 import { openNavDialog } from "./dialogs";
 import { swallowNextClick } from "./touch";

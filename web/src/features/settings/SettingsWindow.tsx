@@ -487,8 +487,10 @@ function PhoneSettings({ groups, hits, current, close }: ViewProps) {
           ) : (
             <ScrollArea className={s.scroll} contentClassName={cx(s.scrollInner, s.mScrollInner)}>
               <div className={cx(s.column, s.mColumn)}>
-                <StatusAskBanner />
-                {current.meta.description && <p className={s.mPaneDesc}>{current.meta.description}</p>}
+                {/* phones: the status question sits on the Settings list and in Privacy (where the answer lives), not
+                    on top of every pane (~100 pt each; iPhone/iPad sweep L1, 2026-10-25) */}
+                {current.meta.key === "privacy" && <StatusAskBanner />}
+                {current.meta.description && <p className={s.mPaneDesc}>{current.meta.phoneDescription ?? current.meta.description}</p>}
                 <Pane key={current.meta.key} />
               </div>
             </ScrollArea>
@@ -520,7 +522,7 @@ function PhoneSettings({ groups, hits, current, close }: ViewProps) {
                             <Icon name={p.meta.icon} size={22} color="var(--th-settings-list-item-fg)" staticOnly />
                             <span className={s.mItemText}>
                               <span className={s.mItemLabel}>{p.meta.label}</span>
-                              {p.meta.description && <span className={s.mItemDesc}>{p.meta.description}</span>}
+                              {p.meta.description && <span className={s.mItemDesc}>{p.meta.phoneDescription ?? p.meta.description}</span>}
                             </span>
                             <Icon name="go-next-symbolic" size={16} color="var(--th-settings-list-chevron-icon)" staticOnly />
                           </button>

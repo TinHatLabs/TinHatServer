@@ -35,6 +35,7 @@ import {
   useStillLabel,
   avatarSeed,
 } from "@/ui";
+import { PadRoomListBar } from "@/features/pad";
 import { acceptInvite, rejectInvite, setActivity } from "./actions";
 import { openNavDialog } from "./dialogs";
 import { AppMenu, NewMenu, RegistryMenuItems, RoomMenu, openBugReport } from "./menus";
@@ -48,6 +49,7 @@ import { accountName } from "@/features/guests/model";
 import { MyStatusLine, StatusPopover, avatarDot, useMyPresence, usePresence, viewOf } from "@/features/presence";
 import { TourOfferCard } from "@/features/selfhost/asks";
 import { openQuickSwitcher } from "./QuickSwitcher";
+import { useIsTouch } from "@/core/device";
 import { swallowNextClick } from "./touch";
 import { listPlan, type PhoneSections } from "./sections";
 import s from "./RoomList.module.css";
@@ -103,6 +105,7 @@ function useFloatingCardHeight(ref: RefObject<HTMLDivElement | null>): number {
 
 export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPicked, island, sections }: RoomPanelProps) {
   const plan = mobile && sections ? listPlan(sections) : null;
+  const touch = useIsTouch();
   const rooms = useNavStore((st) => st.rooms);
   const activeKey = useNavStore((st) => st.activeKey);
   const activeLabel = useNavStore((st) => st.activeLabel);
@@ -240,7 +243,7 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
       {plan?.account === "top" && <AccountCard active={active} mobile={mobile} onBug={() => (openBugReport(), onPicked?.())} onMenu={(el) => setMenu({ kind: "app", anchor: el })} />}
       {(!plan || plan.rooms) && (
       <div className={s.header} onPointerEnter={() => setHeadHover(true)} onPointerLeave={() => setHeadHover(false)}>
-        <div className={s.headLabel} style={{ marginRight: mobile ? 8 + 46 * (2 + (realSpace && !activeInvited ? 1 : 0)) : 8 + 32 + (realSpace && !activeInvited ? 28 : 0) }}>
+        <div className={s.headLabel} style={{ marginRight: mobile ? 8 + 46 * (2 + (realSpace && !activeInvited ? 1 : 0)) : touch ? 8 + 44 * (1 + (realSpace && !activeInvited ? 1 : 0)) : 8 + 32 + (realSpace && !activeInvited ? 28 : 0) }}>
           {activeLabel}
         </div>
         {realSpace && !activeInvited && (
@@ -307,6 +310,7 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
           role="list"
           aria-label="Rooms"
         >
+          {(!plan || plan.rooms) && <PadRoomListBar />}
           {plan?.widgets === "before" && <RailExtras mobile />}
           {(!plan || plan.rooms) && ordered.map((r) => (
             <RoomRowView

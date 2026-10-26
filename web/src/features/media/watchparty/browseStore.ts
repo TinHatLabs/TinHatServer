@@ -1,4 +1,4 @@
-// watchparty/browse.ts — the Browse pane's data (11.4, DESIGN §2.4 / CONTRACT §3): YouTube search (v=2, typed),
+// watchparty/browseStore.ts — the Browse pane's data (11.4, DESIGN §2.4 / CONTRACT §3): YouTube search (v=2, typed),
 // autocomplete, trending, playlists / channels, and the room's play History (CONTRACT §2). One zustand store; the
 // native twin is watchparty.rs `browse` / `suggest` / history. Everything goes through the Tin Hat API (/api/watch/*),
 // which caches and counts the Data API units; a 503 {error:"budget"} = "YouTube search is used up for today".

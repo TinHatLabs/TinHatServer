@@ -100,3 +100,8 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* touch (M6, iPhone/iPad sweep 2026-10-25): the 40 px tool buttons sit 4–10 apart: each hits 2 px wider each side */
+:root[data-touch] .body {
+  --th-hit-x: 2px;
+}

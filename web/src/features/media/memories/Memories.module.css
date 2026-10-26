@@ -109,7 +109,9 @@
 }
 .stateBox {
   position: relative;
-  height: 288px;
+  /* at least the native's 288 px; taller when the text wraps more (a phone): the button then stays below the text
+     instead of over it (iPhone/iPad sweep, 2026-10-25) */
+  min-height: 288px;
   display: flex;
   flex-direction: column;
 }
@@ -117,10 +119,8 @@
   flex: 1 1 auto;
 }
 .tryAgain {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
+  align-self: center;
+  margin-top: 8px;
 }
 
 .card {

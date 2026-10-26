@@ -7,6 +7,7 @@ import { Avatar, Button, Icon, cx } from "@/ui";
 import { CATALOG_BASE, artUrl, openCalendar, openGameReelFor, rsvp, startNew, useCal, type Person } from "@/features/calendar";
 import { fmtClock, useClockMode, type ClockMode } from "@/features/settings";
 import { fmtUntil, ringOf, RING_MINUTES } from "@/widgets/time";
+import { OnThisPhone } from "@/features/native";
 import { defineWidget, type PartProps, type WidgetCtx } from "../impl";
 import { CrossFade, useFreshIds } from "../motion";
 import { useUpNext, type UpEvent, type UpJoin, type UpNextModel } from "./model";
@@ -245,17 +246,19 @@ function Hero({ e, join, now, mode, ctx, linked }: { e: UpEvent; join: UpJoin | 
             </>
           ) : canJoin ? (
             <>
-              <Button
-                highlighted
-                className={s.join}
-                text="Join call"
-                icon="call-start-symbolic"
-                disabled={ctx.preview}
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  startCall(join!.room);
-                }}
-              />
+              <OnThisPhone roomId={join!.room} inline buttonClass={s.join}>
+                <Button
+                  highlighted
+                  className={s.join}
+                  text="Join call"
+                  icon="call-start-symbolic"
+                  disabled={ctx.preview}
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    startCall(join!.room);
+                  }}
+                />
+              </OnThisPhone>
               <Rsvp e={e} iconOnly preview={ctx.preview} />
             </>
           ) : soon && join?.inIt ? (

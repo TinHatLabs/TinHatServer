@@ -1,6 +1,6 @@
 // watchparty/model.ts — the Browse pane's and the History's PURE model (no imports: node tests and the shared vectors
 // load it): CONTRACT §3 `Item` and listings, the queue item a browse row adds, view-count text, and the History ring
-// (CONTRACT §2). browse.ts re-exports these. The native twins live in watchparty.rs (norm_browse_item, queue_item_of,
+// (CONTRACT §2). browseStore.ts re-exports these. The native twins live in watchparty.rs (norm_browse_item, queue_item_of,
 // norm_history, history_push).
 import type { QueueItem } from "./queue";
 

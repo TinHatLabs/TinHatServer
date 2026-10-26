@@ -483,12 +483,14 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+  // not on touch: on an iPad (desktop layout) the on-screen keyboard came up with every room opened, at launch too
+  // (verify pass, 2026-10-25)
   useEffect(() => {
-    if (primary && !mobile) {
+    if (primary && !mobile && !touch) {
       const t = window.setTimeout(() => composer.current?.focus(), 0);
       return () => window.clearTimeout(t);
     }
-  }, [primary, mobile]);
+  }, [primary, mobile, touch]);
   useEffect(() => {
     if (!primary) return;
     const c = peekClient();

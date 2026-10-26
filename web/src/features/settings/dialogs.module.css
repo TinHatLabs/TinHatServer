@@ -232,3 +232,8 @@
   padding-bottom: var(--th-safe-bottom);
   max-height: calc(100dvh - var(--th-safe-top) - var(--th-vv-bottom, 0px)) !important;
 }
+
+/* VerifyDeviceDialog: the Security Key shown as dots without type="password" (see MASK_BY_CSS) */
+.masked {
+  -webkit-text-security: disc;
+}

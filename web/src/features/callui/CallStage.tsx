@@ -25,6 +25,7 @@ import { HearPills } from "./HearPills";
 import { ResumePill } from "./ResumePill";
 import { SameRoomAsk } from "./SameRoomAsk";
 import { JoinBanner, useHeaderChipsMounted } from "./Incoming";
+import { OnThisPhone } from "@/features/native";
 import { MobileCallStage, MobileCallPill } from "./Mobile";
 import { recClipRoom } from "@/actions/decisions";
 import { useChatStore } from "@/features/chat/store";
@@ -50,14 +51,22 @@ export function CallStage({ roomId, mobile, pageH, leftInset }: CallStageProps) 
   if (mobile) {
     return (
       <>
-        {!chipsMounted && !shown && <JoinBanner roomId={roomId} />}
+        {!chipsMounted && !shown && (
+          <OnThisPhone roomId={roomId}>
+            <JoinBanner roomId={roomId} />
+          </OnThisPhone>
+        )}
         {shown && <MobileCallStage roomId={callRoom} />}
       </>
     );
   }
   return (
     <>
-      {!chipsMounted && <JoinBanner roomId={roomId} />}
+      {!chipsMounted && (
+        <OnThisPhone roomId={roomId}>
+          <JoinBanner roomId={roomId} />
+        </OnThisPhone>
+      )}
       {shown && <DesktopStage roomId={callRoom} columnH={pageH} leftInset={leftInset} />}
     </>
   );

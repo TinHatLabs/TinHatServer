@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { installModeration } from "./moderation.mjs";
 import { installInvites } from "./invites.mjs";
 import { createHs, createMatrixAuth, RateLimit, clientIp } from "./reachcommon.mjs";
+import { createLimits } from "./limits.mjs";
 import { installPresence } from "./presence.mjs";
 import { installPush } from "./push.mjs";
 import { installGameServers } from "./gameservers.mjs";
@@ -70,47 +71,22 @@ function b64u(buf) {
 
 const LK_API_URL = required("LK_API_URL"); // the call server's HTTP API (call moderation)
 
-// Rate limiting. Three tiers:
-//   - /vods/file + /vods/thumb: EXEMPT — every request carries an HMAC sig+exp
-//     (that IS the auth), and this is the player's media plane: mpv range reads,
-//     5 live-tile HTTPS pipelines, thumbnail polls. The old global 30/min bucket
-//     starved all of it (souphttpsrc "Unknown Error (429)" in field logs) — and
-//     because req.ip behind our own nginx is 127.0.0.1, ONE bucket was shared by
-//     every user. THUMB_MAX remains the ffmpeg capacity gate.
-//   - /vods/sessions: authenticated (bearer) — its own generous per-IP bucket.
-//   - everything else (soundboard, gifs, …): strict 30/min per REAL
-//     client IP (trust proxy below).
+// Rate limiting: the tiers are in limits.mjs (/vods/file + /vods/thumb exempt: every request carries an HMAC sig+exp,
+// the player's media plane — the old global 30/min bucket starved it, souphttpsrc "Unknown Error (429)" in field
+// logs; THUMB_MAX remains the ffmpeg capacity gate. /vods/sessions 60/min, soundboard clip reads 240/min, the rest
+// 30/min), per REAL client IP.
 // Behind a proxy, req.ip must be the REAL client (TRUST_PROXY names the proxies): otherwise every request looks like
 // the proxy, one bucket for everybody, and one busy client gets everyone 429s (GIFs, soundboard, the invites check).
 // TRUST_PROXY: who may set X-Forwarded-For (comma-separated express values; on a Tin Hat Server its own Caddy: loopback).
 app.set("trust proxy", (process.env.TRUST_PROXY || "loopback").split(",").map((s) => s.trim()).filter(Boolean));
-const rateMap = new Map();
-function bucketCheck(key, max) {
-    const now = Date.now();
-    const windowMs = 60000;
-    if (!rateMap.has(key)) rateMap.set(key, []);
-    const timestamps = rateMap.get(key).filter(t => now - t < windowMs);
-    if (timestamps.length >= max) return false;
-    timestamps.push(now);
-    rateMap.set(key, timestamps);
-    return true;
+const limits = createLimits(Date.now);
+setInterval(() => limits.sweep(), 600000).unref?.(); // idle addresses go, so the maps can't grow unbounded
+function tooMany(res) {
+    res.setHeader("Retry-After", "5");
+    return res.status(429).json({ error: "Too many requests" });
 }
-// idle-key eviction so the map can't grow unbounded (10-min sweep)
-setInterval(() => {
-    const cutoff = Date.now() - 120000;
-    for (const [k, v] of rateMap) if (!v.length || v[v.length - 1] < cutoff) rateMap.delete(k);
-}, 600000).unref?.();
 function rateLimit(req, res, next) {
-    if (req.path.startsWith("/vods/file/") || req.path.startsWith("/vods/thumb/"))
-        return next(); // signed media plane — exempt (see above)
-    const sessions = req.path.startsWith("/vods/sessions");
-    const ok = sessions
-        ? bucketCheck("s:" + req.ip, 60)
-        : bucketCheck(req.ip, 30);
-    if (!ok) {
-        res.setHeader("Retry-After", "5");
-        return res.status(429).json({ error: "Too many requests" });
-    }
+    if (!limits.request(req.path, req.ip)) return tooMany(res);
     next();
 }
 
@@ -558,12 +534,16 @@ app.get("/search", async (req, res) => {
 // GET /clip?id=<sha256> serves an UPLOADED clip instead — see the uploads section below.
 const CLIP_TYPES = { mp3: "audio/mpeg", ogg: "audio/ogg", opus: "audio/ogg", wav: "audio/wav", m4a: "audio/mp4", webm: "audio/webm" };
 const clipInflight = new Map(); // key -> Promise
-async function ensureClip(fullUrl) {
+function clipPaths(fullUrl) {
     const key = createHash("sha256").update(fullUrl).digest("hex");
     const m = /\.(mp3|ogg|opus|wav|m4a|webm)(?:\?|$)/i.exec(new URL(fullUrl).pathname);
     const ext = m ? m[1].toLowerCase() : "mp3";
-    const file = `${CLIP_DIR}/${key}.${ext}`;
-    const metaFile = `${CLIP_DIR}/${key}.json`;
+    return { key, ext, file: `${CLIP_DIR}/${key}.${ext}`, metaFile: `${CLIP_DIR}/${key}.json` };
+}
+// `admit()` is asked only right before a NEW upstream fetch starts (not for a cached clip, not for a request that joins
+// a fetch already running): false = no fetch, a 429 (limits.mjs: a fetch from myinstants costs a strict one).
+async function ensureClip(fullUrl, admit = () => true) {
+    const { key, ext, file, metaFile } = clipPaths(fullUrl);
     if (existsSync(file)) {
         let ct = CLIP_TYPES[ext];
         try { ct = JSON.parse(readFileSync(metaFile, "utf8")).content_type || ct; } catch { /* no meta */ }
@@ -571,6 +551,7 @@ async function ensureClip(fullUrl) {
         return { file, contentType: ct };
     }
     if (clipInflight.has(key)) return clipInflight.get(key);
+    if (!admit()) throw Object.assign(new Error("Too many requests"), { status: 429 });
     const p = (async () => {
         const tmp = `${file}.part-${process.pid}-${Date.now()}`;
         const r = await miFetch(fullUrl, tmp);
@@ -603,11 +584,13 @@ async function serveClip(req, res) {
     try { full = miUrl(url); } catch { full = null; }
     if (!full) return res.status(403).json({ error: "Only myinstants.com URLs allowed" });
     try {
-        const { file, contentType } = await ensureClip(full);
+        // reading a cached clip is the clip tier's (limits.mjs); a new fetch from myinstants also costs a strict one
+        const { file, contentType } = await ensureClip(full, () => limits.upstreamFetch(req.ip));
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
         res.sendFile(file, { headers: { "Content-Type": contentType, "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox" }, acceptRanges: true, lastModified: false });
     } catch (err) {
+        if (err.status === 429) return tooMany(res);
         console.warn(`[soundboard] clip fetch failed: ${err.message} ${full}`);
         res.status(502).json({ error: err.message || "Fetch failed" });
     }
@@ -898,6 +881,7 @@ installPush(app, {
     auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN, dir: CONF,
     gatewayListen: { host: process.env.PUSH_GATEWAY_HOST || "127.0.0.1", port: Number(process.env.PUSH_GATEWAY_PORT || 3091) },
     gatewayUrl: required("PUSH_GATEWAY_URL"), subject: required("PUSH_SUBJECT"),
+    relay: process.env.PUSH_RELAY || null, // the Tin Hat phone apps' relay (docs/PHONE-PUSH.md); unset = phones refused
 });
 
 // The guest room (docs/GUESTS.md in the server repository): one optional Guests room, a link that can be renewed,

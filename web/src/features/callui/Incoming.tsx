@@ -5,10 +5,12 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import { GlowButton, Icon, OverlayPortal, RING_OPACITY, RING_STEP_MS, ToolButton, ringHigh, ringOn, useIsMobile, useReducedMotion } from "@/ui";
 import { useRealWinState } from "@/core/winstate";
 import { openRoom } from "@/core/bus";
+import { OnThisPhone } from "@/features/native";
 import { playUiSound, startRing, stopRing } from "@/core/sounds";
 import { peekClient, useRoomStateEvents } from "@/core/matrix";
 import { isRecorder } from "@/core/server";
 import { act, getC, useC } from "./store";
+import { PadButton, padCallText, pickTarget, useDeviceName, usePadTargets } from "@/features/pad";
 import s from "./Incoming.module.css";
 
 // ---- live call roster (org.matrix.msc3401.call.member / m.call.member / m.rtc.member) ---------
@@ -96,7 +98,12 @@ export function CallHeaderChips({ roomId }: { roomId: string }) {
       listeners.forEach((f) => f());
     };
   }, [roomId]);
-  return <JoinBanner roomId={roomId} />;
+  // a Tin Hat app's native call in this room: "You're in this call on this phone" instead (features/native)
+  return (
+    <OnThisPhone roomId={roomId}>
+      <JoinBanner roomId={roomId} />
+    </OnThisPhone>
+  );
 }
 
 export function JoinBanner({ roomId }: { roomId: string }) {
@@ -108,11 +115,17 @@ export function JoinBanner({ roomId }: { roomId: string }) {
   const me = peekClient()?.getUserId() ?? "";
   const others = parts.filter((p) => p !== me || callRoom !== roomId);
   const joining = connecting && callRoom === roomId;
+  // Pad (features/pad): one of my other devices is in this call → "You're in this call on <device>" + Pad beside Join
+  const pad = usePadTargets(roomId);
+  const padT = pickTarget(pad);
+  const padDev = useDeviceName(padT?.device ?? "");
   // Main.qml:5249 — hidden while we're in (or joining) any call; the incoming card offers Switch.
   if (fake || inCall || (connecting && !joining) || parts.length === 0) return null;
+  const text = padT ? padCallText(padDev, parts.filter((p) => p !== me).map((p) => displayName(roomId, p))) : joinBannerText(roomId, others);
   return (
     <div className={s.banner} data-testid="join-banner">
-      <span className={s.bannerText}>{joinBannerText(roomId, others)}</span>
+      <span className={s.bannerText}>{text}</span>
+      {padT && <PadButton roomId={roomId} targets={pad} />}
       <GlowButton text={joining ? "Joining…" : "Join"} busy={joining} disabled={connecting} onClick={() => act("joinCall")(roomId)} />
     </div>
   );

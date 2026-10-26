@@ -506,7 +506,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           ))}
         </div>
       )}
-      <div className={cx(s.box, focused && s.boxFocus, (target || staged.length > 0) && s.boxTopGap)} data-composer-focus={focused ? "" : undefined}>
+      <div className={cx(s.box, focused && s.boxFocus, (target || staged.length > 0) && s.boxTopGap)} data-composer-focus={focused ? "" : undefined} data-composer>
         {p.mobile ? (
           <ToolButton ref={plusBtn} iconName="list-add-symbolic" tip="Add to your message" className={s.tb} onMouseDown={(e) => e.preventDefault()} onClick={() => setPlusOpen((o) => !o)} />
         ) : (

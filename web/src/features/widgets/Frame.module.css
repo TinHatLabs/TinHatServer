@@ -165,3 +165,14 @@
 .frame[data-mobile] .body {
   font-size: 15px;
 }
+
+/* touch, desktop layout (iPad; M5, iPhone/iPad sweep 2026-10-25): the header (it folds the widget) and its options
+   button are 44 tall like the phone's; the options button can't grow past the header without covering the body */
+:root[data-touch] .frame:not([data-mobile]) > .header {
+  height: 44px;
+}
+:root[data-touch] .frame:not([data-mobile]) .menuBtn {
+  width: 44px;
+  height: 44px;
+  margin-left: 0;
+}

@@ -29,6 +29,7 @@ import { OverlayPortal, placePopup, rectOf, usePopupStack, type Rect } from "./o
 import { useIsMobile } from "./formFactor";
 import { BACK_LEVEL_POPUP, useBackToClose } from "./backStack";
 import { cx } from "./hooks";
+import { holdTextSelection } from "./touchPress";
 import s from "./Menu.module.css";
 
 export type MenuAnchor = HTMLElement | Rect | { x: number; y: number } | null | undefined;
@@ -501,8 +502,16 @@ export function ContextMenu({ menu, children, disabled, modal, width, title, lon
       }}
       onPointerDown={(e) => {
         if (disabled || e.pointerType !== "touch") return;
+        holdTextSelection();
         const x = e.clientX, y = e.clientY;
-        lp.current = { t: window.setTimeout(() => setAt({ x, y }), longPress), x, y };
+        lp.current = {
+          t: window.setTimeout(() => {
+            window.getSelection?.()?.removeAllRanges(); // the system's own long-press selection (iOS)
+            setAt({ x, y });
+          }, longPress),
+          x,
+          y,
+        };
       }}
       onPointerMove={(e) => {
         const l = lp.current;

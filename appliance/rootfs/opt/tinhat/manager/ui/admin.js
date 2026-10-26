@@ -303,6 +303,8 @@ function apiCard(o, el) {
     const rows = [
       ...API_KEYS.map(([k, label]) => [label, keys[k] ? "Set" : "Not set", !!keys[k]]),
       ["Memories (call recordings)", a.memories ? `On · ${a.recorder}` : "Off", !!a.memories],
+      ["Phone notifications", a.phonePush === false ? "Off" : a.phoneRelay ? `On · through ${a.phoneRelay}` : "On, but no relay is set: phones get none",
+        a.phonePush !== false && !!a.phoneRelay],
       ["Game servers panel", a.gameservers ? "Configured" : "Not configured", !!a.gameservers],
       ["TURN server for calls", a.turn ? `${a.turn.host}:${a.turn.port} (${a.turn.protocol})` : "None", !!a.turn],
       ...(a.webOffered ? [["Web app address", a.web || `${a.serverName} (the server's own)`, !!a.web]] : []),
@@ -326,6 +328,9 @@ function apiCard(o, el) {
     const memSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(mem), "aria-label": "Memories" });
     memSw.addEventListener("click", () => { mem = !mem; memSw.setAttribute("aria-checked", String(mem)); });
     const recIn = h("input", { type: "text", value: a.recorder || "", placeholder: "@recorder:your.server", autocomplete: "off", spellcheck: "false" });
+    let phone = a.phonePush !== false;
+    const phoneSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(phone), "aria-label": "Phone notifications" });
+    phoneSw.addEventListener("click", () => { phone = !phone; phoneSw.setAttribute("aria-checked", String(phone)); });
     const turn = a.turn || {};
     const tHost = h("input", { type: "text", value: turn.host || "", placeholder: "turn.example.com (empty = none)", spellcheck: "false" });
     const tPort = h("input", { type: "text", value: turn.port ? String(turn.port) : "", placeholder: "3478 or 5349" });
@@ -339,7 +344,7 @@ function apiCard(o, el) {
       save.disabled = true;
       save.replaceChildren(h("span.spin"), "Applying…");
       err.classList.add("hidden");
-      const body = { ...f, memories: mem, recorder: recIn.value.trim(), ...(webIn ? { web: webIn.value.trim() } : {}) };
+      const body = { ...f, memories: mem, recorder: recIn.value.trim(), phonePush: phone, ...(webIn ? { web: webIn.value.trim() } : {}) };
       body.turn = tHost.value.trim()
         ? { host: tHost.value.trim(), port: tPort.value.trim(), protocol: tProto.value, username: tUser.value.trim(), credential: tCred.value }
         : null;
@@ -361,6 +366,8 @@ function apiCard(o, el) {
       h("div.list", ...keyItems,
         h("div.item", h("div.grow", h("div.k", "Memories (call recordings)"),
           h("div.s", "Recordings a Tin Hat recorder writes into this server's recordings folder. Name the recorder's account, so the apps don't show it as a caller."), recIn), memSw),
+        h("div.item", h("div.grow", h("div.k", "Phone notifications"),
+          h("div.s", `Lets the Tin Hat iPhone and Android apps get notifications from this server. Each one is encrypted on this server for that phone and travels through the Tin Hat project's relay (${a.phoneRelay || "push.tinhat.dev"}) to Apple or Google; the relay sees only scrambled data and the phone's push address, never who wrote what. Off: phones get no notifications from this server.`)), phoneSw),
         h("div.item", h("div.grow", h("div.k", "TURN server for calls"),
           h("div.s", "For callers whose network blocks UDP (a coturn of your own). Leave the host empty for none."),
           h("div.row.wrap", tHost, tPort, tProto), h("div.row.wrap", tUser, tCred))),

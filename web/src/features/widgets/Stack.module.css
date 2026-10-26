@@ -81,3 +81,8 @@
   max-height: 100%;
   margin: 0;
 }
+
+/* touch (M5/M6, iPhone/iPad sweep 2026-10-25): "Add widget" is a 44-pt target */
+:root[data-touch] .add {
+  height: 44px;
+}

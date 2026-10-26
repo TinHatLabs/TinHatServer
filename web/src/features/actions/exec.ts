@@ -49,6 +49,8 @@ import { libraryDoc } from "@/ui/themeLibrary";
 import { chooseTheme, getThemeState } from "@/ui/themeStore";
 import { copyText } from "@/features/nav/actions";
 import { currentRoomId } from "./providers";
+import { pressPad } from "@/features/pad/Entry";
+import { targetsIn } from "@/features/pad/runtime";
 
 const c = () => useCallStore.getState();
 const flip = (key: string, def: string) => setPref(key, getPref(key, def) === "1" ? "0" : "1");
@@ -158,6 +160,11 @@ export const HANDLERS: Record<string, Handler> = {
   "call.join": (ctx) => {
     const room = roomOf(ctx);
     if (room) c().switchCall(room);
+  },
+  // 12.0.2 Pad (docs/PAD.md): the Pad button beside Join (features/pad Entry.tsx pressPad) for the target room's call
+  "call.pad.open": (ctx) => {
+    const room = roomOf(ctx);
+    if (room) pressPad(room, targetsIn(room));
   },
   // 11.0.2: "Keep call buttons visible" — the bar's pin and Settings → Calls do the same (callui/chrome.ts)
   "call.bar.pin.toggle": () => setCallBarPinned(!callBarPinned()),

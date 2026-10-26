@@ -64,6 +64,8 @@ import { buildMicOptions, micProcessorFor, rnnoiseAvailable } from "./mic";
 import { av1Probe, av1Watch } from "./av1";
 import { setCallAudioSession } from "@/core/sounds";
 import type { Stamp } from "./envclock";
+// Tin Hat apps (bridge 2): the phone's native device does the call — Join goes to the app, never this engine
+import { joinNatively, nativeDeviceId, pageOwnsMembership } from "@/features/native";
 
 const log = createLogger("call");
 
@@ -2073,6 +2075,7 @@ function primeAudioInGesture(): void {
 }
 
 export function joinCall(roomId: string): void {
+  if (joinNatively(roomId)) return; // a Tin Hat app with "calls": the app joins (features/native; false everywhere else)
   const st = getCall();
   if (roomId && !st.inCall && !st.connecting) primeAudioInGesture();
   if (roomId && st.hangingUp && !st.inCall && !st.connecting) {
@@ -2868,6 +2871,7 @@ async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false)
 }
 
 export function switchCall(roomId: string): void {
+  if (joinNatively(roomId)) return; // a Tin Hat app with "calls": the app joins or switches (features/native)
   const st = getCall();
   if (roomId && st.callRoomId !== roomId) primeAudioInGesture();
   if (!st.inCall && !st.connecting && !st.hangingUp) {
@@ -3191,7 +3195,8 @@ function onOwnMemberEvent(ev: MatrixEvent) {
   if (ev.getType() !== MEMBER_TYPE) return;
   const ses = getSession();
   const roomId = ev.getRoomId();
-  if (!roomId || !ses.userId || !ses.deviceId || ev.getStateKey() !== ownStateKey(ses.userId, ses.deviceId)) return;
+  // only our OWN device's key (never the phone app's native call device: another device of this account)
+  if (!roomId || !pageOwnsMembership(ev.getStateKey(), ses.userId, ses.deviceId, nativeDeviceId())) return;
   markMemberDirty(roomId, 3000);
 }
 
@@ -3210,6 +3215,7 @@ async function reconcileOwnMembership(roomId: string, entry: { tries: number }) 
   const c = peekClient();
   // one tab owns this device's session (core's Web Lock) — only that tab ever corrects its membership
   if (!c || c !== memberWatch || !ses.userId || !ses.deviceId || !holdsTabLock()) return;
+  if (!pageOwnsMembership(ownStateKey(ses.userId, ses.deviceId), ses.userId, ses.deviceId, nativeDeviceId())) return;
   const again = (ms: number) => entry.tries < 12 && markMemberDirty(roomId, ms, entry.tries + 1);
   const st = getCall();
   // a join / leave / switch in flight owns the membership right now: look again once it has settled

@@ -52,6 +52,39 @@ export function checkEndpoint(raw) {
     return { ok: true, url: u };
 }
 
+// ── the phone apps' relay (docs/PHONE-PUSH.md) ───────────────────────────────────────────────────────
+// The Tin Hat phone apps subscribe at ONE relay (Web Push in, APNs / FCM out); a server takes their endpoints only
+// when its PUSH_RELAY names that relay, and only for the phone app ids. Unset = phone pushers are refused, as before.
+
+/** PUSH_RELAY → the relay's origin ("https://push.example"; http only for a loopback lab relay), or null. */
+export function relayOrigin(raw) {
+    if (typeof raw !== "string" || raw.trim() === "") return null;
+    // the URL parser would quietly drop tabs/newlines (and keep what follows): no whitespace or controls at all
+    if (/[\u0000-\u0020\u007f]/.test(raw.trim())) return null;
+    let u;
+    try { u = new URL(raw.trim()); } catch { return null; }
+    const loopback = u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "[::1]";
+    if (u.protocol !== "https:" && !(u.protocol === "http:" && loopback)) return null;
+    if (u.username !== "" || u.password !== "" || (u.pathname !== "/" && u.pathname !== "") || u.search || u.hash) return null;
+    return u.origin;
+}
+
+/**
+ * A relay endpoint: the RAW string is exactly `<relay origin>/w/<22-char id>` (relay = relayOrigin()'s canonical form),
+ * so one subscription has one spelling and one pushkey: no `:443`, no `/x/../w/…`, no empty `?` or `#`, no case games.
+ * {ok: true, url} or {ok: false, reason}.
+ */
+export function checkRelayEndpoint(raw, relay) {
+    if (!relay) return { ok: false, reason: "no_relay" };
+    if (typeof raw !== "string" || raw.length === 0 || raw.length > 2048) return { ok: false, reason: "bad_endpoint" };
+    const prefix = `${relay}/w/`;
+    if (!raw.startsWith(prefix) || !/^[A-Za-z0-9_-]{22}$/.test(raw.slice(prefix.length))) return { ok: false, reason: "not_relay" };
+    let u;
+    try { u = new URL(raw); } catch { return { ok: false, reason: "bad_endpoint" }; }
+    if (u.href !== raw) return { ok: false, reason: "not_relay" };
+    return { ok: true, url: u };
+}
+
 /** A P-256 point in uncompressed form that really lies on the curve (OpenSSL checks it on import). */
 function isP256Point(buf) {
     if (!Buffer.isBuffer(buf) || buf.length !== 65 || buf[0] !== 0x04) return false;
@@ -62,18 +95,30 @@ function isP256Point(buf) {
 }
 
 /**
- * Pusher data {endpoint, p256dh, auth} -> {ok: true, endpoint: URL, p256dh: Buffer(65), auth: Buffer(16)}
+ * Pusher data {endpoint, p256dh, auth} -> {ok: true, endpoint: URL, p256dh: Buffer(65), auth: Buffer(16), viaRelay}
  * or {ok: false, reason}. The allowlist is applied here, so an invalid subscription is never fetched.
+ * `kind`: "browser" = the push-service allowlist only (a browser's subscription; the default), "relay" = the phone
+ * apps' relay only (`relay` = its origin from relayOrigin()), "any" = either (a registration, which names no app id).
  */
-export function parseSubscription(data) {
+export function parseSubscription(data, relay = null, kind = "browser") {
     if (!data || typeof data !== "object") return { ok: false, reason: "no_data" };
-    const ep = checkEndpoint(data.endpoint);
+    let ep, viaRelay = false;
+    if (kind === "relay") {
+        ep = checkRelayEndpoint(data.endpoint, relay);
+        viaRelay = true;
+    } else {
+        ep = checkEndpoint(data.endpoint);
+        if (!ep.ok && kind === "any" && relay) {
+            const r = checkRelayEndpoint(data.endpoint, relay);
+            if (r.ok) { ep = r; viaRelay = true; }
+        }
+    }
     if (!ep.ok) return ep;
     const p256dh = fromB64u(data.p256dh);
     if (!p256dh || !isP256Point(p256dh)) return { ok: false, reason: "bad_p256dh" };
     const auth = fromB64u(data.auth);
     if (!auth || auth.length !== 16) return { ok: false, reason: "bad_auth" };
-    return { ok: true, endpoint: ep.url, p256dh, auth };
+    return { ok: true, endpoint: ep.url, p256dh, auth, viaRelay };
 }
 
 /** The pushkey the web client derives from its endpoint (REACH §3.2): base64url(sha256(endpoint)). */

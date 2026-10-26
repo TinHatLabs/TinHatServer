@@ -47,6 +47,7 @@ export * from "./ComboBox";
 export * from "./CheckBox";
 export * from "./Slider";
 export * from "./Menu";
+export * from "./touchPress";
 export * from "./Popover";
 export * from "./Tooltip";
 export * from "./Dialog";

@@ -353,3 +353,10 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+
+/* touch (M6, iPhone/iPad sweep 2026-10-25): the status presets are 44 tall (they wrap 6 px apart, so they can't just hit
+   larger) */
+:root[data-touch] .preset {
+  height: 44px;
+  border-radius: 22px;
+}

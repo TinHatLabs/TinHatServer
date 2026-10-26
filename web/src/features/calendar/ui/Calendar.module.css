@@ -711,6 +711,10 @@
 .mobile .stack {
   flex: none;
 }
+/* the lists sat 7 pt from the screen's edge (the body's 6 + 1), the other panes 16–20 (iPhone/iPad sweep L13) */
+.mobile .stack:is([data-tab="upcoming"], [data-tab="games"]) {
+  padding: 0 10px;
+}
 .mobile .grid {
   flex: none;
   grid-auto-rows: 52px;

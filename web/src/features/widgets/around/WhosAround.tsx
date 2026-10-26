@@ -9,10 +9,12 @@ import { openRoom, openUserProfile, startCall } from "@/core/bus";
 import { useDerived, useSession } from "@/core/matrix";
 import { Avatar, Button, ContextMenu, Icon, MenuItem, Popover, cx, useIsTouch } from "@/ui";
 import { useCall } from "@/features/calls";
+import { PadButton, usePadTargets } from "@/features/pad";
 import { recorderRule } from "@/core/server";
 import { messageUser } from "@/features/nav";
 import { PresenceLine, StatusChip, avatarDot, readNow, turnSharingOn, usePresenceStore, viewOf, type PresenceRow } from "@/features/presence";
 import { groupAround, type AroundGroups, type AroundRoom } from "@/widgets/people";
+import { OnThisPhone } from "@/features/native";
 import { defineWidget, type PartProps, type WidgetCtx } from "../impl";
 import { CrossFade, Roll, useFreshIds } from "../motion";
 import { nameNow, usePerson, useRoomLabel } from "../names";
@@ -108,18 +110,23 @@ function Faces({ ids, room, size = 16, max = 4 }: { ids: string[]; room?: string
 }
 
 function JoinOrHere({ room, here, preview }: { room: string; here: boolean; preview: boolean }) {
+  // Pad (features/pad): one of my other devices is in that call → Pad beside Join
+  const pad = usePadTargets(preview ? null : room);
   if (here) return <span className={s.here}>You're here</span>;
   return (
-    <Button
-      highlighted
-      className={s.join}
-      text="Join"
-      disabled={preview}
-      onClick={(e) => {
-        e.stopPropagation();
-        startCall(room);
-      }}
-    />
+    <>
+      {pad.length > 0 && <PadButton roomId={room} targets={pad} compact className={s.join} />}
+      <Button
+        highlighted
+        className={s.join}
+        text="Join"
+        disabled={preview}
+        onClick={(e) => {
+          e.stopPropagation();
+          startCall(room);
+        }}
+      />
+    </>
   );
 }
 
@@ -143,7 +150,9 @@ function RoomRow({ g, playing, enter, myCallRoom, ctx }: { g: AroundRoom; playin
           <Faces ids={g.people} room={g.room} size={ctx.mobile ? 20 : 16} />
         </span>
       </span>
-      <JoinOrHere room={g.room} here={myCallRoom === g.room} preview={ctx.preview} />
+      <OnThisPhone roomId={g.room} inline buttonClass={s.join}>
+        <JoinOrHere room={g.room} here={myCallRoom === g.room} preview={ctx.preview} />
+      </OnThisPhone>
     </div>
   );
 }

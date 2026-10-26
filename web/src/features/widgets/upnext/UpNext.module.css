@@ -499,3 +499,13 @@
 .cdot {
   margin-right: 6px;
 }
+
+/* touch (M5/M6, iPhone/iPad sweep 2026-10-25): "+ New event" (18 tall) hits at 44 */
+:root[data-touch] .newEvent {
+  position: relative;
+}
+:root[data-touch] .newEvent::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc(50% - 22px)) max(calc(0px - var(--th-hit-x, 0px)), min(0px, calc(50% - 22px)));
+}

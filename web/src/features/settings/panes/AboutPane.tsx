@@ -10,14 +10,19 @@ import { useSession } from "@/core/matrix";
 import { useServerFeature } from "@/core/server";
 import { Button, cx, useIsMobile } from "@/ui";
 import { checkForUpdates, useUpdate } from "@/features/nav";
+import { chooseServer, hasNativeCap } from "@/features/native";
 import { APP_VERSION } from "../logs";
 import { buildHash } from "../sheets";
+import { nativeInfo } from "@/features/native/bridge";
 import { closeSettings } from "../store";
 import { Card, Row, Section } from "../rows";
 import p from "./panes.module.css";
 
 /** Web, or Web · staging at <host>/next/ (the build says "dev" in a dev server) */
 function channel(): string {
+  // inside a Tin Hat app: which app and its own version (bug reports need both)
+  const app = nativeInfo();
+  if (app) return `${app.platform === "ios" ? "iPhone app" : "Android app"}${app.app ? ` ${app.app}` : ""}`;
   return /\/next\//.test(location.pathname) ? "Web · staging" : "Web";
 }
 
@@ -31,7 +36,7 @@ async function releaseNotes(): Promise<{ version?: string; notes?: string } | nu
 }
 
 export function AboutPane() {
-  const { userId = "" } = useSession();
+  const { userId = "", hsUrl = "" } = useSession();
   const upd = useUpdate();
   const phone = useIsMobile();
   const reportsOn = useServerFeature("reports"); // docs/SELFHOST.md: no reports inbox on this server → no row
@@ -129,6 +134,14 @@ export function AboutPane() {
           description={userId}
           control={<Button flat className={p.signOut} text="Sign out" onClick={() => bus.emit("requestSignOut", {})} />}
         />
+        {/* a Tin Hat app (bridge "servers"): its own server chooser — features/native */}
+        {hasNativeCap("servers") && (
+          <Row
+            label="Server"
+            description={hsUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "")}
+            control={<Button text="Switch server" icon="network-server-symbolic" onClick={chooseServer} />}
+          />
+        )}
       </Section>
 
       <p className={p.footer}>Tin Hat Web — the Tin Hat app in your browser: the same rooms, calls and people, nothing to install. It updates whenever the page reloads.</p>

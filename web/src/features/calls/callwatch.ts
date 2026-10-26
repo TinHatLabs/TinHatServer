@@ -17,7 +17,8 @@ import { sess } from "./session";
 import { claimsRoom, hooks, setChimeHook, switchCall } from "./engine";
 import { callActive, liveSessions, roomCallParticipants, type CallParticipant } from "./rtc";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, avatarMxc, displayName, isRecorder, mxidOf } from "./util";
-import { pruneAnnounced, shouldAnnounce } from "./alertrules";
+import { answeredElsewhere, pruneAnnounced, shouldAnnounce } from "./alertrules";
+import { nativeCall, nativeCallIn, onNativeCall } from "@/features/native";
 
 const log = createLogger("callwatch");
 
@@ -83,7 +84,8 @@ function present(call: IncomingCall) {
   if (cur.some((c) => c.roomId === call.roomId)) return;
   patch({ incomingCalls: [...cur, call] });
   const st = getCall();
-  if (st.inCall || st.connecting) playUiSound("notify");
+  // (a Tin Hat app's native call counts as being in a call: the short blip, not the ring — features/native)
+  if (st.inCall || st.connecting || nativeCall()) playUiSound("notify");
   else {
     if (getPref("snd.ring", "") !== "0") {
       startRing();
@@ -139,6 +141,11 @@ export function answerIncoming(roomId: string): void {
   switchCall(roomId);
 }
 
+/** A room's call-membership state events in the raw shape Pad's discovery reads ({sender, state_key, origin_server_ts, content}). */
+function memberRaw(c: MatrixClient, roomId: string): unknown[] {
+  return (c.getRoom(roomId)?.currentState.getStateEvents(MEMBER_TYPE) ?? []).map((ev) => ({ sender: ev.getSender() ?? "", state_key: ev.getStateKey() ?? "", origin_server_ts: ev.getTs(), content: ev.getContent() }));
+}
+
 function scan() {
   const c = peekClient();
   if (!c) return;
@@ -156,12 +163,17 @@ function scan() {
     activeRooms.set(r.roomId, active);
     if (!seeded) continue;
     if (active && !was) {
-      if (claimsRoom(r.roomId) || roomMuted(c, r.roomId)) continue;
+      if (claimsRoom(r.roomId) || nativeCallIn(r.roomId) || roomMuted(c, r.roomId)) continue;
       const me = c.getUserId();
       const first = liveSessions(r.roomId, now)
         .filter((s) => s.sender !== me && !isRecorder(`${s.sender}:x`))
         .sort((a, b) => a.createdTs - b.createdTs)[0];
       if (!first) continue; // our own membership (another device of ours) — natives ring anyway; skip our own
+      // already taken on another of my devices (both arrived together): no card, no ring (callwatch.rs does the same)
+      if (answeredElsewhere(me ?? "", c.getDeviceId() ?? "", now, memberRaw(c, r.roomId))) {
+        log.info(`call in ${r.roomId} already answered on another of my devices — not announced`);
+        continue;
+      }
       // A flapping group call (test rig, reconnecting client, recorder retry) alerts once per window; DMs always ring.
       if (!shouldAnnounce(announced.get(r.roomId), now, isDirectRoom(c, r.roomId))) {
         log.info(`call in ${r.roomId} restarted within the re-announce window — not alerting again`);
@@ -172,6 +184,16 @@ function scan() {
       present({ roomId: r.roomId, roomName: r.name || r.roomId, who: first ? displayName(r.roomId, first.sender) : "" });
     } else if (!active && was) {
       dismissIncoming(r.roomId);
+    }
+  }
+  // Answered elsewhere: a card whose call one of MY OTHER devices is now in goes, and the ring with it (callwatch.rs
+  // does the same) — otherwise the phone keeps "Incoming call · Join" over the Pad after the PC took the call.
+  const meId = c.getUserId() ?? "";
+  const myDev = c.getDeviceId() ?? "";
+  for (const call of getCall().incomingCalls) {
+    if (answeredElsewhere(meId, myDev, now, memberRaw(c, call.roomId))) {
+      log.info(`call in ${call.roomId} answered on another of my devices — card dismissed`);
+      dismissIncoming(call.roomId);
     }
   }
   // Seed on the first NETWORK sync (native: its first sync_once) — the IndexedDB cache can predate
@@ -301,6 +323,12 @@ export function installCallWatch(): void {
     const wasBusy = prev.inCall || prev.connecting || prev.hangingUp || prev.reconnecting;
     if (!busy && wasBusy) setCallAudioSession(false);
     else if (busy && !wasBusy) setCallAudioSession(true); // a join that didn't come through the click (auto-rejoin, guest hand-off)
+  });
+  // A Tin Hat app's native call (bridge 2) answers like a join of ours: its room's card goes, the ring stops.
+  onNativeCall((n) => {
+    if (!n || n.state === "leaving") return;
+    dismissIncoming(n.roomId);
+    stopRinging();
   });
   hooks.onParticipantJoined.push(() => bump());
   hooks.onParticipantLeft.push(() => bump());

@@ -50,7 +50,7 @@ import {
 import { useServerFeature } from "@/core/server";
 import { addLink, type LinkMeta } from "./add";
 import { BrowsePane } from "./Browse";
-import { clearSuggestions, setTab, suggest, useBrowse } from "./browse";
+import { clearSuggestions, setTab, suggest, useBrowse } from "./browseStore";
 import { openInLabel, parseMediaLink, serviceLabel, type MediaLink } from "./links";
 import { MP_KEY_GROUPS, keyName, shortcutFor, type MpShortcut } from "./shortcuts";
 import { remoteChange, type PbSnap } from "./osd";

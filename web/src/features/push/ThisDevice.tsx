@@ -9,6 +9,7 @@
 //                    couldn't repair it / "Try again" when turning off didn't finish (never "off" before that's
 //                    confirmed — web review #5)
 import { Button, HintLabel, SectionLabel, Separator, Switch, cx } from "@/ui";
+import { inTinHatApp } from "@/features/native";
 import { disablePush, enablePush, sendTest, setQuiet, usePushStore } from "./client";
 import s from "./push.module.css";
 
@@ -24,6 +25,7 @@ export function ThisDeviceSection() {
   const on = st.phase === "on";
   const busy = st.phase === "turning-on" || st.phase === "turning-off";
   const checked = (on || st.phase === "turning-on" || st.phase === "checking") && !denied;
+  if (inTinHatApp()) return null; // a Tin Hat app: no Web Push, no "Add to Home Screen" (features/native)
   return (
     <>
       <SectionLabel>This device</SectionLabel>

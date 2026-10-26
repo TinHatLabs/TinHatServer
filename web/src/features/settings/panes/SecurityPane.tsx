@@ -322,7 +322,7 @@ function Devices() {
           { text: "Cancel", role: "reject", onClick: () => setSignOut(null) },
         ]}
       >
-        <TextField type="password" aria-label="Account password" placeholder="Account password" value={pw} onChange={(e) => setPw(e.target.value)} />
+        <TextField type="password" autoComplete="current-password" aria-label="Account password" placeholder="Account password" value={pw} onChange={(e) => setPw(e.target.value)} />
       </PromptDialog>
       <PromptDialog
         open={signOutAll}
@@ -351,7 +351,7 @@ function Devices() {
           { text: "Cancel", role: "reject", onClick: () => setSignOutAll(false) },
         ]}
       >
-        <TextField type="password" aria-label="Account password" placeholder="Account password" value={pw} onChange={(e) => setPw(e.target.value)} />
+        <TextField type="password" autoComplete="current-password" aria-label="Account password" placeholder="Account password" value={pw} onChange={(e) => setPw(e.target.value)} />
       </PromptDialog>
     </Section>
   );

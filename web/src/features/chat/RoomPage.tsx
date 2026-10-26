@@ -9,14 +9,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBus, bus, startCall } from "@/core/bus";
 import { useRegistry } from "@/core/registry";
-import { useDmFace, useRoomName, useRoomAvatar, useMembers, useRoomState } from "@/core/matrix";
+import { useDmFace, useRoomName, useRoomAvatar, useMembers, useRoomState, useSession } from "@/core/matrix";
 import { useCall } from "@/features/calls";
 import { CallHeaderChips } from "@/features/callui";
+import { PadButton, padCallText, pickTarget, useDeviceName, usePadTargets } from "@/features/pad";
 import * as spacesFeature from "@/features/spaces";
 import { Avatar, GlowButton, HeaderIconButton, Icon, OverlayPortal, Popover, avatarSeed, cx } from "@/ui";
 import type { ItemOut } from "@/actions/evaluate";
 import { Dim, EditableRow, RowButton, bespokeOk, shownItems, useRow, type RowState } from "@/actions/ui/rowHost";
 import type { RoomHeaderActionContribution } from "@/core/registry";
+import { OnThisPhone } from "@/features/native";
 import { ConversationView } from "./ConversationView";
 import { mainView } from "./store";
 import { callBannerText, useRoomCallInfo } from "./roomCall";
@@ -58,7 +60,11 @@ export function HeaderIsland({ roomId, leftInset, mobile, onBack, fill, island, 
       {!fill && <RoomHeaderBar roomId={roomId} leftInset={leftInset} mobile={mobile} onBack={onBack} bgRadius={island ? bgRadius : 0} />}
       {/* callui's join banner (CUI-149) when the real call UI is loaded; chat's own otherwise (CHAT-12) */}
       <CallHeaderChips roomId={roomId} />
-      {!calluiOwnsCall && <CallBanner roomId={roomId} />}
+      {!calluiOwnsCall && (
+        <OnThisPhone roomId={roomId}>
+          <CallBanner roomId={roomId} />
+        </OnThisPhone>
+      )}
       {banners
         .filter((b) => (b.visible ? b.visible(roomId) : true))
         .map((b) => (
@@ -276,15 +282,21 @@ function CallBanner({ roomId }: { roomId: string }) {
   const callRoom = useCall((c) => c.roomId);
   const inThis = callRoom === roomId && (joined || connecting);
   const [busy, setBusy] = useState(false);
+  // Pad (features/pad): one of my other devices is in this call → "You're in this call on <device>" + Pad beside Join
+  const pad = usePadTargets(roomId);
+  const padT = pickTarget(pad);
+  const padDev = useDeviceName(padT?.device ?? "");
+  const me = useSession().userId ?? "";
   useEffect(() => {
     if (!connecting) setBusy(false);
   }, [connecting]);
   if (!info.active || (inThis && joined)) return null;
   const joining = busy || (connecting && callRoom === roomId);
-  const text = callBannerText(info.participants.map((p) => p.name));
+  const text = padT ? padCallText(padDev, info.participants.filter((p) => p.userId !== me).map((p) => p.name)) : callBannerText(info.participants.map((p) => p.name));
   return (
     <div className={s.callBanner}>
       <span className={s.bannerText}>{text}</span>
+      {padT && <PadButton roomId={roomId} targets={pad} />}
       <GlowButton
         text={joining ? "Joining…" : "Join"}
         busy={false}

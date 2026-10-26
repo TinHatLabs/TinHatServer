@@ -7,6 +7,7 @@ import { useSession } from "@/core/matrix";
 import { getPref, setPref, usePref } from "@/core/prefs";
 import { enablePush, envNow, usePushStore } from "./client";
 import { isInstalled, isIos } from "./wire";
+import { inTinHatApp } from "@/features/native";
 
 const SNOOZE_PREF = "notify.ask-until";
 const SNOOZE_MS = 30 * 24 * 3_600_000;
@@ -18,7 +19,8 @@ export function useNotifyCardVisible(): boolean {
   const perm = usePushStore((st) => st.permission);
   const desk = usePref("desktop-notifications", "1");
   const until = Number(usePref(SNOOZE_PREF, "0")) || 0;
-  return session.state === "ready" && session.liveSyncDone && perm === "default" && desk !== "0" && until <= Date.now();
+  // (never inside a Tin Hat app: its web view has no Web Push; the apps notify natively — features/native)
+  return session.state === "ready" && session.liveSyncDone && perm === "default" && desk !== "0" && until <= Date.now() && !inTinHatApp();
 }
 
 /** [Turn on] — call it INSIDE the click (iOS asks only within the tap): the browser's question, or on an iPhone Home

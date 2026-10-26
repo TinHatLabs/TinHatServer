@@ -27,6 +27,13 @@ refused, and the newest *signed* version among the sources wins.
   provision.sh checks each reused image's id (from its file name) and processor; only reuse when `git diff
   vPREVIOUS -- api appliance/rootfs/opt/tinhat/build` is empty. Servers whose Docker names loaded images its own way
   (the containerd store: install.sh on Docker 29+) don't find the ids and still fetch the images from GitHub.
+  When only one of them changed, `REUSE_IMAGES=caddy` (or `api`) reuses just that one and builds the other (0.3.3:
+  a new API, Caddy as in 0.3.2).
+- **A release with a new image stays off the mirror** (0.3.3 onwards, until no 0.3.0/0.3.1 server is left): the
+  mirror keeps 0.3.2, the newest release such a server can install, so it steps to 0.3.2 there and reads GitHub from
+  then on. A 0.3.2+ server reads both and takes the newer GitHub release; on a day GitHub can't be read it sees only
+  0.3.2 there and waits. Don't use `--min-from` for this: a server that read that manifest would stop at "blocked"
+  instead of taking 0.3.2 from the mirror.
 
 ## One-time setup
 1. The repository (github.com/TinHatLabs/TinHatServer), and `gh auth login` on the machine that publishes.
@@ -80,7 +87,8 @@ refused, and the newest *signed* version among the sources wins.
    `tinhat-server-X.Y.Z.update.tar.gz` from `out/github/vX.Y.Z/` to the mirror (the site repo's `public/server/`;
    `release.sh … --mirror DIR` does it, keeping the newest three bundles): the very files GitHub has, never
    regenerated.
-   Not before: the mirror's signed manifest counts for servers whatever GitHub's pre-release flag says.
+   Not before: the mirror's signed manifest counts for servers whatever GitHub's pre-release flag says. Not at all
+   for a release with a new image while 0.3.0/0.3.1 servers may be out there (above).
 5. The download page (tinhat.dev) follows: its version chips and "What's new" read the release; check the copy too.
 
 ## When a release is bad

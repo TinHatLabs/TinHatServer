@@ -5,7 +5,7 @@
 // — and locally; outside a call only locally, "Only you hear these here…"); pressing the playing sound stops it. In a
 // call whose roles turned `use_soundboard` off for you the buttons are disabled with the panel's own line. Motion:
 // pressRipple (a one-shot ripple from the press point, `verylong`, only while animate). No timer.
-import { useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import { useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from "react";
 import { useAccountData } from "@/core/matrix";
 import { cx, useAnimate } from "@/ui";
 import { useCall } from "@/features/calls";
@@ -34,12 +34,12 @@ function useModel(ctx: WidgetCtx): SoundPadModel {
   return { sounds, gate: padGate(inCall, perms), playingUrl };
 }
 
-function PadButton({ d, m, ctx, compact }: { d: PadSound; m: SoundPadModel; ctx: WidgetCtx; compact?: boolean }) {
+/** One pad button as drawn (the emoji over the name, the playing glow, the press ripple). Exported for the Pad screen
+ *  (features/pad), whose sound grid IS this widget's grid; `pending` = a Pad press waiting for the PC's answer. */
+export function SoundPadButton({ d, playing, disabled, compact, pending, onPress }: { d: PadSound; playing: boolean; disabled?: boolean; compact?: boolean; pending?: boolean; onPress: () => void }) {
   const animate = useAnimate();
   const [ripple, setRipple] = useState<{ x: number; y: number; k: number } | null>(null);
   const seq = useRef(0);
-  const playing = d.url === m.playingUrl;
-  const disabled = ctx.preview || !m.gate.allowed;
   const press = (e: RPointerEvent<HTMLButtonElement>) => {
     if (disabled || !animate) return;
     const r = e.currentTarget.getBoundingClientRect();
@@ -48,7 +48,7 @@ function PadButton({ d, m, ctx, compact }: { d: PadSound; m: SoundPadModel; ctx:
   return (
     <button
       type="button"
-      className={cx(compact ? s.chip : s.pad, playing && s.playing)}
+      className={cx(compact ? s.chip : s.pad, playing && s.playing, pending && s.pending)}
       disabled={disabled}
       aria-pressed={playing}
       aria-label={playing ? `Stop ${d.name}` : `Play ${d.name}`}
@@ -58,7 +58,7 @@ function PadButton({ d, m, ctx, compact }: { d: PadSound; m: SoundPadModel; ctx:
       onPointerDown={press}
       onClick={(e) => {
         e.stopPropagation();
-        if (!m.sample) toggleSound(d.url, d.name, d.emoji);
+        onPress();
       }}
     >
       <span className={s.emoji} aria-hidden>
@@ -68,6 +68,26 @@ function PadButton({ d, m, ctx, compact }: { d: PadSound; m: SoundPadModel; ctx:
       {ripple && <span key={ripple.k} className={s.ripple} style={{ left: ripple.x, top: ripple.y }} onAnimationEnd={() => setRipple(null)} aria-hidden />}
     </button>
   );
+}
+
+/** The pad's grid (3 per row; phones: the bigger buttons) + its one line under it. */
+export function SoundPadGrid({ mobile, hint, hintOff, columns, children }: { mobile?: boolean; hint?: string; hintOff?: boolean; columns?: number; children: ReactNode }) {
+  return (
+    <div className={s.body} data-mobile={mobile ? "" : undefined}>
+      <div className={s.grid} style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}>
+        {children}
+      </div>
+      {hint && (
+        <div className={s.hint} data-off={hintOff ? "" : undefined}>
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PadButton({ d, m, ctx, compact }: { d: PadSound; m: SoundPadModel; ctx: WidgetCtx; compact?: boolean }) {
+  return <SoundPadButton d={d} playing={d.url === m.playingUrl} disabled={ctx.preview || !m.gate.allowed} compact={compact} onPress={() => !m.sample && toggleSound(d.url, d.name, d.emoji)} />;
 }
 
 function Body({ model: m, ctx }: PartProps<SoundPadModel>) {
@@ -83,18 +103,11 @@ function Body({ model: m, ctx }: PartProps<SoundPadModel>) {
       </div>
     );
   return (
-    <div className={s.body} data-mobile={ctx.mobile ? "" : undefined}>
-      <div className={s.grid}>
-        {shown.map((d) => (
-          <PadButton key={d.url} d={d} m={m} ctx={ctx} />
-        ))}
-      </div>
-      {m.gate.hint && (
-        <div className={s.hint} data-off={m.gate.allowed ? undefined : ""}>
-          {m.gate.hint}
-        </div>
-      )}
-    </div>
+    <SoundPadGrid mobile={ctx.mobile} hint={m.gate.hint} hintOff={!m.gate.allowed}>
+      {shown.map((d) => (
+        <PadButton key={d.url} d={d} m={m} ctx={ctx} />
+      ))}
+    </SoundPadGrid>
   );
 }
 

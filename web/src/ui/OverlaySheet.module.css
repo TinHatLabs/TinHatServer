@@ -47,6 +47,12 @@
   padding: 8px 52px 8px 8px;
   min-height: 35px;
 }
+/* no close button: nothing to keep clear on the right (the phone layout editor's Done sat 56 pt in from the edge;
+   iPhone/iPad sweep L11, 2026-10-25) */
+/* phones only: desktop layouts keep the native's header padding (visual parity with the desktop app) */
+:root[data-ff="mobile"] .headerNoClose {
+  padding-right: 8px;
+}
 .title {
   font-size: var(--th-font-h2);
   line-height: var(--th-line-h2);
@@ -211,4 +217,10 @@
 }
 :root[data-ff="mobile"] .prompt {
   max-height: calc(100% - 16px);
+}
+/* ... so a prompt that is also a phone bottom sheet is lifted once, not twice (the sheet class adds the keyboard as a
+   bottom margin, for confirm dialogs whose box doesn't end at the keyboard): New DM / New room went off the top of
+   the screen with the keyboard up (verify pass, 2026-10-25) */
+:root[data-ff="mobile"] .center > .prompt {
+  margin-bottom: 0;
 }

@@ -29,6 +29,12 @@ function decode(s: string): string {
   return out;
 }
 
+/** A room id: "!opaque:server" (room versions 1–11) or, from room version 12 on, "!opaque" with no server part
+ *  (Synapse makes v12 rooms by default since 1.163; federated rooms can be v12 whatever our own server makes). */
+export function isRoomId(s: string): boolean {
+  return /^![^\s/]+$/.test(s);
+}
+
 export function parseHash(hash: string): Route {
   let h = hash.startsWith("#") ? hash.slice(1) : hash;
   if (!h || h === "/") return { name: "home" };
@@ -61,7 +67,7 @@ export function parseHash(hash: string): Route {
       const raw = decode(rest);
       const [target, ev] = raw.split(/\/(?=\$)/);
       const t = target.replace(/\/+$/, "").trim();
-      if ((t.startsWith("!") || t.startsWith("#")) && t.includes(":")) {
+      if (isRoomId(t) || (t.startsWith("#") && t.includes(":"))) {
         return { name: "room", target: t, eventId: ev || undefined, via: query.getAll("via") };
       }
       if (t.startsWith("@") && t.includes(":")) return { name: "user", userId: t };

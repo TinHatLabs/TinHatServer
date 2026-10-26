@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { restoreSession, takeOverSession, useSession, type SessionInfo } from "@/core/matrix";
 import { onPrefChange, getPref } from "@/core/prefs";
-import { keyboardInset, useFormFactor, useIsTouch } from "@/core/device";
+import { iosKeyboardPath, keyboardInset, useFormFactor, useIsTouch } from "@/core/device";
 import { installShortcuts } from "@/core/shortcuts";
 import { applyReducedMotion, CrashProbe, GlowButton, setFormFactorAttrs, ToastHost, TooltipHost } from "@/ui";
 import { Startup } from "./Startup";
@@ -125,6 +125,15 @@ function textFieldAt(t: EventTarget | null): HTMLElement | null {
   return el?.isContentEditable ? el : null;
 }
 
+/** The nearest ancestor that scrolls vertically (where a focused field can be brought into view). */
+function scrollBoxOf(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if ((o === "auto" || o === "scroll") && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
 /** Theme, reduced motion, form factor, keyboard inset, shortcuts — once, app-wide. */
 function useAppEnvironment() {
   useEffect(() => {
@@ -145,7 +154,8 @@ function useAppEnvironment() {
     const vv = window.visualViewport;
     if (!vv) return;
     const root = document.documentElement;
-    const iosPwa = root.hasAttribute("data-ios-pwa");
+    // the Home Screen app's keyboard path — also the Tin Hat iOS app's web view (core/device.ts iosKeyboardPath)
+    const iosPwa = iosKeyboardPath();
     let shift = 0;
     let poll = 0;
     let kbUp = false;
@@ -156,6 +166,30 @@ function useAppEnvironment() {
     // After the keyboard comes up iOS can draw the page a status bar lower than where it tells the page it is, until
     // the next touch scroll lines the two up (device check, 2026-10-25). A 1-pt scroll and back does the same; it runs
     // as soon as iOS's own slide has stopped (no viewport event for 60 ms), with timed ones as a fallback.
+    // The tap-focus below (preventScroll) also stops iOS from bringing a field in a sheet into view: the Start over
+    // password sat behind the keyboard (iPhone/iPad sweep, 2026-10-25). Once the keyboard is up, a focused field the
+    // keyboard covers is scrolled into its own container's view ("nearest": nothing moves when it's visible). The
+    // composer is always above the keyboard and is left alone.
+    // Verify pass (2026-10-25): with its form when that fits, so Start over's button comes along (it sat under the
+    // sheet's Close bar); what counts as visible is also inside the field's scroll box (a footer below it covers the
+    // rest); the Safari tab gets the same (iOS left the field behind the keyboard there too), and a field focused while
+    // the keyboard is already up as well.
+    let reveals: number[] = [];
+    const reveal = () => {
+      const el = document.activeElement;
+      if (!kbUp || !(el instanceof HTMLElement) || !textFieldAt(el) || el.closest("[data-composer]")) return;
+      const form = el.closest("form");
+      const t = form && form.getBoundingClientRect().height < vv.height / 2 ? form : el;
+      const box = scrollBoxOf(el)?.getBoundingClientRect();
+      const top = Math.max(vv.offsetTop, box?.top ?? -Infinity);
+      const bottom = Math.min(vv.offsetTop + vv.height - 8, box?.bottom ?? Infinity);
+      const r = t.getBoundingClientRect();
+      if (r.bottom > bottom || r.top < top) t.scrollIntoView({ block: "nearest" });
+    };
+    const revealSoon = (times: number[]) => {
+      reveals.forEach((t) => window.clearTimeout(t));
+      reveals = times.map((ms) => window.setTimeout(reveal, ms));
+    };
     const nudge = () => {
       if (!kbUp) return;
       lastNudge = performance.now();
@@ -180,6 +214,7 @@ function useAppEnvironment() {
         nudges.forEach((t) => window.clearTimeout(t));
         nudges = [400, 1200].map((ms) => window.setTimeout(nudge, ms));
       }
+      if (inset > 120 && !kbUp) revealSoon([450, 1300]);
       kbUp = inset > 120;
       if (iosPwa && inset > 120 && !poll) poll = window.setInterval(on, 200);
       else if (poll && inset <= 120) {
@@ -229,9 +264,12 @@ function useAppEnvironment() {
     window.addEventListener("scroll", onEvent);
     document.addEventListener("focusin", onEvent);
     document.addEventListener("focusout", onEvent);
+    const onFocusIn = () => kbUp && revealSoon([300]);
+    document.addEventListener("focusin", onFocusIn);
     return () => {
       settle.forEach((t) => window.clearTimeout(t));
       nudges.forEach((t) => window.clearTimeout(t));
+      reveals.forEach((t) => window.clearTimeout(t));
       window.clearTimeout(quiet);
       window.clearInterval(poll);
       vv.removeEventListener("resize", onEvent);
@@ -240,6 +278,7 @@ function useAppEnvironment() {
       window.removeEventListener("scroll", onEvent);
       document.removeEventListener("focusin", onEvent);
       document.removeEventListener("focusout", onEvent);
+      document.removeEventListener("focusin", onFocusIn);
       document.removeEventListener("touchstart", onTouchStart, { capture: true });
       document.removeEventListener("touchend", onTouchEnd, { capture: true });
     };

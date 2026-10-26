@@ -63,6 +63,11 @@
 .fbtn > button {
   width: 100%;
 }
+/* phones: a half-width footer button (the first-key sheet's Done) has its label in the middle, not at the left
+   (iPhone/iPad sweep L4, 2026-10-25) */
+:root[data-ff="mobile"] .fbtn > button {
+  justify-content: center;
+}
 
 /* ConfirmDialog */
 .confirmBody {

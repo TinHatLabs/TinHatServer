@@ -24,7 +24,10 @@
 // m.room.encrypted notification whose ciphertext has the key-event length, in a room that is positively not a 2-member
 // DM, is dropped and counted).
 // Payload {v, room, event, kind, title, body, unread: null, user} ≤ 3 KB — `unread` is null since A5.10: the service
-// worker keeps the badge itself; headers TTL 3600, Urgency high, Topic = base64url(sha256(room))[0..32).
+// worker keeps the badge itself; headers TTL 3600, Urgency high, Topic = a keyed per-subscription label: HMAC-SHA256 with
+// this server's secret (push-topic.key, 0600) over (pushkey, room) for browsers — newest replaces per room — and over
+// (pushkey, room, event) for the phone apps. Unkeyed hashes would be the same for every recipient (the Topic travels
+// outside the encrypted body, RFC 8030 §5.4) and would let a push service or the relay link people to an event.
 // Push-service answers (A2.7): 2xx ok · 404/410 -> `rejected` + registration dropped · 429/5xx/timeout/network (or
 // our own queue full) -> 502 to Synapse so it retries with its backoff · any other answer -> 200 + an error line.
 // Other app_ids, undeliverable subscriptions (bad keys, endpoint off the allowlist — never fetched) and pushkeys that
@@ -36,12 +39,15 @@
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { RateLimit, isObj, mono, noStore, readJson, safe, wall } from "./reachcommon.mjs";
-import { b64u, loadOrCreateVapid, parseSubscription, pushkeyFor, sendWebPush } from "./webpush.mjs";
+import { b64u, loadOrCreateVapid, parseSubscription, pushkeyFor, relayOrigin, sendWebPush } from "./webpush.mjs";
 
 export const PUSH = Object.freeze({
     APP_ID: "dev.tinhat.web",
+    // The Tin Hat phone apps (docs/PHONE-PUSH.md): their pushers are taken only with an endpoint at the relay named by
+    // PUSH_RELAY (deps.relay), never a browser push service; without PUSH_RELAY they are refused like any other app id.
+    PHONE_APP_IDS: Object.freeze(["dev.tinhat.ios", "dev.tinhat.android"]),
     GATEWAY_URL: "http://127.0.0.1:3091/_matrix/push/v1/notify", // deps.gatewayUrl: where Synapse reaches the gateway
     GATEWAY_PATH: "/_matrix/push/v1/notify",
     SUBJECT: "https://tinhat.dev", // deps.subject: VAPID's contact (an https URL or a mailto:); the project's site by default
@@ -52,6 +58,7 @@ export const PUSH = Object.freeze({
     TITLE_MAX: 100,
     NAME_MAX: 64,
     PAYLOAD_MAX: 3072,
+    PHONE_PAYLOAD_MAX: 2560, // the relay's 2 900-byte body cap keeps base64url(body) + the APNs/FCM envelope under 4 KB
     DM_CACHE_MS: 5 * 60_000,
     DM_FAIL_CACHE_MS: 30_000,
     DEDUP_MS: 15 * 60_000,
@@ -144,13 +151,13 @@ export function word(n, cls, dm) {
 }
 
 /** The JSON payload as UTF-8, guaranteed ≤ PAYLOAD_MAX bytes (title and body are cut first, never room/event/user). */
-export function payloadBytes({ room, event, kind, title, body, unread, user }) {
+export function payloadBytes({ room, event, kind, title, body, unread, user }, max = PUSH.PAYLOAD_MAX) {
     const enc = (t, b) => Buffer.from(JSON.stringify({ v: 1, room, event, kind, title: t, body: b, unread, user }), "utf8");
     const cut = (s, n) => Array.from(s).slice(0, n).join("") + "…";
     let t = String(title), b = String(body);
     for (let i = 0; i < 100; i++) {
         const buf = enc(t, b);
-        if (buf.length <= PUSH.PAYLOAD_MAX) return buf;
+        if (buf.length <= max) return buf;
         const bl = Array.from(b).length, tl = Array.from(t).length;
         if (bl > 8) b = cut(b, Math.floor(bl * 0.75));
         else if (tl > 8) t = cut(t, Math.floor(tl * 0.75));
@@ -160,7 +167,32 @@ export function payloadBytes({ room, event, kind, title, body, unread, user }) {
     return Buffer.from(JSON.stringify({ v: 1, room: "", event: "", kind, title: "Tin Hat", body: "New activity", unread, user: "" }), "utf8");
 }
 
-export const topicFor = (room) => b64u(createHash("sha256").update(String(room)).digest()).slice(0, 32);
+const keyedTopic = (key, ...parts) => b64u(createHmac("sha256", key).update(parts.map(String).join("\0")).digest()).slice(0, 32);
+/** A browser's Topic: one per (subscription, room), keyed — the newest message of a room replaces the older one there. */
+export const topicFor = (key, pushkey, room) => keyedTopic(key, "room", pushkey, room);
+/** The phones' Topic: one per (subscription, event), keyed — a retry replaces itself; a room's messages stack. */
+export const topicForEvent = (key, pushkey, room, event) => keyedTopic(key, "event", pushkey, room, event);
+
+/** The Topic secret (32 random bytes, 0600 next to vapid.json): made once, kept across restarts. */
+export function loadOrCreateTopicKey(path, log = () => {}) {
+    try {
+        const b = Buffer.from(readFileSync(path, "utf8").trim(), "base64url");
+        if (b.length === 32) return b;
+        log(`push-topic.key isn't 32 bytes — not replacing it; Topic labels can't be made`);
+        throw new Error("bad push-topic.key");
+    } catch (e) {
+        if (e?.code !== "ENOENT") throw e;
+    }
+    const key = randomBytes(32);
+    try {
+        writeFileSync(path, key.toString("base64url") + "\n", { mode: 0o600, flag: "wx" }); // never over another's key
+        log("made push-topic.key");
+        return key;
+    } catch (e) {
+        if (e?.code === "EEXIST") return loadOrCreateTopicKey(path, log);
+        throw e;
+    }
+}
 
 const safeTag = (s) => String(s ?? "-").replace(/[^\w.:-]/g, "?").slice(0, 64) || "-";
 const INSTANCE_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -199,7 +231,7 @@ export function outcome(r) {
 
 /**
  * The store + handlers, without Express. deps: {auth, hs, adminToken, dir | (vapid + ownersFile), fetchImpl?,
- * now? (monotonic ms), wallNow?, log?, logError?, gatewayUrl?, pushTimeoutMs?}.
+ * now? (monotonic ms), wallNow?, log?, logError?, gatewayUrl?, pushTimeoutMs?, relay? (PUSH_RELAY: the phone apps' relay)}.
  */
 export function createPush(deps) {
     const { auth, hs, adminToken } = deps;
@@ -210,9 +242,14 @@ export function createPush(deps) {
     const fetchImpl = deps.fetchImpl || fetch;
     const P = PUSH;
     const GATEWAY_URL = deps.gatewayUrl || P.GATEWAY_URL;
+    const RELAY = relayOrigin(deps.relay);
+    if (deps.relay && !RELAY) logError(`[push] PUSH_RELAY isn't an https origin -> phone pushers refused`);
+    /** How an app id's subscriptions are checked: "browser" (the push-service allowlist), "relay" (phones), or null. */
+    const kindOf = (appId) => (appId === P.APP_ID ? "browser" : RELAY && P.PHONE_APP_IDS.includes(appId) ? "relay" : null);
     const SUBJECT = deps.subject || P.SUBJECT;
     const timeoutMs = deps.pushTimeoutMs ?? P.PUSH_TIMEOUT_MS;
     const vapid = deps.vapid || loadOrCreateVapid(join(deps.dir, "vapid.json"), (m) => log(`[push] ${m}`));
+    const topicKey = deps.topicKey || loadOrCreateTopicKey(join(deps.dir, "push-topic.key"), (m) => log(`[push] ${m}`));
     const regsFile = deps.ownersFile || join(deps.dir, "push-owners.json");
 
     // ── registrations (persisted, 0600): pushkey -> {mxid, quiet, at (wall ms), endpoint, p256dh, auth} ──
@@ -221,7 +258,7 @@ export function createPush(deps) {
         const raw = JSON.parse(readFileSync(regsFile, "utf8"));
         if (!isObj(raw)) throw new Error("not an object");
         for (const [k, v] of Object.entries(raw)) {
-            if (isObj(v) && typeof v.mxid === "string" && parseSubscription(v).ok && pushkeyFor(v.endpoint) === k)
+            if (isObj(v) && typeof v.mxid === "string" && parseSubscription(v, RELAY, "any").ok && pushkeyFor(v.endpoint) === k)
                 regs.set(k, { mxid: v.mxid, quiet: v.quiet === true, at: Number(v.at) || 0, endpoint: v.endpoint, p256dh: v.p256dh, auth: v.auth });
         }
     } catch (e) {
@@ -358,7 +395,8 @@ export function createPush(deps) {
     // ── handlers ──
     function config(_req, res) {
         noStore(res);
-        res.json({ vapid: vapid.publicKey, gateway: GATEWAY_URL, app_id: P.APP_ID });
+        // `relay` only when PUSH_RELAY is set: the phone apps subscribe there (browsers ignore it)
+        res.json({ vapid: vapid.publicKey, gateway: GATEWAY_URL, app_id: P.APP_ID, ...(RELAY ? { relay: RELAY } : {}) });
     }
 
     async function register(req, res) {
@@ -371,7 +409,7 @@ export function createPush(deps) {
         const v = b.value;
         if (!isObj(v) || (v.quietWhileActive !== undefined && typeof v.quietWhileActive !== "boolean"))
             return res.status(400).json({ error: 'expected {"endpoint", "p256dh", "auth", "quietWhileActive": true|false}' });
-        const sub = parseSubscription(v);
+        const sub = parseSubscription(v, RELAY, "any"); // a registration names no app id: a browser's or a phone's
         if (!sub.ok) return res.status(400).json({ error: "subscription_refused", reason: sub.reason });
         const pushkey = pushkeyFor(v.endpoint);
         const existing = regs.get(pushkey);
@@ -473,16 +511,17 @@ export function createPush(deps) {
         const reg = ownReg(req, res, who, v.pushkey);
         if (reg === undefined) return;
         if (!reg) return res.status(404).json({ error: "not_registered" });
-        const sub = parseSubscription(reg);
+        const sub = parseSubscription(reg, RELAY, "any");
         if (!sub.ok) return res.status(400).json({ error: "subscription_refused", reason: sub.reason });
         if (!testLimit.hit(who.user)) {
             res.set("Retry-After", String(testLimit.retryAfter(who.user)));
             return res.status(429).json({ error: "rate_limited", retry_after: testLimit.retryAfter(who.user) });
         }
-        const payload = payloadBytes({ room: "", event: "", kind: "message", title: "Tin Hat", body: "Notifications work on this device.", unread: null, user: who.user });
+        const payload = payloadBytes({ room: "", event: "", kind: "message", title: "Tin Hat", body: "Notifications work on this device.", unread: null, user: who.user },
+            sub.viaRelay ? P.PHONE_PAYLOAD_MAX : P.PAYLOAD_MAX);
         const r = await send(sub, payload, undefined);
         const o = outcome(r);
-        line(P.APP_ID, sub.endpoint.hostname, r.status || r.reason, r.ms, v.pushkey, r.status ? r.reason : "", " (test)", o === "error");
+        line(sub.viaRelay ? "phone" : P.APP_ID, sub.endpoint.hostname, r.status || r.reason, r.ms, v.pushkey, r.status ? r.reason : "", " (test)", o === "error");
         if (o === "ok") return res.json({ ok: true, status: r.status });
         if (o === "gone") dropGone(v.pushkey, reg.endpoint);
         return res.status(502).json({ ok: false, status: r.status, gone: o === "gone", error: r.status ? `push service answered ${r.status}` : `push failed (${r.reason})` });
@@ -505,7 +544,7 @@ export function createPush(deps) {
         let dm; // Promise<true|false|null>, once per notification, only when needed
         const roomDm = () => (dm ??= dmState(n.room_id));
         // A5.9: call-key-sized encrypted events are dropped unless the room is (or may be) a DM.
-        if (!cls.skip && isCallKeySized(n) && devices.some((d) => isObj(d) && d.app_id === P.APP_ID) && (await roomDm()) === false)
+        if (!cls.skip && isCallKeySized(n) && devices.some((d) => isObj(d) && kindOf(d.app_id)) && (await roomDm()) === false)
             cls = { skip: "call_key" };
         const rejected = [];
         const jobs = [];
@@ -515,8 +554,9 @@ export function createPush(deps) {
         for (const d of devices) {
             if (!isObj(d) || !validPushkey(d.pushkey)) continue;
             const pk = d.pushkey;
-            if (d.app_id !== P.APP_ID) { rejected.push(pk); stats.rejected++; line(d.app_id, "-", "rejected:app_id", 0, pk); continue; }
-            const sub = parseSubscription(d.data);
+            const kind = kindOf(d.app_id); // dev.tinhat.web → a browser push service; a phone app → the relay only
+            if (!kind) { rejected.push(pk); stats.rejected++; line(d.app_id, "-", "rejected:app_id", 0, pk); continue; }
+            const sub = parseSubscription(d.data, RELAY, kind);
             if (!sub.ok) { rejected.push(pk); stats.rejected++; line(d.app_id, "-", `rejected:${sub.reason}`, 0, pk); continue; }
             // A pushkey is bound to the subscription it arrived with — base64url(sha256(endpoint)), exactly as the
             // server derives it at registration. Anything else could borrow another user's pushkey (owner, activity)
@@ -535,7 +575,7 @@ export function createPush(deps) {
             if (why) { skip(why); continue; }
             const entry = { pending: null, until: 0 };
             delivered.set(dedupKey, entry); // reserved synchronously, before the first await
-            entry.pending = deliver(n, cls, pk, sub, d.data.endpoint, roomDm);
+            entry.pending = deliver(n, cls, pk, sub, d.data.endpoint, roomDm, d.app_id);
             entry.pending.then((o) => settleDelivery(dedupKey, entry, o));
             jobs.push(entry.pending.then(account(pk)));
         }
@@ -545,21 +585,23 @@ export function createPush(deps) {
     }
 
     /** One delivery: word it, encrypt, send, account for the answer. Resolves to its outcome; never rejects. */
-    async function deliver(n, cls, pk, sub, endpoint, roomDm) {
+    async function deliver(n, cls, pk, sub, endpoint, roomDm, appId = P.APP_ID) {
         try {
             const isDirect = cls.kind === "message" ? (await roomDm()) === true : false;
             const { title, body } = word(n, cls, isDirect);
             const user = regs.get(pk)?.mxid || "";
             // unread: null — the service worker counts the badge itself (A5.10), counts.unread is not it
-            const payload = payloadBytes({ room: n.room_id, event: n.event_id, kind: cls.kind, title, body, unread: null, user });
-            const r = await send(sub, payload, topicFor(n.room_id));
+            const phone = appId !== P.APP_ID;
+            const payload = payloadBytes({ room: n.room_id, event: n.event_id, kind: cls.kind, title, body, unread: null, user },
+                phone ? P.PHONE_PAYLOAD_MAX : P.PAYLOAD_MAX);
+            const r = await send(sub, payload, phone ? topicForEvent(topicKey, pk, n.room_id, n.event_id) : topicFor(topicKey, pk, n.room_id));
             const o = outcome(r);
             if (!r.busy) stats.sent++;
             if (o === "ok") stats.ok++;
             else if (o === "gone") { stats.gone++; dropGone(pk, endpoint); }
             else if (o === "retry") stats.retry++;
             else stats.failed++;
-            line(P.APP_ID, sub.endpoint.hostname, r.status || r.reason, r.ms, pk, r.status ? r.reason : "",
+            line(appId, sub.endpoint.hostname, r.status || r.reason, r.ms, pk, r.status ? r.reason : "",
                 o === "gone" ? " -> rejected" : o === "retry" ? " -> retry" : "", o === "error");
             return o;
         } catch (e) {
@@ -580,7 +622,7 @@ export function createPush(deps) {
 
     return {
         config, register, registration, unregister, quietWanted, active: activeHandler, test, notify, report, sweep, suppressed,
-        _regs: regs, _active: active, vapidPublic: vapid.publicKey,
+        _regs: regs, _active: active, _topicKey: topicKey, vapidPublic: vapid.publicKey,
     };
 }
 
@@ -637,6 +679,8 @@ export function installPush(app, deps) {
     const every = deps.reportEveryMs ?? 10 * 60_000;
     if (every > 0) setInterval(() => { try { p.report(); } catch { /* never fatal */ } }, every).unref?.();
     if (!deps.adminToken) console.error("[push] synapse-admin.token missing -> DMs can't be told from groups (group wording)");
-    (deps.log || console.log)(`[push] ready — app_id ${PUSH.APP_ID}, gateway ${deps.gatewayUrl || PUSH.GATEWAY_URL}`);
+    const relay = relayOrigin(deps.relay);
+    (deps.log || console.log)(`[push] ready — app_id ${PUSH.APP_ID}, gateway ${deps.gatewayUrl || PUSH.GATEWAY_URL}` +
+        (relay ? `, phone apps via ${new URL(relay).host}` : ""));
     return p;
 }

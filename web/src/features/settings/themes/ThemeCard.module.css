@@ -290,3 +290,16 @@
 :global(html[data-ff="mobile"]) .tile {
   height: 96px;
 }
+
+/* touch (M6, iPhone/iPad sweep 2026-10-25): "More for …" hits at 44. The card clips anything outside it and the dot sits
+   4 px from its corner, so the button fills the corner's 44 × 44 and still draws the same 22 px dot where it was */
+:root[data-touch] .more {
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  box-sizing: border-box;
+  padding: 0 0 14px 14px; /* the icon stays centred on the dot */
+  border-radius: 0;
+  background: radial-gradient(circle at 29px 15px, var(--th-settings-theme-card-menu-bg) 10.5px, transparent 11px);
+}

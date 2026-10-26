@@ -2,6 +2,7 @@
 // rules"). 500 ms like the foundation's ContextMenu; cancelled by lifting the finger or moving
 // > 10 px; the click that follows a long-press is swallowed so the row doesn't also open the profile.
 import { useRef, type PointerEvent as RPointerEvent, type MouseEvent as RMouseEvent } from "react";
+import { holdTextSelection } from "@/ui";
 
 /**
  * The click that ends a long-press lands on whatever is under the finger by then — usually the
@@ -21,6 +22,11 @@ function swallowNextClick() {
   document.addEventListener("click", kill, true);
 }
 
+/** A long-press just opened our menu: drop the text selection the system may have started under the finger. */
+export function clearTouchSelection(): void {
+  window.getSelection?.()?.removeAllRanges();
+}
+
 export function useLongPress(onLongPress: (pt: { x: number; y: number }) => void, delay = 500) {
   const st = useRef<{ t: number; x: number; y: number; fired: boolean }>({ t: 0, x: 0, y: 0, fired: false });
   const clear = () => {
@@ -30,6 +36,7 @@ export function useLongPress(onLongPress: (pt: { x: number; y: number }) => void
   return {
     onPointerDown: (e: RPointerEvent) => {
       if (e.pointerType !== "touch") return;
+      holdTextSelection();
       clear();
       const x = e.clientX, y = e.clientY;
       st.current = {
@@ -39,6 +46,7 @@ export function useLongPress(onLongPress: (pt: { x: number; y: number }) => void
         t: window.setTimeout(() => {
           st.current.fired = true;
           swallowNextClick();
+          clearTouchSelection();
           onLongPress({ x, y });
         }, delay),
       };

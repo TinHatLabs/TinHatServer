@@ -13,6 +13,7 @@ import { createLogger } from "@/core/log";
 import { stateKeyOwned } from "./keyrules";
 import { clientMarker } from "./av1";
 import { focusFromWellKnown } from "./focus";
+import { deviceStateKey, nativeDeviceId, pageOwnsMembership } from "@/features/native";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, MEMBERSHIP_EXPIRES_MS, defaultFocusUrl, displayName, avatarMxc, sleep, withTimeout, errText } from "./util";
 
 const log = createLogger("rtc");
@@ -41,7 +42,7 @@ export interface LiveSession {
 type Content = Record<string, unknown>;
 
 export function ownStateKey(userId: string, deviceId: string): string {
-  return `_${userId}_${deviceId}_m.call`;
+  return deviceStateKey(userId, deviceId);
 }
 
 function num(v: unknown): number | null {
@@ -411,6 +412,8 @@ export async function sweepOwnGhosts(skipRoom: string | null, stillIdle: (roomId
   const s = getSession();
   if (!c || !s.userId || !s.deviceId) return;
   const key = ownStateKey(s.userId, s.deviceId);
+  // our OWN device's membership only — never the phone app's native call device (features/native/membership.ts)
+  if (!pageOwnsMembership(key, s.userId, s.deviceId, nativeDeviceId())) return;
   for (const r of c.getRooms()) {
     if (r.getMyMembership() !== "join" || r.roomId === skipRoom) continue;
     const ev = r.currentState.getStateEvents(MEMBER_TYPE, key);

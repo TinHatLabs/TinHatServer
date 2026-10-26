@@ -15,6 +15,8 @@ import E2EEWorker from "livekit-client/e2ee-worker?worker";
 import { getPref, onPrefChange, setPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
 import { getFormFactor } from "@/core/device";
+import { PAD_CAP } from "./pad/rules";
+import { padAllowed } from "./pad/prefs";
 
 const log = createLogger("av1");
 
@@ -133,10 +135,13 @@ export function av1Advertised(): boolean {
   return !!caps?.ok && !degraded && getPref(AV1_PREF, true) === true;
 }
 
-/** The `dev.tinhat.client` marker for our membership (key order as natives' own). */
+/** The `dev.tinhat.client` marker for our membership (key order as natives' own). `caps` sits in both branches:
+ *  "av1e2ee" (this browser decrypts natives' AV1) and "pad1" (Settings → Calls → Pad is on: my other verified devices
+ *  may control this call, docs/PAD.md); left out when empty. */
 export function clientMarker(version: string, recordOptout: boolean): Record<string, unknown> {
-  if (av1Advertised()) return { kind: "native", web: true, caps: ["av1e2ee"], version, record_optout: recordOptout };
-  return { kind: "web", version, record_optout: recordOptout };
+  const pad = padAllowed() ? [PAD_CAP] : [];
+  if (av1Advertised()) return { kind: "native", web: true, caps: ["av1e2ee", ...pad], version, record_optout: recordOptout };
+  return pad.length ? { kind: "web", caps: pad, version, record_optout: recordOptout } : { kind: "web", version, record_optout: recordOptout };
 }
 
 // ---- runtime safety net ------------------------------------------------------------------------------

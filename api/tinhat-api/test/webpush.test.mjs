@@ -7,7 +7,7 @@ import { mkdtempSync, statSync, readFileSync, rmSync, writeFileSync, chmodSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-    b64u, fromB64u, checkEndpoint, parseSubscription, encrypt, decrypt, vapidJwt, verifyVapidJwt,
+    b64u, fromB64u, checkEndpoint, checkRelayEndpoint, relayOrigin, parseSubscription, encrypt, decrypt, vapidJwt, verifyVapidJwt,
     loadOrCreateVapid, sendWebPush, pushkeyFor, JWT_TTL_SEC,
 } from "../webpush.mjs";
 
@@ -267,4 +267,39 @@ test("allowlist_accepts_jmt17_google_com_exactly", () => {
         "http://jmt17.google.com/fcm/send/x": "not_https",
         "https://user@jmt17.google.com/fcm/send/x": "userinfo",
     })) assert.deepEqual(checkEndpoint(u), { ok: false, reason: why }, u);
+});
+
+test("relay_origin_and_relay_endpoints", () => {
+    assert.equal(relayOrigin("https://push.tinhat.example"), "https://push.tinhat.example");
+    assert.equal(relayOrigin(" https://Push.Tinhat.Example/ "), "https://push.tinhat.example");
+    assert.equal(relayOrigin("https://push.tinhat.example:8443"), "https://push.tinhat.example:8443");
+    assert.equal(relayOrigin("http://127.0.0.1:8098"), "http://127.0.0.1:8098", "a loopback lab relay");
+    for (const bad of [undefined, null, "", "push.tinhat.example", "http://push.tinhat.example", "https://push.tinhat.example/x",
+        "https://push.tinhat.example/?a", "https://u:p@push.tinhat.example", "ftp://push.tinhat.example"])
+        assert.equal(relayOrigin(bad), null, String(bad));
+    const R = "https://push.tinhat.example";
+    const id = "AbCdEfGhIjKlMnOpQrStUv";
+    assert.equal(checkRelayEndpoint(`${R}/w/${id}`, R).ok, true);
+    assert.equal(checkRelayEndpoint(`${R}/w/${id}`, null).reason, "no_relay");
+    for (const bad of [`${R}/w/${id}x`, `${R}/w/${id}#f`, `${R}/w/${id}?q`, `${R}/w/${id}/`, `${R}//w/${id}`,
+        `https://u@push.tinhat.example/w/${id}`, `https://push.tinhat.example:444/w/${id}`, `https://other.example/w/${id}`,
+        // equivalent spellings of the same endpoint would mean another pushkey / registration: refused (Astra 2026-10-26)
+        `https://push.tinhat.example:443/w/${id}`, `${R}/x/../w/${id}`, `${R}/w/${id}?`, `${R}/w/${id}#`,
+        `https://PUSH.tinhat.example/w/${id}`, `${R}/w/${id} `, ` ${R}/w/${id}`])
+        assert.equal(checkRelayEndpoint(bad, R).ok, false, JSON.stringify(bad));
+    // (whitespace around the value is trimmed; inside it, it is refused)
+    for (const bad of ["https://push.tinhat.example\nPUSH_GATEWAY_HOST=0.0.0.0", "https://push.tinhat\t.example", "https://push .tinhat.example"])
+        assert.equal(relayOrigin(bad), null, JSON.stringify(bad));
+    const ua = createECDH("prime256v1");
+    ua.generateKeys();
+    const keys = { p256dh: b64u(ua.getPublicKey()), auth: b64u(randomBytes(16)) };
+    const relaySub = { endpoint: `${R}/w/${id}`, ...keys };
+    const browserSub = { endpoint: "https://fcm.googleapis.com/fcm/send/x", ...keys };
+    assert.equal(parseSubscription(relaySub).reason, "host_not_allowed", "browser kind (the default) never takes the relay");
+    assert.equal(parseSubscription(relaySub, R, "relay").viaRelay, true);
+    assert.equal(parseSubscription(browserSub, R, "relay").reason, "not_relay");
+    assert.equal(parseSubscription(relaySub, R, "any").viaRelay, true);
+    assert.equal(parseSubscription(browserSub, R, "any").viaRelay, false);
+    assert.equal(parseSubscription(relaySub, null, "any").reason, "host_not_allowed");
+    assert.equal(parseSubscription(browserSub).viaRelay, false);
 });

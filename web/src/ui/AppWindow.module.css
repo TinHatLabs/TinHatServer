@@ -188,3 +188,21 @@
 .sheet .body {
   padding-bottom: var(--th-safe-bottom);
 }
+
+/* touch (iPad, desktop layout): Maximize and Close 4 px apart can't both grow to 44 without overlapping, so the title
+   bar and its buttons are 44 tall and 44 wide (M5, iPhone/iPad sweep 2026-10-25) */
+:root[data-touch] .titlebar {
+  height: 44px;
+  padding-right: 0;
+}
+:root[data-touch] .buttons {
+  gap: 0;
+}
+:root[data-touch] .wbtn {
+  width: 44px;
+  height: 44px;
+}
+:root[data-touch] .title {
+  left: 96px;
+  right: 96px;
+}

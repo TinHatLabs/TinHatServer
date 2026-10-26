@@ -63,3 +63,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* touch: the hit area grows to 44 (tokens.css "touch: 44-pt hit areas") */
+:root[data-touch] .glow::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc(50% - 22px)) max(calc(0px - var(--th-hit-x, 0px)), min(0px, calc(50% - 22px)));
+}

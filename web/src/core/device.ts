@@ -117,12 +117,21 @@ export function useIsTouch(): boolean {
 /** How much of the page the on-screen keyboard covers, in px (App mirrors it into --th-vv-bottom). Browsers keep the
  *  layout viewport and shrink the visual one: the covered part is below the visual viewport. An iPhone/iPad Home
  *  Screen app (<html data-ios-pwa>) shrinks both and pans the screen-tall body instead (tokens.css): the covered
- *  part is the body's height minus what is visible. A pinch-zoom is not a keyboard there. */
+ *  part is the body's height minus what is visible. A pinch-zoom is not a keyboard there. The Tin Hat iOS app's web
+ *  view (<html data-tinhat-ios-app>) takes the same path (iosKeyboardPath). */
 export function keyboardInset(vv: VisualViewport): number {
-  if (document.documentElement.hasAttribute("data-ios-pwa")) {
+  if (iosKeyboardPath()) {
     return vv.scale > 1.01 ? 0 : Math.max(0, Math.round(document.body.offsetHeight - vv.height));
   }
   return Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+}
+
+/** The iOS keyboard handling of the Home Screen app (tokens.css, App.tsx, keyboardInset): an iPhone/iPad Home Screen
+ *  app, or the Tin Hat iOS app's web view (features/native — the only place that keys off data-tinhat-ios-app rather
+ *  than the bridge's caps; the Android app resizes for the keyboard natively and keeps the browser path). */
+export function iosKeyboardPath(): boolean {
+  const root = document.documentElement;
+  return root.hasAttribute("data-ios-pwa") || root.hasAttribute("data-tinhat-ios-app");
 }
 
 /** Non-React subscription (fires when the form factor or touch capability changes). */

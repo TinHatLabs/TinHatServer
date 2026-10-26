@@ -598,3 +598,29 @@
   box-sizing: border-box;
   padding: 0 calc(6px - var(--island-inset, 4px)) 0 calc(8px - var(--island-inset, 4px));
 }
+
+/* ---- touch, desktop layout (iPad; M5, iPhone/iPad sweep 2026-10-25): 44-pt targets ---- */
+/* the header's buttons sit 2 px apart: 44 × 44 like the phone's (RoomList.tsx keeps the label clear of them) */
+:global(html[data-touch]) .panel:not([data-mobile]) .headBtn {
+  top: 0;
+  right: 0;
+  width: 44px;
+  min-width: 44px !important;
+  height: 44px !important;
+}
+:global(html[data-touch]) .panel:not([data-mobile]) .gear {
+  right: 44px;
+}
+/* the footer's three 40 px tools are 4 apart: each may grow 2 sideways; so may the activity line's pencil (40 wide) */
+:global(html[data-touch]) .footBtn,
+:global(html[data-touch]) .pencil {
+  --th-hit-x: 2px;
+}
+:global(html[data-touch]) .meBtn {
+  position: relative;
+}
+:global(html[data-touch]) .meBtn::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc(50% - 22px)) max(calc(0px - var(--th-hit-x, 0px)), min(0px, calc(50% - 22px)));
+}

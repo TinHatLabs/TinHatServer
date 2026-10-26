@@ -704,8 +704,8 @@ class Manager:
 
     async def set_api_features(self, req: web.Request) -> web.Response:
         """The Features card's extras (the Tin Hat API on this server): the owner's own API keys, Memories with the
-        recorder's account, a TURN server for calls. Writes the API's files, restarts it, and the well-known says
-        what is on (apiconf.py)."""
+        recorder's account, phone notifications, a TURN server for calls. Writes the API's files, recreates its
+        containers (so a changed environment takes effect), and the well-known says what is on (apiconf.py)."""
         s_ = self._admin(req)
         if not s_ or not self._csrf_ok(req):
             return _err("Sign in first.", 401)
@@ -735,6 +735,11 @@ class Manager:
             if on != bool(api.get("memories")) or rec != str(api.get("recorder") or ""):
                 api["memories"], api["recorder"] = on, rec
                 changed.append("memories")
+        if "phonePush" in body:
+            on = body["phonePush"] is True
+            if on != (api.get("phone_push") is not False):
+                api["phone_push"] = on
+                changed.append("phonePush")
         if "web" in body:
             w = str(body["web"] or "").strip().lower()
             w = re.sub(r"^https?://", "", w).rstrip("/").rstrip(".")
@@ -771,7 +776,10 @@ class Manager:
             st = state.save_state(api=api)
             from . import install
             if apiconf.write(st, s):
-                rc, out = await compose.run("restart", "api", "games", timeout=180)
+                # Recreated, not restarted: `compose restart` keeps a container's old environment, so a changed env
+                # file (PUSH_RELAY when phone notifications go off or on, WEB_BASE) would never reach the running API.
+                rc, out = await compose.run("up", "-d", "--no-build", "--pull", "never", "--force-recreate", "api", "games",
+                                            timeout=180)
                 if rc != 0:
                     log.warning("restarting the extras: %s", out[-400:])
             install.write_wellknowns(st, st["server_name"], st.get("calls", True))

@@ -8,7 +8,7 @@ import { createECDH, createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, statSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPush, startGatewayServer, classify, word, payloadBytes, topicFor, clean, outcome, isCallKeySized, Gate, PUSH } from "../push.mjs";
+import { createPush, startGatewayServer, classify, word, payloadBytes, topicFor, topicForEvent, loadOrCreateTopicKey, clean, outcome, isCallKeySized, Gate, PUSH } from "../push.mjs";
 import { b64u, decrypt, loadOrCreateVapid, pushkeyFor } from "../webpush.mjs";
 import { call, bearer, clock, fakeHomeserver, authFor, fakeFetch } from "./helpers.mjs";
 
@@ -22,7 +22,7 @@ function subscription(endpoint = "https://web.push.apple.com/abcdef") {
     return { ua, auth, endpoint, pushkey: pushkeyFor(endpoint), data: { endpoint, p256dh: b64u(ua.getPublicKey()), auth: b64u(auth), v: 1 } };
 }
 
-function setup({ status = () => 201 } = {}) {
+function setup({ status = () => 201, relay } = {}) {
     const dir = mkdtempSync(join(tmpdir(), "reach-push-"));
     const now = clock(1000);
     const hs = fakeHomeserver({
@@ -33,7 +33,7 @@ function setup({ status = () => 201 } = {}) {
     const fetchImpl = fakeFetch(status);
     const p = createPush({
         auth: authFor(hs, now), hs, adminToken: "admintoken", dir, fetchImpl, now, wallNow: () => 1_790_000_000_000 + now(),
-        log: (s) => logs.push(s), logError: (s) => { logs.push(s); errors.push(s); }, pushTimeoutMs: 200,
+        log: (s) => logs.push(s), logError: (s) => { logs.push(s); errors.push(s); }, pushTimeoutMs: 200, relay,
     });
     const notify = (notification) => call(p.notify, { method: "POST", body: { notification } });
     const api = (h, tok, body, query) => call(h, { method: "POST", headers: bearer(tok), body, query });
@@ -161,8 +161,9 @@ test("dm_message_is_pushed_encrypted_with_contract_payload_and_headers", async (
         assert.equal(c.url, sub.endpoint);
         assert.equal(c.init.headers.TTL, "3600");
         assert.equal(c.init.headers.Urgency, "high");
-        assert.equal(c.init.headers.Topic, createHash("sha256").update(DM).digest("base64url").slice(0, 32));
-        assert.equal(c.init.headers.Topic, topicFor(DM));
+        assert.equal(c.init.headers.Topic, topicFor(fx.p._topicKey, sub.pushkey, DM), "keyed, per subscription and room");
+        assert.notEqual(c.init.headers.Topic, createHash("sha256").update(DM).digest("base64url").slice(0, 32), "never the bare room hash");
+        assert.match(c.init.headers.Topic, /^[A-Za-z0-9_-]{32}$/);
         assert.match(c.init.headers.Authorization, /^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]{87}$/);
         assert.ok(!/Bearer|admintoken/.test(JSON.stringify(c.init.headers)), "never Matrix or admin auth outbound");
         const j = open(sub, c);
@@ -760,4 +761,152 @@ test("a6_1_k_own_foreground_report_quiets_k", async () => {
         await fx.api(fx.p.active, "ta", { pushkey: phone.pushkey, visible: false, instance: "phone-page" });
         assert.equal(await push(), 1);
     } finally { fx.cleanup(); }
+});
+
+// ── the Tin Hat phone apps through the relay (docs/PHONE-PUSH.md) ────────────────────────────────────────────────────
+
+const RELAY = "https://push.tinhat.example";
+const relayEndpoint = (id = "AbCdEfGhIjKlMnOpQrStUv") => `${RELAY}/w/${id}`;
+const phoneNote = (sub, appId, over = {}) => {
+    const n = note(sub, fresh(over));
+    n.devices = [{ ...n.devices[0], app_id: appId }];
+    return n;
+};
+
+test("phone_without_push_relay_is_refused_like_any_other_app_id", async () => {
+    const fx = setup();
+    try {
+        const sub = subscription(relayEndpoint());
+        for (const app of PUSH.PHONE_APP_IDS) {
+            const r = await fx.notify(phoneNote(sub, app));
+            assert.deepEqual([r.statusCode, r.body], [200, { rejected: [sub.pushkey] }], app);
+        }
+        assert.equal(fx.fetchImpl.calls.length, 0);
+        assert.deepEqual(Object.keys((await call(fx.p.config)).body).sort(), ["app_id", "gateway", "vapid"], "config unchanged");
+        const r = await fx.reg("ta", sub);
+        assert.deepEqual([r.statusCode, r.body.reason], [400, "host_not_allowed"], "no relay: its endpoints aren't registrable");
+    } finally { fx.cleanup(); }
+});
+
+test("phone_pushers_go_to_the_relay_with_a_per_event_topic_and_the_phone_cap", async () => {
+    const fx = setup({ relay: RELAY + "/" });
+    try {
+        assert.equal((await call(fx.p.config)).body.relay, RELAY, "config names the relay for the apps");
+        for (const [i, app] of PUSH.PHONE_APP_IDS.entries()) {
+            const sub = subscription(relayEndpoint(`AbCdEfGhIjKlMnOpQrSt${i}v`));
+            assert.equal((await fx.reg("ta", sub)).statusCode, 200, "a phone's relay subscription registers");
+            const n = phoneNote(sub, app, { content: { msgtype: "m.text", body: "x".repeat(5000) } });
+            const r = await fx.notify(n);
+            assert.deepEqual([r.statusCode, r.body], [200, { rejected: [] }], app);
+            const c = fx.fetchImpl.calls.at(-1);
+            assert.equal(c.url, sub.endpoint, "sent to the relay endpoint");
+            assert.equal(c.init.headers.Topic, topicForEvent(fx.p._topicKey, sub.pushkey, DM, n.event_id), "one Topic per event for phones");
+            assert.notEqual(c.init.headers.Topic, topicFor(fx.p._topicKey, sub.pushkey, DM));
+            const body = c.init.body;
+            const plain = decrypt(body, sub.ua.getPrivateKey(), sub.auth);
+            assert.ok(plain.length <= PUSH.PHONE_PAYLOAD_MAX, `phone payload ${plain.length} B`);
+            assert.ok(body.length <= 2900, `the relay takes bodies up to 2 900 B (${body.length})`);
+            const p = JSON.parse(plain.toString("utf8"));
+            assert.deepEqual([p.v, p.room, p.event, p.kind, p.user], [1, DM, n.event_id, "message", A]);
+            assert.ok(fx.logs.some((l) => l.includes(`[push] ${app} push.tinhat.example 201`)), "logged under the app id");
+        }
+    } finally { fx.cleanup(); }
+});
+
+test("app_ids_and_endpoint_kinds_never_mix", async () => {
+    const fx = setup({ relay: RELAY });
+    try {
+        const browser = subscription();
+        const phone = subscription(relayEndpoint());
+        let r = await fx.notify(phoneNote(browser, "dev.tinhat.ios"));
+        assert.deepEqual(r.body, { rejected: [browser.pushkey] }, "a phone app id with a browser endpoint");
+        r = await fx.notify(phoneNote(phone, PUSH.APP_ID));
+        assert.deepEqual(r.body, { rejected: [phone.pushkey] }, "the web app id with the relay endpoint");
+        for (const bad of [`${RELAY}/w/short`, `${RELAY}/x/AbCdEfGhIjKlMnOpQrStUv`, `${RELAY}/w/AbCdEfGhIjKlMnOpQrStUv?x=1`,
+            `${RELAY}:8443/w/AbCdEfGhIjKlMnOpQrStUv`, "https://push.tinhat.example.evil.example/w/AbCdEfGhIjKlMnOpQrStUv",
+            "http://push.tinhat.example/w/AbCdEfGhIjKlMnOpQrStUv"]) {
+            const s = subscription(bad);
+            r = await fx.notify(phoneNote(s, "dev.tinhat.android"));
+            assert.deepEqual(r.body, { rejected: [s.pushkey] }, bad);
+        }
+        r = await fx.notify(phoneNote(phone, "dev.tinhat.something-else"));
+        assert.deepEqual(r.body, { rejected: [phone.pushkey] }, "only the two phone app ids");
+        assert.equal(fx.fetchImpl.calls.length, 0, "nothing refused is ever fetched");
+        // the browser path is exactly as before with a relay configured
+        r = await fx.notify(note(browser, fresh()));
+        assert.deepEqual([r.body, fx.fetchImpl.calls.length, sent(fx).init.headers.Topic], [{ rejected: [] }, 1, topicFor(fx.p._topicKey, browser.pushkey, DM)]);
+        assert.ok(open(browser, sent(fx)).body.length > 0);
+    } finally { fx.cleanup(); }
+});
+
+test("a_bad_push_relay_turns_phones_off_and_says_so", async () => {
+    for (const bad of ["push.tinhat.example", "http://push.tinhat.example", "https://push.tinhat.example/path", "https://u:p@push.tinhat.example"]) {
+        const fx = setup({ relay: bad });
+        try {
+            const sub = subscription(relayEndpoint());
+            const r = await fx.notify(phoneNote(sub, "dev.tinhat.ios"));
+            assert.deepEqual(r.body, { rejected: [sub.pushkey] }, bad);
+            assert.ok(fx.errors.some((l) => l.includes("PUSH_RELAY")), bad);
+            assert.equal((await call(fx.p.config)).body.relay, undefined);
+        } finally { fx.cleanup(); }
+    }
+});
+
+test("phone_call_key_events_follow_the_same_dm_rule", async () => {
+    const fx = setup({ relay: RELAY });
+    try {
+        const sub = subscription(relayEndpoint());
+        const key = (room) => phoneNote(sub, "dev.tinhat.ios", { room_id: room, type: "m.room.encrypted",
+            content: { algorithm: "m.megolm.v1.aes-sha2", ciphertext: "A".repeat(403), device_id: "D", sender_key: "k", session_id: "s" } });
+        await fx.notify(key(GROUP));
+        assert.equal(fx.fetchImpl.calls.length, 0, "a call key in a group never reaches a phone");
+        await fx.notify(key(DM));
+        assert.equal(fx.fetchImpl.calls.length, 1);
+    } finally { fx.cleanup(); }
+});
+
+test("phone_test_push_reaches_the_relay", async () => {
+    const fx = setup({ relay: RELAY });
+    try {
+        const sub = subscription(relayEndpoint());
+        await fx.reg("ta", sub);
+        const r = await fx.api(fx.p.test, "ta", { pushkey: sub.pushkey });
+        assert.deepEqual([r.statusCode, r.body.ok], [200, true]);
+        assert.equal(open(sub, sent(fx)).body, "Notifications work on this device.");
+        assert.ok(fx.logs.some((l) => l.includes("[push] phone push.tinhat.example 201") && l.includes("(test)")));
+    } finally { fx.cleanup(); }
+});
+
+test("payload_cap_is_per_target", () => {
+    // fits the browsers' 3 072 uncut, not the phones' 2 560
+    const big = { room: DM, event: "$e", kind: "message", title: "T".repeat(50), body: "x".repeat(2600), unread: null, user: A };
+    const web = payloadBytes(big), phone = payloadBytes(big, PUSH.PHONE_PAYLOAD_MAX);
+    assert.ok(web.length <= PUSH.PAYLOAD_MAX && web.length > PUSH.PHONE_PAYLOAD_MAX, `web ${web.length}`);
+    assert.equal(JSON.parse(web.toString("utf8")).body, big.body, "browsers: uncut");
+    assert.ok(phone.length <= PUSH.PHONE_PAYLOAD_MAX, `phone ${phone.length}`);
+    const p = JSON.parse(phone.toString("utf8"));
+    assert.deepEqual([p.room, p.event, p.user], [DM, "$e", A], "ids are never cut");
+});
+
+test("topics_are_keyed_per_subscription_and_the_key_survives_a_restart", () => {
+    const dir = mkdtempSync(join(tmpdir(), "reach-topic-"));
+    try {
+        const path = join(dir, "push-topic.key");
+        const k1 = loadOrCreateTopicKey(path);
+        assert.equal(statSync(path).mode & 0o777, 0o600);
+        const k2 = loadOrCreateTopicKey(path);
+        assert.ok(k1.equals(k2), "the same secret after a restart");
+        const a = subscription(), b = subscription("https://fcm.googleapis.com/fcm/send/other");
+        assert.equal(topicForEvent(k1, a.pushkey, DM, "$e"), topicForEvent(k2, a.pushkey, DM, "$e"), "same subscription + event: same topic (a retry replaces itself)");
+        assert.notEqual(topicForEvent(k1, a.pushkey, DM, "$e"), topicForEvent(k1, b.pushkey, DM, "$e"), "another subscription: another topic");
+        assert.notEqual(topicForEvent(k1, a.pushkey, DM, "$e"), topicForEvent(k1, a.pushkey, DM, "$f"), "another event: another topic");
+        assert.equal(topicFor(k1, a.pushkey, DM), topicFor(k1, a.pushkey, DM));
+        assert.notEqual(topicFor(k1, a.pushkey, DM), topicFor(k1, b.pushkey, DM));
+        assert.notEqual(topicFor(k1, a.pushkey, DM), createHash("sha256").update(DM).digest("base64url").slice(0, 32), "never the unkeyed room hash");
+        assert.notEqual(topicForEvent(k1, a.pushkey, DM, "$e"), createHash("sha256").update(`${DM}\n$e`).digest("base64url").slice(0, 32));
+        const other = loadOrCreateTopicKey(join(mkdtempSync(join(tmpdir(), "reach-topic-")), "push-topic.key"));
+        assert.notEqual(topicFor(other, a.pushkey, DM), topicFor(k1, a.pushkey, DM), "another server: another topic");
+        writeFileSync(path, "short\n");
+        assert.throws(() => loadOrCreateTopicKey(path), /bad push-topic.key/, "a damaged key is never silently replaced");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
 });

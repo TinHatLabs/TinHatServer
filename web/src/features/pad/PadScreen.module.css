@@ -1,0 +1,450 @@
+/* PadScreen.module.css — the Pad (DESIGN §1). Phones: the phone call screen's language (callui/Mobile.module.css: the
+   stage background, the 56 px top bar with the round 44 px button, 8 px banners, the scroller). Desktop: the soundboard
+   window's panel (media/soundboard/Soundboard.module.css: 16 px radius, its fill and frame). The pieces are the call
+   bar's own round buttons (CallButton), the Soundboard pad's grid (widgets/soundpad) and the per-person menu's volume
+   rows (callui/menus VolumeSliderRow), so they keep their tokens. Pad's own elements paint pad.* (contract
+   tools/pad-contract.py; each default = the token it was painted with before, 0 px): the panel, the my-row card, a
+   person's row and talking ring, the pending ring, the connection dot. */
+.pad {
+  position: fixed;
+  /* above the call stage (150) and app windows (200), below dialogs (1000) and menus (2000): the volume sheet and the
+     Leave confirmation rise over it */
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+  color: var(--th-soundboard-title-fg);
+}
+.phone {
+  inset: 0;
+  background: var(--th-stage-bg);
+  padding: var(--th-safe-top) var(--th-safe-right) 0 var(--th-safe-left);
+}
+.panel {
+  background: var(--th-pad-panel-bg);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--th-pad-panel-border);
+  overflow: hidden;
+}
+
+/* ---- header ---- */
+.top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  min-height: 56px;
+}
+.panel .top {
+  padding: 10px 10px 4px 16px;
+  min-height: 48px;
+}
+.topBtn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 22px;
+  background: var(--th-stage-top-button-bg);
+  flex: none;
+}
+.topBtn:active {
+  background: var(--th-stage-top-button-bg-pressed);
+}
+.topText {
+  flex: 1;
+  min-width: 0;
+}
+.topTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 22px;
+}
+.panel .topTitle {
+  font-size: calc(var(--th-font-pt) + 2pt);
+  line-height: 1.36;
+}
+.titleText {
+  flex: none;
+}
+.titleSep {
+  flex: none;
+  opacity: 0.6;
+}
+.roomBtn {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.roomBtn:hover {
+  text-decoration: underline;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+  flex: none;
+  transition: background-color var(--th-dur-slow) linear;
+}
+.topSub {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--th-call-status-bar-count-fg);
+  font-size: 14px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.panel .topSub {
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+}
+.devBtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  max-width: 100%;
+}
+.devBtn b {
+  font-weight: 700;
+  color: var(--th-soundboard-title-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.devBtn:hover:not(:disabled) b {
+  text-decoration: underline;
+}
+.devStatic {
+  cursor: default;
+}
+.caret {
+  font-size: 11px;
+}
+.link {
+  min-width: 0;
+  margin-left: 6px;
+  padding-left: 6px;
+  border-left: 1px solid var(--th-call-status-bar-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.linkBad {
+  color: var(--th-call-conn-banner-title-fg);
+}
+.closeBtn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.closeBtn:hover {
+  background: var(--th-call-volume-mute-bg-hover);
+}
+
+/* ---- the notice line (the call screen's connection banners) ---- */
+.banner {
+  flex: none;
+  margin: 0 8px 6px;
+  padding: 8px 8px 8px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--th-call-conn-banner-title-fg);
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.panel .banner {
+  margin: 4px 14px 6px;
+  font-size: var(--th-font-size);
+}
+.warn {
+  background: var(--th-call-conn-banner-warn-bg);
+  border-color: var(--th-call-conn-banner-warn-border);
+}
+.bad {
+  background: var(--th-call-conn-banner-bad-bg);
+  border-color: var(--th-call-conn-banner-bad-border);
+}
+.bannerText {
+  flex: 1;
+  min-width: 0;
+}
+.bannerBtn {
+  flex: none;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--th-call-conn-banner-button-bg);
+  color: var(--th-call-conn-banner-button-fg);
+  font-weight: 700;
+}
+.bannerX {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: transparent;
+}
+
+/* ---- body ---- */
+.scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 0 0 calc(16px + var(--th-safe-bottom));
+}
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.bodyScroll {
+  overflow-y: auto;
+}
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 14px;
+}
+
+/* my row: the call bar's round buttons with their names under them */
+.myWrap {
+  padding: 8px 8px 0;
+}
+.myRow {
+  display: flex;
+  justify-content: space-evenly;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px 6px 10px;
+  border-radius: 16px;
+  background: var(--th-pad-my-row-bg);
+  border: 1px solid var(--th-pad-my-row-border);
+}
+.panel .myWrap {
+  padding: 4px 14px 0;
+}
+.panel .myRow {
+  justify-content: center;
+  gap: 18px;
+}
+.cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 56px;
+}
+.cellLabel {
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--th-call-status-bar-count-fg);
+  white-space: nowrap;
+}
+.panel .cellLabel {
+  font-size: calc(var(--th-font-size) * 0.92);
+}
+.myNote {
+  margin: 8px 6px 0;
+  font-size: 14px;
+  color: var(--th-call-status-bar-count-fg);
+  text-align: center;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 8px;
+}
+.panel .section {
+  padding: 0 12px;
+}
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 4px 0;
+  min-width: 0;
+}
+.sectionTitle {
+  flex: none;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--th-soundboard-section-fg);
+}
+.panel .sectionTitle {
+  font-size: var(--th-font-size);
+}
+.sectionHint {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--th-soundboard-section-hint-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel .sectionHint {
+  font-size: calc(var(--th-font-size) * 0.92);
+}
+.empty {
+  margin: 0 4px;
+  font-size: 14px;
+  color: var(--th-soundboard-empty-fg);
+}
+.roleLine {
+  margin: 0 4px;
+  font-size: 14px;
+  color: var(--th-soundboard-status-fg-error);
+}
+
+/* people: avatar + talking ring, name, the custom volumes, mic-off, 💤, › */
+.people {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.panel .people {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+.person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 6px 10px 6px 6px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--th-dur) linear;
+}
+.person:hover,
+.person:focus-visible {
+  background: var(--th-pad-person-bg-hover);
+  outline: none;
+}
+.person:active {
+  background: var(--th-pad-person-bg-pressed);
+}
+.panel .person {
+  min-height: 48px;
+}
+.face {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 21px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 2px transparent;
+  transition: box-shadow var(--th-dur) linear;
+}
+.talking {
+  box-shadow: 0 0 0 3px var(--th-pad-person-ring-speaking);
+}
+.personText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.personName {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--th-call-volume-label-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel .personName {
+  font-size: var(--th-font-size);
+}
+.personSub {
+  font-size: 13px;
+  color: var(--th-call-volume-value-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.panel .personSub {
+  font-size: calc(var(--th-font-size) * 0.9);
+}
+.badge {
+  flex: none;
+  font-size: 16px;
+}
+.chev {
+  flex: none;
+  margin: 0 2px 0 4px;
+}
+.more {
+  padding: 4px 10px;
+  font-size: 14px;
+  color: var(--th-call-volume-value-fg);
+}
+
+/* connecting / not reaching / ended */
+.state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 240px;
+  padding: 32px 24px;
+  text-align: center;
+}
+.stateText {
+  font-weight: 700;
+  font-size: 17px;
+}
+.stateHint {
+  max-width: 360px;
+  font-size: 14px;
+  color: var(--th-call-empty-fg);
+}
+.stateButtons {
+  display: flex;
+  gap: 8px;
+}

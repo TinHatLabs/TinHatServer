@@ -8,7 +8,8 @@ import { create } from "zustand";
 import { SERVER_LABEL } from "@/core/bearer";
 import { toast, useBus } from "@/core/bus";
 import { canSendState, getSession, logout, peekClient, useCryptoStatus } from "@/core/matrix";
-import { BasicCheckBox, BasicTextField, ConfirmDialog, PromptDialog } from "@/ui";
+import { BasicCheckBox, BasicTextField, ConfirmDialog, PromptDialog, useIsMobile } from "@/ui";
+import sheet from "@/features/settings/dialogs.module.css";
 import { createDm, createRoom, copyText, inviteToRoom, joinByLink, joinRoom, leaveRoom, setActivity, setRecording } from "./actions";
 import { getCurrentRoom, openRoomId } from "./open";
 import { dmTarget, serverOf } from "./dmTarget";
@@ -16,6 +17,16 @@ import { newRoomHint } from "./newRoom";
 import { selectSpace, useNavStore } from "./model";
 import s from "./dialogs.module.css";
 import { changedActions, keysOf, useShortcutsRaw } from "@/actions/shortcutsStore";
+
+/** One-action dialogs: the native's single right-aligned button; on a phone a bottom sheet with Cancel too (there's no
+ *  Esc there, and closing by a tap outside wasn't obvious: iPhone/iPad sweep, 2026-10-25). */
+function useOneAction(onClose: () => void) {
+  const phone = useIsMobile();
+  return {
+    cancel: phone ? [{ text: "Cancel", role: "reject" as const, onClick: onClose }] : [],
+    className: phone ? sheet.bottomSheet : s.oneAction,
+  };
+}
 
 export type NavDialog =
   | { kind: "newChat"; mxid?: string }
@@ -154,6 +165,7 @@ export function NavDialogs() {
 // ---- New chat -------------------------------------------------------------------------------------
 
 function NewChatDialog({ initial, onClose }: { initial: string; onClose: () => void }) {
+  const one = useOneAction(onClose);
   const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(false);
   // 2026-09-29: a plain username is enough ("alex" → @alex:<our server>); dmTarget = the desktop's dm_target
@@ -175,8 +187,8 @@ function NewChatDialog({ initial, onClose }: { initial: string; onClose: () => v
       open
       onClose={onClose}
       title="New DM"
-      actions={[{ text: "Message", icon: "document-edit-symbolic", disabled: !target || busy, onClick: () => void submit() }]}
-      className={s.oneAction}
+      actions={[...one.cancel, { text: "Message", icon: "document-edit-symbolic", disabled: !target || busy, onClick: () => void submit() }]}
+      className={one.className}
     >
       <div className={s.body}>
         <div className={s.label}>Who do you want to message?</div>
@@ -207,6 +219,7 @@ function NewChatDialog({ initial, onClose }: { initial: string; onClose: () => v
 // ---- New room / space -------------------------------------------------------------------------------
 
 function NewRoomDialog({ space: initialSpace, parent, parentName, onClose }: { space: boolean; parent: string | null; parentName: string; onClose: () => void }) {
+  const one = useOneAction(onClose);
   const [name, setName] = useState("");
   const [topic, setTopic] = useState("");
   const [priv, setPriv] = useState(true);
@@ -240,8 +253,8 @@ function NewRoomDialog({ space: initialSpace, parent, parentName, onClose }: { s
       open
       onClose={onClose}
       title={title}
-      actions={[{ text: "Create", icon: "folder-new-symbolic", disabled: !name.trim() || busy, onClick: () => void submit() }]}
-      className={s.oneAction}
+      actions={[...one.cancel, { text: "Create", icon: "folder-new-symbolic", disabled: !name.trim() || busy, onClick: () => void submit() }]}
+      className={one.className}
     >
       <div className={s.body}>
         <BasicTextField className={s.field} placeholder={space ? "Space name" : "Room name"} value={name} autoFocus onChange={(e) => setName(e.target.value)} onAccepted={() => void submit()} />
@@ -265,6 +278,7 @@ function NewRoomDialog({ space: initialSpace, parent, parentName, onClose }: { s
 // ---- Invite -----------------------------------------------------------------------------------------
 
 function InviteDialog({ roomId, name, onClose }: { roomId: string; name: string; onClose: () => void }) {
+  const one = useOneAction(onClose);
   const [v, setV] = useState("");
   const label = name || roomId;
   const submit = () => {
@@ -274,7 +288,7 @@ function InviteDialog({ roomId, name, onClose }: { roomId: string; name: string;
     onClose();
   };
   return (
-    <PromptDialog open onClose={onClose} title={`Invite to ${label}`} actions={[{ text: "Invite", icon: "list-add-user", disabled: !v.trim(), onClick: submit }]} className={s.oneAction}>
+    <PromptDialog open onClose={onClose} title={`Invite to ${label}`} actions={[...one.cancel, { text: "Invite", icon: "list-add-user", disabled: !v.trim(), onClick: submit }]} className={one.className}>
       <div className={s.body}>
         <BasicTextField className={s.field} placeholder={`@someone:${SERVER_LABEL}`} value={v} autoFocus onChange={(e) => setV(e.target.value)} onAccepted={submit} />
         <div className={s.hint}>They'll get an invite they can accept or decline. Remove someone again from the member list on the right.</div>

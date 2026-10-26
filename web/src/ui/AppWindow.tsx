@@ -14,6 +14,8 @@ import { useIsMobile } from "./formFactor";
 import { useBackToClose } from "./backStack";
 import { cx } from "./hooks";
 import s from "./AppWindow.module.css";
+import { clampGeo as clampTo, TITLE_H, type Geo } from "./windowGeo";
+import { isTouch } from "@/core/device";
 
 export interface AppWindowProps {
   /** WindowMemory key ([a-z0-9-]) */
@@ -58,27 +60,11 @@ export interface FloatingGeo {
   onMove?: (x: number, y: number) => void;
 }
 
-interface Geo {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-const TITLE_H = 30;
 /** --th-z-window (tokens.css); raised windows stack above it */
 const WINDOW_Z = 200;
 const EDGE = 6;
 
-function clampGeo(g: Geo, min: { width: number; height: number }): Geo {
-  const vw = window.innerWidth, vh = window.innerHeight;
-  const w = Math.max(min.width, Math.min(g.w, vw));
-  const h = Math.max(min.height, Math.min(g.h, vh));
-  // keep at least the title bar reachable
-  const x = Math.min(Math.max(g.x, -w + 80), vw - 80);
-  const y = Math.min(Math.max(g.y, 0), vh - TITLE_H);
-  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-}
+const clampGeo = (g: Geo, min: { width: number; height: number }) => clampTo(g, min, isTouch);
 
 /** Keep a floating window on screen (its size is the content's own). */
 export function clampFloating(f: { x: number; y: number; w: number; h: number }): { x: number; y: number } {

@@ -1227,3 +1227,19 @@
 .mKb .mRolesTab .footer {
   display: none;
 }
+
+/* touch (M5/M6, iPhone/iPad sweep 2026-10-25): the photo's ✕ badge (26) hits at 44 (tokens.css "touch: 44-pt hit
+   areas"); the photo row moves 18 px down so the scroll box's top edge doesn't cut the badge (and its hit area) off;
+   the rail's tabs and Leave space are 44 tall */
+:root[data-touch] .photoRemove {
+  --th-hit-x: 9px;
+}
+:root[data-touch] .topRow {
+  padding-top: 18px;
+}
+:root[data-touch] .railItem {
+  height: 44px;
+}
+:root[data-touch] .leave {
+  min-height: 44px;
+}

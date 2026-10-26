@@ -1,0 +1,37 @@
+/* "You're in this call on this phone" — the join banner's frame (callui Incoming.module.css .banner: Main:5192 margins,
+   41 px, radius 8, the call.joinBanner tokens), so the strip keeps its place and look while the phone has the call. */
+.banner {
+  flex: none;
+  margin: 4px;
+  min-height: 41px;
+  border-radius: 8px;
+  background: var(--th-call-join-banner-bg);
+  border: 1px solid var(--th-call-join-banner-border);
+  background-clip: padding-box;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+}
+.text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--th-call-join-banner-fg);
+}
+.btn {
+  flex: none;
+}
+/* a widget row's compact form: the label + the two buttons where the row's Join sat */
+.inline {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.inlineText {
+  white-space: nowrap;
+  color: var(--th-call-join-banner-fg);
+}

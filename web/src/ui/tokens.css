@@ -21,7 +21,7 @@
 /* Every role and element token of src/theme/tokens.json as --th-<id> (src/ui/themeNames.ts), with the value the web paints
    in the OLED built-in: resolveForApp(oled, tokens, "web"), the step-1a webPins included. applyTheme() (themes.ts)
    sets the same variables on <html> for the active theme; this block only makes CSS work before the bundle runs.
-   52 roles + 1649 element tokens. How to use them: src/theme/MIGRATING.md. */
+   52 roles + 1667 element tokens. How to use them: src/theme/MIGRATING.md. */
 :root {
   /* roles */
   --th-accent-base: #1e6a76;
@@ -970,6 +970,24 @@
   --th-overlay-pill-icon-muted: #d06868;
   --th-overlay-sharing-icon: #3cbad0;
   --th-overlay-window-bg: #050507;
+  --th-pad-chip-bg: rgba(255, 255, 255, 0.08);
+  --th-pad-chip-bg-hover: rgba(255, 255, 255, 0.16);
+  --th-pad-chip-border: rgba(255, 255, 255, 0.18);
+  --th-pad-chip-fg: #aaaaaa;
+  --th-pad-dot: #aaaaaa;
+  --th-pad-dot-live: #3ad07a;
+  --th-pad-list-bar-bg: rgba(30, 106, 118, 0.16);
+  --th-pad-list-bar-border: rgba(30, 106, 118, 0.45);
+  --th-pad-list-bar-fg: #e0e0e0;
+  --th-pad-my-row-bg: rgba(0, 0, 0, 0.6);
+  --th-pad-my-row-border: rgba(255, 255, 255, 0.1);
+  --th-pad-panel-bg: #0a0a0a;
+  --th-pad-panel-border: rgba(255, 255, 255, 0.12);
+  --th-pad-pending-ring: #3cbad0;
+  --th-pad-person-bg-hover: #1a1a1a;
+  --th-pad-person-bg-pressed: rgba(255, 255, 255, 0.05);
+  --th-pad-person-ring-speaking: #3ad07a;
+  --th-pad-sound-pending-ring: #1e6a76;
   --th-panel-activity-fg: #3cbad0;
   --th-panel-back-bg-pressed: #1a1a1a;
   --th-panel-bg: #0a0a0a;
@@ -1874,6 +1892,21 @@ body {
   height: 100lvh;
   transform: translateY(var(--th-vv-top, 0px));
 }
+/* The Tin Hat iPhone/iPad app (its web view sets data-tinhat-ios-app; features/native, docs/NATIVE-APPS.md): not
+   navigator.standalone, so without this it took the Safari-tab keyboard path the iPhone sweep found broken (M1: iOS
+   pans the page, the headers slide off). It gets point 2 above, the keyboard part only: the body pinned at the
+   screen's height and moved back by iOS's pan (--th-vv-top, App.tsx), --th-vv-bottom = what the keyboard covers. The
+   app's viewport is already the whole screen (874 of 874 pt on an iPhone 17 Pro), so the short-viewport fix (point 1:
+   the page's own 100lvh) and the clock-fade margin (point 3) are not copied; 100lvh here only keeps the body
+   screen-tall while the keyboard is up (keyboardInset measures against it). */
+:root[data-tinhat-ios-app] body {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100lvh;
+  transform: translateY(var(--th-vv-top, 0px));
+}
 
 button,
 input,
@@ -1952,3 +1985,29 @@ img {
   --th-font-h4: calc(11pt * var(--th-text-scale));     /* 14.67 px */
   --th-line-h4: calc(20px * var(--th-text-scale));
 }
+
+/* Touch: a long-press opens our own menus, so the app's chrome (rows, menus, buttons) isn't text to select. iOS
+   started a selection and showed its Copy / Look Up bar under every long-press (iPhone/iPad sweep, 2026-10-25).
+   What people type and message text (Bubble .text) stay selectable. */
+:root[data-touch] body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+:root[data-touch] :is(input, textarea, [contenteditable="true"], [contenteditable=""]) {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+/* ... and while a finger is down on something with a long-press menu, message text isn't either (ui/touchPress.ts) */
+:root[data-touch][data-pressing] body :not(input, textarea, [contenteditable="true"], [contenteditable=""]) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ---- touch: 44-pt hit areas (ARCHITECTURE "mobile"; iPhone/iPad sweep M5/M6, 2026-10-25) ----------------------
+   A small control keeps its look; an empty ::after centred on it grows what a finger can hit to 44 × 44:
+     inset: min(0px, calc(50% - 22px)) max(calc(0px - var(--th-hit-x, 0px)), min(0px, calc(50% - 22px)));
+   Upwards and downwards always (controls sit in rows); sideways only by --th-hit-x, which a row sets to half the gap
+   between its controls, so two hit areas never overlap. Where neighbours sit closer than that, the controls
+   themselves are 44 on touch (window buttons, the room list's header buttons, the composer's tool buttons). */

@@ -27,6 +27,7 @@
 #                         tagged with this version; a tag doesn't change an image's id), so servers on that release
 #                         already have every image this one names and download only the bundle (0.3.2: a 0.3.0/0.3.1
 #                         server can't fetch an image from GitHub at all). Only when api/ and build/caddy didn't change.
+#                         REUSE_IMAGES="caddy" (or "api"): reuse only those, build the rest (default: "api caddy").
 set -euo pipefail
 HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 web_run() { (cd "$WEB_DIR" && "$@"); }  # runs a command in the Tin Hat Web checkout; build.local.conf may replace it
@@ -123,7 +124,8 @@ stage() {
     mkdir -p "$P/reuse"
     local name f sfx=""
     [ "$ARCH" = arm64 ] && sfx="-arm64"
-    for name in api caddy; do
+    for name in ${REUSE_IMAGES:-api caddy}; do
+      case "$name" in api|caddy) ;; *) echo "REUSE_IMAGES: '$name' isn't one of our images (api, caddy)" >&2; exit 1 ;; esac
       f=$(find "$REUSE_IMAGES_FROM" -maxdepth 1 -regextype posix-extended -regex ".*/tinhat-$name-[0-9a-f]{12}$sfx\.tar\.gz" -print)
       [ -n "$f" ] && [ "$(printf '%s\n' "$f" | wc -l)" = 1 ] || { echo "REUSE_IMAGES_FROM: not exactly one tinhat-$name-<id>$sfx.tar.gz in $REUSE_IMAGES_FROM" >&2; exit 1; }
       cp "$f" "$P/reuse/tinhat-$name.tar.gz"

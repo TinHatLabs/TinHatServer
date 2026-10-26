@@ -104,7 +104,7 @@ services:
     # Synapse reaches at the box's address on the backend network) and game servers. Its environment, keys and state
     # are written by the manager into /var/lib/tinhat/api (manager/tinhat/apiconf.py); recordings are read from
     # /var/lib/tinhat/vods.
-    image: tinhat/api:0.3.2
+    image: tinhat/api:0.3.3
     pull_policy: never
     network_mode: host
     restart: unless-stopped
@@ -116,7 +116,7 @@ services:
 
   games:
     # The games catalogue (the Game Reel's list of games + cover art), from the same image.
-    image: tinhat/api:0.3.2
+    image: tinhat/api:0.3.3
     pull_policy: never
     network_mode: host
     restart: unless-stopped

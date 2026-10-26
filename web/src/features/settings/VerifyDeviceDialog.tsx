@@ -49,6 +49,11 @@ interface VerifyUi {
   status: string;
   armed: boolean;
 }
+
+/** The Security Key is masked by CSS where the browser can (Safari, Chromium): a second type="password" field next to
+ *  the account password made iOS treat the dialog as a change-password form (iPhone/iPad sweep, 2026-10-25). Elsewhere
+ *  it stays a password field, masked as on the desktop. */
+const MASK_BY_CSS = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-text-security", "disc");
 export const useVerifyUi = create<VerifyUi>()(() => ({ open: false, keyPathOpen: false, busy: false, status: "", armed: false }));
 const vset = (p: Partial<VerifyUi>) => useVerifyUi.setState(p);
 
@@ -165,6 +170,7 @@ export function VerifyDeviceHost() {
 const SHEET_HOLD_MS = 1000;
 
 export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const me = useSession().userId ?? "";
   const ui = useVerifyUi();
   const v = useVerification();
   // no identity to verify against (a moved server, core/matrix/moved.ts): the Security Key first, no "another device"
@@ -272,11 +278,14 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
         )}
         {st === "" && (ui.keyPathOpen || keyOnly) && (
           <div className={s.col4}>
-            {!keyOnly && <span className={s.dim}>Your Security Key lives in Settings → Security → Secure Backup on a client where you're already signed in.</span>}
+            {!keyOnly && <span className={s.dim}>It's the Security Key you saved when you first set up encryption (Tin Hat shows it only once, so look where you keep it: a password manager, a note, a printout).</span>}
             <BasicTextField
-              className={s.full}
-              type="password"
+              className={cx(s.full, MASK_BY_CSS && s.masked)}
+              type={MASK_BY_CSS ? "text" : "password"}
               autoComplete="off"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
               aria-label="Security Key"
               placeholder="Security Key (e.g. EsTx …)"
               value={key}
@@ -296,11 +305,14 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
                 VerifyDeviceDialog.qml has the same panel and words). Before this such an account was stuck for good. */}
             <BasicButton className={s.full} flat text={soOpen ? START_OVER.back : START_OVER.link} disabled={ui.busy} onClick={() => setSoOpen(!soOpen)} />
             {soOpen && (
-              <div className={s.col4} data-start-over>
+              <form className={s.col4} data-start-over onSubmit={(e) => e.preventDefault()}>
                 <span className={s.text}>
                   <b>{START_OVER.title}</b>
                 </span>
                 <span className={s.dim}>{START_OVER.hint}</span>
+                {/* whose password this is: without a username field iOS read the form as "change password" and offered
+                    to make up a new one (and save it over the real one): iPhone/iPad sweep 2026-10-25 */}
+                <input className="th-sr-only" type="text" name="username" autoComplete="username" value={me} readOnly tabIndex={-1} aria-hidden="true" />
                 <BasicTextField
                   className={s.full}
                   type="password"
@@ -318,7 +330,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
                     {v.startOverNote}
                   </span>
                 )}
-              </div>
+              </form>
             )}
           </div>
         )}
@@ -367,6 +379,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
                 <BasicTextField
                   className={s.full}
                   type="password"
+                  autoComplete="current-password"
                   aria-label="Account password"
                   placeholder="Account password"
                   value={pw}

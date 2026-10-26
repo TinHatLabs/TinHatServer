@@ -10,7 +10,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--th-safe-top) var(--th-safe-right) var(--th-safe-bottom) var(--th-safe-left);
+  padding: var(--th-safe-top) var(--th-safe-right) calc(var(--th-safe-bottom) + var(--th-vv-bottom, 0px)) var(--th-safe-left);
+}
+/* touch: the native's 21 px inset is a desktop window quirk; on a tablet it left a seam at the right and bottom edges,
+   and the card sits above the keyboard (--th-vv-bottom) */
+:global(html[data-touch]) .view {
+  right: 0;
+  bottom: 0;
 }
 /* Soft top glow: a huge, very faint disc hanging from the top edge (vertical gradient). */
 .glow {
@@ -139,4 +145,10 @@
 }
 :root[data-ff="mobile"] .view {
   --th-login-inset: 0px;
+}
+
+/* touch (M6, iPhone/iPad sweep 2026-10-25): "Forgot your password?" / "Create an account" sit 7 px apart, so they are
+   44 tall themselves */
+:root[data-touch] .link {
+  min-height: 44px;
 }

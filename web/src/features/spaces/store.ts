@@ -36,6 +36,7 @@ import {
 } from "./model";
 import { effectivePermsWith, loadRolesState, powerLevelOf, type Perms } from "./roles";
 import { rl } from "./ratelimit";
+import { isRoomId } from "@/app/router";
 
 const log = createLogger("spaces");
 
@@ -557,7 +558,7 @@ class Ctx {
   static async load(spaceId: string): Promise<Ctx> {
     const client = peekClient();
     if (!client) throw "Not signed in";
-    if (!spaceId.startsWith("!") || !spaceId.includes(":")) throw `Bad space id: ${spaceId}`;
+    if (!isRoomId(spaceId)) throw `Bad space id: ${spaceId}`;
     const space = client.getRoom(spaceId);
     if (!space) throw "That space isn't loaded";
     if (space.getMyMembership() !== "join") throw "You're not a member of that space";

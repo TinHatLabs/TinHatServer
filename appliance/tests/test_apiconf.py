@@ -26,6 +26,42 @@ SECRETS = {"registration_shared_secret": "reg", "macaroon_secret_key": "mac", "f
 
 
 class Env(unittest.TestCase):
+    def test_phone_relay_only_when_given(self):
+        env = dict(l.split("=", 1) for l in apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1", "", "https://push.example").splitlines())
+        self.assertEqual(env["PUSH_RELAY"], "https://push.example")
+        env = dict(l.split("=", 1) for l in apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1").splitlines())
+        self.assertNotIn("PUSH_RELAY", env)
+
+    def test_relay_origin_is_strict_and_canonical(self):
+        for good, want in [("https://push.tinhat.dev", "https://push.tinhat.dev"), (" https://Push.Example/ ", "https://push.example"),
+                           ("https://push.example:443", "https://push.example"), ("https://push.example:8443", "https://push.example:8443"),
+                           ("http://127.0.0.1:8098", "http://127.0.0.1:8098"), ("https://[2001:DB8:0::1]", "https://[2001:db8::1]"),
+                           ("https://198.51.100.7:8443", "https://198.51.100.7:8443"), ("http://[::1]:8098", "http://[::1]:8098")]:
+            self.assertEqual(apiconf.relay_origin(good), want, good)
+        for bad in ["https://x\nPUSH_GATEWAY_HOST=0.0.0.0", "https://x\rY=1", "https://push .example", "http://push.example",
+                    "https://push.example/path", "https://push.example/?", "https://push.example/#", "https://u:p@push.example",
+                    "ftp://push.example", "https://", "https://-bad.example", "", None, 42, "https://push.example:99999",
+                    "https://push.example:0", "https://999.999.999.999", "https://127.1", "https://123", "https://0x7f.1",
+                    "https://push.example.0x1", "https://a.1"]:
+            self.assertEqual(apiconf.relay_origin(bad), "", repr(bad))
+
+    def test_an_invalid_configured_relay_is_off_everywhere(self):
+        st = {"server_name": "crew.tinhat.me", "api": {}}
+        with mock.patch.object(apiconf.environment, "env", return_value={"push_relay": "https://x\nPUSH_GATEWAY_HOST=0.0.0.0"}):
+            self.assertEqual(apiconf.push_relay(st), "")
+            self.assertFalse(apiconf.features(st, SECRETS)["phone_push"])
+        with mock.patch.object(apiconf.environment, "env", return_value={"push_relay": "https://push.example/"}):
+            self.assertEqual(apiconf.push_relay(st), "https://push.example")
+            self.assertTrue(apiconf.features(st, SECRETS)["phone_push"])
+
+    def test_phone_push_on_by_default_and_owner_can_switch_it_off(self):
+        on = {"server_name": "crew.tinhat.me", "api": {}}
+        off = {"server_name": "crew.tinhat.me", "api": {"phone_push": False}}
+        self.assertEqual(apiconf.push_relay(on), "https://push.tinhat.dev")
+        self.assertEqual(apiconf.push_relay(off), "")
+        self.assertTrue(apiconf.settings(on)["phone_push"])
+        self.assertFalse(apiconf.settings(off)["phone_push"])
+
     def test_env_names_this_server_only(self):
         env = dict(l.split("=", 1) for l in apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1").splitlines())
         self.assertEqual(env["SYNAPSE_PUBLIC"], "https://crew.tinhat.me")

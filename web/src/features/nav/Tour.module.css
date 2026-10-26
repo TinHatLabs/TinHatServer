@@ -93,9 +93,14 @@
 /* phones: the sheet is full screen — the card sits in the middle, the buttons at the thumb */
 :global(html[data-ff="mobile"]) .col {
   width: 100%;
+  /* the column fills the sheet and the card takes what the dots and buttons leave, so the buttons sit at the bottom
+     (a 100dvh guess left ~200 pt empty under them in Safari; iPhone/iPad sweep L5, 2026-10-25) */
+  height: 100%;
 }
 :global(html[data-ff="mobile"]) .pager {
-  height: max(340px, calc(100dvh - 250px - var(--th-safe-top) - var(--th-safe-bottom)));
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 300px;
 }
 :global(html[data-ff="mobile"]) .buttons {
   margin-bottom: calc(12px + var(--th-safe-bottom));

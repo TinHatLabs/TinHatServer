@@ -1,0 +1,64 @@
+/* PadChip.module.css — "📱 Pad · <device> ×": a status-strip chip (the call status bar's chips, CallStage.module.css
+   .chip). Colours: pad.chip.* (contract tools/pad-contract.py; defaults = the strip chip's call.hiddenChip.*, 0 px). The
+   desktop's chip (PadChip.qml) is the same element with the same tokens. */
+.chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 3px 2px 8px;
+  border-radius: 999px;
+  background: var(--th-pad-chip-bg);
+  border: 1px solid var(--th-pad-chip-border);
+  color: var(--th-pad-chip-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  max-width: 260px;
+}
+.text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.text b {
+  font-weight: 700;
+}
+.x {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+.x:hover {
+  background: var(--th-pad-chip-bg-hover);
+}
+/* keyboard focus: the icon buttons' ring (HeaderIconButton), as the desktop's PadChip.qml × */
+.x:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--th-button-icon-ring-focus);
+}
+/* forced colours drop box-shadow: an outline the system colours paint */
+@media (forced-colors: active) {
+  .x:focus-visible {
+    outline: 2px solid ButtonText;
+    outline-offset: -2px;
+  }
+}
+.mobile {
+  min-height: 36px;
+  padding: 0 4px 0 12px;
+  font-size: 14px;
+  max-width: 46vw;
+}
+.mobile .x {
+  width: 32px;
+  height: 32px;
+  border-radius: 16px;
+}

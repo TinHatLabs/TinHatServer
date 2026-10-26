@@ -666,3 +666,10 @@
 .islandBox .boxTopGap {
   margin-top: 4px;
 }
+
+/* touch, desktop layout (iPad; M5, iPhone/iPad sweep 2026-10-25): the tool buttons sit edge to edge, so they are 44 wide
+   (their hit areas grow up and down to 44 with every tool button) */
+:root[data-touch] .tb,
+:root[data-touch] .cluster :global(button[class]) {
+  min-width: 44px;
+}

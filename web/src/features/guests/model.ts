@@ -136,7 +136,7 @@ export function parseDoc(v: unknown): GuestsDoc | null {
   const link = own(v, "link");
   return {
     available: own(v, "available") === true,
-    room: typeof room === "string" && /^![^:\s]+:\S+$/.test(room) ? room : null,
+    room: typeof room === "string" && /^![^:\s]+(?::\S+)?$/.test(room) ? room : null, // v12 ids have no ":server"
     alias: typeof alias === "string" ? alias : "",
     on: own(v, "on") === true,
     since: num(own(v, "since")) ?? 0,
