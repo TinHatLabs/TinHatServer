@@ -232,6 +232,28 @@ def recorder(st: dict | None = None) -> str:
     return a["recorder"] if a["memories"] else ""
 
 
+# A localpart as Synapse accepts it (historic ones included): anything but ':', whitespace and control characters.
+_LOCALPART = re.compile(r"[^:\s\x00-\x1f\x7f]{1,255}")
+
+
+def owner(st: dict | None = None) -> str:
+    """The server owner's Matrix id, announced in the well-known (dev.tinhat.server.account.owner) so the apps refuse
+    "Delete my account" for it (docs/ACCOUNT-SAFETY.md). An adopted Synapse's owner (adopt.py: setup's own account
+    went with setup's database) before setup's; after "Move to your own domain" the same account under the current
+    name (move.py renames every account). "" when unknown or not an account of this server."""
+    st = st if st is not None else state.load_state()
+    sn = st.get("server_name") or ""
+    adopted = st.get("adopted") if isinstance(st.get("adopted"), dict) else {}
+    names = {sn} | {f["name"] for f in st.get("former_names") or [] if isinstance(f, dict) and f.get("name")}
+    for cand in (adopted.get("owner"), st.get("admin")):
+        if not isinstance(cand, str) or not cand.startswith("@") or ":" not in cand:
+            continue
+        local, _, host = cand[1:].partition(":")
+        if sn and host in names and _LOCALPART.fullmatch(local):
+            return f"@{local}:{sn}"
+    return ""
+
+
 def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str = "", owner_limits: dict | None = None) -> str:
     base = f"https://{server_name}"
     gw = gateway or "127.0.0.1"
@@ -330,6 +352,10 @@ def reports(limit: int = 50) -> list[dict]:
                     item["user"] = str(j.get("user") or "")
                     body = j.get("report") if isinstance(j.get("report"), dict) else {}
                     item["title"] = str(body.get("title") or body.get("summary") or "")[:120]
+                    if body.get("kind") == "abuse":  # "Report…" on a person or a message (the API checked it)
+                        item["abuse"] = {k: str(body.get(k) or "")[:n] for k, n in (
+                            ("category", 20), ("reported_user", 300), ("room_id", 300), ("event_id", 300),
+                            ("details", 1000))}
                 except (OSError, ValueError):
                     pass
             else:

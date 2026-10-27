@@ -23,7 +23,7 @@ from aiohttp import web
 
 from . import config as config_mod
 from . import pow as pow_mod
-from . import probe, rules
+from . import applinks, probe, rules
 from .db import DB, code_hint
 from .dns_cloudflare import Cloudflare, DNSError
 from .relay_api import RelayAPI
@@ -519,6 +519,15 @@ Report abuse: <a href="mailto:{html.escape(self.cfg['abuse_contact'])}">{html.es
     async def security_txt(self, req):
         return web.Response(text=self.security_txt_text(), content_type="text/plain")
 
+    # The phone apps' link files (applinks.py): plain JSON, no redirect, cached an hour.
+    async def apple_app_site_association(self, req):
+        return web.Response(text=applinks.apple_app_site_association(), content_type="application/json",
+                            headers={"Cache-Control": "public, max-age=3600"})
+
+    async def assetlinks(self, req):
+        return web.Response(text=applinks.assetlinks(), content_type="application/json",
+                            headers={"Cache-Control": "public, max-age=3600"})
+
     # ---- admin (own loopback listener + token) ---------------------------------------------------------------
     # The admin API is served only by make_admin_app() on admin_listen (127.0.0.1:8096), never by the public app: a
     # tunnel or proxy in front of the public port connects from loopback too, so "comes from 127.0.0.1" alone would let
@@ -665,6 +674,8 @@ def make_app(cfg: dict) -> web.Application:
     app["svc"] = svc
     app.add_routes([
         web.get("/", svc.apex), web.get("/go", svc.go), web.get("/.well-known/security.txt", svc.security_txt),
+        web.get("/.well-known/apple-app-site-association", svc.apple_app_site_association),
+        web.get("/.well-known/assetlinks.json", svc.assetlinks),
         web.get("/v1/info", svc.info), web.get("/v1/check", svc.check), web.post("/v1/challenge", svc.challenge),
         web.post("/v1/register", svc.register), web.post("/v1/update", svc.update),
         web.post("/v1/release", svc.release), web.post("/v1/rotate", svc.rotate), web.post("/v1/probe", svc.probe),

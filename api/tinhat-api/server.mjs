@@ -5,6 +5,7 @@ import { spawn, execFile } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installModeration } from "./moderation.mjs";
+import { abuseReport, isAbuse, ABUSE_PER_DAY as ABUSE_PER_DAY_MAX, ABUSE_MAX_BYTES, ABUSE_SUFFIX, ABUSE_TOTAL_MAX_BYTES } from "./reports.mjs";
 import { installInvites } from "./invites.mjs";
 import { createHs, createMatrixAuth, RateLimit, clientKey, ipBucket, trustProxy } from "./reachcommon.mjs";
 import { createLimits } from "./limits.mjs";
@@ -143,8 +144,24 @@ const REPORTS_MAX_BYTES = 200 * 1024 * 1024;
 function storedBytes() {
     let n = 0;
     for (const d of ["reports", "logs"]) {
-        try { for (const f of readdirSync(join(CONF, d))) { try { n += statSync(join(CONF, d, f)).size; } catch { /* gone */ } } } catch { /* none yet */ }
+        try {
+            for (const f of readdirSync(join(CONF, d))) {
+                if (f.endsWith(ABUSE_SUFFIX)) continue;  // abuse reports: tiny, outside the cap (reports.mjs)
+                try { n += statSync(join(CONF, d, f)).size; } catch { /* gone */ }
+            }
+        } catch { /* none yet */ }
     }
+    return n;
+}
+/** What the stored abuse reports take together (their own bound, ABUSE_TOTAL_MAX_BYTES). */
+function abuseBytes() {
+    let n = 0;
+    try {
+        for (const f of readdirSync(join(CONF, "reports"))) {
+            if (!f.endsWith(ABUSE_SUFFIX)) continue;
+            try { n += statSync(join(CONF, "reports", f)).size; } catch { /* gone */ }
+        }
+    } catch { /* none yet */ }
     return n;
 }
 function reportAllowed(req, res, incoming) {
@@ -155,15 +172,34 @@ function reportAllowed(req, res, incoming) {
 }
 const fileStamp = () => `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
 const safeName = (s) => String(s || "").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) || "file";
+// Abuse reports (reports.mjs) have their own quota and never count toward the size cap: they are tiny.
+const ABUSE_PER_DAY = new RateLimit(ABUSE_PER_DAY_MAX, 24 * 3600_000);
 async function storeReport(req, res) {
-    if (!reportAllowed(req, res, Number(req.headers["content-length"]) || 0)) { req.resume(); return; }
+    if (/^@guest-/.test(req.matrixUser || "")) { req.resume(); return res.status(403).json({ error: "Guests can't send reports." }); }
+    // neither quota left: refuse before reading anything; only abuse reports left: read no more than one of those
+    const bugOk = REPORTS_PER_DAY.can(req.matrixUser);
+    if (!bugOk && !ABUSE_PER_DAY.can(req.matrixUser)) {
+        req.resume();
+        return res.status(429).json({ error: "That's enough reports for today." });
+    }
+    const max = bugOk ? 1024 * 1024 : ABUSE_MAX_BYTES;
     let raw;
-    try { raw = await readRaw(req, 1024 * 1024); } catch { return res.status(413).json({ error: "report too big (1 MB)" }); }
+    try { raw = await readRaw(req, max); } catch { return res.status(413).json({ error: `report too big (${bugOk ? "1 MB" : "16 KB"})` }); }
     let report;
     try { report = JSON.parse(raw.toString("utf8") || "{}"); } catch { return res.status(400).json({ error: "report must be JSON" }); }
+    const abuse = isAbuse(report);
+    if (abuse) {  // every try counts, a refused one too
+        if (raw.length > ABUSE_MAX_BYTES) return res.status(413).json({ error: "report too big (16 KB)" });
+        if (!ABUSE_PER_DAY.hit(req.matrixUser)) return res.status(429).json({ error: "That's enough reports for today." });
+        report = abuseReport(report, req.matrixUser);
+        if (report.error) return res.status(400).json({ error: report.error });
+        if (abuseBytes() + raw.length > ABUSE_TOTAL_MAX_BYTES) return res.status(507).json({ error: "The server's report inbox is full; its owner needs to clear it." });
+    } else if (!reportAllowed(req, res, raw.length)) {
+        return;
+    }
     const dir = join(CONF, "reports");
     mkdirSync(dir, { recursive: true });
-    const id = fileStamp();
+    const id = abuse ? `${fileStamp()}-abuse` : fileStamp();
     writeFileSync(join(dir, `${id}.json`), JSON.stringify({ at: Date.now(), user: req.matrixUser, report }, null, 1), { mode: 0o600 });
     res.json({ ok: true, id });
 }

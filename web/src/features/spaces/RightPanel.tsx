@@ -68,6 +68,7 @@ import {
   unbanInRoom,
 } from "./roomActions";
 import { ProfileCardPopup } from "./ProfileCard";
+import { PersonMenuItems } from "@/features/safety";
 import { freshMembers } from "./store";
 import { useLongPress } from "./longPress";
 import { setRightPanelTab, useRightPanelStore, closeRightPanel } from "./panelState";
@@ -564,6 +565,8 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
       {menu && (
         <Menu open modal anchor={menu.at} onClose={() => setMenu(null)} title={menu.row.name}>
           <MenuItem text="View profile" icon="user-identity" onTriggered={() => setCard({ mxid: menu.row.mxid, name: menu.row.name, avatar: menu.row.avatar })} />
+          {/* account safety: Ignore… / Report… (features/safety; nothing for myself) */}
+          <PersonMenuItems mxid={menu.row.mxid} roomId={roomId} name={menu.row.name} />
           <MenuSeparator />
           {perms.canChangePower && menu.row.membership === "join" && (
             <MenuItem text="Change role…" icon="system-users-symbolic" onTriggered={() => setPowerMenu({ at: menu.at, row: menu.row })} />

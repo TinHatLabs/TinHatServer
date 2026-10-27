@@ -310,6 +310,7 @@ class Installer:
         feats = apiconf.features(state.load_state() | {"calls": a["calls"]}, s)
         state.write_text(wk / "client", templates.wellknown_client(sn, a["calls"], config.VERSION, features=feats), 0o644)
         state.write_text(wk / "server", templates.wellknown_server(sn), 0o644)
+        write_app_links()
         config.CA_DIR.mkdir(parents=True, exist_ok=True)
         _hosts_entry(sn, a["name"])
         return ""
@@ -884,9 +885,12 @@ def write_wellknowns(st: dict, sn: str, calls: bool) -> None:
     wk = config.WELLKNOWN_DIR / ".well-known" / "matrix"
     former = [f["name"] for f in st.get("former_names") or [] if isinstance(f, dict) and f.get("name") and f["name"] != sn]
     held = {f["name"] for f in st.get("former_names") or [] if isinstance(f, dict) and f.get("name") and not f.get("released")}
-    feats, rec = apiconf.features(st), apiconf.recorder(st)
-    state.write_text(wk / "client", templates.wellknown_client(sn, calls, config.VERSION, former, features=feats, recorder=rec), 0o644)
+    feats, rec, web = apiconf.features(st), apiconf.recorder(st), apiconf.settings(st)["web"]
+    owner = apiconf.owner(st | {"server_name": sn})
+    state.write_text(wk / "client", templates.wellknown_client(sn, calls, config.VERSION, former, features=feats, recorder=rec,
+                                                               web=web, owner=owner), 0o644)
     state.write_text(wk / "server", templates.wellknown_server(sn), 0o644)
+    write_app_links()
     for name in former:
         if not templates.is_hostname(name):
             continue
@@ -894,8 +898,16 @@ def write_wellknowns(st: dict, sn: str, calls: bool) -> None:
             shutil.rmtree(config.WELLKNOWN_DIR / "former" / name, ignore_errors=True)
             continue
         fwk = config.WELLKNOWN_DIR / "former" / name / ".well-known" / "matrix"
-        state.write_text(fwk / "client", templates.wellknown_former_client(sn, calls, config.VERSION, feats, rec), 0o644)
+        state.write_text(fwk / "client", templates.wellknown_former_client(sn, calls, config.VERSION, feats, rec, web, owner), 0o644)
         state.write_text(fwk / "server", templates.wellknown_server(sn), 0o644)
+
+
+def write_app_links() -> None:
+    """/.well-known/apple-app-site-association and /.well-known/assetlinks.json (docs/DEEPLINKS.md): the same on every
+    server, rewritten with the Matrix well-known (so an update brings the current app ids)."""
+    wk = config.WELLKNOWN_DIR / ".well-known"
+    state.write_text(wk / "apple-app-site-association", templates.apple_app_site_association(), 0o644)
+    state.write_text(wk / "assetlinks.json", templates.assetlinks(), 0o644)
 
 
 def _former_tls(f: dict, s: dict) -> str | None:

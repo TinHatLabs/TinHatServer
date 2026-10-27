@@ -20,6 +20,7 @@ import { CrossFade, Roll, useFreshIds } from "../motion";
 import { nameNow, usePerson, useRoomLabel } from "../names";
 import { useGameCover } from "./covers";
 import s from "./WhosAround.module.css";
+import { PersonMenuItems } from "@/features/safety";
 
 const ACTIVITY_TYPE = "dev.tinhat.activity";
 
@@ -170,6 +171,7 @@ function PersonMenu({ mxid, close }: { mxid: string; close: () => void }) {
         }}
       />
       <MenuItem text="View profile" icon="user-symbolic" onTriggered={() => (close(), openUserProfile(mxid))} />
+      <PersonMenuItems mxid={mxid} />
     </>
   );
 }

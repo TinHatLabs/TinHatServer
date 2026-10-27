@@ -14,6 +14,7 @@ import { useContainer, useRolesState, powerLevelOf } from "./roles";
 import { plLabel } from "./model";
 import { RoleBadge } from "./RoleBadge";
 import { openOrCreateDm } from "./roomActions";
+import { PersonButtons } from "@/features/safety";
 import s from "./ProfileFlyout.module.css";
 
 export function ProfileFlyout() {
@@ -75,6 +76,10 @@ function Flyout({ userId, roomId, onClose }: { userId: string; roomId?: string; 
               onClose();
             }}
           />
+        </div>
+        {/* account safety (features/safety): Ignore… / Stop ignoring · Report… — a tap on a name lands here on a phone */}
+        <div className={s.cell}>
+          <PersonButtons mxid={userId} roomId={roomId} name={name} onDone={onClose} />
         </div>
       </div>
     </Popover>

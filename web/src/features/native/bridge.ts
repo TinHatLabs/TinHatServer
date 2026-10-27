@@ -7,7 +7,7 @@
 // wrapped (a broken or hostile object can't throw into a click handler). The page passes the app ids only: a room id,
 // a room name, the signed-in mxid — never a token, key or password.
 
-export type NativeCap = "calls" | "servers" | "haptics" | "notifications";
+export type NativeCap = "calls" | "servers" | "haptics" | "notifications" | "trust";
 
 export interface NativeInfo {
   platform: "ios" | "android";
@@ -28,6 +28,7 @@ interface RawNative {
   webCall?: unknown;
   notifications?: unknown;
   signedOut?: unknown;
+  trust?: unknown;
 }
 
 function raw(): RawNative | null {
@@ -87,6 +88,7 @@ export function hasNativeCap(cap: NativeCap): boolean {
   }
   if (cap === "servers") return typeof member("chooseServer") === "function";
   if (cap === "notifications") return (["state", "enable", "disable"] as const).every((k) => notifyFn(k) !== null);
+  if (cap === "trust") return trustFn("pending") !== null && trustFn("result") !== null;
   return true;
 }
 
@@ -268,3 +270,50 @@ export function phoneNotifyText(state: PhoneNotifyState): { description: string;
       return { description: "DMs, mentions and invites, even when Tin Hat is closed.", line: "" };
   }
 }
+
+// ---- trust the phone's native device (caps "trust"; BRIDGE.md, docs/TRUST.md) ---------------------------------------
+// The app names the device it set up (one id + one public ed25519 key); the page checks the server's copy and signs it
+// with the account's self-signing key (trust.ts). Nothing secret crosses: ids, a public key and a result word.
+
+/** `tinhatNative.trust[name]`, bound, or null (guarded reads: getters may throw). */
+function trustFn(name: "pending" | "result"): ((arg: unknown) => unknown) | null {
+  try {
+    const o = member("trust");
+    if (!o || typeof o !== "object") return null;
+    const f = (o as Record<string, unknown>)[name];
+    return typeof f === "function" ? (arg: unknown) => (f as (a: unknown) => unknown).call(o, arg) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** How long the page waits for the app's pending() / result() before it gives up (a late answer is ignored). */
+export const TRUST_ASK_MS = 10_000;
+
+async function askTrust(name: "pending" | "result", arg: unknown, ms: number): Promise<unknown> {
+  const f = trustFn(name);
+  if (!f) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const p = Promise.resolve(f(arg));
+    const late = new Promise<null>((r) => (timer = setTimeout(() => r(null), ms)));
+    return await Promise.race([p, late]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const nativeTrust = {
+  /** the app's pending() for `userId`, unchecked (parse with trust.ts parsePending); null outside the apps */
+  async pendingRaw(userId: string, ms = TRUST_ASK_MS): Promise<unknown> {
+    if (!hasNativeCap("trust") || !userIdOk(userId)) return null;
+    return askTrust("pending", { userId }, ms);
+  },
+  /** tell the app what the page did; its answer unchecked (parse with trust.ts parseTrustAnswer) */
+  async resultRaw(userId: string, deviceId: string, result: string, ms = TRUST_ASK_MS): Promise<unknown> {
+    if (!hasNativeCap("trust") || !userIdOk(userId)) return null;
+    return askTrust("result", { userId, deviceId, result }, ms);
+  },
+};

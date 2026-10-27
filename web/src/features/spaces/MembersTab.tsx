@@ -27,6 +27,7 @@ import { spaceActions, useSpaceAdmin, type MemberRow } from "./store";
 import { RoleBadge } from "./RoleBadge";
 import { InvitePopover } from "./InvitePopover";
 import { openOrCreateDm } from "./roomActions";
+import { PersonMenuItems } from "@/features/safety";
 import { useLongPress } from "./longPress";
 import { MiddleElide } from "./MiddleElide";
 import { useCenterOnWindow } from "./winGeom";
@@ -209,6 +210,7 @@ export function MembersTab({ mobile, onManageRoles }: { mobile?: boolean; onMana
         <Menu open modal anchor={menuAt} onClose={() => setMenuAt(null)} title={actorName}>
           <MenuItem text="View profile" icon="user-identity" onTriggered={() => openUserProfile(actor.mxid, spaceId)} />
           {!actor.isMe && actor.membership === "join" && <MenuItem text="Message" icon="mail-message-new-symbolic" onTriggered={() => void openOrCreateDm(actor.mxid)} />}
+          {!actor.isMe && <PersonMenuItems mxid={actor.mxid} roomId={spaceId} name={actorName} />}
           {rolesActive && actor.canEditRoles && actor.membership === "join" && (
             <>
               <MenuSeparator />

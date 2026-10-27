@@ -1,16 +1,20 @@
 // Devices & security pane — SETTINGS-WINDOW.md §5 (was the Sessions and Security panes; old key `sessions` opens it).
 // Card "This device": Verification (status icon + text; "Verify…" while unverified) and Key backup (on, or "Set up…"
 // → the existing password flow). Card "Where you're signed in": the device list, this device first with a "This
-// device" chip; each row's ⋯ (or a right-click / long-press) offers Rename…, Verify this session, Sign out…; "Sign out
-// all others…" on the card's first row. verified = the three private cross-signing keys on this device (native
+// device" chip; each row's ⋯ (or a right-click / long-press) offers Rename…, Verify this session, Sign out… (+ Trust…
+// on the phone's own Tin Hat device while it isn't cross-signed, docs/TRUST.md); "Sign out all others…" on the card's
+// first row. verified = the three private cross-signing keys on this device (native
 // meaning); backup = key backup active here. Child dialogs (verify, rename, sign out) open over the window.
 import { useEffect, useRef, useState } from "react";
-import { startDeviceVerificationWith, useCryptoStatus } from "@/core/matrix";
+import { CryptoEvent } from "matrix-js-sdk/lib/crypto-api/index.js";
+import { peekClient, startDeviceVerificationWith, useCryptoStatus } from "@/core/matrix";
+import { fallbackOffersTrust, fingerprintText, trustDevice, trustDoneText, trustLookupFor, trustResultText, TRUST_WORDS, WAIT_MS } from "@/features/native";
 import { bus, toast } from "@/core/bus";
 import { Button, Icon, Menu, MenuItem, PromptDialog, TextField, ToolButton, cx, useIsMobile } from "@/ui";
 import { changePassword, changePasswordError, deleteDevice, deleteOtherDevices, refreshDevices, renameDevice, useProfile, type DeviceRow } from "../profile";
 import { guestNow } from "@/core/server/store";
 import { runSetUpBackup } from "../VerifyDeviceDialog";
+import { DeleteAccountRow } from "@/features/safety";
 import { Chip, Hint, NoteRow, Row, Section } from "../rows";
 import p from "./panes.module.css";
 import dlg from "../dialogs.module.css";
@@ -93,6 +97,8 @@ function YourAccount() {
         <TextField type="password" aria-label="New password again" placeholder="New password again" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} onAccepted={submit} />
         <Hint tone={mismatch ? "danger" : undefined}>{mismatch ? "Those two don't match." : "At least 8 characters"}</Hint>
       </PromptDialog>
+      {/* account safety (features/safety): Delete my account — explained, the password, Matrix deactivate (erase) */}
+      <DeleteAccountRow />
     </Section>
   );
 }
@@ -159,7 +165,7 @@ function ThisDevice() {
   );
 }
 
-function DeviceItem({ d, onRename, onSignOut }: { d: DeviceRow; onRename: () => void; onSignOut: () => void }) {
+function DeviceItem({ d, onRename, onSignOut, onTrust }: { d: DeviceRow; onRename: () => void; onSignOut: () => void; onTrust?: () => void }) {
   const mobile = useIsMobile();
   const more = useRef<HTMLButtonElement>(null);
   // the ⋯ button's menu, or a right-click at the pointer (the old list's context menu)
@@ -203,6 +209,7 @@ function DeviceItem({ d, onRename, onSignOut }: { d: DeviceRow; onRename: () => 
                   }}
                 />
               )}
+              {!d.isCurrent && onTrust && <MenuItem text={TRUST_WORDS.action} icon="security-high-symbolic" onTriggered={() => (close(), onTrust())} />}
               {!d.isCurrent && <MenuItem text="Sign out…" icon="system-log-out-symbolic" danger onTriggered={() => (close(), onSignOut())} />}
             </Menu>
           )}
@@ -212,9 +219,141 @@ function DeviceItem({ d, onRename, onSignOut }: { d: DeviceRow; onRename: () => 
   );
 }
 
+/** The phone devices (fallbackOffersTrust: none while the Devices fallback is off) not yet signed by my self-signing key: they get "Trust…". */
+function useUntrustedPhones(devices: DeviceRow[], rev: number): Set<string> {
+  const cs = useCryptoStatus();
+  const [out, setOut] = useState<Set<string>>(new Set());
+  const ids = devices.filter((d) => !d.isCurrent && fallbackOffersTrust(d.name)).map((d) => d.id);
+  const idsKey = ids.join(",");
+  // a signature lands in the crypto store with the next key query of my devices, not with the upload: look again then
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const c = peekClient();
+    if (!c) return;
+    const me = c.getUserId();
+    const on = (users: string[]) => me && users.includes(me) && setTick((n) => n + 1);
+    c.on(CryptoEvent.DevicesUpdated, on);
+    return () => void c.off(CryptoEvent.DevicesUpdated, on);
+  }, []);
+  useEffect(() => {
+    const c = peekClient();
+    if (!c || !cs.cryptoReady || ids.length === 0) return setOut(new Set());
+    let live = true;
+    const look = trustLookupFor(c);
+    void Promise.all(ids.map(async (id) => ((await look.crossSigned(id).catch(() => true)) ? null : id))).then((r) => {
+      if (live) setOut(new Set(r.filter((x): x is string => x !== null)));
+    });
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey, cs, rev, tick]);
+  return out;
+}
+
+/** "Trust this phone?": the device's fingerprint as the server has it, then steps 2–5 of the trust rule for it only. */
+function TrustSheet({ d, onClose, onTrusted }: { d: DeviceRow | null; onClose: () => void; onTrusted: () => void }) {
+  const phone = useIsMobile();
+  const [key, setKey] = useState<string | null | undefined>(undefined); // undefined = loading, null = not listed
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const [needsVerify, setNeedsVerify] = useState(false);
+  const name = d ? d.name || d.id : "";
+  // which opening of the sheet an answer belongs to: a late answer for an earlier device (closed, reopened on another
+  // row) is dropped
+  const gen = useRef(0);
+  useEffect(() => {
+    const mine = ++gen.current;
+    setKey(undefined);
+    setNote("");
+    setBusy(false);
+    setNeedsVerify(false);
+    const c = peekClient();
+    if (!d || !c) return;
+    const look = trustLookupFor(c);
+    void (async () => {
+      try {
+        // a device the server doesn't list yet: the rule's own wait (the next update of my devices, ≤ 5 s) first
+        let k = await look.deviceKey(d.id);
+        if (k === null) {
+          await look.nextDeviceUpdate(d.id, WAIT_MS);
+          k = await look.deviceKey(d.id);
+        }
+        if (gen.current !== mine) return;
+        setKey(k || null);
+        if (!k) setNote(trustResultText(k === null ? "not-published" : "mismatch", name));
+      } catch {
+        if (gen.current !== mine) return;
+        setKey(null);
+        setNote(trustResultText("failed", name));
+      }
+    })();
+    return () => {
+      gen.current++;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [d?.id]);
+  const go = async () => {
+    const c = peekClient();
+    if (!d || !c || !key || busy) return;
+    const mine = gen.current;
+    setBusy(true);
+    setNote("");
+    // the key the person just saw is the one that gets checked against the server's copy (and signed)
+    const r = await trustDevice(trustLookupFor(c), d.id, key);
+    if (r === "signed" || r === "already") {
+      toast(trustDoneText(r, name));
+      onTrusted(); // the list checks its rows again: a trusted phone loses "Trust…"
+    }
+    if (gen.current !== mine) return; // the sheet was closed or moved on meanwhile
+    setBusy(false);
+    if (r === "signed" || r === "already") {
+      onClose();
+      return;
+    }
+    setNote(trustResultText(r, name));
+    setNeedsVerify(r === "keys-locked" || r === "no-cross-signing");
+  };
+  return (
+    <PromptDialog
+      open={!!d}
+      className={phone ? dlg.bottomSheet : undefined}
+      onClose={onClose}
+      title={TRUST_WORDS.title}
+      subtitle={TRUST_WORDS.body(name)}
+      preferredWidth={460}
+      actions={[
+        needsVerify
+          ? {
+              text: TRUST_WORDS.verify,
+              role: "accept",
+              onClick: () => {
+                onClose();
+                bus.emit("openVerifyDialog", {});
+              },
+            }
+          : { text: busy ? TRUST_WORDS.working : TRUST_WORDS.button, role: "accept", disabled: !key || busy, onClick: () => void go() },
+        { text: TRUST_WORDS.cancel, role: "reject", disabled: busy, onClick: onClose }, // as the desktop: no Cancel mid-signature
+      ]}
+    >
+      <div className={p.trustFp} data-trust-fingerprint>
+        {key === undefined ? "…" : key ? fingerprintText(key) : "—"}
+      </div>
+      {note && (
+        <div className={p.trustNote} data-trust-note>
+          {note}
+        </div>
+      )}
+    </PromptDialog>
+  );
+}
+
 function Devices() {
   const prof = useProfile();
   useCryptoStatus();
+  const [trustRev, setTrustRev] = useState(0);
+  const untrusted = useUntrustedPhones(prof.devices, trustRev);
+  const [trust, setTrust] = useState<DeviceRow | null>(null);
   const [rename, setRename] = useState<DeviceRow | null>(null);
   const [newName, setNewName] = useState("");
   const [signOut, setSignOut] = useState<DeviceRow | null>(null);
@@ -269,8 +408,10 @@ function Devices() {
             setErr("");
             setSignOut(d);
           }}
+          onTrust={untrusted.has(d.id) ? () => setTrust(d) : undefined}
         />
       ))}
+      <TrustSheet d={trust} onClose={() => setTrust(null)} onTrusted={() => setTrustRev((n) => n + 1)} />
 
       <PromptDialog
         open={!!rename}

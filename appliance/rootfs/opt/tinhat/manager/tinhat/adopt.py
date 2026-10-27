@@ -232,6 +232,11 @@ async def run(d: Path, owner: str) -> int:
         users = [u for u in await synapse.users(token) if not u.get("name", "").startswith(f"@{config.SYSTEM_LOCALPART}:")]
         rooms = await synapse.room_count(token)
         state.save_state(adopted={"at": int(time.time()), "from": str(d), "owner": owner, "users": len(users), "rooms": rooms})
+        try:  # the well-known names the owner (account.owner, apiconf.owner): now the adopted one
+            st = state.load_state()
+            install.write_wellknowns(st, st["server_name"], st.get("calls", True))
+        except OSError as e:
+            say(warning=f"the well-known wasn't rewritten ({e}); the next update does it")
         say(result="adopted", users=len(users), rooms=rooms, owner=owner, copy_of_the_old_database=str(before))
         return 0
     except Exception as e:  # noqa: BLE001 — any failure (disk full, a timeout, a lost connection) goes back the same way

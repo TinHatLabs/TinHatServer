@@ -13,6 +13,7 @@ import { TZ_HINT, TZ_SWITCH } from "@/features/presence/controls";
 import { ZONE_CHOICES, zoneChoiceText } from "@/widgets/clocks";
 import { LOGSHIP_ENABLED, applyLogship, buildDiagnosticsReport } from "../logs";
 import { Buttons, ComboRow, Hint, NoteRow, Row, Section, SwitchRow } from "../rows";
+import { IgnoredPeopleSection } from "@/features/safety";
 
 let reportUrl = "";
 let diagStatus = "";
@@ -110,6 +111,9 @@ export function PrivacyPane() {
         )}
       </Section>
       )}
+
+      {/* account safety (features/safety): the people I ignore, each with Stop ignoring */}
+      <IgnoredPeopleSection />
     </>
   );
 }

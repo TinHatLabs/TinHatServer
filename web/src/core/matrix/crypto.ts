@@ -205,6 +205,11 @@ function subscribeStatus(cb: () => void): () => void {
   return () => statusListeners.delete(cb);
 }
 
+/** Non-React: called on every change of the crypto status (features/native/trustGlue.ts). Returns the unsubscribe. */
+export function onCryptoStatus(cb: () => void): () => void {
+  return subscribeStatus(cb);
+}
+
 /** React: live E2EE status of this device / account. */
 export function useCryptoStatus(): CryptoStatus {
   return useSyncExternalStore(subscribeStatus, getCryptoStatus, getCryptoStatus);

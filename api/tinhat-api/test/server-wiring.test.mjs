@@ -8,7 +8,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, symlinkSync, rmSync, existsSync, openSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, symlinkSync, rmSync, existsSync, openSync, truncateSync } from "node:fs";
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -71,7 +71,8 @@ before(async () => {
     log = join(T, "stub.log");
     writeFileSync(log, "");
     hs = createServer((req, res) => {
-        const who = { "Bearer good": "@alice:example.org", "Bearer good2": "@bob:example.org" }[req.headers.authorization];
+        const who = { "Bearer good": "@alice:example.org", "Bearer good2": "@bob:example.org", "Bearer guest": "@guest-1:example.org",
+            "Bearer good3": "@carol:example.org", "Bearer good4": "@dave:example.org" }[req.headers.authorization];
         res.writeHead(req.url === "/_matrix/client/v3/account/whoami" && who ? 200 : 401, { "content-type": "application/json" });
         res.end(JSON.stringify(who ? { user_id: who, device_id: "D" } : { errcode: "M_UNKNOWN_TOKEN" }));
     });
@@ -234,4 +235,55 @@ test("other Tin Hat servers' sounds are for members only: no token = 401 before 
     assert.equal(signed.status, 200);
     const q = new URL((await signed.json()).url).search;
     assert.equal((await get(`/clip${q}`, { from: "198.51.100.55" })).status, 502, "a member-signed link is let through (then the name fails)");
+});
+
+const postReport = (body, token = "good3") => fetch(`${base}/reports`, { method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-forwarded-for": "198.51.100.200" },
+    body: JSON.stringify(body) });
+const ABUSE = { kind: "abuse", type: "abuse", title: "[report] Harassment or hate: @bad:example.org", category: "harassment",
+    details: "kept calling names", reported_user: "@bad:example.org", room_id: "!r:example.org", event_id: "$e1",
+    reporter: "@someone-else:example.org", platform: "web (Chrome on Linux)", version: "12.0.3", extra: "x".repeat(5000) };
+
+test("abuse reports (docs/ACCOUNT-SAFETY.md): stored cut down to their fields, the reporter is the signed-in sender", { skip }, async () => {
+    const r = await postReport(ABUSE);
+    assert.equal(r.status, 200);
+    const { id } = await r.json();
+    assert.match(id, /-abuse$/, "named so the size cap leaves it out");
+    const saved = JSON.parse(readFileSync(join(T, "conf", "reports", `${id}.json`), "utf8"));
+    assert.equal(saved.user, "@carol:example.org");
+    assert.deepEqual(saved.report, { kind: "abuse", type: "abuse", title: ABUSE.title, category: "harassment",
+        details: "kept calling names", reporter: "@carol:example.org", platform: ABUSE.platform, version: "12.0.3",
+        reported_user: "@bad:example.org", room_id: "!r:example.org", event_id: "$e1" });
+    assert.equal((await postReport({ ...ABUSE, reported_user: "bad" })).status, 400);
+    assert.equal((await postReport({ ...ABUSE, room_id: undefined })).status, 400, "a message needs its room");
+    assert.equal((await postReport({ kind: "abuse" })).status, 400, "who or what");
+    assert.equal((await postReport(ABUSE, "guest")).status, 403, "guests report through Matrix");
+    assert.equal((await postReport({ ...ABUSE, details: "x".repeat(20_000) })).status, 413, "an abuse report is small");
+});
+
+test("abuse reports have their own total bound (20 MB): full -> 507 until the owner clears some", { skip }, async () => {
+    const dir = join(T, "conf", "reports");
+    mkdirSync(dir, { recursive: true });
+    const filler = join(dir, "0000-filler-abuse.json");
+    writeFileSync(filler, "");
+    truncateSync(filler, 20 * 1024 * 1024 - 100);  // sparse: counts by size, takes no disk
+    const r = await postReport(ABUSE);
+    assert.equal(r.status, 507, "no room left for another abuse report");
+    assert.match((await r.json()).error, /owner needs to clear it/);
+    rmSync(filler);
+    assert.equal((await postReport(ABUSE)).status, 200, "cleared: taken again");
+});
+
+test("abuse reports have their own quota: a day of bug reports doesn't stop a report about a person", { skip }, async () => {
+    const as = (body) => postReport(body, "good4");
+    let bug = 0;
+    for (let i = 0; i < 25; i++) if ((await as({ type: "bug", title: `b${i}` })).status === 200) bug++;
+    assert.equal(bug, 20);
+    assert.equal((await as({ type: "bug", title: "one more" })).status, 429);
+    assert.equal((await as({ type: "bug", title: "big", pad: "x".repeat(40_000) })).status, 413, "bug quota spent: 16 KB at most");
+    assert.equal((await as({ ...ABUSE, reported_user: "junk" })).status, 400, "a refused try counts too");
+    let abuse = 0;
+    for (let i = 0; i < 55; i++) if ((await as({ ...ABUSE, extra: undefined })).status === 200) abuse++;
+    assert.equal(abuse, 49, "50 tries a day");
+    assert.equal((await as(ABUSE)).status, 429);
 });

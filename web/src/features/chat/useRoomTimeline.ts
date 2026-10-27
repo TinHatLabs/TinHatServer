@@ -37,7 +37,11 @@ export function useRoomTimeline(roomId: string | null | undefined): RoomTimeline
     }
     const chain = liveTimelineChain(room);
     const pending = room.getPendingEvents();
-    st.current.events = pending.length ? [...chain.events, ...pending] : [...chain.events];
+    // account safety (core/safety.ts): what someone I ignore already sent stays off screen (the server sends no more)
+    const c = peekClient();
+    const ignoring = (c?.getIgnoredUsers().length ?? 0) > 0;
+    const shown = ignoring ? chain.events.filter((e) => !c!.isUserIgnored(e.getSender() ?? "")) : chain.events;
+    st.current.events = pending.length ? [...shown, ...pending] : [...shown];
     st.current.canBack = chain.canBack;
     st.current.known = true;
   }, [roomId]);
@@ -83,6 +87,10 @@ export function useRoomTimeline(roomId: string | null | undefined): RoomTimeline
     c.on(MatrixEventEvent.Decrypted, onEv);
     c.on(MatrixEventEvent.Replaced, onEv);
     c.on(ClientEvent.Room, onRoom);
+    const onAcct = (ev: MatrixEvent) => {
+      if (ev.getType() === "m.ignored_user_list") bump();
+    };
+    c.on(ClientEvent.AccountData, onAcct);
     snapshot();
     force((n) => n + 1);
     return () => {
@@ -95,6 +103,7 @@ export function useRoomTimeline(roomId: string | null | undefined): RoomTimeline
       c.off(MatrixEventEvent.Decrypted, onEv);
       c.off(MatrixEventEvent.Replaced, onEv);
       c.off(ClientEvent.Room, onRoom);
+      c.off(ClientEvent.AccountData, onAcct);
     };
   }, [client, roomId, snapshot]);
 

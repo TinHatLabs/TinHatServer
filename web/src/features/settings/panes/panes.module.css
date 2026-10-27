@@ -254,3 +254,19 @@
 :global(html[data-ff="mobile"]) .resRow {
   height: 48px;
 }
+
+/* ---- Devices → "Trust this phone?": the device's fingerprint in the mono font, groups of four (docs/TRUST.md) */
+.trustFp {
+  font-family: var(--th-font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  word-spacing: 0.2em;
+  user-select: all;
+  color: var(--th-settings-fg);
+  overflow-wrap: anywhere;
+}
+.trustNote {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--th-settings-error-fg);
+}

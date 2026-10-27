@@ -1,6 +1,6 @@
 .flyout {
   width: 320px;
-  height: 300px;
+  height: 340px; /* 300 + the account-safety row (Main.qml profileFlyout, the same) */
   padding: 8px;
   border-radius: var(--th-radius);
   background: var(--th-profile-bg);

@@ -41,7 +41,7 @@ function previewOffer(): ServerOffer {
     if ((SERVER_FEATURES as readonly string[]).includes(k ?? "") && (v === "0" || v === "1")) features[k as ServerFeature] = v === "1";
   }
   const recorder = devQuery("threcorder") ?? "";
-  return { server: "preview", api: "", features, recorder: /^@[^:\s]+:[^\s]+$/.test(recorder) && features.memories !== false ? recorder : "", passwordReset: devQuery("thpwreset") === "owner" ? "owner" : "" };
+  return { server: "preview", api: "", features, recorder: /^@[^:\s]+:[^\s]+$/.test(recorder) && features.memories !== false ? recorder : "", passwordReset: devQuery("thpwreset") === "owner" ? "owner" : "", owner: "" };
 }
 
 function readCache(): ServerOffer {

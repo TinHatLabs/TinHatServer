@@ -53,9 +53,12 @@ export interface ServerOffer {
   /** how a forgotten password comes back: "owner" = this server sends no email, its owner sets a new one; "" = the
    *  email form (no document, no key, any other value) */
   passwordReset: "owner" | "";
+  /** `account.owner`: the server owner's account (a valid user id, else ""); "Delete my account" refuses it
+   *  (core/safety.ts; the account-safety round's SERVER-SPEC.md) */
+  owner: string;
 }
 
-export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", features: Object.freeze({}), recorder: "", passwordReset: "" }) as ServerOffer;
+export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", features: Object.freeze({}), recorder: "", passwordReset: "", owner: "" }) as ServerOffer;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const own = (o: Record<string, unknown>, k: string): unknown => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
@@ -81,7 +84,9 @@ export function parseOffer(wellKnown: unknown): ServerOffer {
   const recorder = typeof r === "string" && MXID.test(r) && features.memories !== false ? r : "";
   const acct = own(t, "account");
   const passwordReset = isObj(acct) && own(acct, "password_reset") === "owner" ? "owner" : "";
-  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", features, recorder, passwordReset };
+  const ow = isObj(acct) ? own(acct, "owner") : undefined;
+  const owner = typeof ow === "string" && MXID.test(ow) ? ow : "";
+  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", features, recorder, passwordReset, owner };
 }
 
 /** The offer back in the server's own shape (the `dev.tinhat.server` value): what the cache keeps, so parseOffer reads
@@ -89,7 +94,12 @@ export function parseOffer(wellKnown: unknown): ServerOffer {
 export function offerDoc(o: ServerOffer): Record<string, unknown> {
   const doc: Record<string, unknown> = { server: o.server, api: o.api, features: { ...o.features } };
   if (o.recorder) doc.recorder = o.recorder;
-  if (o.passwordReset) doc.account = { password_reset: o.passwordReset };
+  if (o.passwordReset || o.owner) {
+    const a: Record<string, unknown> = {};
+    if (o.passwordReset) a.password_reset = o.passwordReset;
+    if (o.owner) a.owner = o.owner;
+    doc.account = a;
+  }
   return doc;
 }
 
@@ -104,7 +114,7 @@ export const GUEST_WITHHELD: readonly ServerFeature[] = ["reports"];
 
 /** Settings rows a guest account never sees, in the pane or the Settings search (a guest has no password to change). The
  *  desktop's GUEST_HIDDEN_SETTINGS is the same list. */
-export const GUEST_HIDDEN_SETTINGS: readonly string[] = ["security.password"];
+export const GUEST_HIDDEN_SETTINGS: readonly string[] = ["security.password", "security.delete"];
 
 /** Is the feature on for this user? featureOn, minus GUEST_WITHHELD for a guest account. */
 export function featureFor(offer: ServerOffer, f: ServerFeature, guest: boolean): boolean {
@@ -113,7 +123,7 @@ export function featureFor(offer: ServerOffer, f: ServerFeature, guest: boolean)
 
 /** The same offer? (the store notifies only on a real change) */
 export function sameOffer(a: ServerOffer, b: ServerOffer): boolean {
-  if (a.server !== b.server || a.api !== b.api || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset) return false;
+  if (a.server !== b.server || a.api !== b.api || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset || a.owner !== b.owner) return false;
   return SERVER_FEATURES.every((k) => a.features[k] === b.features[k]);
 }
 

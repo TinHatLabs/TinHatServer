@@ -14,6 +14,7 @@ import { clipSrc } from "@/core/clipsrc";
 import { playClip, type ClipHandle } from "@/core/sounds";
 import { fetchProfileCard, linkify, type ProfileCard } from "./roomActions";
 import s from "./ProfileCard.module.css";
+import { PersonButtons } from "@/features/safety";
 import { linkContainerEvents } from "@/core/linkgate";
 
 let preview: ClipHandle | null = null;
@@ -42,7 +43,7 @@ async function playJoinSoundLocally(url: string) {
   }
 }
 
-export function ProfileCardPopup({ mxid, name, avatar, onClose }: { roomId?: string; mxid: string; name: string; avatar: string | null; onClose: () => void }) {
+export function ProfileCardPopup({ roomId, mxid, name, avatar, onClose }: { roomId?: string; mxid: string; name: string; avatar: string | null; onClose: () => void }) {
   const [card, setCard] = useState<ProfileCard>({ mxid, bio: "", accent: "", joinSound: "", loading: true });
   const current = useRef(mxid);
   useEffect(() => {
@@ -79,6 +80,8 @@ export function ProfileCardPopup({ mxid, name, avatar, onClose }: { roomId?: str
         {card.bio && <div className={s.bio} dangerouslySetInnerHTML={{ __html: linkify(card.bio) }} {...linkContainerEvents()} />}
         {card.loading && <div className={s.dim}>Loading…</div>}
         {!card.loading && !card.bio && <div className={s.dimSmall}>No profile set yet.</div>}
+        {/* account safety (features/safety): Ignore… / Stop ignoring · Report… */}
+        <PersonButtons mxid={mxid} roomId={roomId} name={shownName} onDone={onClose} />
         <div className={s.buttons}>
           {card.joinSound && (
             <BasicButton

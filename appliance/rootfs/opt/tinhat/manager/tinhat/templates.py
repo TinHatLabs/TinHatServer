@@ -358,7 +358,7 @@ https://{server_name} {{
 		header Cache-Control "no-cache"
 		file_server
 	}}
-	handle /_matrix/* {{
+{app_links}	handle /_matrix/* {{
 		reverse_proxy 127.0.0.1:8008
 	}}
 	handle /_synapse/client/* {{
@@ -403,6 +403,21 @@ https://{server_name} {{
 """
 
 
+# The phone apps' link files (docs/DEEPLINKS.md), next to the Matrix well-known in every mode: which of this server's
+# links the Tin Hat apps may open (iOS Universal Links, Android App Links). Static files written by
+# install.write_app_links (refresh_configs, so every update rewrites them); no sign-in, plain JSON, no redirect (Apple's
+# and Google's fetchers don't follow one).
+APP_LINKS_ROUTE = """\
+	@applinks path /.well-known/apple-app-site-association /.well-known/assetlinks.json
+	handle @applinks {
+		root * /srv/wk
+		header Content-Type application/json
+		header Cache-Control "public, max-age=3600"
+		file_server
+	}
+"""
+
+
 # From-anywhere mode: a real certificate from Let's Encrypt (Pebble in the lab) through DNS-01, which the Tin Hat names
 # service answers for this box only (acme-dns protocol; Caddy's stock `acmedns` module). Nothing needs port 80 open
 # on the router, and the certificate works before the ports are. HTTP/3 stays off: UDP 443 isn't forwarded.
@@ -438,7 +453,7 @@ https://{server_name} {{
 		header Cache-Control "no-cache"
 		file_server
 	}}
-	handle /_matrix/* {{
+{app_links}	handle /_matrix/* {{
 		reverse_proxy 127.0.0.1:8008
 	}}
 	handle /_synapse/client/* {{
@@ -546,7 +561,7 @@ CADDY_PROXY = """\
 		header Cache-Control "no-cache"
 		file_server
 	}}
-	# Synapse reads the first address in X-Forwarded-For: give it (and the manager) only the caller, as worked out
+{app_links}	# Synapse reads the first address in X-Forwarded-For: give it (and the manager) only the caller, as worked out
 	# above, so both count the same address.
 	handle /_matrix/* {{
 		reverse_proxy 127.0.0.1:8008 {{
@@ -643,7 +658,7 @@ def caddy_proxy(server_name: str, port: int, shared: bool = False, proxies: list
     # A proxy on this same machine connects from the machine's own addresses: on a rented server that's a public one.
     from . import hw
     own_ips = "".join(f" {a}/32" for a in hw.addresses() if ":" not in a)
-    return CADDY_PROXY.format(server_name=server_name, port=port, own_sites=own, own_ips=own_ips, api_routes=CADDY_API,
+    return CADDY_PROXY.format(server_name=server_name, port=port, own_sites=own, app_links=APP_LINKS_ROUTE, own_ips=own_ips, api_routes=CADDY_API,
                               trusted=proxy_words(proxies), admitted=admit_words(proxies), headers_snippet=HEADERS_SNIPPET,
                               web_csp=web_csp_line(),
                               date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
@@ -856,10 +871,11 @@ def with_former_names(caddyfile: str, new: str, former: list[tuple[str, str | No
     return out
 
 
-def wellknown_former_client(new: str, calls: bool, version: str, features: dict | None = None, recorder: str = "") -> str:
+def wellknown_former_client(new: str, calls: bool, version: str, features: dict | None = None, recorder: str = "",
+                            web: str = "", owner: str = "") -> str:
     """The former name's .well-known/matrix/client: the new address (apps that discover through the old name go
     there), and dev.tinhat.moved_to so Tin Hat can say the server moved."""
-    doc = json.loads(wellknown_client(new, calls, version, features=features, recorder=recorder))
+    doc = json.loads(wellknown_client(new, calls, version, features=features, recorder=recorder, web=web, owner=owner))
     doc["dev.tinhat.moved_to"] = new
     return json.dumps(doc, indent=1) + "\n"
 
@@ -872,6 +888,7 @@ def caddy_domain(server_name: str, tls_dns: str, acme_directory: str, extra_root
 def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roots: bool,
                   proxy_from: str | None = None) -> str:
     return CADDY_ANYWHERE.format(
+        app_links=APP_LINKS_ROUTE,
         api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line(),
         relay_servers=CADDY_RELAY_SERVERS.format(proxy_from=proxy_from) if proxy_from else "", hsts=HSTS,
         server_name=server_name, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -880,7 +897,7 @@ def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roo
 
 
 def caddy_lan(server_name: str) -> str:
-    return CADDY_LAN.format(server_name=server_name, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    return CADDY_LAN.format(server_name=server_name, app_links=APP_LINKS_ROUTE, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
                             api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line())
 
 
@@ -1041,16 +1058,23 @@ def _docker_subnets() -> list[str]:
 # ---- discovery + compose ------------------------------------------------------------------------------------
 
 def wellknown_client(server_name: str, calls: bool = True, version: str = "", moved_from: list[str] | None = None,
-                     features: dict | None = None, recorder: str = "") -> str:
+                     features: dict | None = None, recorder: str = "", web: str = "", owner: str = "") -> str:
     """moved_from: the names this server had before it moved to its own domain (move.py), so the apps can say where
     an account came from (dev.tinhat.moved_from). features: apiconf.features() — what this server offers beyond chat,
     so the apps show exactly what works here (only an explicit false hides a feature); recorder: the Memories
-    recorder's account, while Memories is on."""
+    recorder's account, while Memories is on. web: the web app's own address when it isn't the server's (Features →
+    Web app address, a server on its own domain whose front page is another site: example.com → chat.example.com);
+    announced as dev.tinhat.server.web either way, so the phone apps find the web app from a bare domain. owner: the
+    server owner's Matrix id (apiconf.owner), announced as account.owner so the apps refuse "Delete my account" for
+    it (docs/ACCOUNT-SAFETY.md); left out when unknown."""
     feats = dict(features) if features else {"calls": bool(calls)}
     feats["calls"] = bool(calls)
-    offer = {"server": version or "dev", "api": f"https://{server_name}/api", "features": feats,
+    offer = {"server": version or "dev", "api": f"https://{server_name}/api", "web": f"https://{web or server_name}",
+             "features": feats,
              # no email here: a forgotten password is the owner's to reset (dashboard → People), and the apps say so
              "account": {"password_reset": "owner"}}
+    if owner:
+        offer["account"]["owner"] = owner
     if feats.get("memories") and recorder:
         offer["recorder"] = recorder
     doc = {"m.homeserver": {"base_url": f"https://{server_name}"},
@@ -1062,6 +1086,34 @@ def wellknown_client(server_name: str, calls: bool = True, version: str = "", mo
     if moved_from:
         doc["dev.tinhat.moved_from"] = list(moved_from)
     return json.dumps(doc) + "\n"
+
+
+# ---- the phone apps' links (docs/DEEPLINKS.md) -------------------------------------------------------------------
+# The Tin Hat apps for iOS (team 3XKTU7LCGT, bundle dev.tinhat.TinHat) and Android (dev.tinhat.android, signed with the
+# release key; its certificate's SHA-256 is public). The names service serves the same two documents at tinhat.me
+# (names/tinhat_names/applinks.py; a test keeps them equal): both platforms verify a wildcard (*.tinhat.me) there.
+IOS_APP_IDS = ("3XKTU7LCGT.dev.tinhat.TinHat",)
+ANDROID_PACKAGE = "dev.tinhat.android"
+ANDROID_CERT_SHA256 = ("C9:EC:B6:BA:A1:6C:59:4C:E9:7B:97:A1:0B:CA:36:CE:B6:16:13:65:52:CE:FA:A0:8A:08:E8:8A:AA:F0:FE:20",)
+# The web app routes in the fragment (web/src/app/router.ts): a room or a message, a profile, an invitation to
+# create an account (#/register?token=…). Only these open the app; the front page, /admin, /api, /call/ (a guest
+# link is for people without an account) and everything else stay in the browser.
+APP_LINK_FRAGMENTS = (("/room/*", "a room or a message"), ("/user/*", "someone's profile"),
+                      ("/register", "making an account"),
+                      ("/register?token=*", "an invitation to make an account"))
+
+
+def apple_app_site_association() -> str:
+    comps = [{"/": "/", "#": f, "comment": c} for f, c in APP_LINK_FRAGMENTS]
+    # links only: no webcredentials / get_login_creds (sharing saved sign-ins is a domain-wide grant of its own; not
+    # part of this, review 2026-10-26)
+    return json.dumps({"applinks": {"details": [{"appIDs": list(IOS_APP_IDS), "components": comps}]}}, indent=1) + "\n"
+
+
+def assetlinks() -> str:
+    return json.dumps([{"relation": ["delegate_permission/common.handle_all_urls"],
+                        "target": {"namespace": "android_app", "package_name": ANDROID_PACKAGE,
+                                   "sha256_cert_fingerprints": list(ANDROID_CERT_SHA256)}}], indent=1) + "\n"
 
 
 def wellknown_server(server_name: str) -> str:

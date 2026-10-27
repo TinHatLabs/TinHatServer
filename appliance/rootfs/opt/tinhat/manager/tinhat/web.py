@@ -940,7 +940,33 @@ class Manager:
         """Problem reports and shared logs people sent to this server (the API stores them; apiconf.reports)."""
         if not self._admin(req):
             return _err("Sign in first.", 401)
-        return _json({"reports": await asyncio.to_thread(apiconf.reports)})
+        matrix, total = await self._event_reports()
+        return _json({"reports": await asyncio.to_thread(apiconf.reports), "matrix": matrix, "matrixTotal": total})
+
+    async def _event_reports(self) -> tuple[list[dict] | None, int]:
+        """Reports people sent through Matrix itself (an app without the Tin Hat API, a guest, any Matrix client):
+        Synapse keeps them; read through the admin API, the newest 50, and how many Synapse holds. (None, 0) when
+        Synapse doesn't answer (the card says so rather than showing an empty list)."""
+        tok = self._system_token()
+        if not tok:
+            return None, 0
+        try:
+            code, body = await self.synapse.req("GET", "/_synapse/admin/v1/event_reports?limit=50&dir=b", tok)
+        except Exception:  # noqa: BLE001 — chat down: the card still shows the API's inbox
+            return None, 0
+        if code != 200 or not isinstance(body, dict) or not isinstance(body.get("event_reports"), list):
+            return None, 0
+        out = []
+        for r in body.get("event_reports") or []:
+            if not isinstance(r, dict):
+                continue
+            out.append({"id": r.get("id"), "at": int((r.get("received_ts") or 0) / 1000),
+                        "user": str(r.get("user_id") or ""), "reported_user": str(r.get("sender") or ""),
+                        "room_id": str(r.get("room_id") or ""), "event_id": str(r.get("event_id") or ""),
+                        "room": str(r.get("name") or r.get("canonical_alias") or "")[:120],
+                        "reason": str(r.get("reason") or "")[:1000]})
+        total = body.get("total")
+        return out, total if isinstance(total, int) and total >= len(out) else len(out)
 
     async def report_file(self, req: web.Request) -> web.Response:
         if not self._admin(req):

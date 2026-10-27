@@ -41,16 +41,25 @@ read-only as `/vods`): a folder the owner's recorder writes to — Tin Hat Serve
 ## What the apps are told: the well-known
 `/.well-known/matrix/client` → `dev.tinhat.server` (its presence also marks a Tin Hat server):
 ```json
-{"server": "0.2.21", "api": "https://<name>/api",
+{"server": "0.2.21", "api": "https://<name>/api", "web": "https://<name>",
  "features": {"calls": true, "soundboard": true, "gifs": false, "watch": true, "games": true, "steam": false,
               "gameservers": false, "presence": true, "push": true, "memories": false, "reports": true},
  "recorder": "@recorder:example.org",
- "account": {"password_reset": "owner"}}
+ "account": {"password_reset": "owner", "owner": "@owner:example.org"}}
 ```
 `gifs` = a Giphy key is set; `watch` = a YouTube key (YouTube search in Watch/Media Party; pasted links need no key);
 `steam` = a Steam key (importing someone's library; the catalogue's search is keyless); `gameservers` = the panel is
 configured; `memories` = the owner switched it on and named the recorder's account (`recorder`, only then). The apps
 hide a feature only on an explicit `false`; no document = everything on, as before.
+`web` (0.3.5) = where this server's web app is: `https://<name>` unless the owner set Features → "Web app address"
+(a server on its own domain whose front page is another site, like example.com → chat.example.com). The phone apps
+open that when someone types the bare domain (docs/DEEPLINKS.md); older servers leave it out.
+
+`account.owner` (0.3.5) = the server owner's Matrix id, so the apps refuse "Delete my account" for it (the owner
+deletes nothing from an app; docs/ACCOUNT-SAFETY.md); left out while no owner is known. Older apps ignore it.
+
+The phone apps' link files, `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`, are served
+next to it in every mode (docs/DEEPLINKS.md).
 
 ## Who may use the extras (0.3.4, security review 2026-10-26)
 The GIF picker (`/api/gifs/*`), Media Party (`/api/watch/*`) and the soundboard's search and clip cache
@@ -159,7 +168,9 @@ Paste the keys (all free: Giphy at developers.giphy.com, a YouTube Data API v3 k
 at steamcommunity.com/dev/apikey, SteamGridDB at steamgriddb.com/profile/preferences/api), switch Memories on with the
 recorder's account, name a TURN server for callers whose network blocks UDP (host, port, udp/tcp/tls, user, credential
 → LiveKit's `turn_servers`). Saving rewrites the files and restarts `api` + `games` (TURN: the call server), and the
-well-known. The Reports card lists what people sent with "Report a problem" / "Share logs" (downloads).
+well-known. The Reports card lists what people sent with "Report a problem" / "Share logs" (downloads)
+and, labelled "Abuse report", what they sent with "Report…" on a person or a message (`kind: "abuse"`, its own 50 a
+day, outside the 200 MB cap, all of them together at most 20 MB) plus the reports Synapse holds (guests and other Matrix apps; docs/ACCOUNT-SAFETY.md).
 
 ## The game-servers widget
 For a Pelican or Pterodactyl panel the owner runs: **Dashboard → Overview → Game servers → Set up**. The card asks for

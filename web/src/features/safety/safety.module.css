@@ -1,0 +1,96 @@
+/* account safety — the report / delete dialogs and the settings rows. Phones: every target at least 44 px (Apple HIG). */
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.text {
+  color: var(--th-dialog-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dim {
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size);
+  line-height: var(--th-line);
+  overflow-wrap: anywhere;
+}
+.neg {
+  color: var(--th-dialog-error-fg);
+}
+.lines {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.what {
+  font-weight: 700;
+  color: var(--th-dialog-fg);
+}
+.radios {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.danger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 40px;
+  padding: 0 8px;
+  border-radius: var(--th-radius);
+  background: var(--th-dialog-button-danger-bg);
+  color: var(--th-dialog-button-danger-fg);
+  font-weight: 700;
+  outline: none;
+}
+.danger:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 2px var(--th-dialog-button-danger-border-hover);
+}
+.danger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.personText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.mxid {
+  color: var(--th-dialog-hint-fg);
+  font-size: var(--th-font-size-small);
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+/* phones: 44 px targets for every control these dialogs and rows add */
+.phone label,
+.phone button {
+  min-height: 44px;
+}
+.phone label {
+  display: flex;
+  align-items: center;
+}
+.phone .danger {
+  height: 44px;
+}
+.tap {
+  min-height: 44px;
+  min-width: 44px;
+}

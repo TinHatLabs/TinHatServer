@@ -64,6 +64,7 @@ import * as audio from "./audio";
 import { AFK_TYPE, MEMBER_TYPE, avatarMxc, displayName, errText, isRecorder, mxidOf, sleep, withTimeout } from "./util";
 import { buildMicOptions, micProcessorFor, rnnoiseAvailable } from "./mic";
 import { av1Probe, av1Watch } from "./av1";
+import { shareFit, SHARE_MAX_DIM } from "./shareFit";
 import { setCallAudioSession } from "@/core/sounds";
 import type { Stamp } from "./envclock";
 // Tin Hat apps (bridge 2): the phone's native device does the call — Join goes to the app, never this engine
@@ -1485,7 +1486,32 @@ export const shareAuto = { w: 1920, h: 1080, kbps: 12000 };
 
 export function shareBox(q: ShareQ): { w: number; h: number; kbps: number } {
   if (q.w === 0 || q.h === 0) return { w: shareAuto.w, h: shareAuto.h, kbps: shareAuto.kbps };
-  return { w: Math.min(4096, q.w), h: Math.min(4096, q.h), kbps: q.kbps };
+  return { w: Math.min(SHARE_MAX_DIM, q.w), h: Math.min(SHARE_MAX_DIM, q.h), kbps: q.kbps };
+}
+
+/** The captured source's size as first seen (under only the 4096 envelope): a re-fit (quality change) must start from
+ * the source, not from the size the previous fit constrained the track to (that never grew back up). */
+const shareSource = new WeakMap<MediaStreamTrack, { w: number; h: number }>();
+
+/** The current surface size where the browser reports it (Chromium: a display track's capabilities follow the window
+ * or screen, also after a resize or a surface switch), else the size first seen. */
+function shareSourceSize(track: MediaStreamTrack): { w: number; h: number } {
+  const caps = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities;
+  const cw = caps.width?.max ?? 0;
+  const ch = caps.height?.max ?? 0;
+  if (cw > 0 && ch > 0) {
+    const scale = Math.min(1, SHARE_MAX_DIM / Math.max(cw, ch));
+    const live = { w: Math.round(cw * scale), h: Math.round(ch * scale) };
+    shareSource.set(track, live);
+    return live;
+  }
+  let src = shareSource.get(track);
+  if (!src) {
+    const set = track.getSettings();
+    src = { w: set.width ?? 0, h: set.height ?? 0 };
+    if (src.w > 0 && src.h > 0) shareSource.set(track, src);
+  }
+  return src;
 }
 
 function sharePublishOptions(q: ShareQ, box: { kbps: number }): TrackPublishOptions {
@@ -1503,23 +1529,22 @@ function sharePublishOptions(q: ShareQ, box: { kbps: number }): TrackPublishOpti
   };
 }
 
-async function fitTrack(track: MediaStreamTrack, q: ShareQ): Promise<void> {
+/** Constrain the share track to the published size (shareFit: the preset's lines, the source's aspect); returns it. */
+async function fitTrack(track: MediaStreamTrack, q: ShareQ): Promise<{ w: number; h: number }> {
   const box = shareBox(q);
-  const set = track.getSettings();
-  const sw = set.width ?? box.w;
-  const sh = set.height ?? box.h;
-  const scale = Math.min(1, box.w / sw, box.h / sh);
-  const w = Math.max(16, Math.floor((sw * scale) / 16) * 16);
-  const h = Math.max(16, Math.floor((sh * scale) / 16) * 16);
+  const src = shareSourceSize(track);
+  const fit = shareFit(src.w, src.h, box.w, box.h);
   try {
-    await track.applyConstraints({ width: { max: w }, height: { max: h }, frameRate: { max: q.fps } });
+    await track.applyConstraints({ width: { max: fit.w }, height: { max: fit.h }, frameRate: { max: q.fps } });
   } catch (e) {
     log.debug(`share applyConstraints: ${errText(e)}`);
   }
+  log.info(`[share] source ${src.w}x${src.h} -> ${fit.w}x${fit.h} (preset ${box.w}x${box.h})`);
+  return fit;
 }
 
 /** Some capturers ignore applyConstraints (and even report the constrained size): 2 s after a (re-)fit,
- * compare the ENCODED frame size with the box and scale down at the encoder if it is still too big. */
+ * compare the ENCODED frame size with the fitted size and scale down at the encoder if it is still too big. */
 function enforceShareBox(s: Sess, box: { w: number; h: number }) {
   s.timers.push(
     setTimeout(async () => {
@@ -1572,7 +1597,9 @@ export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { width: { max: box.w }, height: { max: box.h }, frameRate: { max: q.fps } },
+      // Only the encoder's limit here: fitTrack needs the source's own size (a box here would bind an ultrawide's
+      // width first — 1080p on 21:9 came out 1920x800) and then fits it to the preset.
+      video: { width: { max: SHARE_MAX_DIM }, height: { max: SHARE_MAX_DIM }, frameRate: { max: q.fps } },
       audio: opts.audio === "browser",
       // Chromium extras (ignored elsewhere)
       ...({ selfBrowserSurface: "exclude", surfaceSwitching: "include", systemAudio: "include" } as object),
@@ -1594,7 +1621,7 @@ export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
     return;
   }
   vt.contentHint = q.enc === "vp9" ? "detail" : "motion";
-  await fitTrack(vt, q);
+  const fit = await fitTrack(vt, q);
   if (superseded()) {
     dropStream();
     return;
@@ -1614,7 +1641,7 @@ export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
     return;
   }
   s.screen = track;
-  enforceShareBox(s, box);
+  enforceShareBox(s, fit);
   vt.addEventListener("ended", () => {
     // (compare the MediaStreamTrack: a codec change re-wraps it in a new LocalVideoTrack)
     if (sess()?.screen?.mediaStreamTrack === vt) {
@@ -1705,7 +1732,7 @@ async function reapplyShareNow(codecChanged: boolean, s: Sess): Promise<void> {
   const superseded = () => op !== shareOp || !live(s) || s.screen?.mediaStreamTrack !== mst;
   try {
     mst.contentHint = q.enc === "vp9" ? "detail" : "motion";
-    await fitTrack(mst, q);
+    const fit = await fitTrack(mst, q);
     if (superseded()) return;
     if (codecChanged) {
       const old = s.screen!;
@@ -1720,7 +1747,7 @@ async function reapplyShareNow(codecChanged: boolean, s: Sess): Promise<void> {
         return;
       }
       s.screen = track;
-      enforceShareBox(s, box);
+      enforceShareBox(s, fit);
       reattach("vid_selfshare");
       for (const h of hooks.onShareChanged) h(s);
     } else {
@@ -1728,8 +1755,8 @@ async function reapplyShareNow(codecChanged: boolean, s: Sess): Promise<void> {
       if (sender) {
         // Some capturers ignore applyConstraints: scale at the encoder instead so the box still holds.
         const set = mst.getSettings();
-        const over = Math.max(1, (set.width ?? 0) / box.w, (set.height ?? 0) / box.h);
-        log.info(`[share] re-fit to ${box.w}x${box.h} @ ${box.kbps} kbps (source ${set.width}x${set.height})`);
+        const over = Math.max(1, (set.width ?? 0) / fit.w, (set.height ?? 0) / fit.h);
+        log.info(`[share] re-fit to ${fit.w}x${fit.h} @ ${box.kbps} kbps (capturing ${set.width}x${set.height})`);
         const p = sender.getParameters();
         for (const e of p.encodings ?? []) {
           e.maxBitrate = box.kbps * 1000;
@@ -1737,7 +1764,7 @@ async function reapplyShareNow(codecChanged: boolean, s: Sess): Promise<void> {
           e.scaleResolutionDownBy = over > 1.01 ? over : 1;
         }
         await sender.setParameters(p);
-        enforceShareBox(s, box);
+        enforceShareBox(s, fit);
       }
     }
   } catch (e) {

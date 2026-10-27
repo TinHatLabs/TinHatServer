@@ -554,7 +554,8 @@ export function buildNav(c: MatrixClient, activeKey: string): NavSnapshot {
   for (const [id, at] of leftLocally) if (now - at > 60_000 || !c.getRoom(id) || c.getRoom(id)!.getMyMembership() === "leave") leftLocally.delete(id);
   const all = c.getRooms().filter((r) => !leftLocally.has(r.roomId));
   const joined = all.filter((r) => r.getMyMembership() === "join");
-  const invited = all.filter((r) => r.getMyMembership() === "invite");
+  // account safety (core/safety.ts): an invite from someone I ignore is hidden (the server stops sending new ones)
+  const invited = all.filter((r) => r.getMyMembership() === "invite" && !c.isUserIgnored(inviterOf(r, c.getUserId() ?? "").mxid));
   const dms = directPeers(c);
   const rules = pushRules(c);
 
@@ -888,7 +889,7 @@ function attach(c: MatrixClient) {
   };
   const accF = (ev: MatrixEvent) => {
     const t = ev.getType();
-    if (t === EventType.Direct || t === EventType.PushRules) f();
+    if (t === EventType.Direct || t === EventType.PushRules || t === "m.ignored_user_list") f();
   };
   const unreadRooms = new Set<Room>();
   const bindUnread = () => {

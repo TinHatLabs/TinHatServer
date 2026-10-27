@@ -39,6 +39,24 @@ If your Matrix name is `example.com` (accounts like `@you:example.com`) but you'
 as well. Set the server up with the name `example.com` in that case (the name is permanent; changing it later is
 "Move to your own domain").
 
+With the web app on its own address (`chat.example.com` here, while `example.com` is another website), set Features →
+"Web app address" to it: invitations and guest links then open there, and the server's well-known tells the phone apps
+where it is (`dev.tinhat.server.web`), so typing `example.com` in the app still works.
+
+The phone apps' link files (docs/DEEPLINKS.md) come from Tin Hat too. A proxy that sends the whole domain needs nothing
+more; one that sends only parts of `example.com` adds them. Caddy:
+```
+example.com {
+	@tinhat path /.well-known/matrix/* /_matrix/* /.well-known/apple-app-site-association /.well-known/assetlinks.json
+	reverse_proxy @tinhat <the server's address>:8080
+	# … the rest of example.com
+}
+```
+nginx: `location ~ ^/(\.well-known/(matrix/|apple-app-site-association$|assetlinks\.json$)|_matrix/) { proxy_pass
+http://<the server's address>:8080; … }` with the same headers as the main block. Don't redirect these two: Apple
+and Google don't follow redirects, and they must answer `200` with `Content-Type: application/json`
+(`curl -sI https://example.com/.well-known/assetlinks.json`).
+
 ## Known limits
 - Port 8080 trusts every home-network address as a possible proxy, so a device on your own network could claim to
   be someone else for rate limits (not for anything more). A setting for your proxy's exact address is planned.

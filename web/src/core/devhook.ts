@@ -9,7 +9,7 @@
 //   await __tw.logout()                            // ends the device on the server too
 //
 // tools/webshot.mjs drives sign-in through this (the password never enters the repo).
-import { openRoom } from "@/core/bus";
+import { openRoom, openSettings } from "@/core/bus";
 import { armCrashProbe } from "@/ui/ErrorBoundary";
 import { getFormFactor, isTouch } from "@/core/device";
 import { listOwnedDatabases, peekClient } from "@/core/matrix/client";
@@ -37,6 +37,8 @@ export interface TwDebug {
   session(): ReturnType<typeof getSession>;
   waitReady(timeoutMs?: number): Promise<boolean>;
   openRoom(roomId: string): void;
+  /** account-safety e2e: open Settings at a pane ("privacy", "security", …). */
+  openSettings(paneId?: string): void;
   rooms(): Array<{ roomId: string; name: string; membership: string; space: boolean }>;
   info(): Promise<Record<string, unknown>>;
   /** In-browser unit checks of core (selftest.ts). */
@@ -110,6 +112,7 @@ function install() {
     session: () => getSession(),
     waitReady,
     openRoom: (roomId) => openRoom(roomId),
+    openSettings: (paneId) => openSettings(paneId),
     rooms: () =>
       (peekClient()?.getRooms() ?? []).map((r) => ({
         roomId: r.roomId,

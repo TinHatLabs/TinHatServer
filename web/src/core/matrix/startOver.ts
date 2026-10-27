@@ -27,6 +27,27 @@ export const START_OVER = {
     "retrieved later. Messages from before stay locked unless a device that still has them signs in again.",
 } as const;
 
+/** The second way out, the Security Key (the chooser's own words; repeated on the screens below). */
+export const USE_KEY = "No other device? Use your Security Key";
+
+/**
+ * Which verification screens carry the way out ("No other device? Use your Security Key", then "Lost your Security
+ * Key? Start over"), fix/recovery-escape-phone 2026-10-26. A friend on a phone saw only "Use another device": Start over
+ * sat inside the Security Key panel (behind a button that asks for the very key they didn't have), and once they had
+ * tried another device the waiting and cancelled screens offered only Cancel / Try again, after a reopen too.
+ * - the first screen (state ""), waiting for my other device (I asked) and cancelled: while this device is not verified
+ *   (on the first screen right under the Security Key option, no other tap needed). A verified device keeps it where
+ *   12.0.1 put it, inside the Security Key panel: one tap further from an accidental reset (Astra review 2026-10-26)
+ * - never while another device's request is being answered (someone is there) or emoji are on screen.
+ * The desktop's VerifyDeviceDialog.qml follows the same rule (docs/DESKTOP-PENDING-recovery-escape.md).
+ */
+export function offersStartOver(s: { sasState: string; sasIncoming: boolean; thisDeviceVerified: boolean }): boolean {
+  if (s.thisDeviceVerified) return false;
+  if (s.sasState === "") return true;
+  if (s.sasState === "waiting") return !s.sasIncoming;
+  return s.sasState === "cancelled";
+}
+
 /** Why it stopped. Everything but `after` means nothing was changed. */
 export type StartOverStop =
   | { kind: "wrong" }

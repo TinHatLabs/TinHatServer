@@ -516,19 +516,45 @@ function gameServersCard(el) {
   return card;
 }
 
-/** Reports: what people sent this server with "Report a problem" and "Share logs". */
+/** Reports: what people sent this server with "Report a problem", "Share logs" and "Report…" (a person or a message:
+ * an abuse report, from the Tin Hat API or, for guests and other Matrix apps, Synapse's own; docs/ACCOUNT-SAFETY.md). */
 function reportsCard(o) {
   const card = h("div.card.flat.stack-sm");
   const n = (o.api && o.api.reports) || 0;
+  const web = (o.api && o.api.web) || o.serverName || "";
   const list = h("div.list");
+  const when = (at) => new Date(at * 1000).toLocaleString();
+  // the room or the message in the web app (the owner opens it signed in as themselves; nothing is fetched here)
+  const openLink = (room, event) => room && web ? h("a.btn.ghost.small", { href: `https://${web}/#/room/${encodeURIComponent(room)}${event ? "/" + encodeURIComponent(event) : ""}`, target: "_blank", rel: "noopener" }, event ? "Open the message" : "Open the room") : null;
+  const download = (it) => h("a.btn.ghost.small", { href: `/admin/api/reports/file?kind=${it.kind}&name=${encodeURIComponent(it.name)}` }, "Download");
+  const abuseItem = (who, reporter, at, category, details, room, event, extra, more) => h("div.item",
+    h("div.grow",
+      h("div.k", h("span.chip.bad", "Abuse report"), " ", category ? `${category}: ` : "", who || (event ? "a message" : "?")),
+      h("div.s", `from ${reporter || "?"} · ${when(at)}${event ? " · a message" : ""}${extra ? ` · ${extra}` : ""}`),
+      details ? h("div.s", `“${details}”`) : null),
+    openLink(room, event), more || null);
+  const row = (it) => {
+    if (it.source === "matrix") return abuseItem(it.reported_user, it.user, it.at, "", it.reason, it.room_id, it.event_id, `through Matrix${it.room ? ` in ${it.room}` : ""}`);
+    if (it.abuse) {
+      const a = it.abuse;
+      return abuseItem(a.reported_user, it.user, it.at, a.category, a.details, a.room_id, a.event_id, "", download(it));
+    }
+    return h("div.item",
+      h("div.grow", h("div.k", it.kind === "report" ? (it.title || "Problem report") : `Log: ${it.name.split("-").slice(4).join("-") || it.name}`),
+        h("div.s", `${it.user || "?"} · ${when(it.at)} · ${Math.max(1, Math.round(it.size / 1024))} KB`)),
+      download(it));
+  };
   const load = async () => {
     try {
       const r = await api("/admin/api/reports");
-      list.replaceChildren(...(r.reports.length ? r.reports.map((it) => h("div.item",
-        h("div.grow", h("div.k", it.kind === "report" ? (it.title || "Problem report") : `Log: ${it.name.split("-").slice(4).join("-") || it.name}`),
-          h("div.s", `${it.user || "?"} · ${new Date(it.at * 1000).toLocaleString()} · ${Math.max(1, Math.round(it.size / 1024))} KB`)),
-        h("a.btn.ghost.small", { href: `/admin/api/reports/file?kind=${it.kind}&name=${encodeURIComponent(it.name)}` }, "Download")))
-        : [h("div.item", h("div.grow.muted", "Nothing yet. People send these from the app's Report a problem and Share logs; they stay on this server."))]));
+      const all = [...r.reports, ...(r.matrix || []).map((m) => ({ ...m, source: "matrix" }))].sort((a, b) => b.at - a.at);
+      // one odd entry never hides the others
+      const safe = (it) => { try { return row(it); } catch { return h("div.item", h("div.grow.muted", `A report this page can't show (${it.name || it.id || "?"})`)); } };
+      const notes = [];
+      if (r.matrix === null) notes.push(h("div.item", h("div.grow.muted", "Reports sent through Matrix couldn't be read just now (is chat running?). Refresh to try again.")));
+      else if (r.matrixTotal > r.matrix.length) notes.push(h("div.item", h("div.grow.muted", `Showing the newest ${r.matrix.length} of ${r.matrixTotal} reports sent through Matrix.`)));
+      list.replaceChildren(...(all.length ? all.map(safe)
+        : [h("div.item", h("div.grow.muted", "Nothing yet. People send these from the app's Report a problem, Share logs and Report…; they stay on this server."))]), ...notes);
     } catch (ex) {
       list.replaceChildren(h("div.item", h("div.grow.muted", ex.message)));
     }

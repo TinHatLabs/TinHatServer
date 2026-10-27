@@ -37,7 +37,7 @@ import {
 import { bus, toast, useBus } from "@/core/bus";
 import { isGuestAccount } from "@/core/server";
 import { keyFirst } from "@/core/matrix/moved";
-import { START_OVER } from "@/core/matrix/startOver";
+import { offersStartOver, START_OVER, USE_KEY } from "@/core/matrix/startOver";
 import { FirstKeyDialog } from "@/features/selfhost/FirstKeyDialog";
 import { BasicButton, BasicCheckBox, BasicTextField, BusyIndicator, Button, Dialog, Icon, TextArea, cx, useIsMobile } from "@/ui";
 import s from "./dialogs.module.css";
@@ -174,7 +174,8 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
   const ui = useVerifyUi();
   const v = useVerification();
   // no identity to verify against (a moved server, core/matrix/moved.ts): the Security Key first, no "another device"
-  const keyOnly = keyFirst(useCryptoStatus());
+  const cs = useCryptoStatus();
+  const keyOnly = keyFirst(cs);
   const mobile = useIsMobile();
   const [key, setKey] = useState("");
   const [pw, setPw] = useState("");
@@ -240,6 +241,24 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
     <BusyIndicator size={48} color="var(--th-loader-spinner-fg)" className={s.spinner} />
   );
 
+  // fix/recovery-escape-phone: the ways out on the screens after "Use another device" too (waiting on it, cancelled /
+  // timed out / nothing could vouch) — before, those offered only Cancel / Try again and the only way back to the
+  // Security Key was closing the sheet. Each one ends the request on screen and opens the first screen at that option.
+  const offers = offersStartOver({ sasState: st, sasIncoming: v.sasIncoming, thisDeviceVerified: cs.thisDeviceVerified });
+  const wayOut = (to: "key" | "start-over") => {
+    if (st === "waiting" || st === "emoji" || st === "confirming") void cancelDeviceVerification(); // sends the cancel
+    resetVerification();
+    vset({ keyPathOpen: to === "key" || ui.keyPathOpen, status: "" });
+    setSoPw(""); // a password typed before "Use another device" never waits in the form for the next tap
+    setSoOpen(to === "start-over");
+  };
+  const waysOut = (
+    <>
+      <BasicButton className={s.full} flat text={USE_KEY} disabled={hold || ui.busy} onClick={() => wayOut("key")} />
+      <BasicButton className={s.full} flat text={START_OVER.link} disabled={hold || ui.busy} onClick={() => wayOut("start-over")} />
+    </>
+  );
+
   return (
     <Dialog
       open={open}
@@ -271,7 +290,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
             <BasicButton
               className={s.full}
               flat
-              text={ui.keyPathOpen ? "Hide the Security Key option" : "No other device? Use your Security Key"}
+              text={ui.keyPathOpen ? "Hide the Security Key option" : USE_KEY}
               onClick={() => vset({ keyPathOpen: !ui.keyPathOpen })}
             />
           </div>
@@ -301,8 +320,16 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
               onClick={() => void verifyKey()}
             />
             {ui.status && <span className={cx(s.text, !ui.busy && !/^Verified/.test(ui.status) && s.neg)}>{ui.status}</span>}
-            {/* 12.0.1: no Security Key and no other signed-in device — the way out (crypto.ts startOver; the desktop's
-                VerifyDeviceDialog.qml has the same panel and words). Before this such an account was stuck for good. */}
+          </div>
+        )}
+        {/* 12.0.1: no Security Key and no other signed-in device — the way out (crypto.ts startOver; the desktop's
+            VerifyDeviceDialog.qml has the same panel and words). Before this such an account was stuck for good.
+            fix/recovery-escape-phone (2026-10-26): on the first screen itself, under the Security Key option — it used to
+            sit INSIDE the Security Key panel, so someone without the key never saw it (a friend's phone: "only verify on
+            another device"). Same order as before: another device, the Security Key, then Start over. A verified device
+            sees it with the Security Key panel only, as before (offersStartOver). */}
+        {st === "" && (offers || ui.keyPathOpen || keyOnly) && (
+          <div className={s.col4}>
             <BasicButton className={s.full} flat text={soOpen ? START_OVER.back : START_OVER.link} disabled={ui.busy} onClick={() => setSoOpen(!soOpen)} />
             {soOpen && (
               <form className={s.col4} data-start-over onSubmit={(e) => e.preventDefault()}>
@@ -320,11 +347,13 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
                   aria-label={START_OVER.placeholder}
                   placeholder={START_OVER.placeholder}
                   value={soPw}
-                  disabled={ui.busy}
+                  disabled={ui.busy || hold}
                   onChange={(e) => setSoPw(e.target.value)}
-                  onAccepted={() => soPw && void startOver(soPw)}
+                  onAccepted={() => !hold && soPw && void startOver(soPw)}
                 />
-                <BasicButton className={s.full} text={START_OVER.button} disabled={ui.busy || !soPw} onClick={() => void startOver(soPw)} />
+                {/* S9 hold here too: a way out (waiting / cancelled) opens this form on the first screen, a new layout
+                    under the finger, so its field + button wait out the hold like the buttons that led here */}
+                <BasicButton className={s.full} text={START_OVER.button} disabled={ui.busy || hold || !soPw} onClick={() => void startOver(soPw)} />
                 {v.startOverNote && (
                   <span className={cx(s.text, s.neg)} data-start-over-note>
                     {v.startOverNote}
@@ -343,6 +372,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
               <BasicButton className={cx(s.full, s.hl)} highlighted text={SAS_START_BUTTON} disabled={hold} onClick={() => void startSasComparison()} />
             )}
             <BasicButton className={s.full} flat text="Cancel" disabled={hold} onClick={() => void cancelDeviceVerification()} />
+            {offers && st === "waiting" && waysOut}
           </div>
         )}
         {st === "emoji" && (
@@ -389,6 +419,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
                 <BasicButton className={cx(s.full, s.hl)} highlighted disabled={!pw} text="Set up encryption on this device" onClick={bootstrap} />
               </>
             )}
+            {offers && st === "cancelled" && waysOut}
           </div>
         )}
         {st === "recovery-working" && (
