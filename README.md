@@ -34,6 +34,8 @@ Each one sets up the same way: open the address it shows, type its setup code, a
   push notifications, the game-servers widget and the games catalogue, on every server with the owner's own keys
   (the dashboard's "Extras and keys" card). Nothing in it points at anyone else's machine; `docs/API.md`.
 - The manager (Python, aiohttp): setup, the dashboard, updates, backups (`appliance/rootfs/opt/tinhat/manager/`).
+  It runs on a pinned aiohttp that every release carries as hash-checked wheels (`build/wheels.lock`), installed
+  offline into a venv on each server; the operating system's aiohttp is only the fallback (`docs/RELEASING.md`).
 - Tin Hat Web (`web/`), the app your server serves to browsers: its full source, built into every release
   (`web/README.md` says how to build it yourself).
 

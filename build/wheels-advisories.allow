@@ -1,0 +1,4 @@
+# Reviewed exceptions to `build/wheels.py audit` (release.sh refuses a release while any pinned wheel has an advisory
+# that isn't named here). One per line: the OSV id (GHSA-…, PYSEC-…, CVE-…) as the audit prints it, then ONE line saying
+# why it doesn't apply to Tin Hat Server (which code path, why we don't use it). An entry without a reason is refused;
+# one that no pinned package has any more is reported (remove it). Prefer moving the lock on (docs/RELEASING.md).

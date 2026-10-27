@@ -75,10 +75,14 @@ function loadDetached(src: string): Promise<HTMLImageElement> {
 }
 
 async function inspect(src: string): Promise<Source | null> {
-  const blob = await readBytes(src);
-  if (blob) {
-    const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
-    if (sniffKind(head) === "other") return null;
+  const raw = await readBytes(src);
+  if (raw) {
+    const head = new Uint8Array(await raw.slice(0, 16).arrayBuffer());
+    const kind = sniffKind(head);
+    if (kind === "other") return null;
+    // the runs show object URLs of these bytes in this origin: type them by what they ARE (a GIF/WebP polyglot served
+    // as text/html by a member-chosen host must not become an HTML page here — security review 2026-10-26, H1)
+    const blob = new Blob([raw], { type: kind === "gif" ? "image/gif" : "image/webp" });
     const info = inspectAnimation(new Uint8Array(await blob.arrayBuffer()));
     if (!info.animated) return null;
     // the default image of an animated image = its first frame (HTML: createImageBitmap)

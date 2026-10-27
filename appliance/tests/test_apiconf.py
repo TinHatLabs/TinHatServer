@@ -152,11 +152,19 @@ class Templates(unittest.TestCase):
     def setUp(self):
         self._mods = mock.patch.dict(sys.modules, REAL)
         self._mods.start()
+        # `from . import apiconf` inside templates finds the package's attribute before sys.modules: other test modules
+        # swap the `tinhat` package object, and one that then imports web binds its own apiconf/hw onto it
+        pkg = sys.modules.get("tinhat")
+        self._pkg = mock.patch.multiple(pkg, create=True, **{k.split(".", 1)[1]: v for k, v in REAL.items()}) if pkg else None
+        if self._pkg:
+            self._pkg.start()
         self._addr = mock.patch.object(hw, "addresses", return_value=["10.0.0.2"])
         self._addr.start()
 
     def tearDown(self):
         self._addr.stop()
+        if self._pkg:
+            self._pkg.stop()
         self._mods.stop()
 
     def test_every_caddy_mode_routes_the_api(self):

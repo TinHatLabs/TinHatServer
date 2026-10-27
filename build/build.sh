@@ -7,8 +7,8 @@
 #   build.sh provision     run provision.sh in the VM (packages, images, units) — re-runnable
 #   build.sh update        dev loop: push + copy the rootfs over + restart the manager (no apt, no pulls)
 #   build.sh ssh CMD…      run CMD as root in the VM
-#   build.sh artifacts     out/release-<VERSION>/: images.lock, our Caddy image, the Tin Hat Web build (release.sh
-#                          turns them into an update; run after provision, before seal)
+#   build.sh artifacts     out/release-<VERSION>/: images.lock, our Caddy image, the Tin Hat Web build, the pinned
+#                          aiohttp's wheels (release.sh turns them into an update; run after provision, before seal)
 #   build.sh compose [DIR] the Docker Compose edition's image from release.sh's files (DIR: default out/channel)
 #   build.sh seal          seal.sh: first-boot state, then the VM powers off; then the host zeroes the disk's free
 #                          blocks (needs zerofree on the host: apt install zerofree)
@@ -26,7 +26,9 @@
 #                         out/github/vX.Y.Z/): the VM loads those exact images instead of building new ones (the API
 #                         tagged with this version; a tag doesn't change an image's id), so servers on that release
 #                         already have every image this one names and download only the bundle (0.3.2: a 0.3.0/0.3.1
-#                         server can't fetch an image from GitHub at all). Only when api/ and build/caddy didn't change.
+#                         server can't fetch an image from GitHub at all). Only when api/ and build/caddy didn't change:
+#                         the API image is checked against this tree's api/ (build/api-image-check.py) and refused when
+#                         its code differs.
 #                         REUSE_IMAGES="caddy" (or "api"): reuse only those, build the rest (default: "api caddy").
 set -euo pipefail
 HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
@@ -109,16 +111,35 @@ stage() {
   mkdir -p "$P/web"
   cp -a "$HERE/appliance/rootfs" "$P/rootfs"
   find "$P/rootfs" -name __pycache__ -prune -exec rm -rf {} +
+  # The pinned aiohttp (build/wheels.lock): downloaded here (or from out/wheels-cache), each file refused unless its
+  # sha256 is the lock's. provision.sh installs them into the image's venv; the bundle carries the same files.
+  python3 "$HERE/build/wheels.py" fetch "$P/rootfs/opt/tinhat/manager/wheels" --cache "$OUT/wheels-cache"
   cp "$HERE/appliance/VERSION" "$HERE/appliance/provision.sh" "$HERE/appliance/seal.sh" "$P/"
   need WEB_DIR
   [ -f "$WT/tmp/selfhost-dist/index.html" ] || { echo "no web build — run: build.sh web" >&2; exit 1; }
   rsync -a --exclude='*.map' "$WT/tmp/selfhost-dist/" "$P/web/"
+  # This server needs Tin Hat Web 12.0.3 or later, built CSP-ready (review of 116d103, #4): older bundles send no bearer
+  # to the extras (every web and phone user would land in the token-less allowance) and can't take the app's
+  # Content-Security-Policy (csp-ready.json is what turns it on; the manager's own check of it decides here too).
+  python3 - "$WT/package.json" "$P/web" "$HERE/appliance/rootfs/opt/tinhat/manager" <<'PY' || exit 1
+import json, re, sys
+pkg, web, mgr = sys.argv[1:]
+v = str(json.load(open(pkg)).get("version", ""))
+m = re.match(r"(\d+)\.(\d+)\.(\d+)", v)
+if not m or tuple(map(int, m.groups())) < (12, 0, 3):
+    sys.exit(f"Tin Hat Web {v or '?'} in WEB_DIR: this server needs 12.0.3 or later (the extras ask for a sign-in, the app gets a CSP)")
+sys.path.insert(0, mgr)
+from tinhat import templates
+if not templates.web_app_csp(web):
+    sys.exit("the web build has no valid csp-ready.json: build a CSP-ready Tin Hat Web (12.0.3 or later)")
+print(f"web {v}: CSP-ready")
+PY
   # The Tin Hat API's image is built in the VM from api/ (provision.sh); the guest call page is served with the web app.
   rm -rf "$P/rootfs/opt/tinhat/build/api"
   mkdir -p "$P/rootfs/opt/tinhat/build/api" "$P/web/call"
   cp -a "$HERE/api/Dockerfile" "$HERE/api/tinhat-api" "$HERE/api/games" "$P/rootfs/opt/tinhat/build/api/"
   rm -rf "$P/rootfs/opt/tinhat/build/api/tinhat-api/test" "$P/rootfs/opt/tinhat/build/api/tinhat-api/node_modules" "$P/rootfs/opt/tinhat/build/api/games/node_modules"
-  install -m 0644 "$HERE/api/guest/index.html" "$P/web/call/"
+  install -m 0644 "$HERE/api/guest/index.html" "$HERE/api/guest/door.js" "$P/web/call/"
   # REUSE_IMAGES_FROM (see the top): this processor's tarball of each of our images from that release, exactly one each
   if [ -n "${REUSE_IMAGES_FROM:-}" ]; then
     mkdir -p "$P/reuse"
@@ -128,6 +149,11 @@ stage() {
       case "$name" in api|caddy) ;; *) echo "REUSE_IMAGES: '$name' isn't one of our images (api, caddy)" >&2; exit 1 ;; esac
       f=$(find "$REUSE_IMAGES_FROM" -maxdepth 1 -regextype posix-extended -regex ".*/tinhat-$name-[0-9a-f]{12}$sfx\.tar\.gz" -print)
       [ -n "$f" ] && [ "$(printf '%s\n' "$f" | wc -l)" = 1 ] || { echo "REUSE_IMAGES_FROM: not exactly one tinhat-$name-<id>$sfx.tar.gz in $REUSE_IMAGES_FROM" >&2; exit 1; }
+      # never reuse an API image whose code differs from this tree (review of 116d103, #4): it would ship the old API
+      if [ "$name" = api ] && ! python3 "$HERE/build/api-image-check.py" "$f" "$HERE/api"; then
+        echo "REUSE_IMAGES: $(basename "$f") doesn't carry this tree's api/: tinhat/api must be built (REUSE_IMAGES=caddy)" >&2
+        exit 1
+      fi
       cp "$f" "$P/reuse/tinhat-$name.tar.gz"
       # the id its name carries (release.sh names each tarball by the image's id): provision.sh checks the loaded image
       basename "$f" | sed -E "s/^tinhat-$name-([0-9a-f]{12}).*/\1/" > "$P/reuse/tinhat-$name.id"
@@ -168,6 +194,10 @@ cmd_artifacts() {
     vm_ssh docker save "$ref" | gzip -1 > "$R/tinhat-$name.tar.gz"
   done
   cp -a "$OUT/payload/web" "$R/web"
+  # the pinned aiohttp's wheels exactly as the image has them (release.sh puts them into the bundle's manager/)
+  mkdir -p "$R/wheels"
+  vm_ssh tar -C /opt/tinhat/manager/wheels -cf - . | tar -C "$R/wheels" --no-same-owner -xf -
+  python3 "$HERE/build/wheels.py" verify "$R/wheels"
   echo "release artifacts: $R ($(du -sh "$R" | cut -f1))"
 }
 

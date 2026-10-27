@@ -204,6 +204,12 @@ echo linux > /opt/tinhat/EDITION  # the manager leaves this machine's name, netw
 [ "$BEHIND" = 1 ] && echo proxy > /opt/tinhat/PORTS  # never 80/443: they're the machine's own web server's
 cp -a "$TMP/b/host/." /
 chmod 0755 /usr/local/sbin/tinhat
+# Tin Hat's pinned aiohttp: the release's manager/wheels (each checked against the signed release's list), installed
+# offline into /opt/tinhat/venv. Debian 13 gets its compiled build; another Python (Ubuntu 24.04's 3.12) the same
+# version in pure Python, with the same checks. Without it the manager runs on the system's python3-aiohttp and its
+# dashboard says so.
+(cd /opt/tinhat/manager && python3 -m tinhat pyenv build) \
+  || echo "  (the manager will run on this system's own aiohttp for now; its dashboard says why)"
 install -d -m 0700 /var/lib/tinhat
 sysctl -q -p /etc/sysctl.d/90-tinhat-host.conf || true
 systemctl daemon-reload

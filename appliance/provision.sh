@@ -30,6 +30,11 @@ install -m 0644 "$P/VERSION" /opt/tinhat/VERSION
 install -d -m 0700 /var/lib/tinhat
 find /opt/tinhat -name __pycache__ -prune -exec rm -rf {} +
 
+step "the pinned aiohttp (manager/wheels → /opt/tinhat/venv)"
+# Debian's python3-aiohttp (above) stays as the fallback (tinhat/pyenv.py). The image's own venv must pass its whole
+# check here, compiled parts included, or there is no image.
+(cd /opt/tinhat/manager && python3 -m tinhat pyenv build --strict)
+
 step "container images (baked in, so first boot needs no internet)"
 # Restart, not just start: apt already started Docker, before rootfs brought /etc/docker/daemon.json (its networks
 # move to 198.18.0.0/15, away from home networks, and LiveKit leaves that range out of its call addresses).

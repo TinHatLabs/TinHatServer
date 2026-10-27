@@ -52,6 +52,96 @@ read-only as `/vods`): a folder the owner's recorder writes to — Tin Hat Serve
 configured; `memories` = the owner switched it on and named the recorder's account (`recorder`, only then). The apps
 hide a feature only on an explicit `false`; no document = everything on, as before.
 
+## Who may use the extras (0.3.4, security review 2026-10-26)
+The GIF picker (`/api/gifs/*`), Media Party (`/api/watch/*`) and the soundboard's search and clip cache
+(`/api/soundboard/search|clip|fetch`) spend the owner's Giphy/YouTube quota and fetch from myinstants and other Tin Hat
+servers. They used to need no sign-in at all; now (`api/tinhat-api/access.mjs`):
+
+| caller | gets |
+|---|---|
+| `Authorization: Bearer <Matrix access token>`, valid | everything; upstream calls count against that person's own budget (below); over it: `429` (Media Party: `503 {"error":"budget","scope":"you"}`) |
+| a bearer Synapse rejects | `401 {"error":"bad token"}` — never the token-less lane |
+| no bearer (apps released before 0.3.4: desktop 12.0.x, the web app of servers up to 0.3.3) | cached answers as before; every upstream call (a Giphy request, a myinstants search, a new sound, YouTube units) comes out of that caller's own allowance (per address: an IPv4 address or an IPv6 /64) under a larger ceiling for every token-less caller together, so one caller can't drain anyone else's; spent, or `API_LEGACY_ANON=off`: `401 {"error":"Sign in to use this. If you are signed in, update Tin Hat.","signin":true}` |
+
+Clips are played by `<audio>` and GStreamer, which can't send a header. `GET /api/soundboard/clip?url=…` therefore:
+- serves a clip already cached to anyone (public bytes, no spend), typed from its bytes (audio only);
+- fetches a new one only for a member's bearer, a **signed link** (`GET /api/soundboard/clip/sign?url=…` with the
+  bearer → `{"url": "<base>/clip?url=…&p=<payer>&exp=<ms>&sig=…", "exp": <ms>}`, valid an hour; play that URL as is),
+  a myinstants clip one of this server's own search answers handed out in the last day, or the token-less allowance;
+- charges every real download to someone: the member (a bearer, or the signer of a signed link: `p` is an opaque id
+  of theirs inside the signature), the address that played a search result (and everybody's budget for those), or the
+  caller's token-less allowance; a request turned away (busy, too many from that address) spends nothing, and two
+  requests for the same clip make one download;
+- keys the cache on the normalised URL, keeps a clip of at most `SOUNDBOARD_CLIP_MAX_MB` and `SOUNDBOARD_CACHE_MAX_MB`
+  in all, least recently played out first.
+`/api/gifs/fetch` takes Giphy media hosts only and answers only bytes that are an image or an mp4.
+
+### Sounds from another Tin Hat server
+A sound someone uploaded on another Tin Hat server (a friend's) is fetched **through this server**, never by the apps.
+The apps send its link like a myinstants one (`/soundboard/clip?url=<link>` with the bearer, or `/soundboard/clip/sign`
+for header-less players); the same budgets and charging apply (`api/tinhat-api/foreign.mjs`), but **members only**: a
+bearer or a member-signed link, never the token-less lane (no app that sends no token sends such a link). That is
+decided before anything else happens, so a request without one never makes this server look a name up.
+- Links taken: `https://<name>[:443]/api/soundboard/clip?id=<id>` (that one parameter; id `[A-Za-z0-9_-]`) and
+  `https://<name>[:443]/api/soundboard/file/<file>` (file `[A-Za-z0-9._-]`, no query). Refused: http, another port,
+  userinfo, a fragment, `%2e` / `%2f` / `%5c` anywhere (any case), backslashes, an address instead of a name, and this
+  server's own names (the apps play those directly).
+- The fetch: only once the request is admitted, de-duplicated and charged, the name is resolved (A and AAAA, by the
+  API's own resolver: 3 s per try, 2 tries, cancelled at the deadline) and EVERY address it has must be public (IPv4:
+  no loopback, private, link-local, CGNAT, multicast, unspecified, documentation, benchmark or reserved ranges; IPv6:
+  only blocks IANA has allocated in its Global Unicast Address Assignments table, last updated 2025-10-10, minus
+  documentation space, so no 6to4, Teredo, ULA, link-local, IPv4-mapped/compatible or reserved space; NAT64 only of a
+  public IPv4 address; never an address with a zone). The connection goes to exactly the address that was checked, with
+  SNI and Host = the name (no DNS rebinding); no redirects at all; lookup and transfer share one 20 s deadline; an
+  answer refused for its status, size or time is torn down at once (never read to its end); the same cap, audio sniff
+  and helper slots as myinstants.
+- What an app gets back:
+
+| answer | when |
+|---|---|
+| `200` audio (`Content-Type` from its bytes) | cached, or fetched now |
+| `401 {"error":"bad token"}` / `401 {"error":"Sign in to use this…","signin":true}` | a token Synapse rejects / no token and no valid member-signed link |
+| `403 {"error":"…","reason":"not-allowed"}` | not a myinstants or Tin Hat sound link (any refused shape above) |
+| `403 {"error":"That's this server's own sound: play it directly","reason":"own-server"}` | a link on this server's own name |
+| `403 {"error":"<name> isn't a public server","reason":"not-public"}` | the name resolves to a non-public address |
+| `413 {"error":"That sound is bigger than this server keeps (5 MB)."}` | over `SOUNDBOARD_CLIP_MAX_MB` |
+| `415 {"error":"not audio (the other server said …)"}` | the bytes aren't audio |
+| `502 {"error":"…"}` | the name doesn't resolve in time, the other server can't be reached or answer in time, redirects, or answers another status (a 404 is remembered for an hour: then `404`) |
+| `429` / `503` (with `Retry-After`) | too many from this address / every helper busy |
+
+A server before 0.3.4 answers such a link `403 {"error":"Only myinstants.com URLs allowed"}`: the apps show that the
+sound couldn't be loaded.
+
+What the apps do from 12.0.3: send the bearer on `/gifs/`, `/watch/` and `/soundboard/search` (as they already do for
+`/soundboard/upload*`, `/vods/`, `/games/`, `/moderation/`); before playing a myinstants or foreign sound through a
+player that can't send a header, ask `/soundboard/clip/sign` (or fetch the clip with the bearer and play the bytes).
+
+The numbers: whole numbers (digits only: no sign, decimals or exponent) inside the range below, so the API only ever
+sees a bounded safe integer; anything else is refused by the console, and an API that finds one in its environment
+keeps its default. **0 means none:** nobody in that group gets any of it (token-less callers the `401` sign-in answer,
+members the `429` "a lot for one hour" answer, `503 {"error":"budget"}` for YouTube units; uploads refused); the
+token-less lane itself is switched off with `API_LEGACY_ANON=off`. Set them with **`tinhat api-limits NAME=VALUE …`** on the server's console
+(`tinhat api-limits` lists them and what is set; `--reset NAME …` / `--reset-all` go back to these defaults): they are
+kept in the server's state and written into the `api` service's environment, which the server regenerates itself, so
+an edit of `/var/lib/tinhat/api/env` doesn't last.
+
+| variable | default | what |
+|---|---|---|
+| `API_LEGACY_ANON` | `on` | `off` = no token-less lane at all (once every member runs 12.0.3 or later) |
+| (every count below, from `API_ANON_…` to `SOUNDBOARD_USER_UPLOADS_MAX`) | | 0 to 999 999 999; 0 = none |
+| `API_ANON_GIF_PER_HOUR` / `API_ANON_GIF_ALL_PER_HOUR` | 60 / 300 | Giphy calls for token-less callers: per address / all together |
+| `API_ANON_SOUNDSEARCH_PER_HOUR` / `API_ANON_SOUNDSEARCH_ALL_PER_HOUR` | 60 / 600 | myinstants searches, the same |
+| `API_ANON_CLIPFETCH_PER_HOUR` / `API_ANON_CLIPFETCH_ALL_PER_HOUR` | 120 / 1200 | new myinstants sounds, the same (another Tin Hat server's: members only) |
+| `API_USER_GIF_PER_HOUR` / `API_USER_SOUNDSEARCH_PER_HOUR` / `API_USER_CLIPFETCH_PER_HOUR` / `API_USER_CLIPSIGN_PER_HOUR` | 240 / 240 / 240 / 1200 | per person (new sounds: whether fetched with the bearer or through their signed links) |
+| `API_SEARCHED_CLIPFETCH_PER_IP_HOUR` / `API_SEARCHED_CLIPFETCH_PER_HOUR` | 60 / 600 | new clips a search answer handed out, played without a token: per address / everybody together |
+| `WATCH_USER_UNITS_PER_DAY` | 9000 | YouTube Data API units per Pacific day per person (Google's daily quota is 10 000; a search is 100) |
+| `WATCH_ANON_UNITS_PER_DAY` / `WATCH_ANON_ALL_UNITS_PER_DAY` | 1000 / 4000 | the same for token-less callers: per address / all together |
+| `SOUNDBOARD_CLIP_MAX_MB` / `SOUNDBOARD_CACHE_MAX_MB` / `SOUNDBOARD_CLIP_LINK_MIN` | 5 / 512 / 60 | one clip (1–100) / the whole cache (1–1 048 576) / how long a signed link works (1–10 080 minutes, a week) |
+| `SOUNDBOARD_USER_UPLOADS_MAX` / `SOUNDBOARD_USER_UPLOADS_MB` / `SOUNDBOARD_UPLOADS_TOTAL_MB` | 200 / 100 / 2048 | people's own sounds: per person (count, size), everybody together (sizes 0–1 048 576; 0 = no uploads) |
+| `GIF_FETCH_MAX_MB` | 8 | `/api/gifs/fetch` (1–100) |
+
+Per-address limits (every route) count an IPv4 address or an IPv6 /64.
+
 ## Forgotten passwords (0.3.0)
 A Tin Hat server sends no email, so `account.password_reset` is `"owner"`: the apps' "Forgot your password?" doesn't
 offer the email form there, it says to ask the person who runs the server (any other value, or none, keeps the email

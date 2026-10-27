@@ -3,9 +3,12 @@
 Small and synchronous on purpose: every call is a few rows, far below a millisecond, so handlers call it directly.
 """
 import hashlib
+import ipaddress
 import json
+import os
 import secrets
 import sqlite3
+import stat
 import time
 
 SCHEMA = """
@@ -47,6 +50,70 @@ def hash_secret(secret: str) -> str:
     return hashlib.sha256(secret.encode()).hexdigest()
 
 
+def code_hint(code: str | None) -> str:
+    """What the logs and the audit table say about a server code: its first two letters, never the whole code (an
+    unused multi-use code in a log or a backup would still work)."""
+    c = (code or "").strip().upper()
+    return f"{c[:5]}…" if len(c) > 5 else ("…" if c else "")
+
+
+def caller_net(ip: str | None):
+    """Who a per-address limit counts: an IPv4 address, or the IPv6 /64 it is in (one home or one server: rotating
+    addresses inside it buys nothing). IPv4-mapped IPv6 counts as the IPv4 address. None when it isn't an address."""
+    try:
+        a = ipaddress.ip_address((ip or "").strip())
+    except ValueError:
+        return None
+    if a.version == 6 and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    return ipaddress.ip_network(f"{a}/{32 if a.version == 4 else 64}", strict=False)
+
+
+def canon_ip(ip: str | None) -> str | None:
+    """One spelling per address, as it is stored and counted: IPv4-mapped IPv6 as its IPv4 (::ffff:203.0.113.5 is
+    203.0.113.5), IPv6 compressed lower-case; anything that isn't an address as it came (second review: the IPv4 path
+    compared the raw string, so the two spellings of one caller had two quotas)."""
+    if ip is None:
+        return None
+    try:
+        a = ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return ip
+    if a.version == 6 and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    return str(a)
+
+
+def _same_caller(net, stored) -> bool:
+    try:
+        a = ipaddress.ip_address((stored or "").strip())
+    except ValueError:
+        return False
+    if a.version == 6 and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    return a.version == net.version and a in net
+
+
+def private_files(path: str) -> None:
+    """The database is the service's alone: its folder 0700, the file and its WAL/SHM 0600. systemd's
+    StateDirectoryMode= leaves a folder that already existed as it was (the live one stayed 0755 with a 0644 database:
+    security review 2026-10-26), so this runs every time the database is opened. A shared folder (sticky, like /tmp,
+    or another user's) is left alone."""
+    d = os.path.dirname(os.path.abspath(path))
+    try:
+        st = os.stat(d)
+        if st.st_uid == os.geteuid() and not st.st_mode & stat.S_ISVTX and stat.S_IMODE(st.st_mode) != 0o700:
+            os.chmod(d, 0o700)
+    except OSError:
+        pass
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        try:
+            if stat.S_IMODE(os.stat(path + suffix).st_mode) != 0o600:
+                os.chmod(path + suffix, 0o600)
+        except OSError:
+            pass
+
+
 class DB:
     def __init__(self, path: str):
         self.c = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
@@ -54,6 +121,8 @@ class DB:
         self.c.execute("PRAGMA journal_mode=WAL")
         self.c.executescript(SCHEMA)
         self._migrate()
+        if path != ":memory:":
+            private_files(path)
 
     # ---- names ----
     def _migrate(self):
@@ -110,7 +179,7 @@ class DB:
         box_id, secret = secrets.token_hex(12), secrets.token_urlsafe(32)
         now = time.time()
         self.c.execute("INSERT INTO names(name,status,box_id,secret_hash,created,created_ip,last_seen) "
-                       "VALUES(?,?,?,?,?,?,?)", (name, "active", box_id, hash_secret(secret), now, ip, now))
+                       "VALUES(?,?,?,?,?,?,?)", (name, "active", box_id, hash_secret(secret), now, canon_ip(ip), now))
         return box_id, secret
 
     def set(self, name: str, **fields):
@@ -123,7 +192,23 @@ class DB:
         return self.c.execute("SELECT * FROM names ORDER BY name").fetchall()
 
     def live_for_ip(self, ip: str) -> int:
-        return self.c.execute("SELECT COUNT(*) FROM names WHERE status='active' AND created_ip=?", (ip,)).fetchone()[0]
+        """Active names registered from exactly this address (in any spelling, rows stored before canon_ip included).
+        Not per /64: hosting providers hand each customer one address out of a shared /64 (review of 116d103, #7)."""
+        return self._from_caller("SELECT created_ip FROM names WHERE status='active'", [], "created_ip", ip, per="address")
+
+    def _from_caller(self, q: str, args: list, col: str, ip: str, per: str = "address") -> int:
+        """How many rows of `q` came from the caller `ip`. per="address": exactly that address, in any spelling (an
+        IPv4 one also as an older ::ffff: row). per="net": an IPv6 caller's whole /64 (burst limits: rotating addresses
+        inside it buys nothing). Not an address: that exact string."""
+        net = caller_net(ip)
+        if net is None:
+            return len(self.c.execute(f"{q} AND {col}=?", (*args, ip)).fetchall())
+        canon = canon_ip(ip)
+        if net.version == 4 or per == "address":
+            rows = self.c.execute(f"{q} AND ({col}=? OR {col} LIKE '%:%')", (*args, canon))
+            return sum(1 for r in rows if r[0] == canon or canon_ip(r[0]) == canon)
+        rows = self.c.execute(f"{q} AND {col} LIKE '%:%'", args)  # the caller's whole /64 (few rows: rate-limited kinds)
+        return sum(1 for r in rows if _same_caller(net, r[0]))
 
     def new_since(self, ts: float) -> int:
         return self.c.execute("SELECT COUNT(*) FROM names WHERE created>=?", (ts,)).fetchone()[0]
@@ -167,16 +252,17 @@ class DB:
     # ---- audit log ----
     def event(self, kind: str, name: str | None = None, ip: str | None = None, detail: str = ""):
         self.c.execute("INSERT INTO events(ts,name,kind,ip,detail) VALUES(?,?,?,?,?)",
-                       (time.time(), name, kind, ip, detail[:500]))
+                       (time.time(), name, kind, canon_ip(ip), detail[:500]))
 
-    def count(self, kind: str, since: float, name: str | None = None, ip: str | None = None) -> int:
+    def count(self, kind: str, since: float, name: str | None = None, ip: str | None = None, per: str = "address") -> int:
+        """Events of `kind` since `since`, for a name and/or a caller (per="address": exactly that address; per="net":
+        an IPv6 caller's /64, for burst limits)."""
         q, args = "SELECT COUNT(*) FROM events WHERE kind=? AND ts>=?", [kind, since]
         if name is not None:
             q += " AND name=?"
             args.append(name)
         if ip is not None:
-            q += " AND ip=?"
-            args.append(ip)
+            return self._from_caller(q.replace("SELECT COUNT(*)", "SELECT ip"), args, "ip", ip, per=per)
         return self.c.execute(q, args).fetchone()[0]
 
     def events(self, name: str | None = None, limit: int = 200):

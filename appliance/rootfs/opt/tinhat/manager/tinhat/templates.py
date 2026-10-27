@@ -3,11 +3,15 @@ everything else is pinned to what the Tin Hat apps are tested against (compose.y
 lk-jwt-service 0.4.0)."""
 import base64
 import json
+import logging
 import os
+import pathlib
 import re
 import secrets
 import string
 from datetime import datetime, timezone
+
+log = logging.getLogger("tinhat.templates")
 
 # ---- Synapse ------------------------------------------------------------------------------------------------
 
@@ -78,6 +82,14 @@ presence:
 user_directory:
   enabled: true
   search_all_users: {search_all}
+
+# Profiles (display names, pictures, Tin Hat's own profile fields) only for signed-in callers: nobody on the internet
+# can check which accounts exist or read them (security review 2026-10-26). Every Tin Hat app reads profiles with its
+# access token. Left as Synapse has them, on purpose: limit_profile_requests_to_users_who_share_rooms (people look up
+# someone before they share a room: New DM by username, the people search) and the directory search for guests
+# (a let-in guest can search the directory while `directory` is on; tinhat_rules confines what they can join, and
+# the owner can switch the directory off on the Features card).
+require_auth_for_profile_requests: true
 
 # Guests (the guest room's temporary accounts) stay in the Guests room; only the Tin Hat API registers guest names.
 modules:
@@ -218,6 +230,103 @@ CADDY_SETUP_PROXY_ONLY = """\
 }
 """
 
+# The headers every site of a set-up server sends (security review 2026-10-26, M3). `header ?Field value` sets a header
+# only when the response doesn't carry one already, and is applied as the response is written (Caddy defers `?` and
+# `-`), so a response with a policy of its own keeps it: the dashboard's pages (web.py _page: frame-ancestors 'none'),
+# the web app's own files once its bundle declares its CSP (web_app_csp below: frame-ancestors 'none'), the API's
+# clips, uploads, GIF bytes, Memories files and game art (sandboxed), Synapse's media. One `?` per header directive:
+# Caddy puts the `?` fields of one block under a single condition (all of them absent). Every other response may be
+# framed only by this same origin (X-Frame-Options SAMEORIGIN + frame-ancestors 'self'), a safe default: nothing in
+# Tin Hat frames the app (the guest door page /call/ is opened as a page of its own), and no other site can put the
+# app or the dashboard in a frame.
+# Strict-Transport-Security is not in here on purpose: it goes only on sites with a publicly trusted certificate
+# (CADDY_ANYWHERE and its former names), never on a home-network name (the server's own CA) or behind the owner's
+# reverse proxy (see CADDY_PROXY).
+HEADERS_SNIPPET = """\
+(tinhat_headers) {
+	header {
+		-Server
+		Referrer-Policy no-referrer
+		X-Content-Type-Options nosniff
+	}
+	header ?X-Frame-Options SAMEORIGIN
+	header ?Content-Security-Policy "frame-ancestors 'self'"
+}
+"""
+HSTS = '\theader Strict-Transport-Security "max-age=31536000"\n'
+
+# Tin Hat Web's Content-Security-Policy comes WITH the web bundle it fits. Older bundles (web release/12.0.2 and before)
+# need an inline boot script, a blob: worklet and the YouTube IFrame API script, which the policy blocks, so the header
+# must never go out with one of them: the web build of a CSP-ready bundle writes csp-ready.json at its root
+# ({"csp": 1, "policy": "<the policy>"}, /opt/tinhat/web/csp-ready.json on the box), and the Caddyfile is written from
+# THAT file every time (setup, after every update, every settings change). No file, or one that doesn't check out = no
+# app CSP (the frame-ancestors default above still applies), logged. The policy goes only on the web app's own files
+# (the `handle { root * /srv/web … }` block of every mode: the app, /assets/*, sw.js, push-sw.js, the guest door page
+# /call/): /admin keeps the manager's own stricter one, /_matrix Synapse's, the API its own. It replaces the
+# frame-ancestors default there, so it must say frame-ancestors itself.
+CSP_READY = "csp-ready.json"
+_CSP_OK = re.compile(r"[\x20-\x7e]{1,4096}")
+
+
+def csp_problem(csp: str) -> str | None:
+    """Why `csp` can't go into the Caddyfile as one quoted word (or would let other sites frame the app), or None."""
+    if not isinstance(csp, str) or not _CSP_OK.fullmatch(csp) or any(c in csp for c in '"\\{}`'):
+        return "it has characters the Caddyfile can't take (one line of printable ASCII, no quotes, backslashes or braces)"
+    if "frame-ancestors" not in csp:
+        return "it doesn't say frame-ancestors"
+    return None
+
+
+def web_app_csp(web_dir=None) -> str:
+    """The policy the bundled web app declares (csp-ready.json in `web_dir`, default config.WEB_DIR), or "" (none)."""
+    if web_dir is None:
+        try:
+            from . import config
+            web_dir = getattr(config, "WEB_DIR", None)
+        except ImportError:
+            web_dir = None
+        if web_dir is None:
+            return ""
+    f = pathlib.Path(web_dir) / CSP_READY
+    try:
+        with open(f, "rb") as fh:
+            raw = fh.read(16385)
+    except FileNotFoundError:
+        return ""  # an older bundle: no app CSP
+    except OSError as e:
+        log.warning("%s unreadable (%s): no Content-Security-Policy for the web app", f, e)
+        return ""
+    why = None
+    try:
+        doc = json.loads(raw.decode("utf-8")) if len(raw) <= 16384 else None
+    except (UnicodeDecodeError, ValueError):
+        doc, why = None, "not JSON"
+    if doc is None and why is None:
+        why = "too big"
+    policy = None
+    if isinstance(doc, dict) and type(doc.get("csp")) is int and doc["csp"] == 1 and isinstance(doc.get("policy"), str):
+        policy = doc["policy"]
+        why = csp_problem(policy)
+    elif why is None:
+        why = 'not {"csp": 1, "policy": "…"}'
+    if why is not None:
+        log.warning("%s: %s; no Content-Security-Policy for the web app", f, why)
+        return ""
+    return policy
+
+
+def web_csp_line(csp: str | None = None) -> str:
+    """The web app block's CSP line: the bundle's policy (web_app_csp) unless `csp` is given; "" when there is none or
+    it doesn't check out (logged, never written)."""
+    csp = web_app_csp() if csp is None else csp
+    if not csp:
+        return ""
+    if (why := csp_problem(csp)) is not None:
+        log.warning("web app Content-Security-Policy refused: %s", why)
+        return ""
+    return f'\t\theader Content-Security-Policy "{csp}"\n'
+
+
 # One origin serves the web app, the homeserver, calls and the dashboard (the Tin Hat Web self-host build
 # requires that: its homeserver is its own origin). Port 80 stays plain HTTP on purpose in home-network mode:
 # it is where a new device downloads the server's certificate before it can trust https.
@@ -236,14 +345,7 @@ CADDY_LAN = """\
 	}}
 }}
 
-(tinhat_headers) {{
-	header {{
-		-Server
-		Referrer-Policy no-referrer
-		X-Content-Type-Options nosniff
-	}}
-}}
-
+{headers_snippet}
 https://{server_name} {{
 	tls internal
 	encode zstd gzip
@@ -280,7 +382,7 @@ https://{server_name} {{
 	# The Tin Hat API (/api, as on the Tin Hat hub). Only invite codes live on the box so far.
 {api_routes}	handle {{
 		root * /srv/web
-		@immutable path /assets/*
+{web_csp}		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
 		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/*
 		header @fresh Cache-Control "no-cache"
@@ -314,22 +416,14 @@ CADDY_ANYWHERE = """\
 	}}
 }}
 
-(tinhat_headers) {{
-	header {{
-		-Server
-		Referrer-Policy no-referrer
-		X-Content-Type-Options nosniff
-	}}
-}}
-
+{headers_snippet}
 https://{server_name} {{
 	tls {{
 {tls_dns}		propagation_timeout 3m
 	}}
 	encode zstd gzip
 	import tinhat_headers
-	header Strict-Transport-Security "max-age=31536000"
-
+{hsts}
 	handle /.well-known/tinhat/* {{
 		reverse_proxy 127.0.0.1:8090
 	}}
@@ -367,7 +461,7 @@ https://{server_name} {{
 	}}
 {api_routes}	handle {{
 		root * /srv/web
-		@immutable path /assets/*
+{web_csp}		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
 		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/*
 		header @fresh Cache-Control "no-cache"
@@ -402,6 +496,14 @@ https://{server_name} {{
 # public IPv6 address). The box still answers its own name on its loopback addresses with a certificate of its own CA,
 # for its own services (lk-jwt checks sign-ins through https://<name>, which resolves to 127.0.1.1 here) and the
 # updater's health check. Calls (TCP 7881, UDP 7882) never go through the proxy.
+# Who counts as "the proxy" ({trusted}): the address(es) the owner named in the dashboard (Network → Your reverse proxy;
+# state domain.proxies), else every home-network address as before. Named, nobody else on the home network may connect
+# to this port or write the caller's address (X-Forwarded-For) the manager's and the API's limits count. Who may
+# connect ({admitted}) is {trusted} plus this machine's loopback: the updater's health check and setup's self-check
+# connect from there, but what loopback writes into X-Forwarded-For is not believed unless 127.0.0.1 is named.
+# No Strict-Transport-Security here: the owner's proxy terminates HTTPS and owns the name's HSTS policy (max-age,
+# includeSubDomains, preload); this box only speaks plain HTTP to it and can't know that every path of the name is
+# HTTPS-only.
 CADDY_PROXY = """\
 # Tin Hat Server — behind your own reverse proxy, for {server_name}, written by the setup wizard on {date}.
 {{
@@ -410,9 +512,10 @@ CADDY_PROXY = """\
 	skip_install_trust
 	servers {{
 		protocols h1 h2
-		# Your proxy: on the home network, or on this same machine. Strict: the caller is the first address from the
-		# right that isn't one of these, so nothing a browser writes into X-Forwarded-For itself counts.
-		trusted_proxies static private_ranges{own_ips}
+		# Your proxy: the address(es) you named in the dashboard (else any home-network address), or this same
+		# machine's own addresses. Strict: the caller is the first address from the right that isn't one of these,
+		# so nothing a browser writes into X-Forwarded-For itself counts.
+		trusted_proxies static {trusted}{own_ips}
 		trusted_proxies_strict
 	}}
 	pki {{
@@ -424,14 +527,7 @@ CADDY_PROXY = """\
 	}}
 }}
 
-(tinhat_headers) {{
-	header {{
-		-Server
-		Referrer-Policy no-referrer
-		X-Content-Type-Options nosniff
-	}}
-}}
-
+{headers_snippet}
 (tinhat_routes) {{
 	handle /.well-known/tinhat/* {{
 		reverse_proxy 127.0.0.1:8090 {{
@@ -477,11 +573,14 @@ CADDY_PROXY = """\
 	handle @admin {{
 		reverse_proxy 127.0.0.1:8090 {{
 			header_up X-Forwarded-For {{client_ip}}
+			# the address that connected to this port (the owner's proxy): the dashboard shows it, and won't save a
+			# proxy list that leaves it out
+			header_up X-Tinhat-Peer {{remote_host}}
 		}}
 	}}
 {api_routes}	handle {{
 		root * /srv/web
-		@immutable path /assets/*
+{web_csp}		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
 		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/*
 		header @fresh Cache-Control "no-cache"
@@ -494,7 +593,7 @@ CADDY_PROXY = """\
 http://:{port} {{
 	encode zstd gzip
 	import tinhat_headers
-	@home remote_ip private_ranges{own_ips}
+	@home remote_ip {admitted}{own_ips}
 	handle @home {{
 		# A move to a new address behind your proxy (move.py): its one-off check answers on this port only, from a
 		# file the web server serves itself (only while the check runs; never cached).
@@ -537,14 +636,46 @@ https://{server_name} {{
 """
 
 
-def caddy_proxy(server_name: str, port: int, shared: bool = False) -> str:
-    """shared: another web server on this machine has ports 80 and 443 (config.proxy_only)."""
+def caddy_proxy(server_name: str, port: int, shared: bool = False, proxies: list[str] | None = None) -> str:
+    """shared: another web server on this machine has ports 80 and 443 (config.proxy_only). proxies: the owner's
+    reverse proxy address(es) (owndomain.parse_proxies; None/empty = every home-network address, as before)."""
     own = "" if shared else CADDY_PROXY_OWN_SITES.format(server_name=server_name)
     # A proxy on this same machine connects from the machine's own addresses: on a rented server that's a public one.
     from . import hw
     own_ips = "".join(f" {a}/32" for a in hw.addresses() if ":" not in a)
     return CADDY_PROXY.format(server_name=server_name, port=port, own_sites=own, own_ips=own_ips, api_routes=CADDY_API,
+                              trusted=proxy_words(proxies), admitted=admit_words(proxies), headers_snippet=HEADERS_SNIPPET,
+                              web_csp=web_csp_line(),
                               date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+
+
+_PROXY_WORD = re.compile(r"[0-9A-Fa-f.:]{2,39}(?:/[0-9]{1,3})?")
+# This machine's own loopback always reaches the proxy port, named proxy or not: the updater's health check
+# (updater.py: http://127.0.0.1:8080/_matrix/client/versions) and setup's self-check (install.secure_proxy) come from
+# there, and hw.addresses() leaves loopback out. Without it, naming a proxy made every later update fail its check and
+# roll back (review of 116d103, #1). private_ranges already includes both. Connecting is all it gets: loopback is not a
+# trusted proxy unless it is named (second review, #5), so what it writes into X-Forwarded-For isn't believed.
+LOOPBACK = ("127.0.0.0/8", "::1/128")
+
+
+def _proxy_list(proxies: list[str] | None) -> list[str]:
+    """The configured addresses, each re-checked here (only address characters reach the Caddyfile, whatever state.json
+    holds)."""
+    return [p for p in (proxies or []) if isinstance(p, str) and _PROXY_WORD.fullmatch(p)]
+
+
+def proxy_words(proxies: list[str] | None) -> str:
+    """trusted_proxies (whose X-Forwarded-For counts): exactly the configured addresses, or private_ranges when none
+    are named. CADDY_PROXY adds this machine's own IPv4 addresses ({own_ips})."""
+    words = _proxy_list(proxies)
+    return " ".join(words) if words else "private_ranges"
+
+
+def admit_words(proxies: list[str] | None) -> str:
+    """@home remote_ip (who may connect to the proxy port): the configured addresses plus this machine's loopback, or
+    private_ranges when none are named. CADDY_PROXY adds this machine's own IPv4 addresses ({own_ips})."""
+    words = _proxy_list(proxies)
+    return " ".join(words + [w for w in LOOPBACK if w not in words]) if words else "private_ranges"
 
 
 # Through the Tin Hat relay (relay.py): HTTPS arrives from the relay's tunnel address with a PROXY v2 header carrying the
@@ -596,7 +727,7 @@ CADDY_FORMER_SITE = """
 https://{old} {{
 {tls}	encode zstd gzip
 	import tinhat_headers
-{media}	handle /.well-known/matrix/* {{
+{hsts}{media}	handle /.well-known/matrix/* {{
 		root * /srv/wk/former/{old}
 		header Access-Control-Allow-Origin *
 		header Content-Type application/json
@@ -718,7 +849,10 @@ def with_former_names(caddyfile: str, new: str, former: list[tuple[str, str | No
         if old not in names or tls is None:
             continue
         tls_block = "\ttls internal\n" if tls == "internal" else f"\ttls {{\n{tls}\t\tpropagation_timeout 3m\n\t}}\n"
-        out += CADDY_FORMER_SITE.format(old=old, new=new, tls=tls_block, media=media)
+        # a publicly trusted certificate (a tinhat.me name, an own domain) gets HSTS like the server's own name; a
+        # .local name (the server's own CA) never does
+        out += CADDY_FORMER_SITE.format(old=old, new=new, tls=tls_block, media=media,
+                                        hsts="" if tls == "internal" else HSTS)
     return out
 
 
@@ -738,8 +872,8 @@ def caddy_domain(server_name: str, tls_dns: str, acme_directory: str, extra_root
 def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roots: bool,
                   proxy_from: str | None = None) -> str:
     return CADDY_ANYWHERE.format(
-        api_routes=CADDY_API,
-        relay_servers=CADDY_RELAY_SERVERS.format(proxy_from=proxy_from) if proxy_from else "",
+        api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line(),
+        relay_servers=CADDY_RELAY_SERVERS.format(proxy_from=proxy_from) if proxy_from else "", hsts=HSTS,
         server_name=server_name, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         acme_directory=acme_directory, tls_dns=tls_dns,
         acme_ca_root="\tacme_ca_root /etc/tinhat-ca/extra-roots.pem\n" if extra_roots else "")
@@ -747,7 +881,7 @@ def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roo
 
 def caddy_lan(server_name: str) -> str:
     return CADDY_LAN.format(server_name=server_name, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                            api_routes=CADDY_API)
+                            api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line())
 
 
 # ---- the Tin Hat API ------------------------------------------------------------------------------------------
@@ -959,3 +1093,150 @@ def compose_env(server_name: str, s: dict, lan: bool, bundle: bool = False) -> s
         "TINHAT_SELF_IP": _self_ip(),
     }
     return "".join(f"{k}={v}\n" for k, v in lines.items())
+
+
+# ---- in front of the manager: limits on every route to it (M15) ------------------------------------------------------
+# The manager is aiohttp, partly reachable before any sign-in, and older servers run the operating system's aiohttp
+# with known advisories (pyenv.py). It only ever sees what Caddy passes on, so on every route to it Caddy refuses:
+#   - a compressed request body (nothing legitimate sends one; one that inflates is a disk-filling bomb: 415);
+#   - a body over 1 MB, or one that takes over 30 s to arrive (the manager reads at most 64 KB of JSON itself);
+#     except the setup's speed test (110 MB in 5 min; the manager stops at 100 MB) and a backup uploaded for a
+#     restore (a whole server's backup, media included: 1 TB, no deadline: it may come over a slow network).
+#     The deadline is set only for a request that HAS a body (a Content-Length above 0, or chunked): Go arms it for a
+#     bodiless one too, where nothing clears it, and on HTTP/1.1 it then cuts the response (a backup download, a
+#     support report, a restart that takes a while) when it passes. With a body, Go clears it once the body is read.
+#     HTTP/2 can stream a body with neither header, so every HTTP/2 request without a Content-Length gets the deadline
+#     too (assembly 0.3.4, finding F): there it bounds only the body; a bodiless request's response is never cut
+#     (proven on Caddy 2.10.2 over TLS: a 150 MB download slower than the deadline completes). Exactly HTTP/2: HTTP/3
+#     keeps the 0.3.3 behaviour until it is proven the same way.
+# A Caddyfile that serves nothing but the manager (before setup) also gets short header and idle timeouts for its
+# whole server (Caddy's defaults: 1 min, 5 min); one that serves Synapse and calls keeps Caddy's.
+# Applied here, to every `reverse_proxy 127.0.0.1:8090` in the templates, so no route to the manager (now or added
+# later) goes without; Synapse's and LiveKit's routes are left as they are. The import goes right after the proxy
+# directive (and its block): Caddy sorts what a handle block (or a site) holds by directive order, so the limits still
+# come first; never inside a `route` block, which keeps the written order (test_manager_limits checks every rendered
+# Caddyfile, and with TINHAT_TEST_CADDY the order Caddy itself makes of it). `request_body read_timeout` is Caddy 2.10's
+# (our image: tinhat/caddy:2.10.2-dns); a Caddy upgrade must pass that test first.
+MANAGER_LIMITS = """\
+(tinhat_manager_limits) {
+	@tinhat_mgr_encoded header Content-Encoding *
+	respond @tinhat_mgr_encoded "Compressed requests aren't accepted here." 415
+	@tinhat_mgr_restore path /admin/setup/restore/upload
+	request_body @tinhat_mgr_restore {
+		max_size 1TB
+	}
+	@tinhat_mgr_speed path /admin/setup/speed/up
+	request_body @tinhat_mgr_speed {
+		max_size 110MB
+	}
+	@tinhat_mgr_other not path /admin/setup/restore/upload /admin/setup/speed/up
+	request_body @tinhat_mgr_other {
+		max_size 1MB
+	}
+	@tinhat_mgr_sized {
+		not path /admin/setup/restore/upload /admin/setup/speed/up
+		header_regexp Content-Length ^0*[1-9]
+	}
+	request_body @tinhat_mgr_sized {
+		read_timeout 30s
+	}
+	@tinhat_mgr_chunked {
+		not path /admin/setup/restore/upload /admin/setup/speed/up
+		header Transfer-Encoding *
+	}
+	request_body @tinhat_mgr_chunked {
+		read_timeout 30s
+	}
+	@tinhat_mgr_h2 {
+		not path /admin/setup/restore/upload /admin/setup/speed/up
+		protocol http/2
+		not header Content-Length *
+	}
+	request_body @tinhat_mgr_h2 {
+		read_timeout 30s
+	}
+	@tinhat_mgr_speed_sized {
+		path /admin/setup/speed/up
+		header_regexp Content-Length ^0*[1-9]
+	}
+	request_body @tinhat_mgr_speed_sized {
+		read_timeout 5m
+	}
+	@tinhat_mgr_speed_chunked {
+		path /admin/setup/speed/up
+		header Transfer-Encoding *
+	}
+	request_body @tinhat_mgr_speed_chunked {
+		read_timeout 5m
+	}
+	@tinhat_mgr_speed_h2 {
+		path /admin/setup/speed/up
+		protocol http/2
+		not header Content-Length *
+	}
+	request_body @tinhat_mgr_speed_h2 {
+		read_timeout 5m
+	}
+}
+
+"""
+MANAGER_ONLY_TIMEOUTS = """\
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+"""
+_TO_MANAGER = re.compile(r"(\t+)reverse_proxy 127\.0\.0\.1:8090( \{\{?)?$")
+
+
+def limit_manager(t: str, *, template: bool, define: bool = True, manager_only: bool = False) -> str:
+    """t with `import tinhat_manager_limits` ahead of every route to the manager. template: t is a str.format template
+    (braces doubled). define: t is a whole Caddyfile (the snippet goes right after its global options, before anything
+    can import it); a part that is added to one (a former name's site, CADDY_API) uses that file's. manager_only: the
+    whole Caddyfile is the manager's (before setup): its servers get MANAGER_ONLY_TIMEOUTS."""
+    esc = (lambda s: s.replace("{", "{{").replace("}", "}}")) if template else (lambda s: s)
+    lines = t.splitlines(keepends=True)
+    for i in reversed(range(len(lines))):
+        m = _TO_MANAGER.match(lines[i].rstrip("\n"))
+        if not m:
+            continue
+        end = i
+        if m.group(2):  # the directive's own block: up to its closing brace, at the same indentation
+            end = next((j for j in range(i + 1, len(lines)) if lines[j].rstrip("\n") == m.group(1) + esc("}")), None)
+            if end is None:
+                raise ValueError(f"line {i + 1}: the manager's reverse_proxy block doesn't close")
+        lines.insert(end + 1, f"{m.group(1)}import tinhat_manager_limits\n")
+    out = "".join(lines)
+    if define:
+        lines = out.splitlines(keepends=True)
+        start = next((i for i, l in enumerate(lines) if l.rstrip("\n") == esc("{")), None)
+        end = None if start is None else next(
+            (i for i in range(start + 1, len(lines)) if lines[i].rstrip("\n") == esc("}")), None)
+        if end is None:
+            raise ValueError("no global options block to put the limits after")
+        lines[end + 1:end + 1] = ["\n", esc(MANAGER_LIMITS).rstrip("\n") + "\n"]
+        if manager_only:
+            lines[end:end] = [esc(MANAGER_ONLY_TIMEOUTS)]
+        out = "".join(lines)
+    return out
+
+
+def _limited(t: str, **kw) -> str:
+    """limit_manager(), but never a manager that can't start (this runs when the module is imported): a template it
+    can't place the limits in stays as it was, and test_manager_limits fails on it."""
+    try:
+        return limit_manager(t, **kw)
+    except ValueError:
+        return t
+
+
+CADDY_SETUP = _limited(CADDY_SETUP, template=False, manager_only=True)
+CADDY_SETUP_PROXY_ONLY = _limited(CADDY_SETUP_PROXY_ONLY, template=False, manager_only=True)
+CADDY_LAN = _limited(CADDY_LAN, template=True)
+CADDY_ANYWHERE = _limited(CADDY_ANYWHERE, template=True)
+CADDY_PROXY = _limited(CADDY_PROXY, template=True)
+CADDY_PROXY_OWN_SITES = _limited(CADDY_PROXY_OWN_SITES, template=True, define=False)
+CADDY_FORMER_SITE = _limited(CADDY_FORMER_SITE, template=True, define=False)
+CADDY_API = _limited(CADDY_API, template=False, define=False)

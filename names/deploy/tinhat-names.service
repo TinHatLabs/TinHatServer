@@ -9,6 +9,9 @@ User=tinhat-names
 Group=tinhat-names
 StateDirectory=tinhat-names
 StateDirectoryMode=0700
+# New files (the database, its WAL, the proof-of-work key) are the service's alone. StateDirectoryMode= doesn't change
+# a folder that already existed; the service sets the folder 0700 and the database 0600 itself at every start (db.py).
+UMask=0077
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=yes

@@ -94,6 +94,12 @@ echo "root filesystem: $ROOTPART (clean, Tin Hat Server $IVER)"
 # files only). The same check build.sh export makes: no build account, keys, journal, setup state or shared identities.
 bash "$TOP/build/check-sealed.sh" "$MNT" || die "the image isn't sealed (above): make it with build/build.sh seal + export"
 echo "sealed: nothing of the build on it"
+# Tin Hat's pinned aiohttp: provision.sh built and checked the venv for this release's wheels (WSL runs the same
+# amd64 Python); an image from before it (0.3.3 and older) would leave the Windows edition on Debian's aiohttp.
+[ -f "$MNT/opt/tinhat/venv/tinhat-venv.json" ] && [ -f "$MNT/opt/tinhat/manager/wheels/wheels.lock" ] \
+  && grep -q "\"lock\": \"$(sha256sum "$MNT/opt/tinhat/manager/wheels/wheels.lock" | cut -d' ' -f1)\"" "$MNT/opt/tinhat/venv/tinhat-venv.json" \
+  || die "the image has no venv built for its pinned aiohttp (provision.sh builds /opt/tinhat/venv)"
+echo "pinned aiohttp: $(sed -nE 's/.*"aiohttp": "([^"]+)".*/\1/p' "$MNT/opt/tinhat/venv/tinhat-venv.json") in /opt/tinhat/venv"
 
 step "overlay check"
 # Every overlay file must be new to the image, unless it is one of REPLACED. Directories already in the image are

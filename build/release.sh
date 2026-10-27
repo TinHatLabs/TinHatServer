@@ -50,6 +50,16 @@ done
 grep -q "image: tinhat/api:$VER\$" "$HERE/appliance/rootfs/opt/tinhat/compose.yaml" || { echo "compose.yaml must run tinhat/api:$VER (bump it with appliance/VERSION)" >&2; exit 1; }
 R=$HERE/out/release-$VER
 [ -f "$R/images.lock" ] || { echo "no $R — run build.sh artifacts during $VER's image build" >&2; exit 1; }
+# The pinned aiohttp's wheels (build/wheels.lock) as this version's images were built with them (build.sh artifacts):
+# the bundle carries exactly these files, in manager/wheels (every updater copies manager/), checked again here.
+for w in "$R/wheels" $([ -d "$R-arm64" ] && echo "$R-arm64/wheels"); do
+  python3 "$HERE/build/wheels.py" verify "$w" >/dev/null ||
+    { echo "$w isn't exactly build/wheels.lock's files: run build.sh artifacts again for $VER" >&2; exit 1; }
+done
+# ...and no known advisory against any of them (OSV), unless build/wheels-advisories.allow names it with its reason:
+# before anything is signed. Unreachable OSV = not checked = refused.
+python3 "$HERE/build/wheels.py" audit ||
+  { echo "release.sh: the pinned wheels have advisories (above) or weren't checked: nothing was signed" >&2; exit 1; }
 if [ -n "$GH" ]; then
   [[ "$GH" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "--github wants OWNER/REPO" >&2; exit 2; }
   # Servers built from this tree must look there too, or nobody ever sees the release (the lab sets its own channel).
@@ -143,6 +153,8 @@ trap 'rm -rf "$B"' EXIT
 mkdir -p "$B/b"
 cp -a "$HERE/appliance/rootfs/opt/tinhat/manager" "$B/b/manager"
 find "$B/b" -name __pycache__ -prune -exec rm -rf {} +
+rm -rf "$B/b/manager/wheels"
+cp -a "$R/wheels" "$B/b/manager/wheels"  # checked above; servers check each file again before installing it
 cp "$HERE/appliance/rootfs/opt/tinhat/compose.yaml" "$R/images.lock" "$B/b/"
 echo "$VER" > "$B/b/VERSION"
 cp -a "$R/web" "$B/b/web"

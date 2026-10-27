@@ -5,6 +5,10 @@
                                     (kept if they exist); prints the public key and the certificate's fingerprint
   tinhat-relay serve [-c CONFIG]    the control API + upkeep (systemd: tinhat-relay.service)
   tinhat-relay status [-c CONFIG]   this relay's places: name, ports, tunnel address, last handshake, traffic
+  tinhat-relay pyenv build | check | status | off | on
+                                    Tin Hat's pinned aiohttp: build its venv from wheels/ (as root, after every
+                                    install of this folder) / check it / what the running relay is on / turn it off
+                                    or on here (then restart the relay; pyenv.py)
 """
 import json
 import os
@@ -12,8 +16,19 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
 from tinhat_relay import config as config_mod  # noqa: E402
+
+
+def pyenv_places() -> dict:
+    """Tin Hat's pinned aiohttp for the relay: wheels/ (build/wheels.lock's files) installed into venv/ next to this
+    file by `tinhat-relay pyenv build`; its status in the relay's state folder."""
+    from pathlib import Path
+    state = (os.environ.get("STATE_DIRECTORY") or "/var/lib/tinhat-relay").split(":")[0]
+    from tinhat_relay import __version__
+    return {"venv": Path(HERE) / "venv", "wheels": Path(HERE) / "wheels", "state_dir": Path(state),
+            "imports": ("tinhat_relay.app",), "path": Path(HERE), "release": __version__}
 
 
 def sh(*args, input=None):
@@ -64,6 +79,8 @@ def status(cfg):
     except subprocess.CalledProcessError:
         pass
     print(f"{len(st['places'])}/{cfg['capacity']} places on {cfg['relay_id']} ({cfg['public_ip']})")
+    from tinhat_relay import pyenv
+    print(f"web toolkit: {pyenv.describe(pyenv.status(pyenv_places()['state_dir']))}")
     now = time.time()
     for p in st["places"]:
         hs, rx, tx = peers.get(p["public_key"], (0, 0, 0))
@@ -82,7 +99,15 @@ def main():
         path = args[i + 1]
         del args[i:i + 2]
     cmd = args[0] if args else "help"
+    if cmd == "pyenv":
+        from tinhat_relay import pyenv
+        sys.exit(pyenv.cli(args[1:], **pyenv_places(), prog="tinhat-relay pyenv", name="the relay"))
     if cmd == "serve":
+        # on the pinned aiohttp once it's built and passes its check (this process starts again on the venv's Python);
+        # else on the system's, loudly (the journal, `tinhat-relay status`, GET /v1/status)
+        from tinhat_relay import pyenv
+        pyenv.choose(**pyenv_places(), argv=[os.path.realpath(__file__), *sys.argv[1:]], can_build=False,
+                     name="the relay")
         from tinhat_relay.app import main as serve
         sys.argv = [sys.argv[0], "-c", path]
         serve()

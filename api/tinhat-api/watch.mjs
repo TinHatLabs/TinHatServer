@@ -23,6 +23,11 @@
 // a JSON file <dataDir>/watch.json if node:sqlite is missing, so the service still starts.
 // Budget: uncached `search` answers 503 {error:"budget",resetAt} above 9 000 units, `resolve` above 9 800; everything
 // cached or costing ≤ 3 units keeps working. Google's own 403 quotaExceeded is mapped to the same 503.
+// Who spends (security review 2026-10-26, H4): installWatch's `guard` (access.memberOrLegacy) runs first on every route;
+// a member's Data API units come out of their own budget per Pacific day (userUnitsPerDay; over it: the same 503
+// {error:"budget"} with scope "you"), a caller without a token out of its own (anonUnitsPerDay, per address) under a
+// ceiling for all of them together (anonAllUnitsPerDay); over either: 401 {signin:true}. Cached answers cost nothing
+// and are served to both. createUnitBudget is pure (tests).
 // Upstream: 8 s timeout per call, 2 MB body cap, https only (redirects followed by hand, never to non-https), at most
 // 2 upstream calls per leg (see resolve). The Data API key comes in from server.mjs (youtube.key) and never appears in
 // a log line, an error message or a response.
@@ -32,6 +37,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { clientKey } from "./reachcommon.mjs";
 
 export const LIMIT = 10000;
 export const SEARCH_CUTOFF = 9000;
@@ -306,6 +312,40 @@ async function fetchSafe(url, { accept = "application/json", headers = {}, timeo
     throw new Error("too many redirects");
 }
 
+// ── who spends the units (security review 2026-10-26) ─────────────────────────────────────────────────────────────────
+/**
+ * Units per Pacific day: per person (`user`), per token-less caller (`anon`, keyed by address) and for every token-less
+ * caller together (`anonAll`). charge(who, units) -> null when allowed (and counted), else "user" | "anon" (the budget
+ * that is spent). who = {user} | {legacy: true, key} | {} (no guard installed: not limited here). Kept in memory: a
+ * restart forgets the day's counts; the global quota (the store) still holds.
+ */
+export function createUnitBudget({ userPerDay = Infinity, anonPerDay = Infinity, anonAllPerDay = Infinity, now = Date.now } = {}) {
+    let day = "", anonAll = 0;
+    const users = new Map(), anon = new Map();
+    const roll = () => { const d = pacificDay(now()); if (d !== day) { day = d; anonAll = 0; users.clear(); anon.clear(); } };
+    return {
+        charge(who, units) {
+            roll();
+            if (who && who.user) {
+                const u = users.get(who.user) || 0;
+                if (u + units > userPerDay) return "user";
+                users.set(who.user, u + units);
+                return null;
+            }
+            if (who && who.legacy) {
+                const k = String(who.key ?? "-");
+                const mine = anon.get(k) || 0;
+                if (mine + units > anonPerDay || anonAll + units > anonAllPerDay) return "anon";
+                anon.set(k, mine + units);
+                anonAll += units;
+                if (anon.size > 50_000) anon.clear();   // a flood of addresses can't grow it without end
+            }
+            return null;
+        },
+        used(who) { roll(); return who && who.user ? users.get(who.user) || 0 : who && who.key !== undefined ? anon.get(String(who.key)) || 0 : anonAll; },
+    };
+}
+
 // ── stores ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 class SqliteStore {
     constructor(DatabaseSync, path) {
@@ -448,12 +488,19 @@ export function installWatch(app, deps = {}) {
     setInterval(() => storeReady.then((s) => s.sweep()).catch(() => {}), H).unref?.();
 
     const requireKey = () => { if (!key) throw new HttpError(503, { error: "YouTube search not configured" }); };
+    const guard = typeof deps.guard === "function" ? deps.guard : null;
+    const unitBudget = createUnitBudget({ userPerDay: deps.userUnitsPerDay ?? Infinity, anonPerDay: deps.anonUnitsPerDay ?? Infinity,
+        anonAllPerDay: deps.anonAllUnitsPerDay ?? Infinity });
     const budget503 = () => new HttpError(503, { error: "budget", resetAt: pacificResetAt() });
     const checkBudget = (store, cutoff) => { if (store.unitsToday(pacificDay()) > cutoff) throw budget503(); };
 
     /** One Data API call: counts units (before the call — Google bills what reaches it), honours the per-leg call cap. */
-    async function yt(ctx, store, endpoint, params, units) {
+    async function yt(ctx, store, endpoint, params, cost) {
         if (ctx.calls >= MAX_CALLS) throw new Error("upstream call cap reached");
+        const spent = unitBudget.charge(ctx.who, cost);
+        if (spent === "user") throw new HttpError(503, { error: "budget", resetAt: pacificResetAt(), scope: "you" });
+        if (spent === "anon") throw new HttpError(401, { error: "Sign in to use this. If you are signed in, update Tin Hat.", signin: true });
+        const units = cost;
         ctx.calls++;
         ctx.units += units;
         store.addUnits(pacificDay(), units, ctx.route, endpoint);
@@ -473,6 +520,14 @@ export function installWatch(app, deps = {}) {
     }
     /** Second call: durations/views (videos), itemCount (playlists/channels) — only while a call slot remains. */
     async function enrich(ctx, store, kind, items) {
+        try { return await enrichNow(ctx, store, kind, items); } catch (e) {
+            // a budget (the caller's own, or the shared token-less one) ran out between the search and this optional
+            // second call: answer without durations rather than lose the search that was already paid for
+            if (e instanceof HttpError && (e.status === 401 || (e.body && e.body.scope === "you"))) return false;
+            throw e;
+        }
+    }
+    async function enrichNow(ctx, store, kind, items) {
         if (!items.length || ctx.calls >= MAX_CALLS) return false;
         const id = items.map((i) => i.id).join(",");
         if (kind === "video") {
@@ -782,9 +837,10 @@ export function installWatch(app, deps = {}) {
 
     // ── express wiring ──
     const route = (name, fn) =>
-        app.get(`/youtube/${name}`, async (req, res) => {
+        app.get(`/youtube/${name}`, ...(guard ? [guard] : []), async (req, res) => {
             const t0 = Date.now();
-            const ctx = { route: name, calls: 0, units: 0, hit: null };
+            const ctx = { route: name, calls: 0, units: 0, hit: null,
+                who: req.matrixUser ? { user: req.matrixUser } : req.legacy ? { legacy: true, key: clientKey(req) } : {} };
             try {
                 const store = await storeReady;
                 const body = await fn(req, store, ctx);
@@ -949,7 +1005,7 @@ export function installWatch(app, deps = {}) {
         ctx.hit = false;
         requireKey();
         checkBudget(store, RESOLVE_CUTOFF);
-        const leg = { route: "resolve", calls: 0, units: 0 };   // the Data API leg: search.list + videos.list (its own 2-call cap)
+        const leg = { route: "resolve", calls: 0, units: 0, who: ctx.who };   // the Data API leg: search.list + videos.list (its own 2-call cap)
         try {
             const sj = await yt(leg, store, "search", {
                 part: "snippet", type: "video", videoCategoryId: "10", videoEmbeddable: "true", maxResults: "10",

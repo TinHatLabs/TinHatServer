@@ -53,6 +53,66 @@ SUBDIRS = ["cache", "uploads", "games", "watch", "reports", "logs"]
 TURN_PROTOCOLS = ("udp", "tcp", "tls")
 
 
+# The owner's own numbers for the API's limits (docs/API.md "Who may use the extras"), kept in state api.limits and
+# written into its environment by env_text: the env file itself is regenerated on every refresh, update and settings
+# save, so an edit there never lasted (review of 116d103, #3). Only these names, each checked: "onoff" = on|off, else
+# (low, high) = a whole number in that range, bounds included: digits only (no sign, decimals, exponent, inf or nan),
+# so always a safe integer. Where 0 is allowed it means none (docs/API.md): nobody in that group gets any of it; the
+# token-less lane itself is API_LEGACY_ANON. Set from the console: `tinhat api-limits NAME=VALUE …`.
+COUNT = (0, 999_999_999)            # calls, units, sounds per hour / day: 0 = none
+FILE_MB = (1, 100)                  # one file, held in memory while it is checked: at least 1 MB
+STORE_MB = (0, 1_048_576)           # disk for uploads, up to 1 TB: 0 = no uploads
+LIMITS = {
+    "API_LEGACY_ANON": "onoff",
+    **{k: COUNT for k in (
+        "API_ANON_GIF_PER_HOUR", "API_ANON_GIF_ALL_PER_HOUR", "API_ANON_SOUNDSEARCH_PER_HOUR",
+        "API_ANON_SOUNDSEARCH_ALL_PER_HOUR", "API_ANON_CLIPFETCH_PER_HOUR", "API_ANON_CLIPFETCH_ALL_PER_HOUR",
+        "API_USER_GIF_PER_HOUR", "API_USER_SOUNDSEARCH_PER_HOUR", "API_USER_CLIPFETCH_PER_HOUR", "API_USER_CLIPSIGN_PER_HOUR",
+        "API_SEARCHED_CLIPFETCH_PER_IP_HOUR", "API_SEARCHED_CLIPFETCH_PER_HOUR",
+        "WATCH_USER_UNITS_PER_DAY", "WATCH_ANON_UNITS_PER_DAY", "WATCH_ANON_ALL_UNITS_PER_DAY",
+        "SOUNDBOARD_USER_UPLOADS_MAX")},
+    "SOUNDBOARD_CLIP_MAX_MB": FILE_MB, "GIF_FETCH_MAX_MB": FILE_MB,
+    "SOUNDBOARD_CACHE_MAX_MB": (1, 1_048_576),   # the myinstants clip cache: at least 1 MB (it always keeps one clip)
+    "SOUNDBOARD_USER_UPLOADS_MB": STORE_MB, "SOUNDBOARD_UPLOADS_TOTAL_MB": STORE_MB,
+    "SOUNDBOARD_CLIP_LINK_MIN": (1, 10_080),      # a signed clip link lives 1 minute to a week
+}
+
+
+def limit_value(name: str, value) -> str | None:
+    """The value as it goes into the env file, or None when the name isn't one of LIMITS or the value doesn't fit."""
+    kind = LIMITS.get(str(name))
+    if isinstance(value, bool):
+        return None  # JSON true/false is neither on/off nor a number
+    v = str(value).strip().lower() if value is not None else ""
+    if kind == "onoff":
+        return v if v in ("on", "off") else None
+    if isinstance(kind, tuple) and re.fullmatch(r"[0-9]{1,10}", v, re.ASCII):
+        n = int(v)
+        return str(n) if kind[0] <= n <= kind[1] else None
+    return None
+
+
+def limit_help(name: str) -> str:
+    """What a value of this limit may be, for the console."""
+    kind = LIMITS.get(name)
+    if kind == "onoff":
+        return "on or off"
+    low, high = kind
+    return f"a whole number from {low} to {high:,}" + (" (0 = none)" if low == 0 else "")
+
+
+def limits(st: dict | None = None) -> dict:
+    """The owner's limits from state (api.limits), only the valid ones (a hand-edited state.json can't add anything)."""
+    st = st if st is not None else state.load_state()
+    raw = (st.get("api") or {}).get("limits")
+    out = {}
+    for k, v in (raw.items() if isinstance(raw, dict) else []):
+        val = limit_value(k, v)
+        if val is not None:
+            out[k] = val
+    return out
+
+
 def settings(st: dict | None = None) -> dict:
     """The owner's choices for the API, from state: {memories: bool, recorder: "@…:…", turn: {...}|None, web: host}.
     web: where the owner's reverse proxy serves the web app when the server's own name is another website's (a
@@ -62,6 +122,7 @@ def settings(st: dict | None = None) -> dict:
     turn = a.get("turn") if isinstance(a.get("turn"), dict) else None
     web = str(a.get("web") or "") if st.get("mode") == "domain" else ""
     return {"memories": bool(a.get("memories")), "recorder": str(a.get("recorder") or ""), "turn": turn, "web": web,
+            "limits": limits(st),
             # notifications to the Tin Hat phone apps through the relay (docs/PHONE-PUSH.md): on unless the owner says no
             "phone_push": a.get("phone_push") is not False}
 
@@ -171,7 +232,7 @@ def recorder(st: dict | None = None) -> str:
     return a["recorder"] if a["memories"] else ""
 
 
-def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str = "") -> str:
+def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str = "", owner_limits: dict | None = None) -> str:
     base = f"https://{server_name}"
     gw = gateway or "127.0.0.1"
     lines = {
@@ -196,6 +257,10 @@ def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str 
     }
     if relay:
         lines["PUSH_RELAY"] = relay  # the phone apps' relay (docs/PHONE-PUSH.md); absent = phone pushers refused
+    for k, v in (owner_limits or {}).items():  # the owner's numbers (LIMITS only, re-checked: never another variable)
+        val = limit_value(k, v)
+        if val is not None and k not in lines:
+            lines[k] = val
     return "".join(f"{k}={v}\n" for k, v in lines.items())
 
 
@@ -224,7 +289,7 @@ def write(st: dict | None = None, s: dict | None = None) -> bool:
         return False
     changed = False
     files = {
-        "env": env_text(sn, s, docker_gateway(), settings(st)["web"], push_relay(st)),
+        "env": env_text(sn, s, docker_gateway(), settings(st)["web"], push_relay(st), limits(st)),
         "synapse-admin.token": s.get("system_token") or "",
         "synapse.secret": s.get("registration_shared_secret") or "",
         "livekit.secret": s.get("livekit_secret") or "",

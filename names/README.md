@@ -19,7 +19,12 @@ Gives every Tin Hat Server `<name>.tinhat.me`, so friends only type `crew`.
      Let's Encrypt certificates.
    - DNS: `names.tinhat.dev` and the `tinhat.me` apex point at the machine's public address.
 2. **Code:** `/opt/tinhat-names` (this folder). Install `deploy/tinhat-names.service` and create a `tinhat-names`
-   user.
+   user. Then Tin Hat's pinned aiohttp (Debian's has advisories Debian won't fix), after every install of the folder:
+   `python3 build/wheels.py fetch /opt/tinhat-names/wheels` from the repository (downloads exactly the files
+   `build/wheels.lock` names, each checked by its sha256; or copy a release's `manager/wheels` over), then
+   `sudo /opt/tinhat-names/tinhat-names pyenv build` (an offline `pip install --require-hashes` into
+   `/opt/tinhat-names/venv`). The service starts on that venv only once its check passes, and otherwise on the
+   system's python3-aiohttp, logged as an error; `tinhat-names pyenv status` says which.
 3. **`/etc/tinhat-names/config.json`:**
    ```json
    {"listen": "127.0.0.1:8095", "trust_proxy": true, "trusted_proxies": ["127.0.0.1", "<the proxy's address>"],

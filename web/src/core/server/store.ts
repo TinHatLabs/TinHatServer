@@ -13,6 +13,8 @@ import { MATRIX_ORIGIN } from "@/core/bearer";
 import { createLogger } from "@/core/log";
 import { getSession, useSessionStore } from "@/core/matrix/session";
 import { DISCOVERY_KEY, NO_OFFER, SERVER_FEATURES, featureFor, isGuestAccount, isRecorderId, offerDoc, parseOffer, sameOffer, type ServerFeature, type ServerOffer } from "./offer";
+import { parseMove } from "@/core/matrix/moved";
+import { API_BASE } from "@/core/api";
 
 const log = createLogger("server-offer");
 
@@ -71,6 +73,42 @@ function set(next: ServerOffer): void {
   offer = next;
   writeCache(next);
   for (const l of [...listeners]) l();
+}
+
+// ---- this server's own API bases (core/clipsrc.ts) -----------------------------------------------------------------
+// The names the server had before a move (its well-known's dev.tinhat.moved_from): links it handed out then (uploaded
+// sounds, Memories) are still its own. Cached like the offer (a tinhat.cache.* key: wiped at sign-out).
+const FORMER_KEY = "tinhat.cache.server-former";
+let former: string[] = (() => {
+  try {
+    const v = JSON.parse(localStorage.getItem(FORMER_KEY) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+})();
+function setFormer(names: string[]): void {
+  former = names;
+  try {
+    localStorage.setItem(FORMER_KEY, JSON.stringify(names));
+  } catch {
+    /* private mode */
+  }
+}
+
+/** This server's absolute API bases: this page's `<origin>/api`, the API base the well-known announces (another host on
+ *  a server whose web app has a name of its own, e.g. API on example.org, app on chat.example.org), `https://<former name>/api`
+ *  for each former name — the desktop's proxy.rs known_bases. */
+export function ownApiBases(): string[] {
+  const out: string[] = [];
+  const add = (b: string) => {
+    const x = (b ?? "").trim().replace(/\/+$/, "");
+    if (/^https?:\/\/[^/\s]+(\/\S*)?$/i.test(x) && !out.some((o) => o.toLowerCase() === x.toLowerCase())) out.push(x);
+  };
+  if (MATRIX_ORIGIN) add(API_BASE.startsWith("/") ? `${MATRIX_ORIGIN}${API_BASE}` : API_BASE);
+  if (offer.api) add(offer.api);
+  for (const n of former) add(`https://${n}/api`);
+  return out;
 }
 
 /** What the server offers (NO_OFFER before the server answered). */
@@ -170,7 +208,9 @@ export function refreshServerOffer(force = false): Promise<void> {
       const r = await fetch(`${MATRIX_ORIGIN}/.well-known/matrix/client`, { cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(8000) });
       if (r.status === 404) return set(NO_OFFER);
       if (!r.ok) return log.warn(`HTTP ${r.status} — keeping the last answer`);
-      set(parseOffer(await r.json()));
+      const doc: unknown = await r.json();
+      setFormer(parseMove(doc).movedFrom);
+      set(parseOffer(doc));
     } catch (e) {
       lastRead = 0; // try again on the next occasion
       log.warn("couldn't read the server's offer — keeping the last answer", e);

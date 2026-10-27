@@ -1,6 +1,7 @@
-// devhook.ts — `window.__tw` for tests and debugging. Installed in dev builds (import.meta.env.DEV),
-// when the URL hash contains "twdebug" (production builds: open …/#twdebug once), or when
-// `window.__TW_DEBUG__ = true` was set before the app loaded (tools/webshot.mjs does that).
+// devhook.ts — `window.__tw` for tests and debugging. Installed in dev builds (import.meta.env.DEV), or when
+// `window.__TW_DEBUG__ = true` was set by a test harness (tools/webshot.mjs does that, before the app loads). A URL can
+// no longer install it in a production build (the "#twdebug" fragment did until the 2026-10-26 security review: a
+// one-call SAS confirm etc. is no business of a link).
 //
 //   await __tw.login("tester1", "…")               // resolves when the session is "ready"
 //   __tw.session() / __tw.client() / await __tw.info()
@@ -149,8 +150,7 @@ function install() {
 
 const wanted = () =>
   (typeof import.meta !== "undefined" && import.meta.env?.DEV) ||
-  (typeof window !== "undefined" && (window as Window & { __TW_DEBUG__?: boolean }).__TW_DEBUG__ === true) ||
-  (typeof location !== "undefined" && /twdebug/.test(location.hash));
+  (typeof window !== "undefined" && (window as Window & { __TW_DEBUG__?: boolean }).__TW_DEBUG__ === true);
 
 if (typeof window !== "undefined") {
   if (wanted()) install();

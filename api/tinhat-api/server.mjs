@@ -1,18 +1,22 @@
 import express from "express";
-import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, mkdirSync, renameSync, unlinkSync, openSync, readSync, closeSync } from "node:fs";
 import { createHmac, createHash, randomBytes } from "node:crypto";
 import { spawn, execFile } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installModeration } from "./moderation.mjs";
 import { installInvites } from "./invites.mjs";
-import { createHs, createMatrixAuth, RateLimit, clientIp } from "./reachcommon.mjs";
+import { createHs, createMatrixAuth, RateLimit, clientKey, ipBucket, trustProxy } from "./reachcommon.mjs";
 import { createLimits } from "./limits.mjs";
 import { installPresence } from "./presence.mjs";
 import { installPush } from "./push.mjs";
 import { installGameServers } from "./gameservers.mjs";
 import { installWatch } from "./watch.mjs";
 import { installGuests } from "./guests.mjs";
+import { accessConfig, createAccess, SIGNIN_REQUIRED } from "./access.mjs";
+import { normaliseClipUrl, ClipStore, Admitted, createClipSigner, sameHex, oneDownload } from "./clipcache.mjs";
+import { parseForeignClipUrl, foreignDownload } from "./foreign.mjs";
+import { giphyMediaUrl, sniffImage, readCapped, MEDIA_HEADERS, sniffAudio, sniffClipAudio, SANDBOX_HEADERS } from "./media.mjs";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -74,11 +78,13 @@ const LK_API_URL = required("LK_API_URL"); // the call server's HTTP API (call m
 // Rate limiting: the tiers are in limits.mjs (/vods/file + /vods/thumb exempt: every request carries an HMAC sig+exp,
 // the player's media plane — the old global 30/min bucket starved it, souphttpsrc "Unknown Error (429)" in field
 // logs; THUMB_MAX remains the ffmpeg capacity gate. /vods/sessions 60/min, soundboard clip reads 240/min, the rest
-// 30/min), per REAL client IP.
+// 30/min), per REAL client IP (an IPv6 caller counts as its /64: reachcommon ipBucket).
 // Behind a proxy, req.ip must be the REAL client (TRUST_PROXY names the proxies): otherwise every request looks like
 // the proxy, one bucket for everybody, and one busy client gets everyone 429s (GIFs, soundboard, the invites check).
-// TRUST_PROXY: who may set X-Forwarded-For (comma-separated express values; on a Tin Hat Server its own Caddy: loopback).
-app.set("trust proxy", (process.env.TRUST_PROXY || "loopback").split(",").map((s) => s.trim()).filter(Boolean));
+// TRUST_PROXY: who may set X-Forwarded-For (comma-separated addresses, networks or loopback / linklocal / uniquelocal;
+// on a Tin Hat Server its own Caddy: loopback). Only that immediate hop is believed: req.ip is the last entry, the
+// address Caddy verified, the same as reachcommon.clientIp (trustProxy).
+app.set("trust proxy", trustProxy(process.env.TRUST_PROXY || "loopback"));
 const limits = createLimits(Date.now);
 setInterval(() => limits.sweep(), 600000).unref?.(); // idle addresses go, so the maps can't grow unbounded
 function tooMany(res) {
@@ -86,7 +92,7 @@ function tooMany(res) {
     return res.status(429).json({ error: "Too many requests" });
 }
 function rateLimit(req, res, next) {
-    if (!limits.request(req.path, req.ip)) return tooMany(res);
+    if (!limits.request(req.path, ipBucket(req.ip))) return tooMany(res);
     next();
 }
 
@@ -105,7 +111,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 const SPEED_PER_IP = new RateLimit(6, 60_000);
 let speedRunning = 0;
 app.post("/speedtest/up", (req, res) => {
-    const ip = clientIp(req);
+    const ip = clientKey(req);
     if (!SPEED_PER_IP.hit(ip) || speedRunning >= 2) { req.resume(); return res.status(429).json({ error: "busy" }); }
     speedRunning++;
     res.on("close", () => { speedRunning--; });
@@ -185,6 +191,21 @@ app.use((req, res, next) => (REACH_PATH.test(req.path) ? next() : jsonBody(req, 
 // to the real web client. Guests are ordinary participants: the same UI as everyone and
 // the same call. The reaper deactivates accounts after GUEST_ACCOUNT_TTL_MS.
 const HS_INTERNAL = required("SYNAPSE_INTERNAL"); // Synapse, as this process reaches it
+// The shared sign-in check (reachcommon; REACH A2.4: pinned at start, never taken from a request) and who may make
+// this server spend its keys and outbound fetches (access.mjs: members, or the small allowance for older apps).
+const reachHs = createHs({ hsUrl: HS_INTERNAL });
+const reachAuth = createMatrixAuth({ hs: reachHs });
+const access = createAccess({ auth: reachAuth, config: accessConfig() });
+const MB = 1024 * 1024;
+/** A positive number from the environment, else `def` (sizes in MB, counts). */
+/** A whole-number setting: digits only (no sign, decimals, exponent, Infinity or NaN), inside [min, max], else `def`.
+ *  The same ranges as the dashboard's (apiconf.LIMITS), so a value it refuses can't reach the API another way. */
+function envNum(name, def, min = 0, max = 999_999_999) {
+    const raw = String(process.env[name] ?? "").trim();
+    if (!/^[0-9]{1,10}$/.test(raw)) return def;
+    const v = Number(raw);
+    return v >= min && v <= max ? v : def;
+}
 const HS_PUBLIC = required("SYNAPSE_PUBLIC"); // Synapse, as a guest's browser reaches it
 const WEB_BASE = required("WEB_BASE"); // Tin Hat Web, where a guest is handed over
 const GUEST_ACCOUNT_TTL_MS = Number(process.env.GUEST_ACCOUNT_TTL_MS || 12 * 60 * 60 * 1000);
@@ -413,7 +434,7 @@ app.get("/vods/thumb/:room/:session/:file", (req, res) => {
     const t = Math.max(0, Math.min(86400, Number(req.query.t || 0)));
     const p = `${room}/${session}/${file}`;
     if (p.includes("..") || p.includes("//")) return res.status(400).end();
-    if (!exp || exp < Date.now() || s !== vodsSig(p, exp)) return res.status(403).end();
+    if (!exp || exp < Date.now() || !sameHex(s, vodsSig(p, exp))) return res.status(403).end();  // constant-time
     if (thumbBusy >= THUMB_MAX) {
         res.setHeader("Retry-After", "2");
         return res.status(503).end();
@@ -441,6 +462,7 @@ app.get("/vods/thumb/:room/:session/:file", (req, res) => {
             if (c !== 0 || body.length === 0) return res.status(404).end();
             res.setHeader("Content-Type", "image/jpeg");
             res.setHeader("Cache-Control", "no-store");
+            for (const [k, v] of Object.entries(SANDBOX_HEADERS)) res.setHeader(k, v);
             res.end(body);
         } catch {}
     });
@@ -453,8 +475,8 @@ app.get("/vods/file/:room/:session/:file", (req, res) => {
     const s = String(req.query.sig || "");
     const p = `${room}/${session}/${file}`;
     if (p.includes("..") || p.includes("//")) return res.status(400).end();
-    if (!exp || exp < Date.now() || s !== vodsSig(p, exp)) return res.status(403).end();
-    res.sendFile(p, { root: VODS_DIR, acceptRanges: true }, (err) => {
+    if (!exp || exp < Date.now() || !sameHex(s, vodsSig(p, exp))) return res.status(403).end();  // constant-time
+    res.sendFile(p, { root: VODS_DIR, acceptRanges: true, headers: SANDBOX_HEADERS }, (err) => {
         if (err && !res.headersSent) res.status(404).end();
     });
 });
@@ -463,44 +485,65 @@ app.get("/vods/file/:room/:session/:file", (req, res) => {
 // Everything that touches myinstants goes through mi-fetch.py: since ~2026-09-04 their
 // Cloudflare rules 403 Node's/curl's TLS fingerprint from here regardless of headers,
 // while Python's urllib passes. Search results are cached 10 min; clips are cached on
-// disk forever and served from THIS origin, so the app's local preview (Windows
+// disk and served from THIS origin, so the app's local preview (Windows
 // Qt/FFmpeg was 403'd upstream = "I can't hear my own clip") and the call publish both
 // fetch from this server and never from myinstants.
+// Security review 2026-10-26 (H4): a clip is cached under its NORMALISED URL (clipcache.mjs: no query, one spelling),
+// at most SOUNDBOARD_CLIP_MAX_MB (5) each and SOUNDBOARD_CACHE_MAX_MB (512) together, least recently played out first;
+// searches and new clip downloads are spent by members (their own hourly budgets) or by the small shared allowance for
+// apps that send no token (access.mjs); at most MI_CONCURRENT helpers run at once.
 const MI_HELPER = new URL("./mi-fetch.py", import.meta.url).pathname;
 const CLIP_DIR = process.env.SOUNDBOARD_CACHE_DIR || join(CONF, "cache");
 try { mkdirSync(CLIP_DIR, { recursive: true }); } catch { /* exists */ }
-function miFetch(url, outPath) {
+const CLIP_MAX_BYTES = Math.max(64 * 1024, Math.floor(envNum("SOUNDBOARD_CLIP_MAX_MB", 5, 1, 100) * MB));
+const CLIP_CACHE_MAX_BYTES = Math.max(CLIP_MAX_BYTES, Math.floor(envNum("SOUNDBOARD_CACHE_MAX_MB", 512, 1, 1_048_576) * MB));
+const clipStore = new ClipStore({ dir: CLIP_DIR, maxBytes: CLIP_CACHE_MAX_BYTES, log: (s) => console.log(`[soundboard] ${s}`),
+    sniff: sniffClipAudio }).scan();
+console.log(`[soundboard] clip cache ${clipStore.entries.size} clips, ${Math.round(clipStore.total / MB)} of ${Math.round(CLIP_CACHE_MAX_BYTES / MB)} MB; one clip at most ${Math.round(CLIP_MAX_BYTES / MB * 10) / 10} MB`);
+const admitted = new Admitted();      // clip URLs our own search answers handed out (24 h)
+const MI_CONCURRENT = 4;
+let miRunning = 0;
+/** A helper slot, taken before anything is charged (a request that can't fetch spends no budget): {release} or null. */
+function reserveHelper() {
+    if (miRunning >= MI_CONCURRENT) return null;
+    miRunning++;
+    let held = true;
+    return { release() { if (held) { held = false; miRunning--; } } };
+}
+/** Run the helper in a slot reserved with reserveHelper(); the slot is released when it exits. */
+function miFetch(url, outPath, maxBytes, slot) {
     return new Promise((resolve) => {
-        execFile("python3", [MI_HELPER, url, outPath], { timeout: 25000 }, (err, stdout) => {
+        execFile("python3", [MI_HELPER, url, outPath, String(maxBytes)], { timeout: 25000 }, (err, stdout) => {
+            slot.release();
             const line = String(stdout || "").trim().split("\n").pop();
             try { if (line) return resolve(JSON.parse(line)); } catch { /* fall through */ }
             resolve({ status: 0, error: String((err && err.message) || "helper produced no status") });
         });
     });
 }
-function miUrl(url) {
-    const full = url.startsWith("http") ? url : `https://www.myinstants.com${url}`;
-    let parsed;
-    try { parsed = new URL(full); } catch { return null; }
-    const host = parsed.hostname.toLowerCase();
-    // exactly myinstants.com or one of its subdomains (endsWith alone let evilmyinstants.com through), https, no port
-    if (parsed.protocol !== "https:" || parsed.port || !(host === "myinstants.com" || host.endsWith(".myinstants.com"))) return null;
-    return parsed.toString();
-}
+const busy = (res) => { res.setHeader("Retry-After", "2"); return res.status(503).json({ error: "The server is busy fetching sounds; try again in a moment." }); };
 const SEARCH_TTL_MS = 10 * 60 * 1000;
 const searchCache = new Map(); // q -> { at, results }
-app.get("/search", async (req, res) => {
+/** Every clip a search answer hands out may be fetched without a token for a day (players can't send one). */
+const admitResults = (results) => { for (const r of results) admitted.add(normaliseClipUrl(r.mp3Path)); };
+app.get("/search", access.memberOrLegacy, async (req, res) => {
     const query = req.query.q;
     if (!query || typeof query !== "string") {
         return res.status(400).json({ error: "Missing q parameter" });
     }
     const q = query.trim().toLowerCase();
     if (q.length < 2) return res.json([]);
+    if (q.length > 100) return res.status(400).json({ error: "q too long" });
     const hit = searchCache.get(q);
-    if (hit && Date.now() - hit.at < SEARCH_TTL_MS) return res.json(hit.results);
+    if (hit && Date.now() - hit.at < SEARCH_TTL_MS) { admitResults(hit.results); return res.json(hit.results); }
+    // a helper first, the budget only once a search will really go out (a busy server spends nobody's allowance)
+    const slot = reserveHelper();
+    if (!slot) return busy(res);
+    const no = access.spend(req, "soundsearch");
+    if (no) { slot.release(); return access.refuse(res, no); }
     const tmp = join(tmpdir(), `mi-search-${randomBytes(12).toString("hex")}.html`);
     try {
-        const r = await miFetch(`https://www.myinstants.com/en/search/?name=${encodeURIComponent(q)}`, tmp);
+        const r = await miFetch(`https://www.myinstants.com/en/search/?name=${encodeURIComponent(q)}`, tmp, 4 * MB, slot);
         if (r.status === 404) {
             // myinstants answers 404 for NO-RESULT queries and its own filtered terms —
             // that is "no results", not an outage (field logs 2026-08-17).
@@ -508,7 +551,7 @@ app.get("/search", async (req, res) => {
             return res.json([]);
         }
         if (r.status !== 200) {
-            console.warn(`[soundboard] search upstream ${r.status} ${r.error || ""} q=${q}`);
+            console.warn(`[soundboard] search upstream ${r.status} ${r.error || ""} q=${JSON.stringify(q).slice(0, 80)}`);
             return res.status(502).json({
                 error: r.status === 403 ? "myinstants is blocking us right now" : `myinstants returned ${r.status || "error"}`,
             });
@@ -522,6 +565,7 @@ app.get("/search", async (req, res) => {
         }
         if (searchCache.size > 500) searchCache.clear();
         searchCache.set(q, { at: Date.now(), results });
+        admitResults(results);
         res.json(results);
     } catch (err) {
         res.status(500).json({ error: err.message || "Search failed" });
@@ -532,47 +576,86 @@ app.get("/search", async (req, res) => {
 
 // Clip cache: GET /clip?url=<myinstants url>  (and /fetch, the pre-0.8.21 name).
 // GET /clip?id=<sha256> serves an UPLOADED clip instead — see the uploads section below.
-const CLIP_TYPES = { mp3: "audio/mpeg", ogg: "audio/ogg", opus: "audio/ogg", wav: "audio/wav", m4a: "audio/mp4", webm: "audio/webm" };
-const clipInflight = new Map(); // key -> Promise
-function clipPaths(fullUrl) {
-    const key = createHash("sha256").update(fullUrl).digest("hex");
-    const m = /\.(mp3|ogg|opus|wav|m4a|webm)(?:\?|$)/i.exec(new URL(fullUrl).pathname);
-    const ext = m ? m[1].toLowerCase() : "mp3";
-    return { key, ext, file: `${CLIP_DIR}/${key}.${ext}`, metaFile: `${CLIP_DIR}/${key}.json` };
-}
-// `admit()` is asked only right before a NEW upstream fetch starts (not for a cached clip, not for a request that joins
-// a fetch already running): false = no fetch, a 429 (limits.mjs: a fetch from myinstants costs a strict one).
-async function ensureClip(fullUrl, admit = () => true) {
-    const { key, ext, file, metaFile } = clipPaths(fullUrl);
-    if (existsSync(file)) {
-        let ct = CLIP_TYPES[ext];
-        try { ct = JSON.parse(readFileSync(metaFile, "utf8")).content_type || ct; } catch { /* no meta */ }
-        if (!/^audio\/[a-z0-9.+-]+$/i.test(String(ct))) ct = CLIP_TYPES[ext] || "audio/mpeg";  // an older cache entry: audio only
-        return { file, contentType: ct };
+// A cached clip is served to anyone (public bytes, no spend). A clip this server doesn't have yet is fetched from
+// myinstants only for: a member (bearer; their hourly budget), a signed link from /clip/sign (players that can't send
+// a header: <audio>, GStreamer), a clip one of our search answers handed out in the last day, or, for apps that send
+// no token, the small shared allowance (access.mjs). Anyone else gets 401 SIGNIN_REQUIRED.
+const clipInflight = new Map();   // key -> Promise (a second request for the same clip joins the running fetch)
+const clipMissing = new Map();    // key -> until: myinstants said 404 (an hour, so made-up paths cost one fetch each)
+let clipSigner = null;            // set in the uploads section (needs CLIP_PUBLIC_BASE's neighbour, the vods secret)
+/** Another Tin Hat server's sound (foreign.mjs): resolved, checked and fetched under one deadline, only now that the
+ *  request was admitted and charged. The same answer shape as miFetch; the slot is released once the transfer is torn
+ *  down. A non-public address throws 403, a body that isn't audio 415. */
+async function foreignFetch(norm, tmp, host, slot) {
+    try {
+        const got = await foreignDownload(norm, host, { maxBytes: CLIP_MAX_BYTES });
+        if (got.status !== 200) return { status: got.status, bytes: 0 };
+        writeFileSync(tmp, got.data);
+        return { status: 200, bytes: got.data.length, content_type: got.type };
+    } catch (e) {
+        if (e.status === 415 || e.status === 403) throw e;
+        if (e.status === 413) return { status: 413, bytes: 0 };
+        return { status: e.upstream || 0, bytes: 0, error: e.message, redirect: e.reason === "redirect" };
+    } finally {
+        slot.release();
     }
-    if (clipInflight.has(key)) return clipInflight.get(key);
-    if (!admit()) throw Object.assign(new Error("Too many requests"), { status: 429 });
-    const p = (async () => {
-        const tmp = `${file}.part-${process.pid}-${Date.now()}`;
-        const r = await miFetch(fullUrl, tmp);
-        if (r.status !== 200 || !r.bytes) {
-            try { unlinkSync(tmp); } catch { /* never written */ }
-            const e = new Error(r.status === 403 ? "myinstants is blocking us right now" : `upstream ${r.status || "error"}`);
-            e.upstream = r.status;
-            throw e;
+}
+async function fetchClip(norm, slot, foreignHost = null) {
+    const { key, ext, file, metaFile } = clipStore.paths(norm);
+    const tmp = `${file}.part-${process.pid}-${randomBytes(8).toString("hex")}`;   // unique: never two writers on one file
+    const r = foreignHost ? await foreignFetch(norm, tmp, foreignHost, slot) : await miFetch(norm, tmp, CLIP_MAX_BYTES, slot);
+    if (r.status !== 200 || !r.bytes) {
+        try { unlinkSync(tmp); } catch { /* never written */ }
+        if (r.status === 404) {
+            if (clipMissing.size > 5000) clipMissing.clear();
+            clipMissing.set(key, Date.now() + 3600_000);
         }
-        const ct = (r.content_type || "").split(";")[0].trim() || CLIP_TYPES[ext] || "audio/mpeg";
-        if (!/^audio\/[a-z0-9.+-]+$/i.test(ct)) {  // a clip is audio: anything else is never served from this origin
-            try { unlinkSync(tmp); } catch { /* gone */ }
-            throw Object.assign(new Error(`not audio (${ct.slice(0, 40)})`), { status: 415 });
-        }
-        writeFileSync(metaFile, JSON.stringify({ url: fullUrl, content_type: ct, bytes: r.bytes, fetched_at: new Date().toISOString() }));
-        renameSync(tmp, file);
-        console.log(`[soundboard] cached clip ${key.slice(0, 12)} ${r.bytes} B ${fullUrl}`);
-        return { file, contentType: ct };
-    })();
-    clipInflight.set(key, p);
-    try { return await p; } finally { clipInflight.delete(key); }
+        if (r.status === 413) throw Object.assign(new Error(`That sound is bigger than this server keeps (${Math.round(CLIP_MAX_BYTES / MB * 10) / 10} MB).`), { status: 413 });
+        const e = new Error(foreignHost ? (r.redirect ? "The other server redirected (not followed)" : r.error || `the other server said ${r.status || "nothing"}`)
+            : r.status === 403 ? "myinstants is blocking us right now" : `upstream ${r.status || "error"}`);
+        e.upstream = r.status;
+        throw e;
+    }
+    // the type comes from the bytes, never from what myinstants said (round 3): anything that isn't audio is dropped
+    const kind = sniffClipAudio(readHead(tmp, 64));
+    if (!kind) {
+        try { unlinkSync(tmp); } catch { /* gone */ }
+        const said = (r.content_type || "").split(";")[0].trim();
+        throw Object.assign(new Error(`not audio (${foreignHost ? "the other server" : "myinstants"} said ${said.slice(0, 40) || "nothing"})`), { status: 415 });
+    }
+    const ct = kind.type;
+    writeFileSync(metaFile, JSON.stringify({ url: norm, content_type: ct, bytes: r.bytes, fetched_at: new Date().toISOString() }));
+    renameSync(tmp, file);
+    clipStore.add(key, file, metaFile, r.bytes);
+    return { file, contentType: ct };
+}
+/** The first `n` bytes of a file (fewer if it is shorter). */
+function readHead(path, n) {
+    const fd = openSync(path, "r");
+    try { const b = Buffer.alloc(n); return b.subarray(0, readSync(fd, b, 0, n, 0)); } finally { closeSync(fd); }
+}
+/**
+ * Who pays for a new clip download from myinstants, decided before anything is charged: {why, charge()} where charge()
+ * spends the budget and returns null or a refusal; or null when an answer was already sent (a bad token, 401 with the
+ * token-less lane off). Every real download is charged (security review, second round): a member's bearer -> their
+ * budget; a signed link -> the budget of whoever asked for it (its principal); a clip one of our search answers handed
+ * out -> that address's (and everybody's) budget for those; anything else -> the token-less allowance.
+ */
+async function clipPayer(req, res, norm, foreign = false) {
+    if (/^Bearer\s+\S/i.test(String(req.headers.authorization || ""))) {
+        if (!(await access.resolve(req, res))) return null;
+        const principal = clipSigner.principalOf(req.matrixUser);
+        return { why: "member", charge: () => access.spendAs("clipfetch", principal) };
+    }
+    const p = typeof req.query.p === "string" ? req.query.p : "";
+    if (req.query.sig !== undefined && clipSigner.verify(norm, req.query.exp, String(req.query.sig), p))
+        return { why: "signed", charge: () => access.spendAs("clipfetch", p) };
+    // another Tin Hat server's sound: a member's bearer or a member-signed link only, never the token-less lane (no
+    // app that sends no token sends such a link; second review, #4)
+    if (foreign) { res.status(401).json(SIGNIN_REQUIRED); return null; }
+    if (admitted.has(norm)) return { why: "searched", charge: () => access.spendSearched(ipBucket(req.ip)) };
+    if (!access.config.legacy) { res.status(401).json(SIGNIN_REQUIRED); return null; }
+    return { why: "legacy", charge: () => access.spend(req, "clipfetch") };   // req.matrixUser unset: the shared allowance
 }
 async function serveClip(req, res) {
     // ?id= is a user upload, ?url= the myinstants cache: ONE route for both so the app
@@ -580,18 +663,59 @@ async function serveClip(req, res) {
     if (req.query.id !== undefined) return serveUpload(req, res);
     const url = req.query.url;
     if (!url || typeof url !== "string") return res.status(400).json({ error: "Missing url parameter" });
-    let full;
-    try { full = miUrl(url); } catch { full = null; }
-    if (!full) return res.status(403).json({ error: "Only myinstants.com URLs allowed" });
+    // myinstants, or another Tin Hat server's sound link (foreign.mjs: fetched through this server, never by the apps)
+    let norm = normaliseClipUrl(url), foreign = null;
+    if (!norm) {
+        foreign = parseForeignClipUrl(url, ownHosts());
+        if (foreign.error) return res.status(403).json(foreign.reason === "own" ? { error: foreign.error, reason: "own-server" }
+            : { error: "Only myinstants.com sounds and other Tin Hat servers' sound links are allowed", reason: "not-allowed" });
+        norm = foreign.url;
+    }
     try {
-        // reading a cached clip is the clip tier's (limits.mjs); a new fetch from myinstants also costs a strict one
-        const { file, contentType } = await ensureClip(full, () => limits.upstreamFetch(req.ip));
+        let got = clipStore.get(norm);
+        if (!got) {
+            const { key } = clipStore.paths(norm);
+            // who pays is settled first (it may await the sign-in check); oneDownload then looks again, joins a running
+            // download or registers at most one, and charges only a request that really starts one. A request that
+            // joins needs no payer: from the has() below to oneDownload's registering nothing awaits.
+            let payer = null;
+            if (!clipInflight.has(key)) {
+                if ((clipMissing.get(key) || 0) > Date.now()) return res.status(404).json({ error: "That sound isn't there any more" });
+                payer = await clipPayer(req, res, norm, !!foreign);
+                if (!payer) return;   // answered (a bad token; no token with the token-less lane off or for a foreign link)
+            }
+            let slot = null;
+            const r = await oneDownload(clipInflight, key, {
+                cached: () => clipStore.get(norm),
+                gate: () => {
+                    if (!payer) return { status: 401, body: SIGNIN_REQUIRED };   // joined nothing, has no payer
+                    // the caller's address (strict tier), then a helper slot, then the budget: nothing spent on a refusal
+                    if (!limits.upstreamFetch(ipBucket(req.ip))) return { status: 429, retryAfter: 5, body: { error: "Too many requests" } };
+                    slot = reserveHelper();
+                    if (!slot) return { status: 503, retryAfter: 2, body: { error: "The server is busy fetching sounds; try again in a moment." } };
+                    const no = payer.charge();
+                    if (no) { slot.release(); slot = null; return no; }
+                    return null;
+                },
+                start: () => {
+                    // a foreign link's name is resolved inside the download (admitted, de-duplicated, charged, one deadline)
+                    const p = fetchClip(norm, slot, foreign ? foreign.host : null);
+                    p.then(() => console.log(`[soundboard] cached clip ${key.slice(0, 12)} (${payer.why}) ${norm}`), () => {});
+                    return p;
+                },
+            });
+            if (r.refused) return access.refuse(res, r.refused);
+            got = r.got;
+        }
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-        res.sendFile(file, { headers: { "Content-Type": contentType, "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox" }, acceptRanges: true, lastModified: false });
+        res.sendFile(got.file, { headers: { "Content-Type": got.contentType, "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox" }, acceptRanges: true, lastModified: false },
+            (err) => { if (err && !res.headersSent) res.status(404).end(); });
     } catch (err) {
         if (err.status === 429) return tooMany(res);
-        console.warn(`[soundboard] clip fetch failed: ${err.message} ${full}`);
+        if (err.status === 413 || err.status === 415) return res.status(err.status).json({ error: err.message });
+        if (err.status === 403) return res.status(403).json(err.reason ? { error: err.message, reason: err.reason } : { error: err.message });
+        console.warn(`[soundboard] clip fetch failed: ${err.message} ${norm}`);
         res.status(502).json({ error: err.message || "Fetch failed" });
     }
 }
@@ -618,6 +742,52 @@ try { mkdirSync(UPLOAD_DIR, { recursive: true }); } catch { /* exists */ }
 const UPLOAD_MAX = 3 * 1024 * 1024; // a soundboard clip is seconds long; 3 MB is ~3 min of 128k mp3
 const UPLOAD_ID_RE = /^[0-9a-f]{64}$/;
 const CLIP_PUBLIC_BASE = required("SOUNDBOARD_PUBLIC_BASE");
+/** This server's own names: a sound link on one of them is refused as foreign (the apps play those directly). */
+const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ""; } };
+const OWN_HOSTS = [...new Set([process.env.SERVER_NAME, hostOf(CLIP_PUBLIC_BASE), hostOf(HS_PUBLIC), hostOf(WEB_BASE),
+    hostOf(VODS_PUBLIC_BASE)].filter(Boolean).map((h) => h.toLowerCase()))];
+function ownHosts() { return OWN_HOSTS; }
+// Per person and in all (security review 2026-10-26: uploads had no quota): SOUNDBOARD_USER_UPLOADS_MAX clips and
+// SOUNDBOARD_USER_UPLOADS_MB each, SOUNDBOARD_UPLOADS_TOTAL_MB for everybody together.
+const UPLOAD_USER_MAX = Math.floor(envNum("SOUNDBOARD_USER_UPLOADS_MAX", 200));
+const UPLOAD_USER_BYTES = Math.floor(envNum("SOUNDBOARD_USER_UPLOADS_MB", 100, 0, 1_048_576) * MB);
+const UPLOAD_TOTAL_BYTES = Math.floor(envNum("SOUNDBOARD_UPLOADS_TOTAL_MB", 2048, 0, 1_048_576) * MB);
+/** {count, bytes} of `user`'s clips and the bytes of everybody's (a few hundred sidecars at most, read off disk). */
+function uploadUsage(user) {
+    const u = { count: 0, bytes: 0, total: 0 };
+    try {
+        for (const f of readdirSync(UPLOAD_DIR)) {
+            if (!f.endsWith(".json") || !UPLOAD_ID_RE.test(f.slice(0, -5))) continue;
+            const meta = readUploadMeta(f.slice(0, -5));
+            if (!meta) continue;
+            const b = Number(meta.bytes) || 0;
+            u.total += b;
+            if (meta.uploader === user) { u.count++; u.bytes += b; }
+        }
+    } catch { /* none yet */ }
+    return u;
+}
+// Signed clip links (/clip/sign): a member's app asks for one right before it plays a myinstants sound this server may
+// not have yet through a player that can't send a header (<audio>, GStreamer). An hour each; keyed off the vods secret.
+clipSigner = createClipSigner({ key: createHmac("sha256", VODS_SECRET).update("tinhat-clip-links").digest(),
+    ttlMs: Math.max(60_000, Math.floor(envNum("SOUNDBOARD_CLIP_LINK_MIN", 60, 1, 10_080) * 60_000)) });
+/** GET /clip/sign?url=<myinstants url>  (bearer) -> {url, exp}: a link /clip fetches for anyone until exp (ms). */
+app.get("/clip/sign", access.member, (req, res) => {
+    const raw = String(req.query.url || "");
+    let norm = normaliseClipUrl(raw);
+    if (!norm) {
+        const f = parseForeignClipUrl(raw, ownHosts());
+        if (f.error) return res.status(403).json(f.reason === "own" ? { error: f.error, reason: "own-server" }
+            : { error: "Only myinstants.com sounds and other Tin Hat servers' sound links are allowed", reason: "not-allowed" });
+        norm = f.url;
+    }
+    const no = access.spend(req, "clipsign");
+    if (no) return access.refuse(res, no);
+    const principal = clipSigner.principalOf(req.matrixUser);   // the downloads this link causes are charged to the signer
+    const { exp, sig } = clipSigner.sign(norm, principal);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ url: `${CLIP_PUBLIC_BASE}/clip?url=${encodeURIComponent(norm)}&p=${principal}&exp=${exp}&sig=${sig}`, exp });
+});
 
 /**
  * Bearer <matrix access token> -> req.matrixUser, else 401. Mounted BEFORE the body
@@ -668,23 +838,6 @@ function parseMultipart(body, contentType) {
     return { fields, files };
 }
 
-/**
- * Sniff the container from the first bytes; {ext, type} or null. The set is exactly
- * what the soundboard players (browser <audio>, Qt/FFmpeg) decode and CLIP_TYPES serves.
- */
-function sniffAudio(buf) {
-    if (buf.length < 12) return null;
-    const tag = (at, s) => buf.subarray(at, at + s.length).toString("latin1") === s;
-    if (tag(0, "ID3")) return { ext: "mp3", type: "audio/mpeg" };
-    // bare MPEG audio frame: 11-bit sync + a non-reserved layer (0xFFFB / FFFA / FFF3 / FFF2 …)
-    if (buf[0] === 0xff && (buf[1] & 0xe0) === 0xe0 && (buf[1] & 0x06) !== 0) return { ext: "mp3", type: "audio/mpeg" };
-    if (tag(0, "OggS")) return { ext: buf.subarray(0, 64).includes("OpusHead") ? "opus" : "ogg", type: "audio/ogg" };
-    if (tag(0, "RIFF") && tag(8, "WAVE")) return { ext: "wav", type: "audio/wav" };
-    if (tag(4, "ftyp")) return { ext: "m4a", type: "audio/mp4" };
-    if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) return { ext: "webm", type: "audio/webm" }; // EBML
-    return null;
-}
-
 function readUploadMeta(id) {
     try {
         const meta = JSON.parse(readFileSync(`${UPLOAD_DIR}/${id}.json`, "utf8"));
@@ -731,6 +884,11 @@ app.post("/upload", requireMatrixUser, express.raw({ type: "multipart/form-data"
     try {
         let meta = readUploadMeta(id);
         if (!meta) {
+            const use = uploadUsage(req.matrixUser);
+            if (use.count >= UPLOAD_USER_MAX || use.bytes + f.data.length > UPLOAD_USER_BYTES)
+                return res.status(507).json({ error: "You have a lot of sounds on this server already. Delete some of yours first." });
+            if (use.total + f.data.length > UPLOAD_TOTAL_BYTES)
+                return res.status(507).json({ error: "This server's room for sounds is full; its owner can make more." });
             // bytes first, sidecar last: a sidecar without audio would be a dead entry in
             // /uploads, whereas orphan audio without a sidecar is merely unreachable
             const tmp = `${file}.part-${process.pid}-${Date.now()}`;
@@ -783,6 +941,9 @@ app.delete("/uploads/:id", requireMatrixUser, (req, res) => {
 });
 
 // ── GIF picker (Giphy) ─────────────────────────────────────────────────────
+// Security review 2026-10-26: Giphy calls are spent by members (their hourly budget) or the small shared allowance
+// for apps that send no token (access.mjs); answers are cached (trending 10 min, a search 30 min), so the owner's key
+// is asked once per query, not once per keystroke of everyone.
 function mapGif(g) {
     const img = g.images || {};
     const full = img.downsized || img.original || {};
@@ -797,52 +958,64 @@ function mapGif(g) {
     };
 }
 
-async function giphyList(endpoint, params, res) {
+const gifCache = new Map(); // key -> {at, ttl, data}
+async function giphyList(req, res, endpoint, params, cacheKey, ttl) {
     if (!GIPHY_KEY) return res.status(503).json({ error: "GIF search not configured" });
+    const hit = gifCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < hit.ttl) return res.json(hit.data);
+    const no = access.spend(req, "gif");
+    if (no) return access.refuse(res, no);
     try {
         const url =
             `https://api.giphy.com/v1/gifs/${endpoint}?api_key=${GIPHY_KEY}` +
             `${params ? `&${params}` : ""}&limit=24&rating=pg-13&bundle=messaging_non_clips`;
-        const r = await fetch(url);
+        const r = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(10_000) });
         if (!r.ok) return res.status(502).json({ error: `giphy ${r.status}` });
-        const json = await r.json();
-        res.json((json.data || []).map(mapGif).filter((g) => g.url && g.preview));
+        const json = JSON.parse((await readCapped(r, 4 * MB)).toString("utf8"));
+        const data = (json.data || []).map(mapGif).filter((g) => g.url && g.preview);
+        if (gifCache.size > 1000) gifCache.clear();
+        gifCache.set(cacheKey, { at: Date.now(), ttl, data });
+        res.json(data);
     } catch (err) {
-        res.status(500).json({ error: err.message || "GIF request failed" });
+        res.status(500).json({ error: String(err.message || "GIF request failed").split(GIPHY_KEY || "\u0000").join("<key>") });
     }
 }
 
-app.get("/gif/search", (req, res) => {
+app.get("/gif/search", access.memberOrLegacy, (req, res) => {
     const q = req.query.q;
     if (!q || typeof q !== "string") return res.status(400).json({ error: "Missing q parameter" });
-    void giphyList("search", `q=${encodeURIComponent(q)}`, res);
+    const t = q.trim().replace(/\s+/g, " ");
+    if (!t) return res.status(400).json({ error: "Missing q parameter" });
+    if (t.length > 100) return res.status(400).json({ error: "q too long" });
+    void giphyList(req, res, "search", `q=${encodeURIComponent(t)}`, `s:${t.toLowerCase()}`, 30 * 60_000);
 });
 
-app.get("/gif/trending", (_req, res) => {
-    void giphyList("trending", "", res);
+app.get("/gif/trending", access.memberOrLegacy, (req, res) => {
+    void giphyList(req, res, "trending", "", "trending", 10 * 60_000);
 });
 
-// Proxy GIF bytes (CORS-safe) so the client can re-upload to the homeserver.
-app.get("/gif/fetch", async (req, res) => {
+// Proxy GIF bytes (CORS-safe) so the client can re-upload to the homeserver. M5 (security review 2026-10-26): Giphy's
+// media hosts only, no redirects, at most GIF_FETCH_MAX_MB (8), and only bytes that ARE an image or an mp4 (sniffed),
+// served with nosniff + the sandbox CSP /clip uses — so nothing Giphy answers can run on this origin.
+const GIF_FETCH_MAX = Math.max(256 * 1024, Math.floor(envNum("GIF_FETCH_MAX_MB", 8, 1, 100) * MB));
+app.get("/gif/fetch", access.memberOrLegacy, async (req, res) => {
     const url = req.query.url;
     if (!url || typeof url !== "string") return res.status(400).json({ error: "Missing url parameter" });
-    let parsed;
+    const target = giphyMediaUrl(url);
+    if (!target) return res.status(403).json({ error: "Only Giphy media URLs allowed" });
+    const no = access.spend(req, "gif");
+    if (no) return access.refuse(res, no);
     try {
-        parsed = new URL(url);
-    } catch {
-        return res.status(400).json({ error: "Bad url" });
-    }
-    if (parsed.protocol !== "https:" || !(parsed.hostname === "giphy.com" || parsed.hostname.endsWith(".giphy.com"))) {
-        return res.status(403).json({ error: "Only giphy.com URLs allowed" });
-    }
-    try {
-        const r = await fetch(url);
-        if (!r.ok) return res.status(502).json({ error: `Fetch failed: ${r.status}` });
-        res.setHeader("Content-Type", r.headers.get("content-type") || "image/gif");
-        const buf = await r.arrayBuffer();
-        res.send(Buffer.from(buf));
+        const r = await fetch(target, { redirect: "error", signal: AbortSignal.timeout(10_000) });
+        if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } return res.status(502).json({ error: `Fetch failed: ${r.status}` }); }
+        const buf = await readCapped(r, GIF_FETCH_MAX);
+        const type = sniffImage(buf);
+        if (!type) return res.status(415).json({ error: "Not an image" });
+        res.set({ ...MEDIA_HEADERS, "Content-Type": type });
+        res.send(buf);
     } catch (err) {
-        res.status(500).json({ error: err.message || "Fetch failed" });
+        if (err.status === 413) return res.status(413).json({ error: "That GIF is too big" });
+        res.status(502).json({ error: "Fetch failed" });
     }
 });
 
@@ -851,7 +1024,14 @@ app.get("/gif/fetch", async (req, res) => {
 // type=video|music|playlist|channel), suggest, trending, playlist, channel, meta (Spotify / Apple Music / YouTube Music
 // links), resolve (song -> its YouTube upload), budget. SQLite cache + Data API units per Pacific day in
 // WATCH_DATA_DIR/watch.db (default: the watch folder next to the config). Caddy maps /api/watch/* here.
-installWatch(app, { youtubeKey: YOUTUBE_KEY, dataDir: process.env.WATCH_DATA_DIR || join(CONF, "watch") });
+// Security review 2026-10-26 (H4): members spend YouTube units from their own daily budget, apps that send no token
+// from a small shared one (access.mjs), so strangers can't empty the owner's quota.
+installWatch(app, {
+    youtubeKey: YOUTUBE_KEY, dataDir: process.env.WATCH_DATA_DIR || join(CONF, "watch"),
+    guard: access.memberOrLegacy,
+    userUnitsPerDay: access.config.watchUserUnitsPerDay, anonUnitsPerDay: access.config.watchAnonUnitsPerDay,
+    anonAllUnitsPerDay: access.config.watchAnonAllUnitsPerDay,
+});
 
 // Call moderation (RBAC, 2026-09-17): server-mute / disconnect a call participant, authorised
 // by the space's roles (or power levels). Lives in moderation.mjs; it borrows this process'
@@ -864,18 +1044,23 @@ dropFromCall = installModeration(app, {
 // Registration invite codes (Tin Hat 10.4, 2026-09-19): server operators mint Synapse registration
 // tokens from Settings -> Invites; the sign-in screen's "Create an account" redeems them. Operators =
 // Synapse server admins + the mxids in invite-operators.json (the owner's account is not a Synapse admin).
-let INVITE_OPERATORS = new Set();
-try { INVITE_OPERATORS = new Set(JSON.parse(readFileSync(join(CONF, "invite-operators.json"), "utf8"))); }
-catch { console.error("[invites] invite-operators.json missing/invalid -> Synapse admins only"); }
-installInvites(app, { requireMatrixUser, synapse, adminToken: ADMIN_TOKEN, operators: INVITE_OPERATORS, serverName: process.env.SERVER_NAME || "" });
+// On a Tin Hat Server (TINHAT_BOX=1) the manager owns invites (Caddy sends /api/admin/* there), so this second
+// privileged route is not mounted at all (security review 2026-10-26: it was still reachable as
+// /api/soundboard/admin/invites).
+if (process.env.TINHAT_BOX === "1") {
+    console.log("[invites] Tin Hat Server: invite codes are the manager's (/api/admin/*); the API's own route is off");
+} else {
+    let INVITE_OPERATORS = new Set();
+    try { INVITE_OPERATORS = new Set(JSON.parse(readFileSync(join(CONF, "invite-operators.json"), "utf8"))); }
+    catch { console.error("[invites] invite-operators.json missing/invalid -> Synapse admins only"); }
+    installInvites(app, { requireMatrixUser, synapse, adminToken: ADMIN_TOKEN, operators: INVITE_OPERATORS, serverName: process.env.SERVER_NAME || "" });
+}
 
 // Reach (Tin Hat 10.6, 2026-09-25; contract REACH.md in both app repos): opt-in presence + web push. Talks only to
 // the pinned internal Synapse. The push GATEWAY runs on its own listener (PUSH_GATEWAY_HOST:PUSH_GATEWAY_PORT; never
 // this app, whose routes /api/soundboard/ exposes wholesale), reachable by Synapse only (on a Tin Hat Server: the box's
 // address on the compose network, the one private address Synapse's ip_range_whitelist allows).
-const REACH_HS = HS_INTERNAL; // pinned at start (REACH A2.4): never taken from a request
-const reachHs = createHs({ hsUrl: REACH_HS });
-const reachAuth = createMatrixAuth({ hs: reachHs });
+// reachHs / reachAuth: created next to HS_INTERNAL above (pinned at start, REACH A2.4).
 installPresence(app, { auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN });
 installPush(app, {
     auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN, dir: CONF,

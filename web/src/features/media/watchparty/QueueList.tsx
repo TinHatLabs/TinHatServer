@@ -19,6 +19,7 @@ import { shortName } from "../shared/format";
 import { clearPlayed, clearQueue, moveItem, moveToNext, playUrl, removeAt, shuffleUpcoming, upcomingLabel, type QueueItem } from "./engine";
 import { serviceLabel } from "./links";
 import s from "./WatchParty.module.css";
+import { openExternal } from "@/core/openlink";
 
 export interface QueueListProps {
   roomId: string;
@@ -315,7 +316,7 @@ export function QueueList({ roomId, queue: shared, nowUrl, inParty, canControl, 
           <MenuItem text="Move up" icon="go-up-symbolic" disabled={!inParty || m.i === 0} onTriggered={() => moveItem(m.i, m.i - 1)} />
           <MenuItem text="Move down" icon="go-down-symbolic" disabled={!inParty || m.i === queue.length - 1} onTriggered={() => moveItem(m.i, m.i + 1)} />
           <MenuSeparator />
-          <MenuItem text="Open link" icon="link-symbolic" onTriggered={() => window.open(linkOf(mq), "_blank", "noopener,noreferrer")} />
+          <MenuItem text="Open link" icon="link-symbolic" onTriggered={() => openExternal(linkOf(mq))} />
           <MenuItem text="Copy link" icon="edit-copy-symbolic" onTriggered={() => copyLink(mq)} />
           <MenuSeparator />
           <MenuItem text="Remove" icon="edit-delete-remove-symbolic" danger disabled={!inParty} onTriggered={() => removeAt(m.i)} />

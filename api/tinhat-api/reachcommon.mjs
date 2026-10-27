@@ -10,11 +10,14 @@
 //   readJson          the request body as JSON with a hard byte limit (these routes bypass the app-wide
 //                     8 KB express.json parser: presence takes 1 KB, the push gateway 64 KB).
 //   RateLimit         sliding window per key.
+//   ipBucket/clientKey who a per-address limit counts: an IPv4 address, or an IPv6 /64 (one home or one server gets
+//                     a whole /64, so rotating addresses inside it must not buy fresh budgets).
 //   mono              the monotonic clock every TTL here runs on (A2.4); wall time only where it must be real
 //                     (JWT expiry, persisted timestamps, a status' `until`).
 //
 // No npm dependency; nothing here logs a token, a user or a body.
 import { createHash } from "node:crypto";
+import { isIP, BlockList } from "node:net";
 import { performance } from "node:perf_hooks";
 
 export const mono = () => performance.now();
@@ -35,6 +38,11 @@ export class RateLimit {
         this.m.set(key, arr);
         if (this.m.size > 5000) this.sweep();
         return true;
+    }
+    /** Would hit(key) be allowed right now? (Counts nothing: lets a caller check several limits before spending any.) */
+    can(key) {
+        const t = this.now();
+        return (this.m.get(key) || []).filter((x) => t - x < this.windowMs).length < this.max;
     }
     /** Seconds until `key` may hit again (>= 1). */
     retryAfter(key) {
@@ -77,6 +85,81 @@ export function clientIp(req) {
     if (EDGE_PROXY && ip === EDGE_PROXY && hops.length >= 2) ip = hops[hops.length - 2];
     return ip.slice(0, 64);
 }
+
+const NAMED_RANGES = {
+    loopback: [["127.0.0.0", 8, "ipv4"], ["::1", 128, "ipv6"]],
+    linklocal: [["169.254.0.0", 16, "ipv4"], ["fe80::", 10, "ipv6"]],
+    uniquelocal: [["10.0.0.0", 8, "ipv4"], ["172.16.0.0", 12, "ipv4"], ["192.168.0.0", 16, "ipv4"], ["fc00::", 7, "ipv6"]],
+};
+
+/**
+ * Express's "trust proxy" for server.mjs, the same rule as clientIp(): only the IMMEDIATE hop is trusted, and only when
+ * it is one of `list` (TRUST_PROXY: comma-separated addresses, networks or express's names loopback / linklocal /
+ * uniquelocal; on a Tin Hat Server "loopback" = its own Caddy, which replaces X-Forwarded-For with the one caller
+ * address it verified). req.ip is then the LAST X-Forwarded-For entry, or the one before it when that is EDGE_PROXY;
+ * anything further left was written by someone else and is never read, whatever it says (express's own "loopback"
+ * walked on past every loopback entry; second review, #5).
+ */
+export function trustProxy(list = "loopback", edge = EDGE_PROXY) {
+    const bl = new BlockList();
+    for (const w of String(list).split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
+        if (NAMED_RANGES[w]) { for (const [net, bits, fam] of NAMED_RANGES[w]) bl.addSubnet(net, bits, fam); continue; }
+        const [addr, bits, extra] = w.split("/");
+        const v = isIP(addr);
+        if (!v || extra !== undefined || (bits !== undefined && !(/^\d{1,3}$/.test(bits) && Number(bits) <= (v === 4 ? 32 : 128)))) {
+            console.warn(`[api] TRUST_PROXY: ignored "${w}"`);
+            continue;
+        }
+        if (bits === undefined) bl.addAddress(addr, v === 4 ? "ipv4" : "ipv6");
+        else bl.addSubnet(addr, Number(bits), v === 4 ? "ipv4" : "ipv6");
+    }
+    const listed = (raw) => {
+        let s = String(raw || "");
+        const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(s);
+        if (mapped) s = mapped[1];
+        const v = isIP(s);
+        return v !== 0 && bl.check(s, v === 4 ? "ipv4" : "ipv6");
+    };
+    return (addr, i) => (i === 0 ? listed(addr) : i === 1 && !!edge && addr === edge);
+}
+
+/** The 8 groups of an IPv6 address (isIP(s) === 6 already checked), an embedded dotted IPv4 tail folded in. */
+function v6Groups(s) {
+    if (s.includes(".")) {
+        const cut = s.lastIndexOf(":");
+        const b = s.slice(cut + 1).split(".").map(Number);
+        s = `${s.slice(0, cut + 1)}${((b[0] << 8) | b[1]).toString(16)}:${((b[2] << 8) | b[3]).toString(16)}`;
+    }
+    const [head, tail] = s.split("::");
+    const hp = head ? head.split(":") : [];
+    const tp = tail === undefined || tail === "" ? [] : tail.split(":");
+    const fill = tail === undefined ? [] : new Array(8 - hp.length - tp.length).fill("0");
+    return [...hp, ...fill, ...tp].map((x) => parseInt(x, 16));
+}
+
+/**
+ * Who a per-address limit counts (security review 2026-10-26: every IPv6 address used to be its own caller, and a home
+ * or a rented server has a whole /64 of them). IPv4 as is; IPv4-mapped IPv6 as its IPv4; any other IPv6 as its /64
+ * ("2001:db8:1:2::/64"); brackets, a port and a zone id are dropped. Anything that isn't an address comes back as it
+ * was (cut to 64 characters), so a broken header can't collide with a real caller.
+ */
+export function ipBucket(raw) {
+    const orig = String(raw ?? "").trim();
+    let s = orig;
+    const br = /^\[([^\]]+)\](?::\d+)?$/.exec(s);
+    if (br) s = br[1];
+    else if (/^[\d.]+:\d+$/.test(s)) s = s.slice(0, s.indexOf(":"));
+    s = s.replace(/%.*$/, "");
+    const v = isIP(s);
+    if (v === 4) return s;
+    if (v !== 6) return orig.slice(0, 64) || "-";
+    const g = v6Groups(s.toLowerCase());
+    if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
+    return `${g.slice(0, 4).map((x) => x.toString(16)).join(":")}::/64`;
+}
+
+/** The limit key of this request's caller: ipBucket(clientIp(req)). */
+export const clientKey = (req) => ipBucket(clientIp(req));
 
 /** Thrown by whoami() when a sign-in check budget is spent (-> 429, never 401: the token may be fine). */
 export class AuthBusy extends Error {}
@@ -142,7 +225,7 @@ export function createMatrixAuth({ hs, now = mono, ttlMs = 60_000, badTtlMs = 60
         const token = m[1];
         const key = sha256hex(token);
         let who;
-        try { who = await whoami(token, key, clientIp(req)); } catch (e) {
+        try { who = await whoami(token, key, clientKey(req)); } catch (e) {
             if (e instanceof AuthBusy) {
                 res.set("Retry-After", "10");
                 res.status(429).json({ error: "too many sign-in checks, try again shortly" });

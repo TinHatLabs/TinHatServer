@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { onClientChanged, peekClient } from "./client";
 import { bearerAllowed } from "@/core/bearer";
 import { createLogger } from "@/core/log";
+import { blobType, inertBlob } from "@/core/mediatype";
 
 const log = createLogger("media");
 
@@ -69,7 +70,8 @@ export function mxcHttpUrl(mxc: string, opts: MediaOpts = {}, hsUrl?: string): s
 
 const inflightBlobs = new Map<string, Promise<Blob>>();
 
-/** Download media bytes with the bearer token. Thumbnail failures fall back to the full file. */
+/** Download media bytes with the bearer token. Thumbnail failures fall back to the full file. The Blob's type comes from
+ *  the allow-list (core/mediatype), never straight from the server's Content-Type. */
 export async function fetchMedia(mxc: string, opts: MediaOpts = {}): Promise<Blob> {
   const url = mxcHttpUrl(mxc, opts);
   if (!url) throw new Error(`not an mxc url: ${mxc}`);
@@ -85,7 +87,9 @@ export async function fetchMedia(mxc: string, opts: MediaOpts = {}): Promise<Blo
       }
       throw new Error(`media ${r.status}`);
     }
-    return r.blob();
+    // H1 (security review 2026-10-26): the server's Content-Type is the uploader's choice — a blob of these bytes
+    // (an object URL in an <img>, "Open image in new tab") must never be text/html or SVG in this origin
+    return inertBlob(await r.blob());
   })();
   inflightBlobs.set(url, run);
   try {
@@ -274,11 +278,12 @@ export async function encryptAttachment(plain: ArrayBuffer): Promise<{ data: Arr
   };
 }
 
-/** Download + decrypt an encrypted file to a Blob with the given mimetype. */
+/** Download + decrypt an encrypted file to a Blob typed by the event's mimetype through the allow-list (core/mediatype:
+ *  never text/html, SVG or any other type a browser would run as a page in this origin). */
 export async function fetchEncryptedMedia(file: EncryptedFile, mimetype?: string): Promise<Blob> {
   const raw = await fetchMedia(file.url);
   const plain = await decryptAttachment(await raw.arrayBuffer(), file);
-  return new Blob([plain], { type: mimetype || "application/octet-stream" });
+  return new Blob([plain], { type: blobType(mimetype) });
 }
 
 /** React: object URL of a decrypted E2EE attachment (cached like useMxcUrl), or undefined. */

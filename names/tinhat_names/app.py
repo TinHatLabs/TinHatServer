@@ -24,7 +24,7 @@ from aiohttp import web
 from . import config as config_mod
 from . import pow as pow_mod
 from . import probe, rules
-from .db import DB
+from .db import DB, code_hint
 from .dns_cloudflare import Cloudflare, DNSError
 from .relay_api import RelayAPI
 
@@ -230,7 +230,7 @@ class Service:
         except DNSError as e:
             log.error("register %s: DNS: %s", name, e)
             self.db.event("dns-error", name, ip, str(e))
-        self.db.event("register", name, ip, f"code={code}")
+        self.db.event("register", name, ip, f"code={code_hint(code)}")
         return web.json_response({"ok": True, "name": name, "fqdn": self.fqdn(name), "box_id": box_id,
                                   "secret": secret, "ip": ip,
                                   "acme": {"server_url": self.cfg["api_url"], "username": box_id, "password": secret,
@@ -439,7 +439,8 @@ class Service:
         if not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", nonce):
             return jerr(400, "bad-request", "Bad nonce.")
         now = time.time()
-        if self.db.count("probe-open", now - HOUR, ip=ip) >= self.cfg["limits"]["probes_per_hour"]:
+        # a burst limit: an IPv6 caller counts as its /64 (registrations and live names count exact addresses)
+        if self.db.count("probe-open", now - HOUR, ip=ip, per="net") >= self.cfg["limits"]["probes_per_hour"]:
             return jerr(429, "limit-probe", "Too many checks this hour. Try again later.")
         self.used_nonces[pow_nonce] = now + 900
         self.db.event("probe-open", host, ip)
@@ -542,7 +543,7 @@ Report abuse: <a href="mailto:{html.escape(self.cfg['abuse_contact'])}">{html.es
                 body = {}
         if what == "codes" and req.method == "POST":
             code = self.db.new_code(int(body.get("uses", 1)), body.get("days", 30), str(body.get("note", "")))
-            self.db.event("code-new", detail=f"{code} {body.get('note', '')}")
+            self.db.event("code-new", detail=f"{code_hint(code)} {body.get('note', '')}")
             return web.json_response({"ok": True, "code": code})
         if what == "codes" and req.method == "GET":
             return web.json_response({"ok": True, "codes": [dict(r) for r in self.db.codes()]})

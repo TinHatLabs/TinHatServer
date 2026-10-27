@@ -1,5 +1,5 @@
 // devhooks.ts — `window.__twPad` for the Pad gates (tools/pad-gate.mjs), with the core dev hook's conditions (dev
-// builds, #twdebug, or window.__TW_DEBUG__). A lab homeserver has no SFU, so a receiver can't be in a real call there:
+// builds or window.__TW_DEBUG__; no longer #twdebug). A lab homeserver has no SFU, so a receiver can't be in a real call there:
 // `fakeCall` stands in for one — this device publishes a well-formed call membership with the `pad1` cap (discovery),
 // answers Pad commands from a stand-in snapshot and RECORDS what it would have run (the unit tests prove each op calls
 // its button's command). Everything else is real: the Olm to-device transport, the trust facts, the rules, the
@@ -19,7 +19,7 @@ import { closePad, openPad, padController, padReceiver, padTransport, setPadTest
 type Obj = Record<string, unknown>;
 
 function debugOn(): boolean {
-  return import.meta.env.DEV || /twdebug/.test(location.hash) || (window as Window & { __TW_DEBUG__?: boolean }).__TW_DEBUG__ === true;
+  return import.meta.env.DEV || (window as Window & { __TW_DEBUG__?: boolean }).__TW_DEBUG__ === true;
 }
 
 const TEST_GEN = -7_001; // a membership "join generation" no real join uses

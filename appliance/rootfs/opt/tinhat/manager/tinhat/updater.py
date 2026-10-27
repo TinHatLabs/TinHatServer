@@ -12,6 +12,7 @@ it installs. Order, so that a failure at any point leaves a working server:
 import fcntl
 import json
 import platform
+import re
 import shutil
 import socket
 import ssl
@@ -370,9 +371,42 @@ def healthy(version: str, wait: float = HEALTH_WAIT) -> tuple[bool, list[str]]:
 
 # ---- the job ---------------------------------------------------------------------------------------------------------
 
+# A `compose up --force-recreate` that dies mid-recreate (an image that isn't there, a full disk) leaves this project's
+# old container renamed `<12 hex>_tinhat-…` in "Created", and every later `up` then fails with "Conflict … name already
+# in use", the rollback's own included (gates, 2026-10-26: a release naming a missing image ended "broken" with every
+# service down). Only that name shape, only this project's containers (compose's own label), are ever removed.
+STRANDED = re.compile(r"^[0-9a-f]{12}_tinhat-[a-z0-9-]+$")
+
+
+def clear_stranded() -> list[str]:
+    """Remove the containers a failed compose recreate left behind (see STRANDED). Returns their names."""
+    r = sh("docker", "ps", "-a", "--filter", "label=com.docker.compose.project=tinhat", "--format", "{{.ID}} {{.Names}}",
+           timeout=60)
+    gone = []
+    for line in (r.stdout or b"").decode(errors="replace").splitlines() if r.returncode == 0 else []:
+        cid, _, name = line.strip().partition(" ")
+        if re.fullmatch(r"[0-9a-f]{12,64}", cid) and STRANDED.match(name) and sh("docker", "rm", "-f", cid, timeout=120).returncode == 0:
+            gone.append(name)
+    if gone:
+        say(f"  removed what a failed recreate left behind: {', '.join(gone)}")
+    return gone
+
+
+UP_ATTEMPTS = 4
+
+
 def services_up() -> bool:
-    return sh(*COMPOSE, "up", "-d", "--no-build", "--pull", "never", "--remove-orphans", "--force-recreate",
-              timeout=900).returncode == 0
+    """Every service up on the current files. Before each attempt the containers a half-done recreate left behind are
+    cleared: compose recreates the services in parallel, so one conflict aborts the others midway and strands more of
+    them (lab, 2026-10-27: one clear + one retry still ended in a conflict). Up to UP_ATTEMPTS tries."""
+    for i in range(UP_ATTEMPTS):
+        clear_stranded()
+        if i:
+            say(f"  starting the services again (try {i + 1} of {UP_ATTEMPTS})")
+        if sh(*COMPOSE, "up", "-d", "--no-build", "--pull", "never", "--remove-orphans", "--force-recreate",
+              timeout=900).returncode == 0:
+            return True
+    return False
 
 
 def rollback(snap: Path, ver: str, frm: str, why: str) -> int:
@@ -383,13 +417,19 @@ def rollback(snap: Path, ver: str, frm: str, why: str) -> int:
     restore_files(snap)
     retag(snap / "images.lock")
     db_ok = restore_db(snap)
+    up_ok = True
     if db_ok:
-        services_up()
+        up_ok = services_up()  # its result counts: a rollback whose services never came up is never "rolled back"
+        if not up_ok:
+            say("  the services didn't come back up on the old version's files")
     else:  # the database didn't come back: chat stays off (only the web server for the dashboard), never half a database
         sh(*COMPOSE, "stop", "synapse", "api", "games", "livekit", "lk-jwt", timeout=300)
         sh(*COMPOSE, "up", "-d", "--no-build", "--pull", "never", "caddy", timeout=300)
     MANAGER.start()
     ok, bad = healthy(frm, 300)
+    ok = ok and up_ok
+    if not up_ok and not bad:
+        bad = ["the services didn't start"]
     msg = (f"Tin Hat Server {ver} didn't start properly ({why}), so the server went back to {frm} by itself. "
            "Messages sent during the few minutes of the update may be missing." if ok and db_ok else
            f"Tin Hat Server {ver} didn't start properly, and going back to {frm} didn't fully work either "

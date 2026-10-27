@@ -8,9 +8,18 @@
 #   tinhat factory-reset --yes-erase-everything
 #                                 delete ALL accounts, messages and settings and start over at the setup wizard
 #   tinhat uninstall [--erase-data]   (installed with install.sh) remove Tin Hat Server from this machine
+#   tinhat proxy-addresses [--set ADDR[,ADDR...] | --clear]
+#                                 behind your own reverse proxy: which address(es) count as the proxy; --set names them
+#                                 (the way back in if a wrong list locked the dashboard out), --clear lets any
+#                                 home-network address count again
+#   tinhat api-limits [NAME=VALUE ... | --reset NAME ... | --reset-all]
+#                                 the extras' limits (GIFs, sounds, YouTube; docs/API.md): show, set, back to default
 #   tinhat adopt-synapse DIR @owner:server
 #                                 bring a Synapse that ran elsewhere under this server's name into this server
 #                                 (its database, media and signing key; everyone keeps their account): docs/ADOPT.md
+#   tinhat pyenv status|check|off|on|ensure
+#                                 the manager's web toolkit: Tin Hat's pinned aiohttp or the system's; off / on is the
+#                                 owner's switch for this machine (the manager restarts on it)
 set -euo pipefail
 STATE=/var/lib/tinhat
 DC=(docker compose -p tinhat -f /opt/tinhat/compose.yaml --env-file "$STATE/compose.env")
@@ -29,6 +38,17 @@ except Exception:
 print(f"phase:       {s.get('phase', 'unconfigured')}")
 print(f"server name: {s.get('server_name', '-')}")
 print(f"version:     {open('/opt/tinhat/VERSION').read().strip()}")
+try:  # what the manager runs on (tinhat/pyenv.py writes it at every start)
+    p = json.load(open("/var/lib/tinhat/pyenv.json"))
+    if p.get("runtime") == "pinned":
+        w = f"aiohttp {p.get('aiohttp')} (Tin Hat's pinned copy)"
+    elif p.get("runtime") == "system":
+        w = f"aiohttp {p.get('aiohttp')} from the system, NOT Tin Hat's pinned copy: {p.get('reason')}"
+    else:
+        w = "starting"
+except Exception:
+    w = "unknown"
+print(f"web toolkit: {w}")
 PY
     echo "addresses:   $(hostname -I 2>/dev/null)"
     [ -f "$STATE/compose.env" ] && "${DC[@]}" ps --format 'table {{.Service}}\t{{.State}}\t{{.Status}}' || true
@@ -82,6 +102,15 @@ PY
       echo "Done. The server is back at the setup wizard; the new setup code is on its screen."
     fi
     ;;
+  api-limits)
+    shift
+    cd /opt/tinhat/manager && exec python3 -m tinhat api-limits "$@"
+    ;;
+  proxy-addresses)
+    case "${2:-}" in ""|--clear|--set) ;; *) echo "usage: tinhat proxy-addresses [--set ADDR[,ADDR...] | --clear]" >&2; exit 2 ;; esac
+    shift
+    cd /opt/tinhat/manager && exec python3 -m tinhat proxy-addresses "$@"
+    ;;
   adopt-synapse)
     DIR=${2:-}; OWNER=${3:-}
     [ -d "$DIR" ] && [ -n "$OWNER" ] || { echo "usage: tinhat adopt-synapse DIR @owner:server   (docs/ADOPT.md)" >&2; exit 2; }
@@ -125,8 +154,17 @@ PY
     rm -f /usr/local/sbin/tinhat
     echo "Tin Hat Server is removed. Docker and the other packages it installed stay; remove them with apt if you like."
     ;;
+  pyenv)
+    shift
+    (cd /opt/tinhat/manager && python3 -m tinhat pyenv "$@")
+    case "${1:-}" in
+      off | on)
+        if [ "$DOCK" = 1 ]; then echo "Restart it now: docker restart tinhat-manager (on the machine that runs it)"
+        else systemctl restart tinhat-manager && echo "The manager restarted."; fi ;;
+    esac
+    ;;
   *)
-    sed -n '2,12p' "$0"
+    sed -n '2,/^set -euo pipefail/{/^#/p}' "$0"   # the header above, however long it grows
     exit 2
     ;;
 esac

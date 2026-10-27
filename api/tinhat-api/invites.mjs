@@ -16,6 +16,9 @@ import { randomInt } from "node:crypto";
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_RE = /^[A-Za-z0-9._~-]{1,64}$/;   // Synapse's token charset
+/** What a log line may say about a code: its first 5 characters ("TH-AB…"). A live code in the logs is a way in for
+ *  whoever reads them (security review 2026-10-26). */
+export const codeHint = (code) => `${String(code ?? "").slice(0, 5)}…`;
 export const INVITE_PREFIX = "TH-";
 
 /** A new invite code: TH-XXXX-XXXX. */
@@ -25,11 +28,11 @@ export function mintInviteCode() {
 }
 
 /**
- * Mount the routes. deps: { requireMatrixUser, synapse, adminToken, operators: Set<mxid>, serverName }.
+ * Mount the routes. deps: { requireMatrixUser, synapse, adminToken, operators: Set<mxid>, serverName, log? }.
  */
 export function installInvites(app, deps) {
     const { requireMatrixUser, synapse, adminToken, operators, serverName } = deps;
-    const log = (...a) => console.log("[invites]", ...a);
+    const log = deps.log || ((...a) => console.log("[invites]", ...a));
     if (!adminToken) {
         console.error("[invites] synapse-admin.token missing -> invite codes DISABLED");
         return;
@@ -85,7 +88,7 @@ export function installInvites(app, deps) {
         try {
             const r = await synapse("/_synapse/admin/v1/registration_tokens/new", { method: "POST", body: JSON.stringify(body) }, adminToken);
             if (!r.ok) return res.status(502).json({ error: r.body?.error || `Synapse said ${r.status}` });
-            log(`${req.matrixUser} minted ${r.body.token} (uses ${body.uses_allowed ?? "unlimited"}, expires ${body.expiry_time ? new Date(body.expiry_time).toISOString() : "never"})`);
+            log(`${req.matrixUser} minted ${codeHint(r.body.token)} (uses ${body.uses_allowed ?? "unlimited"}, expires ${body.expiry_time ? new Date(body.expiry_time).toISOString() : "never"})`);
             res.json({ invite: shape(r.body) });
         } catch (e) { res.status(502).json({ error: `Synapse unreachable: ${e.message}` }); }
     });
@@ -97,7 +100,7 @@ export function installInvites(app, deps) {
             const r = await synapse(`/_synapse/admin/v1/registration_tokens/${encodeURIComponent(code)}`, { method: "DELETE" }, adminToken);
             if (r.status === 404) return res.status(404).json({ error: "That code is already gone" });
             if (!r.ok) return res.status(502).json({ error: `Synapse said ${r.status}` });
-            log(`${req.matrixUser} revoked ${code}`);
+            log(`${req.matrixUser} revoked ${codeHint(code)}`);
             res.json({ ok: true });
         } catch (e) { res.status(502).json({ error: `Synapse unreachable: ${e.message}` }); }
     });

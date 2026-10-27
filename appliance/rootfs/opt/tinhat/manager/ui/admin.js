@@ -859,6 +859,39 @@ function relayCard(n, el) {
     h("div.row.wrap", off), offWhat, err);
 }
 
+/** Behind the owner's reverse proxy: which address(es) count as the proxy. Named, nobody else on the home network may
+ * connect to the proxy port or say who the caller is (the sign-in limits count that address). Never set by itself:
+ * the server shows where the proxy connects from and offers it. */
+function proxyTrustCard(px, el) {
+  const named = px.trusted || [];
+  const input = h("input", { type: "text", value: named.join(", "), placeholder: px.peer || "192.168.1.5", autocomplete: "off", spellcheck: "false", "aria-label": "Your reverse proxy's address" });
+  const err = h("div.error.hidden");
+  const save = h("button.btn", { type: "button" }, "Save");
+  const send = async (addresses) => {
+    save.disabled = true;
+    err.classList.add("hidden");
+    try {
+      await api("/admin/api/network/proxy", { json: { addresses } });
+      toast(addresses.length ? "Only your proxy connects now" : "Any home-network address counts as your proxy again");
+      tabNetwork(el, true);
+    } catch (ex) { err.textContent = ex.message; err.classList.remove("hidden"); save.disabled = false; }
+  };
+  save.addEventListener("click", () => send(input.value.split(/[\s,]+/).filter(Boolean)));
+  const use = px.peer && !named.includes(px.peer)
+    ? h("button.btn.ghost", { type: "button", onclick: () => send([...named, px.peer]) }, `Use ${px.peer}`) : null;
+  const clear = named.length ? h("button.btn.ghost", { type: "button", onclick: () => send([]) }, "Any home-network address") : null;
+  return h("div.card.stack",
+    h("div.row.wrap.between", h("h2", "Who counts as your proxy"),
+      h(`span.chip.${named.length ? "good" : "muted"}`, h("span.dot"), named.length ? named.join(", ") : "Any home-network address")),
+    h("p.muted", named.length
+      ? "Only these addresses may connect to this server's port " + px.port + " and tell it who the visitor is."
+      : "Right now any device on your home network may connect to port " + px.port + " and tell this server who the visitor is, so a device at home could dodge the sign-in limits. Name your proxy to close that."),
+    px.peer ? h("p.small", "This page reached the server through ", h("span.mono", px.peer), ".") : null,
+    h("label.field", h("span", "Your reverse proxy's address"), input,
+      h("small", "The address your proxy connects to this server from; several with commas. A small network (like 192.168.1.0/28) works too.")),
+    h("div.row.wrap", save, use, clear), err);
+}
+
 async function tabNetwork(el, quiet) {
   if (!quiet) loading(el);
   let n;
@@ -951,6 +984,7 @@ async function tabNetwork(el, quiet) {
       err),
     n.domain ? domainCard(n) : null,
     n.proxy ? proxyCard(n.proxy) : null,
+    n.proxy ? proxyTrustCard(n.proxy, el) : null,
     relayCard(n, el),
     h("div.grid2",
       h("div.card.flat.stack-sm",

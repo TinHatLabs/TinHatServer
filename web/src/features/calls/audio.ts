@@ -11,7 +11,9 @@ import { createLogger } from "@/core/log";
 import type { CallCategory } from "./contract";
 import { clamp, errText, mxidOf } from "./util";
 import { setUiSink } from "@/core/sounds";
-import { AudioClock, TAP_SRC, type Stamp } from "./envclock";
+import { AudioClock, type Stamp } from "./envclock";
+// the level tap's worklet: a same-origin file (the app's CSP has no blob: script source)
+import tapWorkletUrl from "./tap.worklet.js?url";
 
 const log = createLogger("call-audio");
 
@@ -86,7 +88,7 @@ let outAnalyser: AnalyserNode | null = null;
 let fallbackEl: HTMLAudioElement | null = null;
 let workletReady: Promise<boolean> | null = null;
 
-// The level tap's worklet source is envclock.ts TAP_SRC (frames on the context's sample grid, posted with their end).
+// The level tap's worklet is tap.worklet.js (frames on the context's sample grid, posted with their end).
 
 // GPU.md §2.10 (E3): the call's context runs only while something uses it — remote audio, a level tap (the mic
 // meter, heard-by), the output monitor. After a call (and after the last monitor) it is suspended (it ran until the
@@ -123,9 +125,8 @@ export function audioContext(): AudioContext {
     outAnalyser.fftSize = 1024;
     master.connect(outAnalyser);
     master.connect(ctx.destination);
-    const url = URL.createObjectURL(new Blob([TAP_SRC], { type: "text/javascript" }));
     workletReady = ctx.audioWorklet
-      .addModule(url)
+      .addModule(tapWorkletUrl)
       .then(() => true)
       .catch((e) => {
         log.warn(`level tap worklet unavailable: ${errText(e)}`);
@@ -166,7 +167,7 @@ function frameStamp(c: AudioContext, end: number, n: number): Stamp | null {
   const paired = typeof ctxT === "number" && typeof perfT === "number" && perfT > 0;
   const audioMs = paired ? ctxT * 1000 : c.currentTime * 1000;
   const wallMs = paired ? Date.now() - (performance.now() - perfT) : Date.now();
-  // frames end on the context's 10 ms grid (TAP_SRC; within a sample): snap to it, so every frame has the same phase
+  // frames end on the context's 10 ms grid (tap.worklet.js; within a sample): snap to it, so every frame has the same phase
   const was = clock.epoch;
   const s = clock.stamp(Math.round((end * 100) / c.sampleRate) * 10, n, audioMs, wallMs, c.currentTime * 1000);
   if (clock.epoch !== was) noteClockEpoch(paired);

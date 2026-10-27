@@ -103,8 +103,11 @@ test("vapid_jwt_es256_verifies_with_the_public_key", () => {
         assert.deepEqual(JSON.parse(Buffer.from(h, "base64url")), { typ: "JWT", alg: "ES256" });
         assert.equal(fromB64u(s).length, 64, "ieee-p1363 r||s, not DER");
         const claims = verifyVapidJwt(jwt, v.publicKey);
-        assert.deepEqual(claims, { aud: "https://web.push.apple.com", exp: nowSec + 12 * 3600, sub: "mailto:postmaster@example.org" });
-        assert.equal(JWT_TTL_SEC, 12 * 3600);
+        assert.deepEqual(claims, { aud: "https://web.push.apple.com", exp: nowSec + 3600, sub: "mailto:postmaster@example.org" });
+        assert.equal(JWT_TTL_SEC, 3600, "1 h: a captured header replays for an hour at most");
+        assert.ok(JWT_TTL_SEC <= 24 * 3600, "RFC 8292: exp no more than 24 h ahead");
+        assert.deepEqual(Object.keys(claims).sort(), ["aud", "exp", "sub"], "standard claims only (the relay reads exp)");
+        assert.ok(Number.isInteger(claims.exp), "exp is NumericDate seconds");
         // tampered claims / another key -> rejected
         const forged = jwt.split(".");
         forged[1] = b64u(JSON.stringify({ aud: "https://evil.example", exp: nowSec + 60, sub: "mailto:x@y" }));
@@ -218,8 +221,34 @@ test("sender_request_shape_and_decryptable_body", async () => {
         const m = /^vapid t=([^,]+), k=(.+)$/.exec(init.headers.Authorization);
         assert.ok(m, init.headers.Authorization);
         assert.equal(m[2], v.publicKey);
-        assert.deepEqual(verifyVapidJwt(m[1], v.publicKey), { aud: "https://updates.push.services.mozilla.com", exp: 1_760_000_000 + 43_200, sub: "mailto:postmaster@example.org" });
+        assert.deepEqual(verifyVapidJwt(m[1], v.publicKey), { aud: "https://updates.push.services.mozilla.com", exp: 1_760_000_000 + 3600, sub: "mailto:postmaster@example.org" });
         assert.deepEqual(decrypt(init.body, ua.getPrivateKey(), auth), payload);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("vapid_jwt_is_fresh_per_send_and_expires_within_an_hour", async () => {
+    // Nothing caches a JWT: two sends an hour apart each carry their own exp = that send's wall time + 1 h, so no
+    // header ever goes out that is already expired or valid for longer than an hour (security review 2026-10-26).
+    const dir = tmp();
+    try {
+        const v = loadOrCreateVapid(join(dir, "vapid.json"));
+        const ua = createECDH("prime256v1");
+        ua.generateKeys();
+        const sub = parseSubscription({ endpoint: "https://fcm.googleapis.com/fcm/send/abc", p256dh: b64u(ua.getPublicKey()), auth: b64u(randomBytes(16)) });
+        assert.equal(sub.ok, true);
+        const exps = [];
+        const fetchImpl = async (_url, init) => {
+            const m = /^vapid t=([^,]+), k=(.+)$/.exec(init.headers.Authorization);
+            exps.push(verifyVapidJwt(m[1], v.publicKey).exp);
+            return new Response(null, { status: 201 });
+        };
+        let wall = 1_760_000_000_000;
+        for (let i = 0; i < 2; i++) {
+            const r = await sendWebPush({ sub, payload: Buffer.from("{}"), vapid: v, subject: "mailto:a@b", fetchImpl, wallNow: () => wall });
+            assert.equal(r.status, 201);
+            wall += 3600_000;
+        }
+        assert.deepEqual(exps, [1_760_000_000 + 3600, 1_760_003_600 + 3600]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

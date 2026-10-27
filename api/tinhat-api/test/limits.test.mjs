@@ -58,6 +58,6 @@ test("the window slides: a minute later it plays again", () => {
 test("the clip tier covers the route variants Express serves (case, trailing slash)", () => {
     const l = createLimits(clock());
     const ip = "198.51.100.7";
-    for (const p of ["/clip/", "/CLIP", "/Fetch/", "/fetch//"]) assert.equal(l.request(p, ip), true, p);
+    for (const p of ["/clip/", "/CLIP", "/Fetch/", "/fetch//", "/clip/sign", "/Clip/Sign/"]) assert.equal(l.request(p, ip), true, p);
     assert.equal(hits(l, "/search", ip, STRICT_PER_MIN), STRICT_PER_MIN, "none of them took a strict one");
 });

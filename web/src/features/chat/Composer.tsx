@@ -21,6 +21,7 @@ import { completeEmoji, type EmojiItem } from "./lib/emoji";
 import { expandSlash, type PickedMention } from "./lib/markdown";
 import { displayName, snippetOf, type Row } from "./lib/model";
 import { pastedName } from "./lib/format";
+import { inertBlob, isScriptableType } from "@/core/mediatype";
 import { editMessage, playSend, roomReadyToSend, sendAttachment, sendEmote, sendPlain, sendReply, sendText, sendTyping, sendWithMentions } from "./actions";
 import { EmojiPicker } from "./EmojiPicker";
 import { useConvToast } from "./convToast";
@@ -67,8 +68,10 @@ let stageSeq = 0;
 const FIELD_BOTTOM = 5;
 
 function toStaged(f: File): StagedFile {
-  const isImage = f.type.startsWith("image/");
-  return { id: `st${++stageSeq}`, file: f, url: isImage ? URL.createObjectURL(f) : "", isImage };
+  // an SVG (or any type a browser runs as a page) is staged as a file: its preview blob would be octet-stream
+  // (core/mediatype — no object URL of this origin carries a script-capable type), which no <img> draws
+  const isImage = f.type.startsWith("image/") && !isScriptableType(f.type);
+  return { id: `st${++stageSeq}`, file: f, url: isImage ? URL.createObjectURL(inertBlob(f)) : "", isImage };
 }
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(p, ref) {

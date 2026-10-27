@@ -17,7 +17,7 @@
 // isn't a guest (and has the room's invite level). Guests never manage, admit or see the link.
 import { readFileSync, writeFileSync, renameSync } from "node:fs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { RateLimit, readJson, safe, noStore, isObj, wall, clientIp, UNSAFE_TEXT } from "./reachcommon.mjs";
+import { RateLimit, readJson, safe, noStore, isObj, wall, clientKey, UNSAFE_TEXT } from "./reachcommon.mjs";
 
 export const G = Object.freeze({
     STATE: "dev.tinhat.guests",
@@ -410,7 +410,7 @@ export function createGuests(deps) {
             const body = await bodyOf(req, res); if (!body) return;
             const g = String(body.g || "");
             if (!KEY_RE.test(g) || !st.on || !st.key || !sameKey(g, st.key)) return res.status(410).json({ error: "This guest link isn't open any more. Ask whoever sent it for a new one.", closed: true });
-            const ip = clientIp(req);
+            const ip = clientKey(req);  // an IPv6 caller counts as its /64
             if (!knocks.hit(ip)) { res.set("Retry-After", String(knocks.retryAfter(ip))); return res.status(429).json({ error: "That's a lot of knocking. Wait a few minutes, then try again." }); }
             if (waiting.size >= G.MAX_WAITING || tickets.size >= G.MAX_TICKETS) return res.status(429).json({ error: "Lots of people are waiting already. Try again in a few minutes." });
             const id = rnd(6), ticket = rnd(24), name = cleanName(body.name);

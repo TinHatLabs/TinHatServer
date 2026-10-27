@@ -9,7 +9,8 @@
 import { useSyncExternalStore } from "react";
 import { getState, JOINSOUNDS_ROOM_TYPE } from "@/core/matrix";
 import { createLogger } from "@/core/log";
-import { clipUrlFor } from "../shared/clip";
+import { toast } from "@/core/bus";
+import { FOREIGN_SOUND_NOTE, clipUrlFor } from "../shared/clip";
 import { playClip, stopClip } from "@/core/sounds";
 import { callRoomOf, enginePlaySound, engineStopSound, engineHandlesJoinSound, isInCall, onCallChange } from "../shared/call";
 import { fetchJoinSound } from "./data";
@@ -71,7 +72,13 @@ export function togglePreview(url: string): void {
     previewUrl = "";
     emit();
   };
-  void playClip(clipUrlFor(url), { channel: "preview", onEnded: clear }).then((h) => {
+  const src = clipUrlFor(url);
+  if (!src) {
+    toast(FOREIGN_SOUND_NOTE);
+    clear();
+    return;
+  }
+  void playClip(src, { channel: "preview", onEnded: clear }).then((h) => {
     if (!h) clear();
     else if (previewUrl !== url) h.stop();
   });

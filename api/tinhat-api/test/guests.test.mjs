@@ -306,6 +306,12 @@ test("limits: 20 waiting, 5 knocks per address per 10 minutes; names are cleaned
     assert.ok(Number(sixth.headers["retry-after"]) >= 1);
     for (let i = 0; i < 15; i++) assert.equal((await call(w.g.h.knock, { method: "POST", body: { g, name: `B${i}` }, headers: ip(`198.51.100.${10 + i}`) })).statusCode, 200);
     assert.equal((await call(w.g.h.knock, { method: "POST", body: { g, name: "C" }, headers: ip("198.51.100.99") })).statusCode, 429, "20 wait already");
+    // an IPv6 home is one caller: five knocks from its /64, whatever the addresses, then 429 (security review 2026-10-26)
+    const w6 = world();
+    const g6 = keyOf((await call(w6.g.h.manage("on"), { method: "POST", headers: bearer("towner") })).body.link);
+    for (let i = 0; i < 5; i++) assert.equal((await call(w6.g.h.knock, { method: "POST", body: { g: g6, name: `V${i}` }, headers: ip(`2001:db8:7:8::${i + 1}`) })).statusCode, 200);
+    assert.equal((await call(w6.g.h.knock, { method: "POST", body: { g: g6, name: "V5" }, headers: ip("2001:db8:7:8:abcd::1") })).statusCode, 429);
+    assert.equal((await call(w6.g.h.knock, { method: "POST", body: { g: g6, name: "W" }, headers: ip("2001:db8:7:9::1") })).statusCode, 200, "the next /64 is somebody else");
     assert.equal(cleanName("  Ana‮\u0000  Banana  "), "Ana Banana");
     assert.equal(cleanName(""), "Guest");
     assert.equal([...cleanName("x".repeat(80))].length, G.NAME_MAX);

@@ -18,6 +18,7 @@ import re
 import secrets
 import shutil
 import tarfile
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -25,7 +26,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from . import apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
-from . import templates
+from . import pyenv, templates
 from .install import Installer, validate, write_synapse_config
 from .synapse import Synapse
 
@@ -69,7 +70,7 @@ def _proxies() -> set[str] | None:
     def make():
         if not (state.load_state().get("mode") == "domain" and owndomain.settings()[0] == "proxy"):
             return None
-        return {a for a in hw.addresses() if ":" not in a}
+        return {a for a in hw.addresses() if ":" not in a} | {a for a in owndomain.proxies() if "/" not in a}
     return _cached("proxies", 60, make)
 
 
@@ -91,6 +92,59 @@ def _client(req: web.Request) -> str:
 
 def _home(req: web.Request) -> bool:
     return limits.home(_client(req), _home_nets())
+
+
+def _peer(req: web.Request) -> str:
+    """Behind the owner's reverse proxy: the address that connected to the proxy port (Caddy's X-Tinhat-Peer on the
+    dashboard's route, which replaces whatever a caller sent). "" in every other mode, or when it isn't an address."""
+    if not state.behind_proxy():
+        return ""
+    a = limits._ip(req.headers.get("X-Tinhat-Peer", ""))
+    return str(a) if a is not None else ""
+
+
+async def apply_proxy_addresses(new: list[str]) -> tuple[bool, str]:
+    """Save the proxy list and put it live. Success only once the web server runs it (second review): the Caddyfile is
+    written beside the live one (Caddyfile.new), validated, and only then swapped in and reloaded (review of 116d103,
+    #5: a manager restart between writing and validating must never leave an unchecked file for Caddy's next start).
+    A refused file changes nothing; a failed reload puts the previous Caddyfile and state back and reloads them. The
+    caller holds _apply_lock (the dashboard) or is the console; the state is read here, under it. -> (ok, why not)."""
+    from . import install
+    st = state.load_state()
+    before = dict(st.get("domain") or {})
+    dom = {k: v for k, v in before.items() if k != "proxies"}
+    if new:
+        dom["proxies"] = new
+    live = config.CADDYFILE
+    staged = live.with_name(live.name + ".new")
+    old = live.read_bytes() if live.exists() else None
+    old_mode = (live.stat().st_mode & 0o777) if live.exists() else 0o644
+    state.save_state(domain=dom)
+    try:
+        install.refresh_configs(caddyfile_to=staged)
+        if not staged.exists():
+            state.save_state(domain=before)
+            return False, "no Caddyfile was written"
+        rc, out = await compose.caddy_validate(f"/etc/caddy/{staged.name}")
+        if rc != 0:
+            state.save_state(domain=before)
+            return False, f"validate: {out[-400:]}"
+        os.replace(staged, live)
+        rc, out = await compose.caddy_reload()
+        if rc == 0:
+            return True, ""
+        why = f"reload: {out[-400:]}"
+        state.save_state(domain=before)
+        if old is not None:
+            fd, tmp = tempfile.mkstemp(dir=live.parent, prefix=f".{live.name}.")
+            with os.fdopen(fd, "wb") as f:
+                f.write(old)
+            os.chmod(tmp, old_mode)
+            os.replace(tmp, live)
+        await compose.caddy_reload()  # best effort: the previous Caddyfile is what ran before
+        return False, why
+    finally:
+        staged.unlink(missing_ok=True)
 
 
 def _page(name: str) -> web.FileResponse:
@@ -241,17 +295,26 @@ class Manager:
 
     async def setup_status(self, req: web.Request) -> web.Response:
         st = state.load_state()
-        out = {"phase": st.get("phase", "unconfigured"), "version": config.VERSION, "serverName": st.get("server_name"),
-               "mode": st.get("mode", "lan"), "zone": environment.env()["zone"], "edition": config.edition(),
-               "proxyOnly": config.proxy_only(), "platform": "windows" if updates.wsl() else None,
-               "moved": moved.is_moved(st),
-               "unlocked": self._setup_ok(req) or st.get("phase") == "ready", "setupSession": self._setup_ok(req)}
+        ready = st.get("phase") == "ready"
+        session = self._setup_ok(req)
+        # Once set up, a stranger (no setup or dashboard session, not on the home network or this machine: the welcome
+        # page, the tray and the updater are) learns only what the welcome and sign-in pages need: not the version,
+        # how the server reaches the internet, or where a restored copy came from. The edition and platform stay: the
+        # "Forgot your password?" card picks its instructions from them (docker exec / sudo / the tray), also when
+        # the owner is away from home (review of 116d103, #6).
+        told = not ready or session or self._admin(req) is not None or _home(req)
+        out = {"phase": st.get("phase", "unconfigured"), "serverName": st.get("server_name"),
+               "mode": st.get("mode", "lan"), "zone": environment.env()["zone"], "moved": moved.is_moved(st),
+               "unlocked": session or ready, "setupSession": session,
+               "edition": config.edition(), "platform": "windows" if updates.wsl() else None}
+        if told:
+            out.update(version=config.VERSION, proxyOnly=config.proxy_only())
         rf = st.get("restored_from") or {}
-        if st.get("phase") == "ready" and rf and time.time() - rf.get("at", 0) < 86400:
+        if ready and session and rf and time.time() - rf.get("at", 0) < 86400:
             out["restoredFrom"] = {"at": rf.get("at"), "backupTime": rf.get("backup_time"),  # the last page says so
                                    "toldOld": rf.get("told_old"), "oldAddresses": rf.get("old_addresses") or []}
-        if st.get("phase") == "ready" and state.public_mode(st):
-            if self._setup_ok(req):
+        if ready and state.public_mode(st) and told:
+            if session:
                 out["network"] = self._network_doc()  # the wizard's last page shows the outside check's results
                 await self._relay_offer(out["network"])
             last = st.get("reach") or {}
@@ -503,7 +566,7 @@ class Manager:
             "serverName": st.get("server_name"), "mode": st.get("mode"), "version": config.VERSION, "webVersion": web_version,
             "installedAt": st.get("installed_at"), "services": services, "probe": p, "moved": moved.is_moved(st),
             "advice": hw.advise(p, assessed.get("bench"), assessed.get("net")), "features": st.get("features"),
-            "api": apiconf.doc(st),
+            "api": apiconf.doc(st), "python": pyenv.CURRENT or None,
             "counts": {"people": len([u for u in people if not u.get("deactivated")]), "rooms": await self.synapse.room_count(tok) if tok else None},
             "watch": await self._watch(),
         })
@@ -527,6 +590,19 @@ class Manager:
             out.append({"level": "bad", "text": "The last update needs attention."})
         elif up == "rolled-back":
             out.append({"level": "warn", "text": "The last update didn't start properly, so the server went back to the version before."})
+        if (pyenv.CURRENT or {}).get("runtime") == "system":
+            off = pyenv.is_off(config.STATE_DIR)
+            why = ("because it was turned off on this machine (`tinhat pyenv on` turns it back on)" if off else
+                   f"because Tin Hat's own copy didn't pass its check: {pyenv.CURRENT.get('reason')}")
+            todo = ("" if off else
+                    "What to do: update to the next version when it's out (`docker compose pull && docker compose up -d` "
+                    "where its compose file is); it sets Tin Hat's copy up again. If this is still here after an update, "
+                    "make a backup and set Tin Hat Server up again from it. " if config.compose_edition() else
+                    "What to do: install the next update when Updates offers it (it sets Tin Hat's copy up again). If "
+                    "this is still here after an update, make a backup and reinstall Tin Hat Server from it. ")
+            out.append({"level": "warn", "text": "This server runs on an older web toolkit with known security problems "
+                        f"(the operating system's aiohttp {pyenv.CURRENT.get('aiohttp') or ''}), {why}. Everything still "
+                        f"works. {todo}The support report has the details."})
         return out
 
     async def people(self, req: web.Request) -> web.Response:
@@ -908,6 +984,8 @@ class Manager:
             return _err("Sign in first.", 401)
         doc = self._network_doc()
         await self._relay_offer(doc)
+        if isinstance(doc.get("proxy"), dict):  # where this page came through: the proxy card offers it
+            doc["proxy"]["peer"] = _peer(req) or None
         if doc.get("domain"):  # where the domain points now, next to where the home is: the owner's job for most providers
             doc["domain"]["resolves"] = await asyncio.to_thread(owndomain.resolves_to, doc["serverName"])
             doc["domain"]["home"] = await owndomain.public_ip()
@@ -927,6 +1005,37 @@ class Manager:
             return _err("A check is already running.", 409)
         log.info("%s ran the outside check", s["mxid"])
         return _json(await self._network_doc_full())
+
+    async def network_proxy(self, req: web.Request) -> web.Response:
+        """Dashboard → Network → Who counts as your proxy: the address(es) the owner's reverse proxy connects from.
+        Named, only they (and this machine) may connect to the proxy port and write the caller's address; [] = every
+        home-network address, as before. A list that leaves out the address this very request came through is refused:
+        saving it would lock the owner out (`tinhat proxy-addresses --clear` on the console is the way back)."""
+        s = self._admin(req)
+        if not s or not self._csrf_ok(req):
+            return _err("Sign in first.", 401)
+        if (busy := self._moving()) is not None:
+            return busy
+        st = state.load_state()
+        if not state.behind_proxy(st):
+            return _err("This server isn't behind your own reverse proxy.", 400)
+        try:
+            body = await req.json()
+        except ValueError:
+            return _err("Bad request.", 400)
+        new, problem = owndomain.parse_proxies(body.get("addresses") if isinstance(body, dict) else None)
+        if problem is not None:
+            return _err(problem, 400)
+        if (refused := owndomain.proxy_save_problem(new, _peer(req), hw.addresses())) is not None:
+            return _err(refused, 409)
+        async with self._apply_lock:   # the state is read inside apply_proxy_addresses, under the lock (review #5)
+            ok, why = await apply_proxy_addresses(new)
+            if not ok:
+                log.warning("proxy addresses %s not applied: %s", new, why)
+                return _err("The web server didn't take these settings; nothing changed.", 500)
+        _cache.pop("proxies", None)
+        log.info("%s set the reverse proxy's addresses: %s", s["mxid"], ", ".join(new) or "any home-network address")
+        return _json({"ok": True, "trusted": new})
 
     async def setup_network_check(self, req: web.Request) -> web.Response:
         """Check again from the setup page's last screen, on the home network. Right after setup is when owners fix
@@ -1418,11 +1527,17 @@ class Manager:
         if (updates.status().get("phase") or "") in ("downloading", "installing"):
             return _json({"installed": config.VERSION, "status": updates.status()}, 202)
 
+        before = updates.status().get("phase") or "current"
+        before = before if before in ("available", "current", "blocked", "done", "rolled-back") else "current"
+
         async def run():
             try:
                 st = await updates.check()
                 if st.get("phase") != "available":
-                    updates.set_status(message=st.get("check_error") or st.get("message")
+                    # every outcome but "available" puts the phase back (an unreachable channel only sets check_error
+                    # and would leave "downloading" for good: no daily check, no night install, Install refused)
+                    ph = st.get("phase") if st.get("phase") in ("current", "blocked") else before
+                    updates.set_status(phase=ph, message=st.get("check_error") or st.get("message")
                                        or "No newer version is out for this computer.")
                     return
                 await updates.download()
@@ -1730,7 +1845,9 @@ class Manager:
 
 def build_app() -> web.Application:
     m = Manager()
-    app = web.Application(client_max_size=1024 * 64)
+    # Request bodies are never decompressed here: nothing sends the manager a compressed one, and an upload that
+    # inflates (restore_upload writes what it reads to disk) is a disk-filling bomb (M15; Caddy refuses them first).
+    app = web.Application(client_max_size=1024 * 64, handler_args={"auto_decompress": False})
     app["manager"] = m
     r = app.router
     r.add_get("/", m.root)
@@ -1783,6 +1900,7 @@ def build_app() -> web.Application:
     r.add_post("/admin/api/updates/install", m.updates_install)
     r.add_post("/admin/api/updates/settings", m.updates_settings)
     r.add_post("/admin/api/network/relay", m.network_relay)
+    r.add_post("/admin/api/network/proxy", m.network_proxy)
     r.add_post("/admin/setup/relay", m.setup_relay)
     r.add_post("/admin/home/relay", m.home_relay)
     r.add_get("/_tinhat/federation/confirm/{nonce}", m.fed_confirm)
@@ -1819,6 +1937,10 @@ def build_app() -> web.Application:
     r.add_delete("/tinhat-api/admin/invites/{code}", m.api_invites_delete)
 
     async def on_startup(app: web.Application) -> None:
+        try:
+            updates.clear_stale_download()  # no download can be running yet: a "downloading" now is left from before
+        except Exception:  # noqa: BLE001
+            log.exception("couldn't check the update status")
         try:
             federation.adopt()  # never lose a hand-set federation entry to the first change made in the dashboard
         except Exception:  # noqa: BLE001  (the manager must come up; the next change adopts it again)

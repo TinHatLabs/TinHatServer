@@ -300,7 +300,7 @@ function install() {
   });
   // Dev / test hook (window.__twCall) — only with the debug hook enabled.
   const w = window as unknown as { __TW_DEBUG__?: boolean; __twCall?: unknown };
-  if (import.meta.env.DEV || w.__TW_DEBUG__ || /twdebug/.test(location.hash)) {
+  if (import.meta.env.DEV || w.__TW_DEBUG__) {
     w.__twCall = {
       store: useCallStore,
       get: () => {

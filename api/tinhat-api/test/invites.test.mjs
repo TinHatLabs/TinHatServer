@@ -1,7 +1,7 @@
 // invites.mjs — the invite codes the operators mint (the apps parse this exact shape: TH-XXXX-XXXX).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { INVITE_PREFIX, installInvites, mintInviteCode } from "../invites.mjs";
+import { INVITE_PREFIX, installInvites, mintInviteCode, codeHint } from "../invites.mjs";
 import { fakeReq, fakeRes } from "./helpers.mjs";
 
 const SHAPE = /^TH-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/;
@@ -55,4 +55,27 @@ test("POST /admin/invites asks Synapse for a TH- code", async () => {
     assert.equal(asked[0].path, "/_synapse/admin/v1/registration_tokens/new");
     assert.match(asked[0].body.token, SHAPE);
     assert.match(r.body.invite.code, SHAPE);
+});
+
+test("the log names a minted or revoked code by its first five characters only (security review 2026-10-26)", async () => {
+    const app = fakeApp();
+    const lines = [];
+    installInvites(app, {
+        requireMatrixUser: (req, _res, next) => { req.matrixUser = "@owner:example.org"; return next(); },
+        synapse: async (path, init) => (path.endsWith("/new")
+            ? { ok: true, status: 200, body: { ...JSON.parse(init.body), pending: 0, completed: 0 } }
+            : { ok: true, status: 200, body: {} }),
+        adminToken: "x", operators: new Set(["@owner:example.org"]), serverName: "example.org",
+        log: (...a) => lines.push(a.join(" ")),
+    });
+    const r = await app.run("POST /admin/invites", { method: "POST", body: { uses: 5, days: 30 } });
+    const code = r.body.invite.code;
+    await app.run("DELETE /admin/invites/:code", { method: "DELETE", params: { code } });
+    const said = lines.filter((l) => /minted|revoked/.test(l));
+    assert.equal(said.length, 2, lines.join("\n"));
+    for (const l of said) {
+        assert.ok(!l.includes(code), l);
+        assert.ok(l.includes(codeHint(code)), l);
+    }
+    assert.equal(codeHint("TH-ABCD-EFGH"), "TH-AB…");
 });

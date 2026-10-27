@@ -72,6 +72,7 @@ import { freshMembers } from "./store";
 import { useLongPress } from "./longPress";
 import { setRightPanelTab, useRightPanelStore, closeRightPanel } from "./panelState";
 import s from "./RightPanel.module.css";
+import { linkContainerEvents } from "@/core/linkgate";
 
 export interface RightPanelProps {
   roomId: string;
@@ -409,7 +410,7 @@ function InfoPane({ roomId, editing, setEditing, perms }: { roomId: string; edit
       {!editing && shownTopic && (
         <>
           <Separator />
-          <div className={s.topic} dangerouslySetInnerHTML={{ __html: linkify(shownTopic) }} />
+          <div className={s.topic} dangerouslySetInnerHTML={{ __html: linkify(shownTopic) }} {...linkContainerEvents()} />
         </>
       )}
       <Separator />

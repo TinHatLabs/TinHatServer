@@ -37,7 +37,6 @@ function flag(name: string): string | null {
 function debugOn(): boolean {
   return (
     import.meta.env.DEV ||
-    /twdebug/.test(location.hash) ||
     (typeof window !== "undefined" && (window as Window & { __TW_DEBUG__?: boolean }).__TW_DEBUG__ === true)
   );
 }

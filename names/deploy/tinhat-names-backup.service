@@ -10,6 +10,7 @@ Environment=RESTIC_CACHE_DIR=/var/lib/tinhat-names/restic-cache
 User=tinhat-names
 Group=tinhat-names
 StateDirectory=tinhat-names
+UMask=0077
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

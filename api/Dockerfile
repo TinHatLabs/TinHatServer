@@ -14,7 +14,7 @@ RUN cd tinhat-api && npm ci --omit=dev --no-audit --no-fund
 COPY games/package.json games/package-lock.json ./games/
 RUN cd games && npm ci --omit=dev --no-audit --no-fund
 COPY tinhat-api/*.mjs tinhat-api/mi-fetch.py ./tinhat-api/
-COPY games/server.mjs games/seed.json ./games/
+COPY games/*.mjs games/seed.json ./games/
 ENV NODE_ENV=production
 WORKDIR /opt/tinhat-api/tinhat-api
 CMD ["node", "server.mjs"]

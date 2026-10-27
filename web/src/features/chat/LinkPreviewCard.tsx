@@ -3,6 +3,7 @@ import { useMxcUrl } from "@/core/matrix";
 import { AnimatedImage, cx } from "@/ui";
 import { useLinkPreview } from "./lib/linkpreview";
 import s from "./Bubble.module.css";
+import { openExternal } from "@/core/openlink";
 
 export function LinkPreviewCard({ url, maxW, mine, enabled }: { url: string; maxW: number; mine: boolean; enabled: boolean }) {
   const p = useLinkPreview(url, enabled);
@@ -12,7 +13,7 @@ export function LinkPreviewCard({ url, maxW, mine, enabled }: { url: string; max
   const thumb = !!p.image && p.imageW > 0 && p.imageW <= 240 && Math.abs(p.imageW - p.imageH) < p.imageW / 2;
   const open = (e: React.MouseEvent) => {
     e.stopPropagation();
-    window.open(p.url, "_blank", "noopener,noreferrer");
+    openExternal(p.url);
   };
   const imgW = w - 24;
   const imgH = p.imageW && p.imageH ? Math.min(220, Math.round((imgW * p.imageH) / p.imageW)) : undefined;

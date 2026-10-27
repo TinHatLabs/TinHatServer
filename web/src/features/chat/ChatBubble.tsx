@@ -16,6 +16,7 @@ import { AudioChip, AudioPlayer, BIG_AUDIO, FileCard, ImageBlock, VideoCard } fr
 import { EmbedCard } from "./EmbedCard";
 import { LinkPreviewCard } from "./LinkPreviewCard";
 import s from "./Bubble.module.css";
+import { linkContainerEvents } from "@/core/linkgate";
 
 export interface ReceiptUser {
   userId: string;
@@ -100,17 +101,11 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
         className={cx(s.body, row.formatted ? s.rich : s.plain, jumbo && s.jumbo, emote && s.emote)}
         style={{ maxWidth: inner }}
         dangerouslySetInnerHTML={{ __html: emotePrefix + html }}
-        onClick={(e) => {
-          const a = (e.target as HTMLElement).closest("a");
-          if (!a) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const mx = a.getAttribute("data-mention");
-          if (mx) {
-            const r = a.getBoundingClientRect();
-            openUserProfile(mx, roomId, { x: r.x, y: r.y, width: r.width, height: r.height });
-          } else if (a.getAttribute("href")) window.open(a.getAttribute("href")!, "_blank", "noopener,noreferrer");
-        }}
+        // every link: core/linkgate's door (click + middle-click, "Opens <host>" on hover, no drag-out); mentions → the profile
+        {...linkContainerEvents((mx, a) => {
+          const r = a.getBoundingClientRect();
+          openUserProfile(mx, roomId, { x: r.x, y: r.y, width: r.width, height: r.height });
+        })}
       />
     );
   }

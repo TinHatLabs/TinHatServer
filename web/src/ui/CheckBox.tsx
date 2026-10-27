@@ -36,10 +36,17 @@ function Base({
   role,
   ...rest
 }: BaseProps & { kind: string; indicator: ReactNode; role?: "checkbox" | "radio" | "switch" }) {
-  const id = useId();
+  // The label and its input must share ONE id: a caller's id (a settings row labels the same input from its own text)
+  // wins over ours. Before, the caller's id replaced the input's but not the label's `for`, so the label pointed at
+  // nothing and a tap or click on the switch itself did nothing (only the row's text worked) — every settings switch
+  // on phones.
+  const autoId = useId();
+  const { id: givenId, ...inputProps } = rest;
+  const id = givenId || autoId;
   return (
     <label className={cx(s.row, kind, checked && s.checked, disabled && s.disabled, className)} style={style} data-force={force} htmlFor={id}>
       <input
+        {...inputProps}
         id={id}
         type={role === "radio" ? "radio" : "checkbox"}
         role={role === "switch" ? "switch" : undefined}
@@ -47,7 +54,6 @@ function Base({
         checked={!!checked}
         disabled={disabled}
         onChange={(e) => onToggled?.(e.target.checked)}
-        {...rest}
       />
       {indicator}
       {text !== undefined && text !== "" && (

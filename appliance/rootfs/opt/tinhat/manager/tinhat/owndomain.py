@@ -34,6 +34,7 @@ PROVIDERS = {
                       "the domain to this server."},
 }
 PROXY_PORT = 8080  # behind the owner's reverse proxy: plain HTTP, home-network addresses only
+MAX_PROXIES = 8
 HOST_RE = re.compile(r"^(?=.{4,253}\Z)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\Z")  # \Z: no line break
 # What API keys and tokens are made of. They go into the Caddyfile as bare words, so nothing that means something to it
 # (quotes, braces, comments, placeholders, whitespace) may come along.
@@ -59,7 +60,111 @@ def validate(answers: dict) -> tuple[dict | None, str | None]:
                       f"without spaces or quotes.")
     if provider == "duckdns" and not domain.endswith(".duckdns.org"):
         return None, "With DuckDNS, the domain is one of yours under duckdns.org."
-    return {"domain": domain, "provider": provider, "creds": creds}, None
+    out = {"domain": domain, "provider": provider, "creds": creds}
+    if provider == "proxy" and d.get("proxies"):  # optional: the proxy's own address(es); the dashboard can set it later
+        got, problem = parse_proxies(d["proxies"])
+        if problem:
+            return None, problem
+        out["proxies"] = got
+    return out, None
+
+
+def parse_proxies(value) -> tuple[list[str] | None, str | None]:
+    """The owner's reverse proxy address(es) (Network → Your reverse proxy; state domain.proxies): a list, or text with
+    commas/spaces. Each one an IPv4/IPv6 address or a network (192.168.1.5, 10.0.0.0/24, fd00::5); at most MAX_PROXIES;
+    nothing as wide as the internet. [] = none named: every home-network address counts as the proxy, as before."""
+    items = value if isinstance(value, list) else re.split(r"[\s,]+", str(value or ""))
+    out: list[str] = []
+    for raw in items:
+        s = str(raw).strip()
+        if not s:
+            continue
+        try:
+            net = ipaddress.ip_network(s, strict=False)
+        except ValueError:
+            return None, f"“{s[:60]}” isn't an address. Use the address your proxy connects from, like 192.168.1.5."
+        if net.version == 6 and net.network_address.ipv4_mapped and net.prefixlen >= 96:
+            net = ipaddress.ip_network(f"{net.network_address.ipv4_mapped}/{net.prefixlen - 96}")
+        if net.network_address.is_unspecified or net.network_address.is_multicast:
+            return None, f"{s} can't be your proxy's address."
+        if net.prefixlen < (8 if net.version == 4 else 32):
+            return None, f"{s} is far too wide: name your proxy's own address (or its small network)."
+        word = str(net.network_address) if net.num_addresses == 1 else str(net)
+        if word not in out:
+            out.append(word)
+    if len(out) > MAX_PROXIES:
+        return None, f"At most {MAX_PROXIES} addresses."
+    return out, None
+
+
+def proxies(st: dict | None = None) -> list[str]:
+    """The owner's named proxy address(es) while the server is behind its own reverse proxy; [] when none are named
+    (or the stored list doesn't check out any more): then every home-network address counts, as before."""
+    st = st if st is not None else state.load_state()
+    if not state.behind_proxy(st):
+        return []
+    got, problem = parse_proxies((st.get("domain") or {}).get("proxies") or [])
+    return got if problem is None else []
+
+
+# What an empty list means (CADDY_PROXY's `private_ranges`, Caddy's own definition): the home network and this machine.
+HOME_RANGES = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "127.0.0.0/8", "fd00::/8", "::1/128")
+
+
+# This machine's loopback is always let in (templates.LOOPBACK: the updater's and setup's own checks come from there),
+# but it is not a trusted proxy unless it is named.
+LOOPBACK = ("127.0.0.0/8", "::1/128")
+
+
+def effective_proxies(new: list[str], own: list[str]) -> list[str]:
+    """Who may connect to the proxy port once `new` is saved: the named addresses plus this machine's loopback, or every
+    home-network address when none are named, plus this machine's own IPv4 addresses (CADDY_PROXY's {admitted}{own_ips})."""
+    return (list(new) + list(LOOPBACK) if new else list(HOME_RANGES)) + [a for a in own if ":" not in a]
+
+
+def trusted_proxies(new: list[str], own: list[str]) -> list[str]:
+    """Whose X-Forwarded-For Caddy believes once `new` is saved: the named addresses, or every home-network address when
+    none are named, plus this machine's own IPv4 addresses (CADDY_PROXY's trusted_proxies {trusted}{own_ips})."""
+    return (list(new) if new else list(HOME_RANGES)) + [a for a in own if ":" not in a]
+
+
+def proxy_save_problem(new: list[str], peer: str, own: list[str]) -> str | None:
+    """Why the dashboard mustn't save `new` as the proxy list, or None. `peer`: the address the saving request came
+    through (Caddy's X-Tinhat-Peer); `own`: this machine's addresses (always let in). Checked against what the proxy port
+    will really let in afterwards, clearing included (second review: a proxy on a PUBLIC address, named in the list,
+    is not a home-network address, so clearing the list would shut it out too)."""
+    if not peer:
+        return "This server can't tell where your proxy connects from yet. Reload the page, then try again."
+    # The proxy must be one Caddy believes, not just one it lets connect: this machine's loopback may always connect,
+    # but a proxy that connects from there unnamed would pass every caller on as this machine (second review, #5).
+    if new and proxy_covers(effective_proxies(new, own), peer) and not proxy_covers(trusted_proxies(new, own), peer):
+        return (f"Your proxy connects from {peer}, on this machine: add {peer} to the list, so the addresses it "
+                f"passes on count (else everyone would look like this machine).")
+    if not proxy_covers(effective_proxies(new, own), peer):
+        if not new:
+            return (f"Your proxy connects from {peer}, which isn't a home-network address: with no address named it "
+                    f"couldn't connect any more, and you'd be locked out of this dashboard. Keep {peer} in the list.")
+        return (f"You reached this page through {peer}, which isn't in the list: saving it would lock you out of this "
+                f"dashboard. Add {peer}.")
+    return None
+
+
+def proxy_covers(addresses: list[str], peer: str) -> bool:
+    """Would `peer` (the address that connected to the proxy port) still be let in with these proxy addresses?"""
+    try:
+        a = ipaddress.ip_address((peer or "").strip().strip("[]"))
+    except ValueError:
+        return False
+    if a.version == 6 and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    for w in addresses:
+        try:
+            n = ipaddress.ip_network(w, strict=False)
+        except ValueError:
+            continue
+        if n.version == a.version and a in n:
+            return True
+    return False
 
 
 def caddy_tls(provider: str, creds: dict) -> str:
@@ -143,7 +248,7 @@ def proxy_info(st: dict | None = None, upload_mb: int | None = None) -> dict | N
         return None
     lan = (st.get("ports") or {}).get("lan_ip") or next(iter(hw.addresses()), None) or "<this server's address>"
     mb = upload_mb or (st.get("features") or {}).get("uploadMb") or 100
-    return {"serverName": st.get("server_name"), "lanIp": lan, "port": PROXY_PORT,
+    return {"serverName": st.get("server_name"), "lanIp": lan, "port": PROXY_PORT, "trusted": proxies(st),
             "snippets": proxy_snippets(st.get("server_name") or "chat.example.com", lan, mb)}
 
 

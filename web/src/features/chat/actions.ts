@@ -9,6 +9,7 @@ import { editContent, mentionContent, textContent, type PickedMention } from "./
 import { failReason, type MediaRef, type Row } from "./lib/model";
 import { replyMentionIds } from "./lib/reply";
 import { mimeForName } from "./lib/format";
+import { bytesAre, inertBlob, isTextLike, viewerExt } from "@/core/mediatype";
 
 function client() {
   const c = peekClient();
@@ -226,7 +227,8 @@ export function sendAttachment(roomId: string, file: File): Promise<void> {
   const f = file.type ? file : new File([file], file.name, { type: mime });
   const msgtype = mime.startsWith("image/") ? "m.image" : mime.startsWith("video/") ? "m.video" : mime.startsWith("audio/") ? "m.audio" : "m.file";
   const id = `~up${Date.now()}-${++upSeq}`;
-  useChatStore.getState().addUpload({ id, roomId, ts: Date.now(), file: f, localUrl: URL.createObjectURL(f), w: 0, h: 0, state: "uploading", error: "", msgtype });
+  // the echo's object URL carries a safe type too (core/mediatype): even our own file never becomes a page of this origin
+  useChatStore.getState().addUpload({ id, roomId, ts: Date.now(), file: f, localUrl: URL.createObjectURL(inertBlob(f)), w: 0, h: 0, state: "uploading", error: "", msgtype });
   const probe = imageSize(f).then(({ w, h }) => useChatStore.getState().patchUpload(id, { w, h }));
   const prev = uploadChains.get(roomId) ?? Promise.resolve();
   const next = prev.then(() => probe).then(() => runUpload(roomId, id)).catch(() => {});
@@ -264,25 +266,32 @@ async function runUpload(roomId: string, id: string): Promise<void> {
 
 // ---- media: open / save --------------------------------------------------------------------
 
+/** The attachment's bytes as a Blob whose type comes from the allow-list (core/mediatype), by the event's mimetype
+ *  (else the server's) — never the event's string itself: H1, security review 2026-10-26. */
 export async function mediaBlob(m: MediaRef): Promise<Blob> {
-  if (m.localUrl) return (await fetch(m.localUrl)).blob();
+  if (m.localUrl) return inertBlob(await (await fetch(m.localUrl)).blob(), m.mimetype);
   if (m.file) return fetchEncryptedMedia(m.file as unknown as EncryptedFile, m.mimetype);
-  if (m.url) {
-    const b = await fetchMedia(m.url);
-    return m.mimetype && b.type !== m.mimetype ? new Blob([b], { type: m.mimetype }) : b;
-  }
+  if (m.url) return inertBlob(await fetchMedia(m.url), m.mimetype);
   throw new Error("no media");
 }
 
-/** "Open": decrypt + show in a new tab (image/video/audio/pdf/text) or download. */
+/** "Open": decrypt + show in a new tab, or download. A tab only for the viewer allow-list (core/mediatype: PNG/JPEG/
+ *  GIF/WebP/AVIF, MP4/WebM, common audio, PDF, text/plain as UTF-8) whose bytes are that type — a `blob:` page has this
+ *  app's origin, so anything else (HTML, SVG, XML, mislabelled bytes, …) is only ever downloaded. */
 export async function openMedia(m: MediaRef): Promise<void> {
   try {
     const blob = await mediaBlob(m);
-    const url = URL.createObjectURL(blob);
-    const viewable = /^(image|video|audio|text)\//.test(m.mimetype) || m.mimetype === "application/pdf";
-    if (viewable) {
-      const w = window.open(url, "_blank", "noopener,noreferrer");
-      if (!w) download(url, m.name);
+    const head = new Uint8Array(await blob.slice(0, 8192).arrayBuffer());
+    // a tab only when the bytes are what the type says (the desktop's viewer.rs sniff); a text-like file (JSON, CSV,
+    // Markdown, logs, source) whose bytes are plain text opens as UTF-8 plain text; anything else is a download
+    const ext = viewerExt(blob.type);
+    const view = ext && bytesAre(ext, head) ? blob : !ext && isTextLike(m.mimetype, m.name) && bytesAre("txt", head) ? new Blob([blob], { type: "text/plain;charset=utf-8" }) : null;
+    const url = URL.createObjectURL(view ?? blob);
+    if (view) {
+      // noopener makes window.open answer null even when the tab opened (HTML "window open steps"), and Safari may have
+      // let the click's permission lapse during the download: the toast says "Opening…" and offers the download
+      window.open(url, "_blank", "noopener,noreferrer");
+      toast(`Opening ${m.name || "the file"}…`, { action: { label: "Download", run: () => download(url, m.name) }, timeoutMs: 8000 });
     } else download(url, m.name);
     window.setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch {

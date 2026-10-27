@@ -25,7 +25,10 @@ refused, and the newest *signed* version among the sources wins.
   `ARCH=arm64`): the VM loads that release's exact images (the API tagged with the new version), so servers download
   only the bundle — the only way a 0.3.0/0.3.1 server can take an update on a day GitHub's header is too big for it.
   provision.sh checks each reused image's id (from its file name) and processor; only reuse when `git diff
-  vPREVIOUS -- api appliance/rootfs/opt/tinhat/build` is empty. Servers whose Docker names loaded images its own way
+  vPREVIOUS -- api appliance/rootfs/opt/tinhat/build` is empty. build.sh enforces the API half itself: it compares
+  the files the reused API image carries with this tree's `api/` (`build/api-image-check.py`) and refuses one that
+  differs. It also refuses a Tin Hat Web older than 12.0.3 or without a valid `csp-ready.json` (0.3.4 onwards: the
+  extras ask for a sign-in, and the app's Content-Security-Policy comes from that file). Servers whose Docker names loaded images its own way
   (the containerd store: install.sh on Docker 29+) don't find the ids and still fetch the images from GitHub.
   When only one of them changed, `REUSE_IMAGES=caddy` (or `api`) reuses just that one and builds the other (0.3.3:
   a new API, Caddy as in 0.3.2).
@@ -90,6 +93,42 @@ refused, and the newest *signed* version among the sources wins.
    Not before: the mirror's signed manifest counts for servers whatever GitHub's pre-release flag says. Not at all
    for a release with a new image while 0.3.0/0.3.1 servers may be out there (above).
 5. The download page (tinhat.dev) follows: its version chips and "What's new" read the release; check the copy too.
+
+## aiohttp and its wheels
+The manager, the names service and the relay run on a pinned aiohttp (Debian 13's python3-aiohttp has advisories
+Debian won't fix: M15), not on the operating system's, which stays installed as the fallback.
+- `build/wheels.lock` names every file: aiohttp and what it needs for Debian 13's Python 3.13 on amd64 and arm64,
+  pure-Python builds of the same versions (any other Python 3.10+, e.g. install.sh on Ubuntu 24.04), and pip, which
+  installs them. `build.sh push` downloads exactly those files (`build/wheels.py fetch`, each refused unless its
+  sha256 is the lock's; cached in `out/wheels-cache`), provision.sh builds the image's venv (`/opt/tinhat/venv`) and
+  checks it (`python3 -m tinhat pyenv build --strict`), `build.sh artifacts` copies the image's wheels to
+  `out/release-VERSION/wheels`, and release.sh checks them again and puts them into the bundle's `manager/wheels`
+  (every updater copies `manager/`). They add ~8.4 MB to the bundle (~22 MB; the mirror takes under 24 MiB). When
+  the bundle outgrows that: put the compiled wheels per processor into release assets next to the per-processor images
+  (`wheels` / `wheels_arm64` in the manifest, like `images` / `images_arm64`), keeping the bundle itself the same for
+  every processor; until then nothing changes.
+- Debian 13 (the image, install.sh on Debian, the Compose image, Windows) runs the compiled build. Any other Python
+  (install.sh on Ubuntu 24.04: 3.12) gets the same pinned version in pure Python: a little slower, the same fixes, the
+  same check before every start and the same fallback; install.sh says so.
+- On a server nothing is downloaded: `tinhat/pyenv.py` installs the wheels offline (`pip install --no-index
+  --require-hashes`) when the release changed them (after-update, or the manager's start), and the manager starts on
+  the venv only once its check passes. Otherwise it runs on Debian's aiohttp and the dashboard's Overview says so
+  (also `tinhat status`, the support report, `/var/lib/tinhat/pyenv.json`).
+- **Before every release** release.sh runs `python3 build/wheels.py audit` (OSV, the advisories pip-audit reads, for
+  every pinned version) and refuses to sign while any advisory is found, unless `build/wheels-advisories.allow` names
+  its id with a one-line reason (a reviewed exception, in the repository, never a silent one; an entry without a
+  reason is refused, a stale one reported). OSV not answering also refuses: try again. Also look at Debian's tracker
+  for python-aiohttp (security-tracker.debian.org/tracker/source-package/python-aiohttp) to know what the fallback
+  carries.
+- **Moving a version on:** pick versions at least two weeks old unless the move is the fix; get the dependency
+  closure with pip (`pip download --only-binary=:all: --python-version 3.13 --implementation cp --abi cp313
+  --platform manylinux_2_28_x86_64 …` and the same for aarch64, and `--python-version 3.12 --implementation py --abi
+  none --platform any` for the pure set), then write each file's line from PyPI's JSON
+  (`https://pypi.org/pypi/NAME/VERSION/json`: its URL and sha256). Run `wheels.py fetch` and the appliance tests
+  with `TINHAT_TEST_WHEELS=DIR` (they build a real venv from them), and a release's update in the lab.
+- The names service and the relay are installed by hand: `python3 build/wheels.py fetch /opt/tinhat-names/wheels`
+  (or `/opt/tinhat-relay/wheels`), then `tinhat-names pyenv build` (`tinhat-relay pyenv build`) as root, then restart
+  it; `… pyenv status` says what the running service is on.
 
 ## When a release is bad
 - **The first release under a key** has no earlier version these servers trust to fall back to: mark it a pre-release

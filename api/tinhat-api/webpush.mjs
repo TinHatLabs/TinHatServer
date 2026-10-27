@@ -1,8 +1,9 @@
 // webpush.mjs — Web Push for the Tin Hat push gateway (Reach, 10.6; contract docs/REACH.md §3.1).
 //
 //   • RFC 8291 message encryption: aes128gcm, ONE record, rs 4096, padding delimiter 0x02.
-//   • RFC 8292 VAPID: ES256 JWT {aud: endpoint origin, exp: now + 12 h, sub: mailto:…}, sent as
-//     `Authorization: vapid t=<jwt>, k=<raw public key>`.
+//   • RFC 8292 VAPID: ES256 JWT {aud: endpoint origin, exp: now + 1 h, sub: mailto:…}, sent as
+//     `Authorization: vapid t=<jwt>, k=<raw public key>`. A fresh JWT is signed for every send (nothing caches one),
+//     so a captured header replays for at most an hour (RFC 8292 allows up to 24 h; the relay caps exp too).
 //   • The endpoint ALLOWLIST — the SSRF guard. The gateway is unauthenticated by spec (anyone can POST a
 //     notification naming any "endpoint"), so nothing leaves this process unless the URL is https, has no
 //     userinfo, no port, no IP literal and a host on the list below. Redirects are never followed.
@@ -15,7 +16,7 @@ import {
 import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
 
 export const RECORD_SIZE = 4096;
-export const JWT_TTL_SEC = 12 * 3600;
+export const JWT_TTL_SEC = 3600;  // 1 h: short replay window (security review 2026-10-26; RFC 8292 max 24 h)
 
 export const b64u = (buf) => Buffer.from(buf).toString("base64url");
 

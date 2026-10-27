@@ -11,6 +11,7 @@ import { utdRow } from "./utd";
 import { readDice } from "@/widgets/dice";
 import { START_TYPES, readStart } from "@/widgets/polls";
 import { currentRelation } from "@/core/matrix/moved";
+import { isInlineImage, isScriptableType, mimeEssence } from "@/core/mediatype";
 
 export interface Reaction {
   key: string;
@@ -150,10 +151,21 @@ export function displayName(room: Room | null, userId: string): string {
   return userId.replace(/^@/, "").split(":")[0];
 }
 
-function mediaOf(c: C, msgtype: string, localUrl?: string): MediaRef | null {
+/** How the bubble shows a media message: by msgtype, except that an "image" is drawn inline only when its type is one
+ *  of the shared inline pictures (PNG, JPEG, GIF, WebP — core/mediatype isInlineImage, the desktop's rule) or unknown;
+ *  any other (SVG and anything a browser could run as a page — security review 2026-10-26, H1 — BMP, TIFF, HEIC,
+ *  AVIF, …) is a file card: Open shows it in a tab when it is a viewer type whose bytes match, else downloads. */
+export function mediaKind(msgtype: string, mimetype: string): MediaRef["kind"] | null {
   const kind = msgtype === "m.image" ? "image" : msgtype === "m.video" ? "video" : msgtype === "m.audio" ? "audio" : msgtype === "m.file" ? "file" : null;
-  if (!kind) return null;
+  if (kind !== "image") return kind;
+  if (isScriptableType(mimetype)) return "file";
+  return !mimeEssence(mimetype) || isInlineImage(mimetype) ? "image" : "file";
+}
+
+function mediaOf(c: C, msgtype: string, localUrl?: string): MediaRef | null {
   const info = (c.info && typeof c.info === "object" ? c.info : {}) as C;
+  const kind = mediaKind(msgtype, typeof info.mimetype === "string" ? info.mimetype : "");
+  if (!kind) return null;
   const file = c.file && typeof c.file === "object" ? (c.file as MediaRef["file"]) : undefined;
   const url = typeof c.url === "string" ? c.url : undefined;
   return {
@@ -364,7 +376,7 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
       mentionsMe: false,
       pinned: false,
       media: {
-        kind: kind === "m.image" ? "image" : kind === "m.video" ? "video" : kind === "m.audio" ? "audio" : "file",
+        kind: mediaKind(kind, u.file.type) ?? "file",
         mimetype: u.file.type,
         size: u.file.size,
         w: u.w,

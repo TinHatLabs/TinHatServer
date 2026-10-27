@@ -32,7 +32,9 @@ import E2EEWorker from "livekit-client/e2ee-worker?worker";
 import { getSession, ensureWritable, getState, sendState, peekClient, fetchMedia, acquireMxcUrl, onClientChanged } from "@/core/matrix";
 import { holdsTabLock } from "@/core/matrix/client";
 import { RoomStateEvent, type MatrixClient, type MatrixEvent } from "matrix-js-sdk";
-import { apiUrl } from "@/core/api";
+import { apiAuthHeaders } from "@/core/api";
+import { FOREIGN_SOUND_NOTE } from "@/core/clipurl";
+import { clipSrc } from "@/core/clipsrc";
 import { getPref, getPrefRaw, onPrefChange, setPref } from "@/core/prefs";
 import { onWinState, winFocused, winState } from "@/core/winstate";
 import { previewPaused, SPEAKING_LEVEL, UNFOCUSED_CAM_FPS, UNFOCUSED_SAVER_PREF, unfocusedSaverOn as saverFromPref, videoPolicy } from "@/core/lowgpu";
@@ -1935,13 +1937,12 @@ export async function startMusicSource(id: string): Promise<void> {
   }
 }
 
+/** Where a sound published into the call is fetched from: our own blobs as they are; otherwise core/clipurl.ts (the
+ *  desktop's clip_url_for) — myinstants / relative → the clip cache, an upload on this server → its same-origin path,
+ *  anything else "" (refused with FOREIGN_SOUND_NOTE: security review 2026-10-26, M9). */
 function clipUrl(src: string): string {
   if (/^(blob:|data:)/.test(src)) return src;
-  // Stored upload URLs are absolute on the server that took them (a Tin Hat Server: this page's origin); the API
-  // sends no CORS headers — always play through this origin's /api.
-  if (src.startsWith(`${location.origin}/api/`) || src.startsWith(apiUrl("/"))) return src;
-  if (!/^[a-z]+:/i.test(src) || /myinstants\.com/i.test(src)) return apiUrl(`/soundboard/clip?url=${encodeURIComponent(src)}`);
-  return src;
+  return clipSrc(src);
 }
 
 /** Bumped by every sound start AND by stopSound — a start that was superseded while it published stands down. */
@@ -1971,11 +1972,17 @@ async function playSoundNow(url: string, maxMs: number, op: number): Promise<voi
     setError("A moderator muted you for everyone — sounds are off until you're unmuted");
     return;
   }
+  const clip = clipUrl(url);
+  if (!url.startsWith("mxc://") && !clip) {
+    setError(FOREIGN_SOUND_NOTE);
+    return;
+  }
   await takeSoundDown(s);
   try {
     const c = audio.audioContext();
     const gen = audio.contextGen();
-    const buf = url.startsWith("mxc://") ? await (await fetchMedia(url)).arrayBuffer() : await (await fetch(clipUrl(url))).arrayBuffer();
+    // the clip cache takes the bearer (a sound it hasn't cached yet is fetched only for a member: docs/API.md, 0.3.4)
+    const buf = url.startsWith("mxc://") ? await (await fetchMedia(url)).arrayBuffer() : await (await fetch(clip, { headers: apiAuthHeaders(clip) })).arrayBuffer();
     const decoded = await c.decodeAudioData(buf);
     if (sess() !== s || audio.contextGen() !== gen) return; // (a replaced context would publish silence)
     const node = c.createBufferSource();

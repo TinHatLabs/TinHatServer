@@ -13,6 +13,16 @@ export interface Embed {
   layout: EmbedLayout;
   /** the original link (↗ "Open link") */
   url: string;
+  /** image mode: shows by itself (true only for Giphy, the GIF picker's provider); otherwise "GIF from <host> — click
+   *  to show" and nothing is fetched until the click (security review 2026-10-26, M9; embeds.rs `autoload`) */
+  autoload?: boolean;
+  /** image mode: the link's host as shown on that face */
+  host?: string;
+}
+
+/** Giphy's own hosts (giphy.com and its media subdomains: media*.giphy.com, i.giphy.com) — embeds.rs is_giphy_host. */
+export function isGiphyHost(host: string): boolean {
+  return host === "giphy.com" || host.endsWith(".giphy.com");
 }
 
 const MAX_EMBEDS = 3;
@@ -181,7 +191,14 @@ export function parseEmbed(raw: string): Embed | null {
     const mp4 = raw.slice(0, raw.length - 5) + ".mp4";
     return mk(mp4, "media", "video", "Video", "video", raw);
   }
-  if (p.endsWith(".gif")) return mk(raw, "media", "image", "GIF", "gif", raw);
+  if (p.endsWith(".gif")) {
+    // M9: a GIF shows by itself only from Giphy; from any other host it waits for a click (EmbedCard), so a stranger's
+    // link can't make every reader's browser fetch their file (address + time of reading)
+    const e = mk(raw, "media", "image", "GIF", "gif", raw);
+    e.autoload = isGiphyHost(host);
+    e.host = u.hostname.toLowerCase();
+    return e;
+  }
   return null;
 }
 
@@ -206,11 +223,5 @@ export function previewCandidate(body: string): string | null {
   return raw;
 }
 
-/** Spoilers (embeds.rs hide_spoilers) — applied to sanitized HTML. */
-export function hideSpoilers(html: string): string {
-  if (!html.includes("data-mx-spoiler")) return html;
-  return html.replace(/<span\s+data-mx-spoiler(?:="([^"]*)")?\s*>([\s\S]*?)<\/span>/gi, (_m, reason: string | undefined, inner: string) => {
-    const tag = reason ? `spoiler: ${reason}` : "spoiler";
-    return `<span class="tw-spoiler-tag">[${tag} — select to reveal]</span> <span class="tw-spoiler">${inner}</span>`;
-  });
-}
+// Spoilers (embeds.rs hide_spoilers) are hidden on the sanitised DOM by html.ts — never by a regex over serialised HTML
+// (security review 2026-10-26: a fake spoiler inside an attribute value broke out of it on older serialisers).

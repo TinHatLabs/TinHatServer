@@ -8,18 +8,20 @@ import { useEffect, useRef, useState } from "react";
 import { Avatar, BasicButton, Popover, localpart, useIsMobile } from "@/ui";
 import { PresenceLine } from "@/features/presence";
 import { fetchMedia } from "@/core/matrix";
+import { toast } from "@/core/bus";
+import { FOREIGN_SOUND_NOTE } from "@/core/clipurl";
+import { clipSrc } from "@/core/clipsrc";
 import { playClip, type ClipHandle } from "@/core/sounds";
 import { fetchProfileCard, linkify, type ProfileCard } from "./roomActions";
 import s from "./ProfileCard.module.css";
+import { linkContainerEvents } from "@/core/linkgate";
 
 let preview: ClipHandle | null = null;
 
-/** myinstants / relative URLs go through the same-origin clip cache (media.md clipUrlFor): Web Audio has to
- *  fetch the bytes, which a cross-origin host without CORS wouldn't give. */
+/** myinstants / relative URLs go through the same-origin clip cache, own uploads play from this origin, anything else
+ *  is refused (core/clipurl.ts, security review M9; "" = refused). */
 function sameOriginClip(u: string): string {
-  const s = u.trim();
-  if (!s || (!s.startsWith("/") && !s.includes("myinstants.com/")) || s.startsWith("/api/")) return s;
-  return `/api/soundboard/clip?url=${encodeURIComponent(s)}`;
+  return clipSrc(u);
 }
 
 /** Local preview of someone's join sound (never into a call), ≤ 3 s like the native cap. REACH A5.8: through
@@ -30,6 +32,10 @@ async function playJoinSoundLocally(url: string) {
   preview = null;
   try {
     const src: string | Blob = url.startsWith("mxc://") ? await fetchMedia(url) : sameOriginClip(url);
+    if (!src) {
+      toast(FOREIGN_SOUND_NOTE);
+      return;
+    }
     preview = await playClip(src, { channel: "preview", maxMs: 3000 });
   } catch {
     /* unplayable / blocked — nothing to show, like the native no-op */
@@ -70,7 +76,7 @@ export function ProfileCardPopup({ mxid, name, avatar, onClose }: { roomId?: str
           <span className={s.fill} />
           {card.accent && <span className={s.dot} style={{ background: card.accent }} />}
         </div>
-        {card.bio && <div className={s.bio} dangerouslySetInnerHTML={{ __html: linkify(card.bio) }} />}
+        {card.bio && <div className={s.bio} dangerouslySetInnerHTML={{ __html: linkify(card.bio) }} {...linkContainerEvents()} />}
         {card.loading && <div className={s.dim}>Loading…</div>}
         {!card.loading && !card.bio && <div className={s.dimSmall}>No profile set yet.</div>}
         <div className={s.buttons}>

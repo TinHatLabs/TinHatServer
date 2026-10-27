@@ -1,6 +1,6 @@
 // envclock.ts — the wall-clock 10 ms tick of an envelope frame (echo.ts Env), from the AUDIO clock.
 //
-// Every level tap of the call's AudioContext (audio.ts tapTrack: our mic, each received track) runs TAP_SRC below,
+// Every level tap of the call's AudioContext (audio.ts tapTrack: our mic, each received track) runs tap.worklet.js,
 // which cuts its input into 10 ms frames on the context's own sample grid (frame k = the samples of [10k, 10k+10) ms of
 // context time, the same samples in every tap) and posts each batch with the sample index where its last frame ends.
 // AudioClock (one per context) maps that index to a wall-clock tick through one offset (wall ms − audio ms), so what we
@@ -22,7 +22,7 @@
 // no verdict could form (the received stream carried our voice at NCC 0.95). Numbering each stream sequentially (the
 // desktop's rule) closes the holes but lets one stream keep up to 50 ms of bias against another — enough to flip same
 // room (< 120 ms) vs speaker echo, or the local lead check (Astra review). One audio clock for every stream has neither.
-// Pure (no imports): envclock.test.ts runs it under Node, TAP_SRC included.
+// Pure (no imports): envclock.test.ts runs it under Node, tap.worklet.js included.
 
 /** Readings within this (ms) of the held offset are noise (hear.rs: 50 ms); further off starts a new epoch. */
 export const HOLD_MS = 50;
@@ -63,36 +63,5 @@ export function batchSlots(last: number, n: number): number[] {
   return out;
 }
 
-/** The level tap's AudioWorklet (audio.ts registers it as "tw-tap"): 10 ms RMS frames on the context's sample grid,
- *  posted 5 at a time as { f: frames, end: the sample index where the last one ends }. A quantum with no input (a track
- *  that stopped delivering) drops the partial frame and posts what is complete, so a gap stays a gap; the first frame
- *  after a start or a gap may be partial (fewer samples, same slot). A pause of the render thread (> 200 ms between two
- *  quanta: a suspended context, a stall) drops the frames not yet posted, so no batch mixes audio from before and after
- *  it (the clock starts a new epoch on the far side; AudioClock). */
-export const TAP_SRC = `
-class TwTap extends AudioWorkletProcessor {
-  constructor() { super(); this.acc = 0; this.n = 0; this.frames = []; this.end = 0; this.bound = -1; this.last = 0; }
-  flush() { if (this.frames.length) { this.port.postMessage({ f: this.frames, end: this.end }); this.frames = []; } }
-  process(inputs) {
-    const now = Date.now();
-    if (this.last && now - this.last > 200) { this.frames = []; this.acc = 0; this.n = 0; this.bound = -1; }
-    this.last = now;
-    const ch = inputs[0] && inputs[0][0];
-    if (!ch) { this.acc = 0; this.n = 0; this.bound = -1; this.flush(); return true; }
-    for (let i = 0; i < ch.length; i++) {
-      const abs = currentFrame + i;
-      if (abs >= this.bound) {
-        if (this.bound >= 0 && this.n > 0) {
-          this.frames.push(Math.sqrt(this.acc / this.n)); this.end = abs;
-          if (this.frames.length >= 5) this.flush();
-        }
-        this.bound = Math.ceil((Math.floor((abs * 100) / sampleRate) + 1) * sampleRate / 100);
-        this.acc = 0; this.n = 0;
-      }
-      const v = ch[i]; this.acc += v * v; this.n++;
-    }
-    return true;
-  }
-}
-registerProcessor("tw-tap", TwTap);
-`;
+// The level tap's AudioWorklet itself is tap.worklet.js (its own file since the 2026-10-26 security review: the app's CSP
+// has no `blob:` script source); envclock.test.ts runs it.

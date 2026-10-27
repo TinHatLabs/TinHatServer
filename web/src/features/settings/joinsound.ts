@@ -4,6 +4,9 @@
 // request aborted) and the local preview player via the clip cache (media.md clipUrlFor).
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { apiJson } from "@/core/api";
+import { toast } from "@/core/bus";
+import { FOREIGN_SOUND_NOTE } from "@/core/clipurl";
+import { clipSrc } from "@/core/clipsrc";
 import { getClient } from "@/core/matrix";
 import { createLogger } from "@/core/log";
 import { playClip, stopClip, type ClipHandle } from "@/core/sounds";
@@ -27,18 +30,10 @@ export interface SearchHit {
   emoji?: string;
 }
 
-/** media.md clipUrlFor: myinstants URLs go through the server's clip cache (same origin). */
+/** media.md clipUrlFor (core/clipurl.ts, M9): myinstants → the server's clip cache, own uploads → this origin, "" =
+ *  refused (a foreign link never plays). */
 export function clipUrlFor(u: string): string {
-  const s = u.trim();
-  if (!s || (!s.startsWith("/") && !s.includes("myinstants.com/"))) return s;
-  if (s.startsWith("/api/")) return s;
-  const enc = Array.from(new TextEncoder().encode(s))
-    .map((b) => {
-      const c = String.fromCharCode(b);
-      return /[A-Za-z0-9\-_.~]/.test(c) ? c : `%${b.toString(16).toUpperCase().padStart(2, "0")}`;
-    })
-    .join("");
-  return `/api/soundboard/clip?url=${enc}`;
+  return clipSrc(u);
 }
 
 function normalizeHits(raw: unknown): SearchHit[] {
@@ -125,7 +120,13 @@ export function togglePreview(url: string): void {
       emit();
     }
   };
-  void playClip(clipUrlFor(url), { channel: "preview", onEnded: done }).then((h) => {
+  const src = clipUrlFor(url);
+  if (!src) {
+    toast(FOREIGN_SOUND_NOTE);
+    done();
+    return;
+  }
+  void playClip(src, { channel: "preview", onEnded: done }).then((h) => {
     if (playingUrl !== url) return h?.stop();
     if (!h) {
       log.warn("[joinsound] preview error", url);

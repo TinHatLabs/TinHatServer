@@ -1,0 +1,33 @@
+# The Python wheels Tin Hat Server ships: aiohttp (the manager's, the names service's and the relay's web stack) and
+# what it needs, for Debian 13's Python 3.13 on amd64 and arm64, plus pure-Python builds of the same versions for any
+# other Python 3.10+ (install.sh on Ubuntu 24.04: 3.12), and pip, which installs them (run from its own wheel, never
+# installed). Debian's python3-aiohttp 3.11.16 has 2026 advisories Debian won't fix (M15); these replace it.
+#
+# One file per line: NAME VERSION SHA256 URL. build/wheels.py fetch downloads exactly these at build time and refuses
+# any file whose sha256 differs; servers check them again and install them offline into a venv
+# (`pip install --no-index --require-hashes`, tinhat/pyenv.py). Nothing on a server ever asks PyPI for anything.
+#
+# Pinned 2026-10-26: aiohttp 3.14.5 (>= 3.14.4, which fixes every advisory pip-audit lists against 3.11.16; OSV: none
+# against 3.14.5), its dependencies at versions at least two weeks old (multidict 7.1.0, not 7.2.x of 10-24), pip
+# 26.2.1 (not 26.2.2 of 10-20). Changing a version: docs/RELEASING.md, "aiohttp and its wheels".
+aiohappyeyeballs 2.7.1 9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472 https://files.pythonhosted.org/packages/71/43/1947f06babed6b3f1d7f38b0c767f52df66bfb2bc10b468c4a7de9eceff2/aiohappyeyeballs-2.7.1-py3-none-any.whl
+aiohttp 3.14.5 1ffa3a523a36d8628f98c06492ae16a31a23d14c0b4ec721757b477319f656d6 https://files.pythonhosted.org/packages/32/51/395d225ef36f5a50d8e548dcd3141bfdbcd31fb6eed859022c573d2c4d66/aiohttp-3.14.5-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+aiohttp 3.14.5 74efb69332b85675b1eabd760a8cfc2e2cf42c60607c66f88014c1bdfb40942d https://files.pythonhosted.org/packages/9a/68/8c2c67a3aedf46e00f3c42f04fbc6983de80d4ed5786151e33681ba45883/aiohttp-3.14.5-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+aiohttp 3.14.5 efc21a454892828368b11c2c780de0ff8bc991f73f6b99c6b66e56205470929b https://files.pythonhosted.org/packages/68/30/173960c42b05a6c59f7558e4b12a4b0d9ba376cf6aa9bde7f9e08a30ca8d/aiohttp-3.14.5-py3-none-any.whl
+aiosignal 1.4.0 053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e https://files.pythonhosted.org/packages/fb/76/641ae371508676492379f16e2fa48f4e2c11741bd63c48be4b12a6b09cba/aiosignal-1.4.0-py3-none-any.whl
+attrs 26.1.0 c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309 https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl
+frozenlist 1.8.0 0c18a16eab41e82c295618a77502e17b195883241c563b00f0aa5106fc4eaa0d https://files.pythonhosted.org/packages/9a/9a/e35b4a917281c0b8419d4207f4334c8e8c5dbf4f3f5f9ada73958d937dcc/frozenlist-1.8.0-py3-none-any.whl
+frozenlist 1.8.0 eaa352d7047a31d87dafcacbabe89df0aa506abb5b1b85a2fb91bc3faa02d822 https://files.pythonhosted.org/packages/40/76/c202df58e3acdf12969a7895fd6f3bc016c642e6726aa63bd3025e0fc71c/frozenlist-1.8.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+frozenlist 1.8.0 fb30f9626572a76dfe4293c7194a09fb1fe93ba94c7d4f720dfae3b646b45027 https://files.pythonhosted.org/packages/d5/4e/e4691508f9477ce67da2015d8c00acd751e6287739123113a9fca6f1604e/frozenlist-1.8.0-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl
+idna 3.20 ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl
+multidict 7.1.0 5129cc1f5fec6888e2db0be936dab67242e32c738811c8769aeea93aab4257a8 https://files.pythonhosted.org/packages/4d/2e/7b708a72001323dc6b2930834d63e355870ea5b1ee8d1450e0fe1a24752b/multidict-7.1.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+multidict 7.1.0 d9ef29cfd98e17085b4f91bba8fa1570bec6787d5c52ce653ed33a58785585d0 https://files.pythonhosted.org/packages/d0/86/a3de309c5e28ee85b314d0e3ba0e0dea6fd361c313322a05e67be4656e1e/multidict-7.1.0-py3-none-any.whl
+multidict 7.1.0 df03e392cae1e05462918abbae06d6100f1e53f67db971ff0ac6c07d9edf7321 https://files.pythonhosted.org/packages/60/ed/172447dd09f06111f69d2cf22a018020b34a93a39ddf72cddfdb48323449/multidict-7.1.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+pip 26.2.1 71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e https://files.pythonhosted.org/packages/f3/6e/1736e5b4ae2b778ef2f81c47d797de9f891d4d8acb047a24ca37a60294dd/pip-26.2.1-py3-none-any.whl
+propcache 0.5.4 62c60aec739ed00124573cce1178138fd690c7676352d67a37328c1cf51d7468 https://files.pythonhosted.org/packages/f5/cd/785c64ed382f3f04201870267b02783f63b4678c2acfddc177a3ebcc2727/propcache-0.5.4-py3-none-any.whl
+propcache 0.5.4 dbab5f5ff6897c81f355d079010cdae85b02e5a0b518b5251523b8ad8ae9ac3c https://files.pythonhosted.org/packages/73/36/0093091ebb270fcd1bc1f6e095f93b2e0ed7f1011c28837dc2dbe5f96b99/propcache-0.5.4-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+propcache 0.5.4 f85915e00dcb1cd9f2f890ead064ed40a27df06f0db65be427b29482ae357572 https://files.pythonhosted.org/packages/ed/74/08e6c1faf26ee2732023a3828787ba535557122774f4a386b1f715cbd8e0/propcache-0.5.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+typing-extensions 4.16.0 481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl
+yarl 1.25.1 14b79a30a93a3ce2e8832603fd0ab780ada281b0ba5110b519a634f2d7d7d1fc https://files.pythonhosted.org/packages/30/d2/7d1e0ab9f8390e1fbcede5a6dbf70d23c96ad09b8c5567f3a514d1ddb0e2/yarl-1.25.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl
+yarl 1.25.1 681c758b0490f9e96b78e5fa8e8dc6e648e9185bb6eaebe73183c33ea0c445f3 https://files.pythonhosted.org/packages/54/22/318c7980066769c6bcd9221ed2248294f5698811da099013098c670565ed/yarl-1.25.1-py3-none-any.whl
+yarl 1.25.1 be80550d9bfe83d9b62398a37081a90434e6df2d978ec345c3d2820de6beddab https://files.pythonhosted.org/packages/0e/b7/a82a49bf88340b837ef6972b508a1604ae377b9e6904b46b10cf5f1cf925/yarl-1.25.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl

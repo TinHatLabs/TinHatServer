@@ -485,7 +485,7 @@ class Installer:
     async def _s_dns(self, a: dict):
         own = a["domain"]
         state.save_secrets(domain={"provider": own["provider"], "creds": own["creds"]})
-        state.save_state(domain={"provider": own["provider"]})
+        state.save_state(domain={"provider": own["provider"], **({"proxies": own["proxies"]} if own.get("proxies") else {})})
         sn = a["server_name"]
         label = owndomain.PROVIDERS[own["provider"]]["label"]
         ip = await owndomain.public_ip()
@@ -598,6 +598,8 @@ class Installer:
                 "connect_codes", "names_status", "restoring", "livekit_public_ip",
                 "restored_from"}  # a copy of a server that was itself restored once: this restore is the one to remember
         meta = state.read_json(root / "backup.json", {})
+        if isinstance(old.get("domain"), dict):  # the proxy this copy sits behind may connect from elsewhere: named
+            old["domain"] = {k: v for k, v in old["domain"].items() if k != "proxies"}  # again in the dashboard
         state.save_state(**{k: v for k, v in old.items() if k not in drop},
                          restored_from={"at": int(time.time()), "snapshot": r["snapshot"], "backup_time": r.get("time"),
                                         "backup_version": meta.get("version"), "old_addresses": meta.get("addresses") or []})
@@ -821,9 +823,10 @@ def cert_hint(lines: list[str], provider: str | None) -> str:
     return f" Check that the {provider} API token can edit this domain's DNS." if provider else ""
 
 
-def refresh_configs(force: bool = False) -> list[str]:
+def refresh_configs(force: bool = False, caddyfile_to=None) -> list[str]:
     """Write every generated config again from what the box already knows (state, secrets, the name's credentials):
     after an update brought new templates, or after a restore. The signing key and the database are never touched.
+    caddyfile_to: write the Caddyfile there instead of the live one (web.apply_proxy_addresses validates it first).
     Returns the files whose contents changed (the caller restarts what uses them)."""
     st = state.load_state()
     if st.get("phase") != "ready" and not force:
@@ -853,7 +856,7 @@ def refresh_configs(force: bool = False) -> list[str]:
     elif st.get("mode") == "domain":
         provider, creds = owndomain.settings()
         if provider == "proxy":
-            caddyfile = templates.caddy_proxy(sn, owndomain.PROXY_PORT, config.proxy_only())
+            caddyfile = templates.caddy_proxy(sn, owndomain.PROXY_PORT, config.proxy_only(), owndomain.proxies(st))
         elif provider:
             e = environment.env()
             caddyfile = templates.caddy_domain(sn, owndomain.caddy_tls(provider, creds), e["acme_directory"],
@@ -871,7 +874,7 @@ def refresh_configs(force: bool = False) -> list[str]:
         if former:  # moved to its own domain (move.py): the old names keep answering while they last
             caddyfile = templates.with_former_names(caddyfile, sn, [(f["name"], _former_tls(f, s)) for f in former])
             mode = 0o600
-        state.write_text(config.CADDYFILE, caddyfile, mode)
+        state.write_text(caddyfile_to or config.CADDYFILE, caddyfile, mode)
     return [str(f) for f in files if (f.read_bytes() if f.exists() else None) != before[f]]
 
 
@@ -929,7 +932,7 @@ async def secure_proxy(sn: str, write: bool = True) -> str:
     shared = config.proxy_only()
     if write:
         new = config.CADDYFILE.with_name("Caddyfile.new")
-        state.write_text(new, templates.caddy_proxy(sn, port, shared), 0o644)
+        state.write_text(new, templates.caddy_proxy(sn, port, shared, owndomain.proxies()), 0o644)
         rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
         if rc != 0:
             raise InstallError("The web server's new settings were rejected.", _tail(out))

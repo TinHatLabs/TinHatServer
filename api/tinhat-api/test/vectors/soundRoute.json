@@ -1,0 +1,194 @@
+{
+ "_source": "the apps' shared vectors: the desktop app's crates/app/src/testvectors/member-content.json, section soundRoute, at desktop commit 486ad3e6 (bump 2.1; file sha256 65d35feb732b893e01c4c3bbcf2dd12b1f4c690ae6e0304d7d78807cb5fad052); keep in step",
+ "soundRoute": [
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://www.myinstants.com/media/sounds/airhorn.mp3",
+   "route": "myinstants",
+   "play": "https://chat.example.net/api/soundboard/clip?url=https%3A%2F%2Fwww.myinstants.com%2Fmedia%2Fsounds%2Fairhorn.mp3"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "/media/sounds/airhorn.mp3",
+   "route": "myinstants",
+   "play": "https://chat.example.net/api/soundboard/clip?url=%2Fmedia%2Fsounds%2Fairhorn.mp3"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://evil.example/myinstants.com/x.mp3",
+   "route": "myinstants",
+   "play": "https://chat.example.net/api/soundboard/clip?url=https%3A%2F%2Fevil.example%2Fmyinstants.com%2Fx.mp3"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://chat.example.net/api/soundboard/clip?id=0123abcd",
+   "route": "own",
+   "play": "https://chat.example.net/api/soundboard/clip?id=0123abcd"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://chat.example.net/api/soundboard/file/0123abcd.mp3",
+   "route": "own",
+   "play": "https://chat.example.net/api/soundboard/file/0123abcd.mp3"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://chat.example.net/api/soundboard/clip?id=0123abcd&x=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://chat.example.net/api/soundboard/%2e%2e/vods/file/x",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://chat.example.net/api/vods/file/r/1/a.mka",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/clip?id=0123abcd",
+   "route": "foreign",
+   "play": "https://chat.example.net/api/soundboard/clip?url=https%3A%2F%2Fpeer.example.org%2Fapi%2Fsoundboard%2Fclip%3Fid%3D0123abcd"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org:443/api/soundboard/clip?id=0123abcd",
+   "route": "foreign",
+   "play": "https://chat.example.net/api/soundboard/clip?url=https%3A%2F%2Fpeer.example.org%3A443%2Fapi%2Fsoundboard%2Fclip%3Fid%3D0123abcd"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/file/0123abcd.mp3",
+   "route": "foreign",
+   "play": "https://chat.example.net/api/soundboard/clip?url=https%3A%2F%2Fpeer.example.org%2Fapi%2Fsoundboard%2Ffile%2F0123abcd.mp3"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://Peer.Example.org/api/soundboard/file/a_b-c.ogg",
+   "route": "foreign",
+   "play": "https://chat.example.net/api/soundboard/clip?url=https%3A%2F%2FPeer.Example.org%2Fapi%2Fsoundboard%2Ffile%2Fa_b-c.ogg"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/clip?id=1&x=2",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/clip?url=x",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/clip",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/file/a.mp3?x=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/file/..",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/file/a/b",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/%2e%2e/x",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/file/%2Fetc",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/file/a%5Cb",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/api/soundboard/clip?id=1#x",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://user@peer.example.org/api/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://user:pw@peer.example.org/api/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org:8443/api/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "http://peer.example.org/api/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://203.0.113.5/api/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://[2001:db8::1]/api/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://localhost/api/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/apix/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://peer.example.org/API/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://chat.example.net/api/soundboard/clip?id=1&x=2",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://chat.example.net/other/soundboard/clip?id=1",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "https://attacker.example/x.mp3",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "file:///etc/passwd",
+   "route": "refuse"
+  },
+  {
+   "base": "https://chat.example.net/api",
+   "url": "",
+   "route": "refuse"
+  }
+ ]
+}

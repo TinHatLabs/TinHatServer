@@ -15,6 +15,22 @@
 // has no roles yet, the Matrix power levels of the call room decide instead
 // (caller ≥ events["dev.tinhat.call.moderation"] ?? 50, and caller > target).
 //
+// Which spaces govern (security review 2026-10-26, M4; reworked after the second review): a room's m.space.parent is
+// written by the room's own members (Tin Hat's roles map manage_rooms onto it), so nobody below the room's own
+// authority may change which policy applies, and nobody may bring a space of their own in:
+//   - "the room's authority" = whoever may change its power levels (their power level reaches m.room.power_levels');
+//     "a space run by the room" = among its JOINED members with authority there is someone with the room's authority.
+//   - Every m.space.parent event of the room counts, whatever its content now: clearing a link only replaces its
+//     content, the event stays.
+//     - set by the room's authority: a link binds; an emptied one is a real unlink;
+//     - set by anyone else, and only for a space run by the room: a link binds when the space lists the room too
+//       (m.space.child with a `via`, or emptied by someone without authority in the space); an emptied link STILL binds
+//       (fail closed: a moderator clearing or re-sending the link changes nothing).
+//   - Every bound space whose roles are set up must allow (the stricter outcome when there are several); a bound space
+//     that can't be read refuses the request (502), it never falls back. No bound space: the room's power levels decide.
+// And a roles rank never beats the call room's power levels: a target whose power level there is higher than the
+// caller's, or who is at 100 like the caller, can't be moderated by them.
+//
 // LiveKit facts this relies on (verified 2026-09-17 against lk-jwt-service logs): the LiveKit
 // room name is the Matrix room id, and a participant identity is `<mxid>:<DEVICE_ID>`.
 
@@ -23,10 +39,12 @@ const ROLE_TYPE = "dev.tinhat.role";
 const MEMBER_ROLES_TYPE = "dev.tinhat.member_roles";
 const EVERYONE = "everyone";
 
-const ROOM_ID_RE = /^![A-Za-z0-9._~-]{1,80}:[A-Za-z0-9.-]{1,80}$/;
+// `!opaque:server`, or a room v12 id (`!` + the create event's hash, no server part): reachcommon's.
+const ROOM_ID_RE = /^![A-Za-z0-9._~=+/-]{1,255}(?::[A-Za-z0-9.-]{1,255}(?::\d{1,5})?)?$/;
 const IDENTITY_RE = /^(@[^:\s]+:[A-Za-z0-9.-]+(?::\d+)?):([A-Za-z0-9_-]{1,64})$/;
 
 const ACTIONS = new Set(["mute", "unmute", "disconnect"]);
+const MAX_PARENT_LINKS = 32;
 
 // Everything but the microphone (and the "unknown"-source soundboard/music tracks, which are
 // deliberately NOT listed: a server-muted person is silent, full stop — same as Discord).
@@ -95,7 +113,20 @@ export function installModeration(app, deps) {
         return ev?.content?.membership || "leave";
     }
 
+    /** Room v12 and later (and its draft, org.matrix.hydra.11): the creator and additional_creators have unlimited power
+     *  and are never listed in power_levels (review of 116d103, #8: they were ignored). Others: nobody. */
+    function creatorsOf(state) {
+        const c = state.find((e) => e.type === "m.room.create" && e.state_key === "");
+        if (!c) return new Set();
+        const v = String(c.content?.room_version ?? "1");
+        if (!((/^\d+$/.test(v) && Number(v) >= 12) || v === "org.matrix.hydra.11")) return new Set();
+        const out = new Set(typeof c.sender === "string" ? [c.sender] : []);
+        for (const u of Array.isArray(c.content?.additional_creators) ? c.content.additional_creators : []) if (typeof u === "string") out.add(u);
+        return out;
+    }
+
     function powerLevel(state, mxid) {
+        if (creatorsOf(state).has(mxid)) return Infinity;
         const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
         const users = pl.users || {};
         const v = Object.prototype.hasOwnProperty.call(users, mxid) ? users[mxid] : (pl.users_default ?? 0);
@@ -108,11 +139,62 @@ export function installModeration(app, deps) {
         return Object.prototype.hasOwnProperty.call(ev, CALL_MOD_TYPE) ? Number(ev[CALL_MOD_TYPE]) : 50;
     }
 
-    /** The room whose roles govern this room: its canonical (else first) joined-via parent space, else itself. */
-    function containerOf(roomId, state) {
-        const parents = state.filter((e) => e.type === "m.space.parent" && Array.isArray(e.content?.via) && e.content.via.length > 0);
-        parents.sort((a, b) => (b.content?.canonical === true) - (a.content?.canonical === true));
-        return parents[0]?.state_key || roomId;
+    /** The power level a state event of `type` needs in a room (events[type] ?? state_default ?? 50). */
+    function stateLevel(state, type) {
+        const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
+        const ev = pl.events || {};
+        if (Object.prototype.hasOwnProperty.call(ev, type)) return Number(ev[type]) || 0;
+        return Number(pl.state_default ?? 50) || 0;
+    }
+
+    /** Users with authority in a room (their power level reaches m.room.power_levels'), joined ones only when asked. */
+    function authorities(state, joinedOnly) {
+        const need = stateLevel(state, "m.room.power_levels");
+        const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
+        const out = new Set();
+        for (const u of [...creatorsOf(state), ...Object.keys(pl.users || {})]) {
+            if (powerLevel(state, u) < need) continue;
+            if (joinedOnly && membership(state, u) !== "join") continue;
+            out.add(u);
+        }
+        return out;
+    }
+
+    /**
+     * The spaces whose roles govern this room: [{id, state}] (see the rule at the top). Throws when a space the room
+     * names can't be read (the caller answers 502: an established binding never fails open).
+     */
+    async function governingSpaces(roomId, state) {
+        const links = state.filter((e) => e.type === "m.space.parent" && typeof e.state_key === "string" && e.state_key !== roomId
+            && ROOM_ID_RE.test(e.state_key));                        // a key that can't be a room is no space
+        if (!links.length) return [];
+        // every link is read (none may be skipped: skipping one could drop a binding), so their number is bounded
+        if (links.length > MAX_PARENT_LINKS) throw Object.assign(new Error("too many parent links"), { status: 403 });
+        const roomAuthority = stateLevel(state, "m.room.power_levels");
+        const roomRunners = authorities(state, false);
+        const out = [];
+        for (const link of links) {
+            const linked = Array.isArray(link.content?.via) && link.content.via.length > 0;
+            const byAuthority = typeof link.sender === "string" && powerLevel(state, link.sender) >= roomAuthority;
+            if (byAuthority && !linked) continue;                    // the room's own authority unlinked it
+            const ps = await roomState(link.state_key);              // throws -> 502
+            if (!ps) continue;                                       // not on this server: nothing to read roles from
+            if (!byAuthority) {
+                // someone below the room's authority set (or cleared) this link: only a space run by the room counts
+                const spaceRunners = authorities(ps, true);
+                if (![...spaceRunners].some((u) => roomRunners.has(u))) continue;
+                if (linked) {
+                    const child = ps.find((e) => e.type === "m.space.child" && e.state_key === roomId);
+                    const listed = !!child && Array.isArray(child.content?.via) && child.content.via.length > 0;
+                    const unlistedByNobody = !!child && !listed && !(typeof child.sender === "string"
+                        && powerLevel(ps, child.sender) >= stateLevel(ps, "m.room.power_levels"));
+                    if (!listed && !unlistedByNobody) continue;      // a one-sided link by a moderator binds nothing
+                }
+                // an emptied link set by someone below the room's authority still binds (fail closed)
+            }
+            out.push({ id: link.state_key, state: ps });
+        }
+        return out;
     }
 
     /** Roles as the client's roles_model sees them. active=false when the space never set roles up. */
@@ -212,19 +294,24 @@ export function installModeration(app, deps) {
         if (!state) { line(404, "no such room"); return res.status(404).json({ error: "No such room" }); }
         if (membership(state, me) !== "join") { line(403, "not joined"); return res.status(403).json({ error: "You're not in that room" }); }
 
-        // Authorise: roles from the container space when they exist, power levels otherwise.
-        const container = containerOf(roomId, state);
-        let containerState = state;
-        if (container !== roomId) {
-            try { containerState = (await roomState(container)) || state; } catch { containerState = state; }
+        // Authorise: roles from every governing space whose roles are set up (all must allow), power levels otherwise.
+        let governing;
+        try { governing = await governingSpaces(roomId, state); } catch (e) {
+            if (e.status === 403) { line(403, e.message); return res.status(403).json({ error: "This room links to too many spaces to tell who may moderate its calls" }); }
+            line(502, `space: ${e.message}`); return res.status(502).json({ error: "Couldn't read the room's space from the homeserver" });
         }
-        const roles = rolesOf(containerState);
+        const active = governing.map((g) => rolesOf(g.state)).filter((r) => r.active);
         let allowed, why;
-        if (roles.active) {
-            const mine = roles.rankOf(me), theirs = roles.rankOf(targetMxid);
-            if (!roles.has(me, "moderate_calls")) { allowed = false; why = "You can't moderate calls in this space"; }
-            else if (mine <= theirs) { allowed = false; why = "They rank at or above you"; }
-            else allowed = true;
+        if (active.length) {
+            const myPl = powerLevel(state, me), theirPl = powerLevel(state, targetMxid);
+            allowed = true;
+            for (const roles of active) {
+                const mine = roles.rankOf(me), theirs = roles.rankOf(targetMxid);
+                if (!roles.has(me, "moderate_calls")) { allowed = false; why = "You can't moderate calls in this space"; break; }
+                if (mine <= theirs) { allowed = false; why = "They rank at or above you"; break; }
+            }
+            // a roles rank never beats the call room's own power levels (M4)
+            if (allowed && (theirPl > myPl || (theirPl >= 100 && theirPl >= myPl))) { allowed = false; why = "They rank at or above you"; }
         } else {
             const mine = powerLevel(state, me), theirs = powerLevel(state, targetMxid);
             if (mine < modThreshold(state)) { allowed = false; why = "You can't moderate calls in this room"; }
@@ -242,7 +329,7 @@ export function installModeration(app, deps) {
             else if (action === "unmute") await doUnmute(roomId, p);
             else await twirp("RemoveParticipant", roomId, { room: roomId, identity: target });
             line(200, action === "mute" ? `${tracksMuted} track(s)` : "");
-            return res.json({ ok: true, action, target, tracksMuted, rolesActive: roles.active });
+            return res.json({ ok: true, action, target, tracksMuted, rolesActive: active.length > 0 });
         } catch (e) {
             line(502, e.message);
             return res.status(502).json({ error: `The call server refused: ${e.message}` });

@@ -287,7 +287,9 @@
 .rich :global(pre) {
   white-space: pre-wrap;
 }
+/* a member's link can't be dragged out to the tab bar (that would open it past core/linkgate's door) */
 .rich :global(a) {
+  -webkit-user-drag: none;
   color: var(--th-bubble-other-link-fg);
   text-decoration: underline;
 }
@@ -745,6 +747,26 @@
 }
 .embedScrim {
   background: var(--th-embed-poster-overlay);
+}
+/* M9: the click-to-show face of a GIF from a host other than Giphy (ThEmbedCard.qml imageWaits: icon 18 + label, 12 px
+   side margins, 8 px apart, the poster gradient + scrim; hover = the control hover wash) */
+.embedGifWait {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: var(--th-embed-overlay-fg);
+}
+.embedGifWait > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.embed:hover .embedGifWaitScrim {
+  background: var(--th-embed-control-bg-hover);
 }
 .embedSurface {
   background: var(--th-embed-surface-bg);

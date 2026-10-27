@@ -277,7 +277,7 @@ export function av1State() {
 if (typeof window !== "undefined") {
   const w = window as unknown as { __TW_DEBUG__?: boolean; __twAv1?: unknown };
   // test hook, same gate as window.__twCall
-  if (import.meta.env.DEV || w.__TW_DEBUG__ || /twdebug/.test(location.hash))
+  if (import.meta.env.DEV || w.__TW_DEBUG__)
     w.__twAv1 = { state: av1State, probe: av1Probe, setEnabled: (on: boolean) => setPref(AV1_PREF, on) };
   // start the probe early so the first join never waits for it
   void av1Probe();

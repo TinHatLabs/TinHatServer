@@ -194,17 +194,4 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/** RightPanel.linkify: escape, then wrap http(s) URLs (trailing punctuation stays outside). */
-export function linkify(s: string): string {
-  const t = String(s || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/\n/g, "<br>");
-  return t.replace(/(https?:\/\/[^\s<]+)/g, (u) => {
-    const trail = /[.,;:!?)]+$/.exec(u);
-    const core = trail ? u.slice(0, -trail[0].length) : u;
-    return `<a href="${core}" target="_blank" rel="noopener noreferrer">${core}</a>${trail ? trail[0] : ""}`;
-  });
-}
+export { linkify } from "./linkify";

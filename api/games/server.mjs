@@ -28,6 +28,9 @@ import express from "express";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHs, createMatrixAuth, clientKey, mono } from "../tinhat-api/reachcommon.mjs";
+import { createGamesLimits, customAllowed } from "./limits.mjs";
+import { SANDBOX_HEADERS } from "../tinhat-api/media.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3003);
@@ -293,31 +296,34 @@ function pub(e) {
 }
 function isMultiplayer(e) { const f = e.flags; return !!(f && (f.multiplayer || f.coop || f.onlinePvp || f.onlineCoop)); }
 
-// ── auth ──────────────────────────────────────────────────────────────────────
-async function matrixWhoami(token) {
-    try {
-        const r = await fetch(`${HS_INTERNAL}/_matrix/client/v3/account/whoami`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) });
-        if (!r.ok) return null;
-        return (await r.json()).user_id || null;
-    } catch { return null; }
-}
+// ── auth + limits ─────────────────────────────────────────────────────────────
+// The Tin Hat API's shared sign-in check (reachcommon: answers cached 60 s per token, budgets for tokens never seen
+// valid per caller and overall), so a flood of made-up bearers can't hammer Synapse through this service; and request
+// limits per address and per person (limits.mjs). Security review 2026-10-26.
+const auth = HS_INTERNAL ? createMatrixAuth({ hs: createHs({ hsUrl: HS_INTERNAL }) }) : null;
 async function requireMatrixUser(req, res, next) {
-    const token = (req.headers.authorization || "").replace(/^Bearer /, "");
-    if (!token) return res.status(401).json({ error: "bearer token required" });
-    const user = await matrixWhoami(token);
-    if (!user) return res.status(401).json({ error: "bad token" });
-    req.matrixUser = user;
+    if (!auth) return res.status(503).json({ error: "sign-in checks are not set up on this server" });
+    let who;
+    try { who = await auth.authenticate(req, res); } catch { return res.status(502).json({ error: "homeserver unreachable" }); }
+    if (!who) return;  // answered (401 / 429 / 502)
+    req.matrixUser = who.user;
     next();
 }
+const limits = createGamesLimits(mono);
+setInterval(() => limits.sweep(), 600_000).unref?.();
+const tooMany = (res, after = 5) => { res.setHeader("Retry-After", String(after)); return res.status(429).json({ error: "Too many requests" }); };
+/** Per person, after requireMatrixUser. */
+const perUser = (kind) => (req, res, next) => (limits.user(kind, req.matrixUser) ? next() : tooMany(res, limits.retryAfter(kind, req.matrixUser)));
 
 // ── routes ────────────────────────────────────────────────────────────────────
 const app = express();
 app.disable("x-powered-by");
+app.use((req, res, next) => (limits.request(req.path, clientKey(req)) ? next() : tooMany(res)));
 app.use(express.json({ limit: "8kb" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true, games: Object.keys(db.games).length, queue: detailQueue.length, sgdb: !!SGDB_KEY, steamKey: !!STEAM_KEY }));
 
-app.get("/search", requireMatrixUser, async (req, res) => {
+app.get("/search", requireMatrixUser, perUser("search"), async (req, res) => {
     const q = clean(req.query.q).toLowerCase();
     if (q.length < 2) return res.json({ items: [] });
     const seen = new Set();
@@ -354,6 +360,8 @@ app.get("/art/:id/:kind", async (req, res) => {
     if (!KINDS.includes(kind)) return res.status(404).end();
     const e = canonical(req.params.id);
     res.setHeader("Cache-Control", "public, max-age=86400");
+    // cover art and the SVG placeholder are served from the app's origin: never anything that runs (round 3)
+    for (const [k, v] of Object.entries(SANDBOX_HEADERS)) res.setHeader(k, v);
     if (e) {
         const send = (f) => { const b = readFileSync(f); const t = b[0] === 0x89 ? "image/png" : b[0] === 0xff ? "image/jpeg" : (b.slice(0, 4).toString() === "RIFF" ? "image/webp" : "application/octet-stream"); res.setHeader("Content-Type", t); res.send(b); };
         const f = await cachedArt(e, kind);
@@ -369,6 +377,9 @@ app.post("/custom", requireMatrixUser, (req, res) => {
     if (name.length < 2) return res.status(400).json({ error: "Give it a name" });
     const hit = db.aliases[name.toLowerCase()];
     if (hit && db.games[hit]) return res.json(pub(db.games[hit]));
+    // a new row in the catalogue every client downloads: a day's worth per person, and a cap per person in all
+    if (!customAllowed(Object.values(db.games), req.matrixUser)) return res.status(403).json({ error: "You've added a lot of games already." });
+    if (!limits.user("custom", req.matrixUser)) return tooMany(res, limits.retryAfter("custom", req.matrixUser));
     const e = upsert({ id: `custom:${slugify(name)}-${Math.random().toString(36).slice(2, 6)}`, name, source: "custom", flags: { multiplayer: true }, art: {}, artState: "placeholder", createdBy: req.matrixUser, createdAt: Date.now() });
     console.log(`[games] ${req.matrixUser} added custom game "${name}"`);
     res.status(201).json(pub(e));
@@ -376,7 +387,7 @@ app.post("/custom", requireMatrixUser, (req, res) => {
 
 // Owned-games import. Resolves a profile URL/vanity/steamid64, checks the library is
 // public, returns the list — and forgets it. Nothing about the person is written here.
-app.post("/steam/library", requireMatrixUser, async (req, res) => {
+app.post("/steam/library", requireMatrixUser, perUser("library"), async (req, res) => {
     if (!STEAM_KEY) return res.status(503).json({ error: "Steam import is not set up on the server yet — add games by name instead." });
     const raw = clean(req.body?.profile);
     if (!raw) return res.status(400).json({ error: "Paste your Steam profile link" });

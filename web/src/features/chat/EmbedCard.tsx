@@ -9,6 +9,7 @@ import { useC } from "@/features/callui/store";
 import { addLinkToParty } from "@/features/media";
 import type { Embed } from "./lib/embeds";
 import s from "./Bubble.module.css";
+import { openExternal } from "@/core/openlink";
 
 /** Media Party 11.4 (DESIGN §2.2): while I'm in THIS room's call, a music / video link card offers "Add to Media
  *  Party" and "Play now" (the card is added through the party's link pipeline — a Spotify / Apple song becomes its
@@ -48,6 +49,36 @@ export function EmbedCard({ e, maxW, onOpenImage, roomId = "" }: { e: Embed; max
   const imgH = nat ? Math.round((w * nat.h) / Math.max(1, nat.w)) : null;
   const cardRef = useRef<HTMLDivElement>(null);
   useTip(cardRef, !on && e.mode !== "image" ? "Play" : "", { delay: 400 });
+  // M9 (security review 2026-10-26; ThEmbedCard.qml imageWaits): a GIF from a host other than Giphy waits for a click —
+  // nothing is fetched until then (an embed without the field waits too)
+  if (e.mode === "image" && e.autoload !== true && !on) {
+    return (
+      <div
+        className={cx(s.embed, s.embedIdle)}
+        style={{ width: w, height: 160 }}
+        data-embed="gif-wait"
+        role="button"
+        tabIndex={0}
+        onClick={(ev) => {
+          ev.stopPropagation();
+          setOn(true);
+        }}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            setOn(true);
+          }
+        }}
+      >
+        <div className={s.embedGrad} />
+        <div className={cx(s.embedScrim, s.embedGifWaitScrim)} />
+        <div className={s.embedGifWait}>
+          <Icon name="image-x-generic" size={18} color="var(--th-embed-overlay-fg)" />
+          <span>{`GIF from ${e.host || "another site"} — click to show`}</span>
+        </div>
+      </div>
+    );
+  }
   if (e.mode === "image") {
     return (
       <div className={s.embed} style={{ width: w, height: imgH == null ? 160 : Math.min(300, imgH) }}>
@@ -107,7 +138,7 @@ export function EmbedCard({ e, maxW, onOpenImage, roomId = "" }: { e: Embed; max
             />
           )}
           <div className={s.embedCtl}>
-            <EmbedBtn tip="Open link" onClick={() => window.open(e.url, "_blank", "noopener,noreferrer")}>
+            <EmbedBtn tip="Open link" onClick={() => openExternal(e.url)}>
               ↗
             </EmbedBtn>
             <EmbedBtn tip="Dismiss" onClick={() => setOn(false)}>

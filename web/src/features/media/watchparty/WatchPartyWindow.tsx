@@ -57,6 +57,7 @@ import { remoteChange, type PbSnap } from "./osd";
 import { QueueList } from "./QueueList";
 import { WatchPlayer, type WatchPlayerHandle } from "./player";
 import s from "./WatchParty.module.css";
+import { openExternal } from "@/core/openlink";
 
 /** QOL §1 numbers (the desktop's WatchPartyWindow.qml uses the same) */
 export const WIDE_MIN_W = 960;
@@ -754,7 +755,7 @@ export function WatchPartyWindow({ roomId }: { roomId?: string }) {
                 {nowItem.addedBy && <UserChip roomId={partyRoom} userId={nowItem.addedBy} />}
                 {badge && <span className={s.badge}>{badge}</span>}
                 {nowItem.source && nowItem.source.service !== "youtube" && (
-                  <Button text={openInLabel(nowItem.source.service)} onClick={() => window.open(nowItem.source!.url, "_blank", "noopener,noreferrer")} />
+                  <Button text={openInLabel(nowItem.source.service)} onClick={() => openExternal(nowItem.source!.url)} />
                 )}
                 <ToolButton iconName="document-share-symbolic" iconSize={16} tip="Share to chat" className={s.rowBtn} onClick={shareToChat} />
               </div>
@@ -1060,7 +1061,7 @@ function SongCard({ card, onClose }: { card: { link: MediaLink; meta: LinkMeta |
           <Button text={playing ? "Stop preview" : "Preview 30 s"} icon={playing ? "media-playback-stop" : "media-playback-start"} onClick={toggle} />
         </>
       )}
-      <Button text={openInLabel(link.service)} highlighted onClick={() => window.open(link.input, "_blank", "noopener,noreferrer")} />
+      <Button text={openInLabel(link.service)} highlighted onClick={() => openExternal(link.input)} />
       <ToolButton iconName="window-close-symbolic" iconSize={16} tip="Dismiss" className={s.rowBtn} onClick={onClose} />
     </div>
   );

@@ -23,6 +23,7 @@ import type { FeatureModule } from "@/core/registry";
 import { bus } from "@/core/bus";
 import { CallHeaderButton, InfoHeaderButton } from "./RoomPage";
 import { Lightbox } from "./Lightbox";
+import { LinkConfirm } from "./linkconfirm";
 import { closeFloatingChat, getView, mainView, openFloatingChat, restoreChatMemory, useChatStore } from "./store";
 
 export type { RoomPageProps } from "./types";
@@ -84,6 +85,7 @@ export const feature: FeatureModule = {
     // after callui's call (70) + gear (80): native order reel · calendar · memories · call · gear · info
     r.roomHeaderActions.add({ id: "chat-info", order: 90, component: InfoHeaderButton });
     r.overlays.add({ id: "chat-lightbox", order: 50, component: Lightbox });
+    r.overlays.add({ id: "chat-link-confirm", order: 51, component: LinkConfirm });
     r.onReady.add({ id: "chat-drafts", order: 0, run: () => restoreChatMemory() });
     bus.on("openFloatingChat", ({ roomId }) => openFloatingChat(roomId));
     bus.on("jumpToEvent", ({ roomId, eventId }) => jumpTo(roomId, eventId));

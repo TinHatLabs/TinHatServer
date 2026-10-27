@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 
-from . import backup, compose, config, hw, state, updates
+from . import backup, compose, config, hw, pyenv, state, updates
 
 SECRETISH = re.compile(r"(TN-[A-Z2-9]{4}-[A-Z2-9]{4}|TC-[A-Z2-9]{4}-[A-Z2-9]{4}|[A-Za-z0-9_-]{32,}|syt_[A-Za-z0-9_]+)")
 
@@ -43,6 +43,7 @@ async def report() -> str:
     out = [f"Tin Hat Server support report — {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}",
            "(No passwords, keys, codes, people or messages are in this report.)", "",
            f"Version: {config.VERSION}   Mode: {st.get('mode')}   Set up: {st.get('installed_at')}",
+           f"Web toolkit: {pyenv.describe(pyenv.CURRENT or pyenv.status(config.STATE_DIR))}",
            f"Machine: {p.get('cpu', {}).get('cores')} cores, memory {round((p.get('memory') or {}).get('total', 0) / 2**30, 1)} GB, "
            f"disk free {round((p.get('disk') or {}).get('free', 0) / 2**30)} GB, online: {p.get('online')}",
            "", "Services:"]

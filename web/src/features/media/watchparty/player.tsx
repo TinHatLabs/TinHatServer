@@ -1,10 +1,12 @@
 // watchparty/player.tsx — the watch-party player (native: libmpv + yt-dlp). Web backends:
-//   • YouTube IFrame Player API (youtube.com / youtu.be / shorts / embed / live / music) on the
-//     youtube-nocookie host, controls hidden — the window's transport is the only control (like mpv);
+//   • YouTube (youtube.com / youtu.be / shorts / embed / live / music): the youtube-nocookie embed driven over the
+//     IFrame Player API's postMessage protocol by ytframe.ts — YouTube's own script never runs in this page (security
+//     review 2026-10-26); controls hidden — the window's transport is the only control (like mpv);
 //   • <video> for direct media URLs (mp4/webm/ogg/m3u8-in-Safari…);
 //   • anything else → a clear failure (yt-dlp-only sites can't play in a browser).
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { sameOrigin } from "../shared/clip";
+import { YT_BUFFERING, YT_ENDED, YT_PLAYING, YtFramePlayer } from "./ytframe";
 
 export interface WatchPlayerHandle {
   load(url: string): void;
@@ -101,57 +103,8 @@ export function isDirectMedia(url: string): boolean {
   return /^(https?:|blob:|\/)/.test(url) && /\.(mp4|m4v|webm|ogv|ogg|mov|mp3|m4a|opus|wav|flac|m3u8)(\?|#|$)/i.test(url);
 }
 
-// ---- YouTube IFrame API loader (shared, once) --------------------------------------------------------
-
-interface YTPlayer {
-  loadVideoById(o: { videoId: string; startSeconds?: number }): void;
-  playVideo(): void;
-  pauseVideo(): void;
-  stopVideo(): void;
-  seekTo(s: number, allowSeekAhead: boolean): void;
-  getCurrentTime(): number;
-  getDuration(): number;
-  getPlayerState(): number;
-  setVolume(v: number): void;
-  mute(): void;
-  unMute(): void;
-  destroy(): void;
-}
-interface YTNamespace {
-  Player: new (el: HTMLElement, opts: unknown) => YTPlayer;
-}
-declare global {
-  interface Window {
-    YT?: YTNamespace;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-let ytPromise: Promise<YTNamespace> | null = null;
-export function loadYouTubeApi(): Promise<YTNamespace> {
-  if (window.YT?.Player) return Promise.resolve(window.YT);
-  if (ytPromise) return ytPromise;
-  ytPromise = new Promise((resolve, reject) => {
-    const prev = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      prev?.();
-      if (window.YT) resolve(window.YT);
-    };
-    const s = document.createElement("script");
-    s.src = "https://www.youtube.com/iframe_api";
-    s.async = true;
-    s.onerror = () => {
-      ytPromise = null;
-      reject(new Error("YouTube player API didn't load"));
-    };
-    document.head.appendChild(s);
-  });
-  return ytPromise;
-}
-
-const YT_ENDED = 0;
-const YT_PLAYING = 1;
-const YT_BUFFERING = 3;
+/** The YouTube player surface player.tsx drives (ytframe.ts YtFramePlayer). */
+type YTPlayer = YtFramePlayer;
 
 // ---- the surface ---------------------------------------------------------------------------------------
 
@@ -181,8 +134,6 @@ export const WatchPlayer = forwardRef<WatchPlayerHandle, WatchPlayerProps>(funct
   );
 
   const ensureYt = async (): Promise<void> => {
-    if (yt.current) return;
-    const YT = await loadYouTubeApi();
     if (yt.current || !host.current) return;
     const holder = document.createElement("div");
     holder.style.cssText = "position:absolute;inset:0;";
@@ -191,11 +142,8 @@ export const WatchPlayer = forwardRef<WatchPlayerHandle, WatchPlayerProps>(funct
     host.current.appendChild(holder);
     ytHolder.current = holder;
     ytReady.current = false;
-    yt.current = new YT.Player(inner, {
-      host: "https://www.youtube-nocookie.com",
-      width: "100%",
-      height: "100%",
-      playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0, playsinline: 1, iv_load_policy: 3, fs: 0, enablejsapi: 1, origin: location.origin, modestbranding: 1 },
+    yt.current = new YtFramePlayer(inner, {
+      playerVars: { autoplay: 1, controls: 0, disablekb: 1, rel: 0, playsinline: 1, iv_load_policy: 3, fs: 0, modestbranding: 1 },
       events: {
         onReady: () => {
           ytReady.current = true;
@@ -221,8 +169,6 @@ export const WatchPlayer = forwardRef<WatchPlayerHandle, WatchPlayerProps>(funct
         },
       },
     });
-    const iframe = holder.querySelector("iframe");
-    iframe?.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
   };
 
   useImperativeHandle(

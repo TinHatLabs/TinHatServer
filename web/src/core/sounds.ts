@@ -28,6 +28,7 @@
 // gesture is dropped silently.
 import { getPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
+import { apiAuthHeaders } from "@/core/api";
 
 const log = createLogger("sounds");
 
@@ -372,12 +373,15 @@ export interface ClipHandle {
 const clipBuffers = new Map<string, Promise<AudioBuffer | null>>();
 
 function loadClip(url: string): Promise<AudioBuffer | null> {
+  if (!url) return Promise.resolve(null); // a refused sound (core/clipurl.ts) never fetches anything
   let p = clipBuffers.get(url);
   if (!p) {
     p = (async () => {
       const c = context();
       if (!c) return null;
-      const res = await fetch(url);
+      // the server's clip cache fetches a sound it hasn't cached yet only for a member's bearer (docs/API.md, 0.3.4):
+      // apiAuthHeaders adds it for this origin's /api clip routes only (core/apiauth.ts)
+      const res = await fetch(url, { headers: apiAuthHeaders(url) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return await c.decodeAudioData(await res.arrayBuffer());
     })().catch((e: unknown) => {

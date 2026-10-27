@@ -19,7 +19,7 @@ import time
 
 from aiohttp import web
 
-from . import __version__, render, system
+from . import __version__, pyenv, render, system
 from . import config as config_mod
 
 log = logging.getLogger("tinhat-relay")
@@ -86,7 +86,9 @@ class Relay:
         return {"ok": True, "relay_id": c["relay_id"], "version": __version__, "public_ip": c["public_ip"],
                 "wg": {"public_key": self.wg_key, "port": c["wg_port"], "endpoint": f"{c['public_ip']}:{c['wg_port']}"},
                 "tunnel_net": c["tunnel_net"], "tunnel_ip": c["tunnel_ip"], "ports": c["ports"],
-                "capacity": c["capacity"], "places": len(self.state["places"])}
+                "capacity": c["capacity"], "places": len(self.state["places"]),
+                # what it answers with: Tin Hat's pinned aiohttp, or the system's (and why)
+                "aiohttp": {k: pyenv.CURRENT.get(k) for k in ("runtime", "aiohttp", "reason")} if pyenv.CURRENT else None}
 
     # ---- HTTP ----
     def _allowed(self, req: web.Request) -> bool:

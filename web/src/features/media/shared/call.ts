@@ -73,10 +73,13 @@ export function CallBridge() {
 export function engineSoundUrl(url: string): string {
   const u = (url ?? "").trim();
   if (!u || /myinstants\.com/i.test(u) || /^(blob:|data:|mxc:)/.test(u)) return u;
+  // M9: a foreign link maps to "" (the engine refuses it with FOREIGN_SOUND_NOTE) — never to the page's own URL
+  const mapped = clipUrlFor(u);
+  if (!mapped) return "";
   try {
-    return new URL(clipUrlFor(u), location.href).href;
+    return new URL(mapped, location.href).href;
   } catch {
-    return u;
+    return "";
   }
 }
 

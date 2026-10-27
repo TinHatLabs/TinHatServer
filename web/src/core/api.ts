@@ -6,13 +6,15 @@
 //   const list = await apiJson<{ invites: Invite[] }>("/admin/invites");
 //   await apiJson("/moderation/call", { method: "POST", json: { room, identity, action: "mute" } });
 //
-// Routes (Tin Hat Server `api/`; `*` = Matrix bearer required):
-//   /api/soundboard/*     search, clip, fetch, upload*, uploads*, guest/*
-//   /api/gifs/*           search, trending, fetch
+// Routes (Tin Hat Server `api/`; `*` = Matrix bearer sent — core/apiauth.ts, the server's docs/API.md):
+//   /api/soundboard/*     search*, clip* (+ clip/sign*), fetch, upload*, uploads*, guest/*
+//   /api/gifs/*           search*, trending*, fetch*
 //   /api/games/*          games catalog (custom* / steam* need the bearer)
 //   /api/moderation/*     call mute/disconnect*
 //   /api/admin/*          invites* (operators only; 403 for everyone else)
-//   /api/watch/*          YouTube search / meta / resolve
+//   /api/watch/*          YouTube search / meta / resolve*  (0.3.4: gifs / watch / soundboard search+clip spend the
+//                         owner's quota — with the bearer, against the member's own budget; 401 {signin:true} = the
+//                         token-less allowance is spent: the callers show their normal "couldn't load" state)
 //   /api/vods/*           sessions* (+ signed file/thumb URLs it returns)
 //   /api/presence, /api/push/*, /api/gameservers/*   Reach presence*, web push*, the game-servers widget*
 //   /api/speedtest/up     the uplink sink
@@ -23,6 +25,7 @@
 // added automatically for the paths that need it (auth: "auto"); force with auth: true/false.
 import { getAccessToken } from "@/core/matrix/session";
 import { apiBearerAllowed, pageOrigin } from "@/core/bearer";
+import { apiPathNeedsBearer } from "@/core/apiauth";
 
 /** Base path (absolute, so it works at / and at the /next/ staging path). */
 export const API_BASE: string = ((import.meta.env.VITE_TW_API_BASE as string | undefined) ?? "/api").replace(/\/+$/, "");
@@ -36,8 +39,6 @@ export function webAppUrl(): string {
 /** Where a bug report is POSTed (JSON): the Tin Hat Server's /api/reports (bearer). */
 export const REPORTS_PATH = "/reports";
 
-/** Path prefixes whose endpoints require `Authorization: Bearer <matrix token>`. */
-const AUTH_PREFIXES = ["/vods/", "/admin/", "/moderation/", "/soundboard/upload", "/soundboard/uploads", "/games/"];
 
 export interface ApiInit extends Omit<RequestInit, "body"> {
   /** "auto" (default): bearer only where the service needs it. */
@@ -72,7 +73,7 @@ export async function apiFetch(path: string, init: ApiInit = {}): Promise<Respon
   const { auth = "auto", json, timeoutMs = 12000, headers, bearer, ...rest } = init;
   const h = new Headers(headers);
   const p = path.startsWith("/") ? path : `/${path}`;
-  const wantsAuth = auth === true || (auth === "auto" && AUTH_PREFIXES.some((x) => p.startsWith(x)));
+  const wantsAuth = auth === true || (auth === "auto" && apiPathNeedsBearer(p));
   // The bearer only goes to same-origin /api/ (an absolute VITE_TW_API_BASE elsewhere gets none).
   if (wantsAuth && apiBearerAllowed(apiUrl(p))) {
     const token = bearer ?? getAccessToken();
@@ -97,6 +98,22 @@ export async function apiFetch(path: string, init: ApiInit = {}): Promise<Respon
     if (name === "AbortError") throw e;
     throw new ApiError(`Couldn't reach the server: ${(e as Error)?.message ?? e}`, 0, null);
   }
+}
+
+/** The bearer header for a URL the app fetches itself outside apiFetch (a clip it plays through Web Audio): only for
+ *  this origin's API (apiBearerAllowed: same origin, under /api/) and a route that takes it (core/apiauth.ts). */
+export function apiAuthHeaders(url: string, bearer?: string): Record<string, string> {
+  let u: URL;
+  try {
+    u = new URL(url, typeof location !== "undefined" ? location.href : undefined);
+  } catch {
+    return {};
+  }
+  const base = `${API_BASE}/`;
+  if (!base.startsWith("/") || !u.pathname.startsWith(base) || !apiBearerAllowed(u.href)) return {};
+  if (!apiPathNeedsBearer(`/${u.pathname.slice(base.length)}${u.search}`)) return {};
+  const token = bearer ?? getAccessToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 /**

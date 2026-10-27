@@ -16,7 +16,7 @@ import { serverFeatureOn } from "@/core/server";
 import { adaptiveInterval } from "@/core/winstate";
 import { BUSY_STEP_MS } from "@/core/lowgpu";
 import { animate } from "@/ui/motion";
-import { clipUrlFor } from "../shared/clip";
+import { FOREIGN_SOUND_NOTE, clipUrlFor } from "../shared/clip";
 import { enginePlaySound, engineStopSound, getCall, isInCall, subscribeCall } from "../shared/call";
 import { playClip, type ClipHandle } from "@/core/sounds";
 import { padGate } from "@/widgets/soundpad";
@@ -201,10 +201,16 @@ export function startSound(url: string, name: string, emoji: string): void {
     set({ errorText: gate.hint, localNote: "" });
     return;
   }
+  // M9 (core/clipurl.ts): a sound plays only from the clip cache or our own server — neither the local copy nor the call
+  const local = clipUrlFor(url);
+  if (!local) {
+    set({ errorText: FOREIGN_SOUND_NOTE, localNote: "" });
+    return;
+  }
   stopCurrent();
   const my = ++clipSeq;
   set({ playingUrl: url, playingName: name || "", playStartedAt: Date.now(), localNote: "", errorText: "", progress: 0 });
-  void playClip(clipUrlFor(url), {
+  void playClip(local, {
     channel: "clip",
     volume: 1, // the local copy at full level, as the element played it (not a UI chime at snd.volume)
     onEnded: () => {

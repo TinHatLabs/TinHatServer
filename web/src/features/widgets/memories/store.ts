@@ -13,6 +13,7 @@ import { createLogger } from "@/core/log";
 import { fetchSessions, thumbUrl, type VodSession } from "@/features/media";
 import { refreshMs, widgetDef } from "@/widgets/registry";
 import type { MemRoom } from "@/widgets/memories";
+import { inertBlob } from "@/core/mediatype";
 
 const log = createLogger("memories-widget");
 
@@ -160,7 +161,7 @@ export function posterBlob(room: string, id: string, file: string, t: number): P
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const r = await fetch(thumbUrl(track.url, t, attempt), { cache: "no-store", signal: AbortSignal.timeout(15_000) });
-        if (r.ok) return URL.createObjectURL(await r.blob());
+        if (r.ok) return URL.createObjectURL(inertBlob(await r.blob())); // an inert type (core/mediatype, H1)
         if (r.status !== 503 && r.status !== 429) return null;
       } catch {
         /* retry */

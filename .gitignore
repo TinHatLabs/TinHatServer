@@ -2,3 +2,14 @@ out/
 __pycache__/
 *.pyc
 build/build.local.conf
+# the pinned aiohttp's wheels and venvs: fetched at build time (build/wheels.py), never committed
+*.whl
+appliance/rootfs/opt/tinhat/manager/wheels/
+names/wheels/
+names/venv/
+names/.venv-*/
+names/.venv.link-*
+relay/wheels/
+relay/venv/
+relay/.venv-*/
+relay/.venv.link-*

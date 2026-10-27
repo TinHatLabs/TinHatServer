@@ -307,6 +307,18 @@ def wsl() -> bool:
         return False
 
 
+def clear_stale_download() -> None:
+    """At the manager's start. A download runs inside the manager, so a "downloading" the status still says now is left
+    from before (a restart mid-download, or a check that didn't put the phase back): it would make tick() skip the daily
+    check and the night install and refuse Install now for good (gates, 2026-10-26). Back to what is true."""
+    st = status()
+    if st.get("phase") == "downloading":
+        set_status(phase="available" if st.get("available") else "current", step=None,
+                   message="The download stopped when the manager restarted. Install now tries again."
+                   if st.get("available") else None)
+        log.info("update status: a stale \"downloading\" cleared at start")
+
+
 async def tick(busy_call) -> None:  # the manager runs this as its own task (a download can take minutes)
     """Daily check; at night, install what's available (auto) and restart for a kernel security update, never while
     `busy_call()` says someone is in a call (it returns True, False, or None when it can't tell)."""

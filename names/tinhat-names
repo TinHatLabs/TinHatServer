@@ -18,6 +18,10 @@
   tinhat-names relay drain ID | activate ID | sync [ID]       no new places / new places again / push the lists now
   tinhat-names backup [--check | --list]                      back up now (database, keys, zone) / prove a restore
                                                               works / list the copies (tinhat_names/backup.py)
+  tinhat-names pyenv build | check | status | off | on        Tin Hat's pinned aiohttp: build its venv from wheels/
+                                                              (as root, after every install of this folder) / check
+                                                              it / what the running service is on / turn it off or
+                                                              on here (then restart the service; pyenv.py)
 """
 import json
 import os
@@ -25,8 +29,19 @@ import sys
 import time
 import urllib.request
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
 from tinhat_names import config as config_mod  # noqa: E402
+
+
+def pyenv_places() -> dict:
+    """Tin Hat's pinned aiohttp for this service: wheels/ (build/wheels.lock's files) installed into venv/ next to this
+    file by `tinhat-names pyenv build` (the service's /opt is read-only to it); its status in the state folder."""
+    from pathlib import Path
+    state = (os.environ.get("STATE_DIRECTORY") or "/var/lib/tinhat-names").split(":")[0]
+    from tinhat_names import __version__
+    return {"venv": Path(HERE) / "venv", "wheels": Path(HERE) / "wheels", "state_dir": Path(state),
+            "imports": ("tinhat_names.app",), "path": Path(HERE), "release": __version__}
 
 
 def admin(cfg, method, path, body=None):
@@ -91,7 +106,15 @@ def main():
     if not args or args[0] in ("-h", "--help"):
         print(__doc__.strip())
         return
+    if args[0] == "pyenv":
+        from tinhat_names import pyenv
+        sys.exit(pyenv.cli(args[1:], **pyenv_places(), prog="tinhat-names pyenv", name="the names service"))
     if args[0] == "serve":
+        # on the pinned aiohttp once it's built and passes its check (this process starts again on the venv's Python);
+        # else on the system's, loudly (the journal, `tinhat-names pyenv status`)
+        from tinhat_names import pyenv
+        pyenv.choose(**pyenv_places(), argv=[os.path.realpath(__file__), *sys.argv[1:]], can_build=False,
+                     name="the names service")
         from tinhat_names.app import main as serve
         sys.argv = [sys.argv[0], "-c", cfgpath] + args[1:]
         serve()
