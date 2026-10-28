@@ -97,7 +97,11 @@ export function createGuests(deps) {
         renameSync(tmp, deps.statePath);
         deps.publishRoom?.(st.room || "");
     }
-    const webBase = String(deps.webBase || deps.publicBase).replace(/\/+$/, "");
+    // Its canonical origin (no trailing slash, default port, case): the door compares it with location.origin.
+    const webBase = (() => {
+        const raw = String(deps.webBase || deps.publicBase);
+        try { return new URL(raw).origin; } catch { return raw.replace(/\/+$/, ""); }
+    })();
     const linkUrl = () => (st.on && st.key ? `${webBase}/call/?g=${st.key}` : null);
     const waitingList = () => [...waiting.values()].map(({ id, name, at }) => ({ id, name, at }));
 
@@ -179,7 +183,12 @@ export function createGuests(deps) {
     // made by an earlier version may not name them yet (then they'd fall back to state_default, 50: a manager could
     // write them). The system account (100 in the room) raises them; best effort, logged.
     const SERVER_ONLY = [G.STATE, G.WAITING, "m.room.encryption"];
-    // True when they are (or now are) at 100 or above; never lowers anything (a missing type counts at state_default).
+    // Joining the room's call is a state event (MatrixRTC): everyone in the room may, guests too (power level 0, as
+    // General since 0.2.9: install.py, repairs.py). Rooms made before 0.3.6 left it at state_default (50), so a guest
+    // who was let in got "You don't have permission to join calls in this room".
+    const CALL_MEMBER = "org.matrix.msc3401.call.member";
+    // True when they are (or now are) at 100 or above and the call is open to everyone in the room; never lowers
+    // anything else (a missing type counts at state_default).
     async function keepRoomRules() {
         if (!st.room) return true;
         const path = `/_matrix/client/v3/rooms/${enc(st.room)}/state/m.room.power_levels/`;
@@ -191,11 +200,14 @@ export function createGuests(deps) {
         const events = isObj(r.body.events) ? { ...r.body.events } : {};
         const level = (type) => Number(events[type] ?? r.body.state_default ?? 50);
         const low = SERVER_ONLY.filter((type) => !(level(type) >= 100));
-        if (!low.length) return true;
+        const callShut = !(level(CALL_MEMBER) <= 0);
+        if (!low.length && !callShut) return true;
         for (const type of low) events[type] = 100;
+        if (callShut) events[CALL_MEMBER] = 0;
+        const what = [...(low.length ? [`only the server writes ${low.join(", ")}`] : []), ...(callShut ? ["everyone in it may join its call"] : [])].join("; ");
         const w = await hs.call("PUT", path, T, { ...r.body, events });
-        log(w.ok ? `[guests] the Guests room: only the server writes ${low.join(", ")} now`
-            : `[guests] couldn't keep ${low.join(", ")} to the server in the Guests room (${w.status} ${w.body?.errcode || ""})`);
+        log(w.ok ? `[guests] the Guests room: ${what} now`
+            : `[guests] couldn't keep the Guests room's rules (${what}): ${w.status} ${w.body?.errcode || ""}`);
         return w.ok;
     }
     // The Guests room is NOT end-to-end encrypted (decided 2026-10-23: new rooms are, except public rooms inside a
@@ -221,7 +233,7 @@ export function createGuests(deps) {
                 users: { [sys]: 100, [caller]: G.MANAGE_LEVEL },  // the room's own state stays the server's
                 events: { [G.STATE]: 100, [G.WAITING]: 100, "m.room.power_levels": 100, "m.room.encryption": 100,
                     "m.room.history_visibility": 100, "m.room.tombstone": 100, "m.room.server_acl": 100,
-                    "m.room.join_rules": 100, "m.room.canonical_alias": 100 },
+                    "m.room.join_rules": 100, "m.room.canonical_alias": 100, [CALL_MEMBER]: 0 },
                 kick: 50, ban: 50, redact: 50, invite: 0, state_default: 50,
             },
         };
@@ -313,8 +325,10 @@ export function createGuests(deps) {
             return { status: 502, body: { error: "Couldn't bring the guest into the room." } };
         }
         const q = (o) => Object.entries(o).map(([k, v]) => `${k}=${enc(v)}`).join("&");
+        // The web app takes a hand-off only for its own origin as the homeserver (web core/bearer homeserverAllowed,
+        // 12.0.3): on a web address of its own that is webBase (it serves /_matrix too), never publicBase.
         const session = { hs: deps.publicBase, user: acct.user, token: acct.token, device: acct.device, room: st.room,
-            web: `${webBase}/#/guest-session?${q({ hs: deps.publicBase, user: acct.user, token: acct.token, device: acct.device, room: st.room })}` };
+            web: `${webBase}/#/guest-session?${q({ hs: webBase, user: acct.user, token: acct.token, device: acct.device, room: st.room })}` };
         if (t) Object.assign(t, { state: "in", session, sessionAt: now(), user: acct.user, done: now() });
         await writeWaiting();
         log(`[guests] ${caller} let in "${w.name}" (${acct.user})`);
@@ -403,7 +417,7 @@ export function createGuests(deps) {
             noStore(res);
             const g = String(req.query?.g || "");
             if (!KEY_RE.test(g) || !st.key || !sameKey(g, st.key)) return res.status(404).json({ error: "This guest link isn't open any more. Ask whoever sent it for a new one." });
-            res.json({ server: deps.serverName, room: "Guests", open: st.on });
+            res.json({ server: deps.serverName, room: "Guests", open: st.on, web: webBase });  // door.js knocks from there
         },
         knock: async (req, res) => {
             noStore(res);

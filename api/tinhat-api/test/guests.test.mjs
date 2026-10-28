@@ -134,6 +134,7 @@ test("a Guests room from an earlier version: at start only the server may write 
     const ev = w.s.rooms[ROOM].pl.events;
     assert.deepEqual([ev[G.STATE], ev[G.WAITING], ev["m.room.encryption"]], [100, 100, 100], "only the server writes them");
     assert.equal(ev["x.another.type"], 100, "the rest stays as it was");
+    assert.equal(ev["org.matrix.msc3401.call.member"], 0, "guests (level 0) may join the room's call, in the same write");
     assert.equal(w.s.rooms[ROOM].pl.users[OWNER], 50);
     assert.deepEqual(w.s.writes.find((x) => x.type === G.STATE)?.content, { v: 1, on: true, since: 5 }, "on, from sync");
     assert.deepEqual(w.s.writes.find((x) => x.type === G.WAITING)?.content, { v: 1, waiting: [] });
@@ -156,8 +157,12 @@ test("the server's own state types are never lowered: a missing one counts at st
     const pl = { users: { [SYS]: 150 }, state_default: 150, events: { "m.room.power_levels": 150 } };
     const w = world({ statePath }, { rooms: { [ROOM]: { members: new Set([SYS]), pl } } });
     await w.g._ready;
-    assert.equal(w.s.writes.filter((x) => x.type === "m.room.power_levels").length, 0, "150 already: nothing written");
+    // the one write only opens the call (a missing type counted at 150): the server's own types stay at 150
+    assert.equal(w.s.writes.filter((x) => x.type === "m.room.power_levels").length, 1);
     assert.equal(w.s.rooms[ROOM].pl.events[G.STATE], undefined);
+    assert.equal(w.s.rooms[ROOM].pl.events["m.room.power_levels"], 150);
+    assert.equal(w.s.rooms[ROOM].pl.events["org.matrix.msc3401.call.member"], 0);
+    assert.equal(w.s.rooms[ROOM].pl.state_default, 150);
 });
 
 test("a failed power-levels fix at start is tried again, even when the state writes worked", async () => {
@@ -206,6 +211,34 @@ test("turning on again in a room an earlier version made also raises the server'
     assert.equal(r.statusCode, 200);
     assert.equal(w.s.rooms[ROOM].pl.events[G.STATE], 100);
     assert.equal(w.s.rooms[ROOM].pl.events[G.WAITING], 100);
+    assert.equal(w.s.rooms[ROOM].pl.events["org.matrix.msc3401.call.member"], 0);
+});
+
+test("the web app's address is used as its canonical origin (the door compares it with location.origin)", async () => {
+    const w = world({ webBase: "https://Web.Example.org:443/" });
+    const on = await call(w.g.h.manage("on"), { method: "POST", headers: bearer("towner") });
+    assert.match(on.body.link, /^https:\/\/web\.example\.org\/call\/\?g=/);
+    assert.equal((await call(w.g.h.door, { query: { g: keyOf(on.body.link) } })).body.web, "https://web.example.org");
+});
+
+test("a new Guests room: guests (level 0) may join its call, the server's own state stays the server's", async () => {
+    const w = world();
+    assert.equal((await call(w.g.h.manage("on"), { method: "POST", headers: bearer("towner") })).statusCode, 200);
+    const pl = w.s.made[0].power_level_content_override;
+    assert.equal(pl.events["org.matrix.msc3401.call.member"], 0);
+    assert.equal(pl.users_default ?? 0, 0);
+    assert.deepEqual([pl.events[G.STATE], pl.events[G.WAITING], pl.events["m.room.encryption"]], [100, 100, 100]);
+});
+
+test("a Guests room whose call is open already: no power-levels write", async () => {
+    const ROOM = "!open:crew.example.org";
+    const statePath = join(mkdtempSync(join(tmpdir(), "guests-")), "guests.json");
+    writeFileSync(statePath, JSON.stringify({ v: 1, room: ROOM, on: false, since: 5, key: null }));
+    const pl = { users: { [SYS]: 100 }, state_default: 50,
+        events: { [G.STATE]: 100, [G.WAITING]: 100, "m.room.encryption": 100, "org.matrix.msc3401.call.member": 0 } };
+    const w = world({ statePath }, { rooms: { [ROOM]: { members: new Set([SYS]), pl } } });
+    await w.g._ready;
+    assert.equal(w.s.writes.filter((x) => x.type === "m.room.power_levels").length, 0);
 });
 
 test("a chat server that forces encryption on new rooms: the Guests room is made all the same, and that is logged", async () => {
@@ -224,7 +257,7 @@ test("knock, wait, let in: a session once; turn away; who may", async () => {
     const w = world();
     const on = await call(w.g.h.manage("on"), { method: "POST", headers: bearer("towner") });
     const g = keyOf(on.body.link);
-    assert.deepEqual((await call(w.g.h.door, { query: { g } })).body, { server: "crew.example.org", room: "Guests", open: true });
+    assert.deepEqual((await call(w.g.h.door, { query: { g } })).body, { server: "crew.example.org", room: "Guests", open: true, web: "https://crew.example.org" });
     assert.equal((await call(w.g.h.door, { query: { g: "x".repeat(24) } })).statusCode, 404);
     const k1 = await call(w.g.h.knock, { method: "POST", body: { g, name: "Ana" }, headers: ip("203.0.113.5") });
     assert.equal(k1.statusCode, 200);
@@ -346,15 +379,21 @@ test("without a token: 401; a bad id: 400; signed-in non-members see no link", a
     assert.deepEqual(d.body.waiting, []);
 });
 
-test("a web app address of its own: the link and the hand-off go there, the chat server stays the server's", async () => {
+test("a web app address of its own: the link, the door and the hand-off go there (its own origin as the homeserver)", async () => {
     const w = world({ webBase: "https://web.example.org/" });
     const on = await call(w.g.h.manage("on"), { method: "POST", headers: bearer("towner") });
     assert.match(on.body.link, /^https:\/\/web\.example\.org\/call\/\?g=[A-Za-z0-9_-]{24}$/);
     const g = keyOf(on.body.link);
+    // The door on the server's own name sends the guest to the web app's address (door.js).
+    assert.equal((await call(w.g.h.door, { query: { g } })).body.web, "https://web.example.org");
     const k = await call(w.g.h.knock, { method: "POST", body: { g, name: "Ana" }, headers: ip("203.0.113.5") });
     const id = w.s.writes.filter((x) => x.type === G.WAITING).at(-1).content.waiting[0].id;
     assert.equal((await call(w.g.h.decide("admit"), { method: "POST", body: { id }, headers: bearer("towner") })).statusCode, 200);
     const t = await call(w.g.h.ticket, { query: { t: k.body.ticket } });
     assert.equal(t.body.session.hs, "https://crew.example.org");
-    assert.match(t.body.session.web, /^https:\/\/web\.example\.org\/#\/guest-session\?hs=https%3A%2F%2Fcrew\.example\.org&user=/);
+    // The web app takes the hand-off only with its own origin as hs (web core/bearer homeserverAllowed): on 0.3.5 a
+    // guest let in on a server with a web app address of its own got the sign-in screen while hs was the server's name.
+    assert.match(t.body.session.web, /^https:\/\/web\.example\.org\/#\/guest-session\?hs=https%3A%2F%2Fweb\.example\.org&user=/);
+    const hs = new URLSearchParams(new URL(t.body.session.web).hash.replace(/^#\/guest-session\?/, "")).get("hs");
+    assert.equal(new URL(hs).origin, new URL(t.body.session.web).origin);
 });

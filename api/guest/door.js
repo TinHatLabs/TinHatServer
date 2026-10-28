@@ -19,6 +19,14 @@ async function door() {
     const r = await fetch(`/api/guest/door?g=${encodeURIComponent(g)}`, { cache: "no-store" });
     if (r.status === 404) return closed();
     const d = await r.json();
+    // The web app has an address of its own (api.web): knock from there, so the hand-off lands on the web app's own
+    // origin (it takes a session only for that origin, and a door here could never send the guest across).
+    let web = "";
+    try {
+      const u = new URL(String(d.web || ""));
+      if (u.protocol === "https:" && !u.username && !u.password && u.pathname === "/" && !u.search && !u.hash) web = u.origin;
+    } catch { /* no web address: stay here */ }
+    if (web && web !== location.origin) { location.replace(`${web}/call/?g=${encodeURIComponent(g)}`); return; }
     document.title = `Guests · ${d.server}`;
     $("title").textContent = `Guests · ${d.server}`;
     if (!d.open) return finish("The guest room is closed right now", "Ask whoever sent the link to open it, then load this page again.");

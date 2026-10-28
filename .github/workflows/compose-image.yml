@@ -97,4 +97,6 @@ jobs:
           now=$(docker buildx imagetools inspect "$IMG:${TAG#v}" --format '{{json .Manifest.Digest}}' | tr -d '"')
           [ "$now" = "$DIGEST" ] || { echo "$IMG:${TAG#v} is $now, not the tried $DIGEST: not promoted" >&2; exit 1; }
           docker buildx imagetools create -t "$IMG:latest" "$IMG@$DIGEST"
-          docker buildx imagetools inspect "$IMG:latest" | head -3 | tee -a "$GITHUB_STEP_SUMMARY"
+          # Captured first: `| head -3` closed the pipe early and pipefail failed the step after a good push (SIGPIPE).
+          out=$(docker buildx imagetools inspect "$IMG:latest")
+          printf '%s\n' "$out" | sed -n 1,3p | tee -a "$GITHUB_STEP_SUMMARY"

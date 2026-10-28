@@ -38,7 +38,12 @@ space, and the server makes #general unencrypted too: both stay readable for peo
 makes Synapse encrypt new rooms itself), history visible to members from when they joined (guests never read what was
 said before they came in), join rule public (any account on the server can join it from the apps; guests are joined by
 the server). Power levels: the system account 100, whoever turned it on 50, `dev.tinhat.guests` /
-`dev.tinhat.guests.waiting` / `m.room.encryption` 100 (only the server writes them), kick 50, invite 0. A Guests room
+`dev.tinhat.guests.waiting` / `m.room.encryption` 100 (only the server writes them), kick 50, invite 0, and
+`org.matrix.msc3401.call.member` 0: everyone in the room, guests too, may join its call (joining a call is a room state
+event, and state_default is 50; same reason as General since 0.2.9). Rooms made before 0.3.6 had no level for it, so a
+guest who was let in landed in the room but got "You don't have permission to join calls in this room": the API lowers
+exactly that one level to 0 in the Guests room (and no other level, in no other room) when it starts and on every Turn
+on: the one deliberate exception to "the server only ever raises levels there". A Guests room
 made by an earlier version (0.2.21–0.3.0) stays encrypted (encryption can't be turned off); guests still work there.
 
 State the server keeps there (so every app sees changes at once through sync, no polling):
@@ -59,9 +64,15 @@ State the server keeps there (so every app sees changes at once through sync, no
 The guest page (no account; `https://<server>/call/?g=<key>`):
 | | |
 |---|---|
-| `GET /api/guest/door?g=<key>` | `{server, room: "Guests", open}` (404 for a link that isn't the current one) |
+| `GET /api/guest/door?g=<key>` | `{server, room: "Guests", open, web}` (404 for a link that isn't the current one); `web` = the web app's address (api.web, else the server's own): a door page opened anywhere else moves to `<web>/call/?g=<key>` first |
 | `POST /api/guest/knock {g, name}` | `{ticket, every: 2}`; 410 when the link is dead or the room off; 429 when 20 already wait or this address knocked 5 times in 10 minutes |
 | `GET /api/guest/ticket?t=<ticket>` | `{state: "waiting" | "in" | "turned-away" | "closed" | "expired"}`; `"in"` carries `session: {hs, user, token, device, room, web}` once (the page then opens `web`) |
+
+**The hand-off happens on the web app's own origin** (0.3.6). `web` is `<web>/#/guest-session?hs=<web>&…`: the web
+app (12.0.3+) takes a session only with its own origin as the homeserver (it serves `/_matrix` on its address too),
+and the door page opens `web` only on its own origin. With a web app address of its own (api.web, e.g. a server
+`example.com` whose web app is `chat.example.com`) 0.3.5 and earlier sent `hs=<server name>`: the guest was let in
+and then saw the sign-in screen (or, at the door on the server's name, "The knock ran out").
 
 A wait ends after 10 minutes ("expired": knock again). A session not collected within 2 minutes is withdrawn (the
 account is deactivated). Waiting is kept in memory: a restart of the API turns everyone away (the page says to knock
