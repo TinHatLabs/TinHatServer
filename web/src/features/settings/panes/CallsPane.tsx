@@ -27,6 +27,7 @@ import { setCallBarPinned, useCallBarPinned } from "@/features/callui/chrome";
 import { pttKeys } from "@/actions/shortcutsStore";
 import { ComboRow, Hint, Row, Section, SwitchRow } from "../rows";
 import { PAD_PREF } from "@/features/calls/pad/prefs";
+import { CallHostsRows } from "./CallHostsRows";
 
 export const SHARE_RES = [
   { label: "Auto", w: 0, h: 0, base: 12000 },
@@ -235,6 +236,10 @@ export function CallsPane() {
           onToggled={(v) => setPref("av1-receive", v)}
         />
         {/* 10.8.1: "Save GPU while Tin Hat isn't focused" moved to Appearance → Performance (it covers every unfocused rule) */}
+      </Section>
+
+      <Section title="Call hosts">
+        <CallHostsRows />
       </Section>
 
       <Section title="Connection">

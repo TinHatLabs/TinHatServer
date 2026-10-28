@@ -64,6 +64,8 @@ FILE_MB = (1, 100)                  # one file, held in memory while it is check
 STORE_MB = (0, 1_048_576)           # disk for uploads, up to 1 TB: 0 = no uploads
 LIMITS = {
     "API_LEGACY_ANON": "onoff",
+    # call sign-ins only for rooms the caller is in (calltoken.mjs; docs/API.md "Call sign-ins"): on unless the owner says off
+    "CALL_TOKEN_ROOM_CHECK": "onoff",
     **{k: COUNT for k in (
         "API_ANON_GIF_PER_HOUR", "API_ANON_GIF_ALL_PER_HOUR", "API_ANON_SOUNDSEARCH_PER_HOUR",
         "API_ANON_SOUNDSEARCH_ALL_PER_HOUR", "API_ANON_CLIPFETCH_PER_HOUR", "API_ANON_CLIPFETCH_ALL_PER_HOUR",

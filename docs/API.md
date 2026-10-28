@@ -13,14 +13,15 @@ host's network, like the call server:
 
 | service | listens | does |
 |---|---|---|
-| `api` | 127.0.0.1:3001 | soundboard (search/clip/uploads/guest), GIFs, YouTube (`/youtube/*`), Memories files (`/vods/*`), moderation, presence, push (`/push/*`), game servers, the box's extras (`/health`, `/speedtest/up`, `/reports`, `/logs/upload`) |
+| `api` | 127.0.0.1:3001 | soundboard (search/clip/uploads/guest), GIFs, YouTube (`/youtube/*`), Memories files (`/vods/*`), moderation, presence, push (`/push/*`), game servers, call sign-ins (`/calltoken/*`, in front of lk-jwt), the box's extras (`/health`, `/speedtest/up`, `/reports`, `/logs/upload`) |
 | `api` (push gateway) | `<backend gateway>`:3091 | `POST /_matrix/push/v1/notify` for Synapse only (its `ip_range_whitelist` names that one address) |
 | `games` | 127.0.0.1:3003 | the games catalogue (search, cover art, custom entries, Steam library import) |
 
 Caddy maps `/api/*` to them in every mode (`templates.CADDY_API`): `/api/games/*` → :3003; `/api/soundboard/*` →
 the root; `/api/guest/*` → `/guest/*`; `/api/gifs/*` → `/gif/*`; `/api/watch/*` → `/youtube/*`; everything else under
-`/api/*` as is. `/api/admin/*` (invite codes) stays with the manager. The guest room's door page is served at `/call/`
-(`api/guest/index.html`, copied into the web folder by `build.sh`).
+`/api/*` as is. `/api/admin/*` (invite codes) stays with the manager. Call sign-ins: `/livekit/jwt` and everything
+under it go to the API's `/calltoken/…` (only `/livekit/jwt/healthz` goes straight to lk-jwt); see "Call sign-ins".
+The guest room's door page is served at `/call/` (`api/guest/index.html`, copied into the web folder by `build.sh`).
 
 ## Where its things live: `/var/lib/tinhat/api` (`manager/tinhat/apiconf.py`)
 The manager writes everything the services need, from state and secrets, at setup, after every update
@@ -137,6 +138,7 @@ an edit of `/var/lib/tinhat/api/env` doesn't last.
 | variable | default | what |
 |---|---|---|
 | `API_LEGACY_ANON` | `on` | `off` = no token-less lane at all (once every member runs 12.0.3 or later) |
+| `CALL_TOKEN_ROOM_CHECK` | `on` | `off` = call tokens without the room check, as before 0.3.7 ("Call sign-ins" below) |
 | (every count below, from `API_ANON_…` to `SOUNDBOARD_USER_UPLOADS_MAX`) | | 0 to 999 999 999; 0 = none |
 | `API_ANON_GIF_PER_HOUR` / `API_ANON_GIF_ALL_PER_HOUR` | 60 / 300 | Giphy calls for token-less callers: per address / all together |
 | `API_ANON_SOUNDSEARCH_PER_HOUR` / `API_ANON_SOUNDSEARCH_ALL_PER_HOUR` | 60 / 600 | myinstants searches, the same |
@@ -150,6 +152,66 @@ an edit of `/var/lib/tinhat/api/env` doesn't last.
 | `GIF_FETCH_MAX_MB` | 8 | `/api/gifs/fetch` (1–100) |
 
 Per-address limits (every route) count an IPv4 address or an IPv6 /64.
+
+## Call sign-ins: a token only for a room you are in (0.3.7, security review 2026-10-26, calls round M1b)
+
+A call's membership event names the call server (`livekit_service_url`) and the LiveKit room (`livekit_alias`), and
+every app joins the room the membership names. lk-jwt-service (0.4.0) checks *who* asks for a token (the Matrix OpenID
+token) but not that they are in the Matrix room the LiveKit room belongs to, while Tin Hat's call moderation takes the
+LiveKit room to be the Matrix room id. So a room member could post a membership whose alias is another room's id or any
+string, and joiners landed in a LiveKit room the call's own room doesn't govern. The server now checks it, which
+protects every app version (12.0.x included) without a change to them.
+
+**Route.** Caddy sends `/livekit/jwt` (older Element Call posts there), `/livekit/jwt/sfu/get` and everything else under
+`/livekit/jwt/` to the API (`api/tinhat-api/calltoken.mjs`, `/calltoken/sfu/get` and `/calltoken/get_token`; other
+paths 404); only `/livekit/jwt/healthz` ("Is it just me?") goes to lk-jwt directly. Every mode, a former name's site
+included. Behind your own reverse proxy nothing changes for you: keep forwarding `/livekit/jwt` to the box.
+
+**The check** (lk-jwt's `/sfu/get` request `{room, openid_token, device_id}`, the one every Tin Hat app sends):
+1. The body is read the way lk-jwt reads it (exact field names, no unknown ones; ≤ 16 KB) and lk-jwt receives our own
+   re-encoding of exactly what was checked, never the caller's bytes. Malformed, or a `device_id` containing `:` (the
+   LiveKit identity `<mxid>:<device_id>` would be ambiguous): `400 {"errcode":"M_BAD_JSON",…}`.
+2. MSC4195 requests (`{room_id, slot_id, openid_token, member}`, lk-jwt's `/get_token` and also accepted by its
+   `/sfu/get`) are refused: `403 {"error":"this server's calls use /sfu/get","reason":"unsupported"}`. lk-jwt mints
+   those for a hashed room name that call moderation can't govern, with a participant id the client chooses. No Tin Hat
+   app sends them.
+3. Who asks: a sign-in from this server is resolved by Synapse itself (its OpenID userinfo on the internal address),
+   cached ≤ 60 s; a refused one is `401`. A sign-in from another server is never looked up by the API (no request to a
+   member-named host): the room must already have a joined member from that server before lk-jwt is asked, and the
+   token lk-jwt then mints is handed out only when its identity (`<mxid>:<device>`) is a joined member; otherwise it is
+   thrown away and the answer is `403`.
+4. The room: a Matrix room id (`!…:server`, room v12 ids too) in which the caller is **joined** as this server sees it
+   (Synapse's admin member list; a federated member counts when this server sees their join). Otherwise
+   `403 {"errcode":"M_FORBIDDEN","error":"not in that room","reason":"not-member"}`, and lk-jwt is not asked at all.
+   The member list is read fresh for every token that is handed out (someone who left or was removed is refused at
+   once), and someone who has just joined gets in at once (no list is cached; concurrent reads share one request).
+5. One exception: the apps' connection test (Settings → Calls) uses a scratch room `tinhat-conntest-<own localpart>-<n>`
+   that isn't a Matrix room; a caller from this server gets that one for their own name as the apps write it (letters,
+   digits, `_` and `-` of the localpart, so `@a.b` and `@ab` share one scratch name: a speed-test room, nothing private).
+6. Fails closed: when Synapse can't be asked, `502 {"reason":"check-failed"}`, never a pass-through. When lk-jwt
+   doesn't answer, `502`.
+7. Limits: 120 token requests a minute per caller address (an IPv4 address or an IPv6 /64); 120 sign-in lookups a minute
+   per address and 600 for everyone together, counting new sign-ins from this server and every sign-in from another
+   server (lk-jwt looks those up) (`429`, `Retry-After`). CORS answers as lk-jwt's do. On a warm cache the check adds a
+   few milliseconds (lab: 8.4 ms vs 3.7 ms median through the proxy, mostly the fresh member-list read).
+
+What it doesn't change (lk-jwt's own behaviour, as before): lk-jwt still looks up another server's sign-in at the
+server it names (now only for servers that have a joined member in the room asked for), and its error log can carry
+that lookup's URL, which includes the caller's OpenID token in its query. That token is short-lived (up to an hour) and
+only answers "which account is this" (OpenID userinfo); lk-jwt's log is readable by the box's root only. The Tin Hat
+API's own log never carries a token.
+
+**The owner's switch:** `tinhat api-limits CALL_TOKEN_ROOM_CHECK=off` hands every request to lk-jwt unchanged, as
+before 0.3.7 (the route still goes through the API); `tinhat api-limits --reset CALL_TOKEN_ROOM_CHECK` turns the check
+back on (the default).
+
+**Compatibility.** Apps need no change: a normal call (alias = the room's id, the caller joined) and a guest in the
+Guests room get their token exactly as before, and so does a second device of the same person (a share companion, the
+phone). What changes: a membership that points joiners at a room they aren't in, or at a name that isn't a room, no
+longer gets them a token; neither does an MSC4195 request (other Matrix apps' newer Element Call); both show the
+app's usual "couldn't join the call" error. Developer tools that mint tokens for made-up room names (the desktop's `TINHAT_E2EE_LOOPBACK` / `TINHAT_AUDPUB` style tests) need the switch off on a test
+server. A hostile alias naming another room the joiner *is* in still lands them in that room's call, which that room's
+own moderation governs; the 12.1.0 apps refuse an alias that isn't the call's own room (calls round DESIGN §2.3).
 
 ## Forgotten passwords (0.3.0)
 A Tin Hat server sends no email, so `account.password_reset` is `"owner"`: the apps' "Forgot your password?" doesn't

@@ -15,6 +15,7 @@
 // IncomingCallCards + PipHost (registered as r.overlays here), useCallChrome(), useCallParticipants(roomId)
 // (live MatrixRTC roster of a room), CallButton (the round call-bar button, for r.callBarItems).
 // The engine is read only through "@/features/calls" (useCallStore) typed by its contract.
+import { CallHostSheet } from "./CallHostSheet";
 import type { FeatureModule } from "@/core/registry";
 import { bus, toast } from "@/core/bus";
 import { popupDepth } from "@/ui/overlay";
@@ -61,6 +62,7 @@ export const feature: FeatureModule = {
       r.overlays.add({ id: "callui-incoming", order: 900, component: IncomingCallCards }),
       r.overlays.add({ id: "callui-pip", order: 800, component: PipHost }),
       r.overlays.add({ id: "callui-voicehud", order: 810, component: VoiceHudHost }),
+      r.overlays.add({ id: "callui-host-sheet", order: 910, component: CallHostSheet }), // M1: a call hosted elsewhere
       // RoomHeaderBar.qml:227-248 — [Game reel][Calendar][Memories] · call · gear ▾ · [info]
       r.roomHeaderActions.add({ id: "callui-call", order: 70, component: HeaderCall }),
       r.roomHeaderActions.add({ id: "callui-gear", order: 80, component: HeaderGear }),

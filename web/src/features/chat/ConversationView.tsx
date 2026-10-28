@@ -26,6 +26,7 @@ import { dayLabel, sameDay } from "./lib/format";
 import { useRoomTimeline } from "./useRoomTimeline";
 import { registerView, useChatStore } from "./store";
 import { canPin, copyText, deleteLocal, redactMessage, retryLocal, saveMedia, sendReceipt, setPinned, toggleReaction } from "./actions";
+import { shareLinkNow } from "@/core/server";
 import s from "./Conversation.module.css";
 
 export interface ConversationViewProps {
@@ -1052,7 +1053,7 @@ function MessageMenu({
           items.push({
             order: 70,
             key: "link",
-            node: <MenuItem text="Copy link" icon="link-symbolic" onTriggered={() => void copyText(`https://matrix.to/#/${roomId}/${row.eventId}`).then(() => notify("Message link copied"))} />,
+            node: <MenuItem text="Copy link" icon="link-symbolic" onTriggered={() => void copyText(shareLinkNow(roomId, "", row.eventId!)).then(() => notify("Message link copied"))} />,
           });
         if (row.mine && inter)
           items.push({

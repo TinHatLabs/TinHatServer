@@ -13,6 +13,8 @@ import { invalidateHierarchy, noteLeft, notePendingChild, userDefinedMode, readS
 import { openRoomId } from "./open";
 import { serverOf as serverPartOf } from "./dmTarget";
 import { newRoomInitialState } from "./newRoom";
+import { linkTarget } from "./joinLink";
+import { shareLinkNow } from "@/core/server";
 
 export const status = (msg: string) => {
   if (msg) toast(msg, { timeoutMs: 4000 });
@@ -28,11 +30,15 @@ export const isUserId = (s: string) => /^@[^:\s]+:[^\s]+$/.test(s);
 
 // ---- links -------------------------------------------------------------------------------------
 
-/** roomInviteLink(id, alias) (qml/Main.qml:1397) */
+/** roomInviteLink(id, alias) (qml/Main.qml roomInviteLink): the link "Copy link" / Share hand out for a room or space
+ *  (12.0.6, core/links.ts): this server's own web app at `#/room/<alias or id>`, matrix.to for another server's room. */
 export function roomInviteLink(id: string, alias: string): string {
-  return alias
-    ? `https://matrix.to/#/${encodeURIComponent(alias)}`
-    : `https://matrix.to/#/${encodeURIComponent(id)}?via=${encodeURIComponent(serverOf(id))}`;
+  return shareLinkNow(id, alias);
+}
+
+/** A message's "Copy link" (Main.qml messageLink): the same rule, the room id (never the alias) + the event id. */
+export function messageLink(roomId: string, eventId: string): string {
+  return shareLinkNow(roomId, "", eventId);
 }
 
 export async function copyText(text: string): Promise<boolean> {
@@ -335,28 +341,11 @@ export async function inviteToRoom(roomId: string, mxidRaw: string): Promise<voi
 export type JoinTarget = { kind: "join"; target: string; via: string[] } | { kind: "error"; message: string };
 
 export function parseJoinLink(input: string): JoinTarget {
-  const text = input.trim();
-  if (!text) return { kind: "error", message: "Paste a link first." };
-  let s = text;
-  const hashAt = s.indexOf("#/");
-  if (hashAt >= 0) s = s.slice(hashAt + 2);
-  if (s.startsWith("room/")) s = s.slice(5);
-  s = s.replace(/%21/gi, "!").replace(/%23/gi, "#").replace(/%40/gi, "@").replace(/%3A/gi, ":");
-  const via: string[] = [];
-  const q = s.indexOf("?");
-  if (q >= 0) {
-    for (const part of s.slice(q + 1).split("&")) {
-      const [k, v] = part.split("=");
-      if (k === "via" && v) via.push(decodeURIComponent(v));
-    }
-    s = s.slice(0, q);
-  }
-  s = s.replace(/\/+$/, "");
-  // a matrix.to link to a specific event: #/!room:server/$event → the room
-  const slash = s.indexOf("/");
-  if (slash > 0 && /^[!#]/.test(s)) s = s.slice(0, slash);
-  if (/^@[^:]+:.+/.test(s)) return { kind: "error", message: `${s} is a person, not a space — use New chat to message them.` };
-  if (/^[!#][^:]+:.+/.test(s)) return { kind: "join", target: s, via };
+  if (!(input ?? "").trim()) return { kind: "error", message: "Paste a link first." };
+  // the parsing is joinLink.ts linkTarget (pure; shared vectors with the desktop's parse_join_link)
+  const p = linkTarget(input);
+  if (p.kind === "person") return { kind: "error", message: `${p.who} is a person, not a space — use New chat to message them.` };
+  if (p.kind === "room") return { kind: "join", target: p.target, via: p.via };
   return { kind: "error", message: `That doesn't look like a Tin Hat link. Paste an invite link, or a room address like #general:${SERVER_LABEL}.` };
 }
 

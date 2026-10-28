@@ -1,5 +1,5 @@
 // model.ts — byte-faithful port of the native `roles_model.rs` (RBAC pure model, docs/RBAC.md §2–§4)
-// plus the small pure helpers of `roles.rs` / `space.rs` (badges, permalink, plurals).
+// plus the small pure helpers of `roles.rs` / `space.rs` (badges, plurals; the space's link is core/links.ts).
 //
 // NO imports: this file is also loaded by `node model.test.ts` (Node type stripping) to run the
 // native unit tests 1:1. Everything is plain JSON in, plain JSON out.
@@ -530,26 +530,6 @@ export function roleBadgeFrom(st: RolesState, mxid: string, power: number): [str
 }
 
 // ---- space.rs helpers --------------------------------------------------------------------------
-
-/** encodeURIComponent exactly as space.rs::encode_component (= JS encodeURIComponent). */
-export function encodeComponent(s: string): string {
-  let out = "";
-  for (const b of new TextEncoder().encode(s)) {
-    const c = String.fromCharCode(b);
-    if (/[A-Za-z0-9\-_.!~*'()]/.test(c) && b < 128) out += c;
-    else out += `%${b.toString(16).toUpperCase().padStart(2, "0")}`;
-  }
-  return out;
-}
-
-/** matrix.to permalink: the alias when published, else the id with a `via` hint. */
-export function permalink(roomId: string, alias: string): string {
-  if (alias) return `https://matrix.to/#/${encodeComponent(alias)}`;
-  // a room id always carries its server; a malformed one gets no via hint
-  const i = roomId.lastIndexOf(":");
-  const server = i >= 0 ? roomId.slice(i + 1) : "";
-  return `https://matrix.to/#/${encodeComponent(roomId)}${server ? `?via=${server}` : ""}`;
-}
 
 export function plural(n: number, one: string, many: string): string {
   return n === 1 ? `1 ${one}` : `${n} ${many}`;

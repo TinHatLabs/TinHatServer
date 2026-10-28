@@ -15,6 +15,7 @@ import { getSession, useSessionStore } from "@/core/matrix/session";
 import { DISCOVERY_KEY, NO_OFFER, SERVER_FEATURES, featureFor, isGuestAccount, isRecorderId, offerDoc, parseOffer, sameOffer, type ServerFeature, type ServerOffer } from "./offer";
 import { parseMove } from "@/core/matrix/moved";
 import { API_BASE } from "@/core/api";
+import { WRAP_OPEN_LINKS, pageWebBase, shareLinkOn } from "@/core/links";
 
 const log = createLogger("server-offer");
 
@@ -41,7 +42,7 @@ function previewOffer(): ServerOffer {
     if ((SERVER_FEATURES as readonly string[]).includes(k ?? "") && (v === "0" || v === "1")) features[k as ServerFeature] = v === "1";
   }
   const recorder = devQuery("threcorder") ?? "";
-  return { server: "preview", api: "", features, recorder: /^@[^:\s]+:[^\s]+$/.test(recorder) && features.memories !== false ? recorder : "", passwordReset: devQuery("thpwreset") === "owner" ? "owner" : "", owner: "" };
+  return { server: "preview", api: "", web: "", features, recorder: /^@[^:\s]+:[^\s]+$/.test(recorder) && features.memories !== false ? recorder : "", passwordReset: devQuery("thpwreset") === "owner" ? "owner" : "", owner: "" };
 }
 
 function readCache(): ServerOffer {
@@ -109,6 +110,17 @@ export function ownApiBases(): string[] {
   if (offer.api) add(offer.api);
   for (const n of former) add(`https://${n}/api`);
   return out;
+}
+
+/** The link "Copy link" / Share hand out for a room, a space or a message (12.0.6, core/links.ts; the desktop's
+ *  share_link_now): this server's own web app (this page when https, else the well-known's `web` / `api` origin),
+ *  matrix.to for another server's room. A message link names the room id + the event id (pass alias ""). */
+export function shareLinkNow(room: string, alias: string, event = ""): string {
+  const userId = getSession().userId ?? "";
+  const i = userId.indexOf(":");
+  const own = i >= 0 ? userId.slice(i + 1) : "";
+  const base = pageWebBase(typeof location !== "undefined" ? location.origin : "", offer.web, offer.api);
+  return shareLinkOn({ room, alias, event, own, wrap: WRAP_OPEN_LINKS }, base);
 }
 
 /** What the server offers (NO_OFFER before the server answered). */

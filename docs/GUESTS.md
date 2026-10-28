@@ -78,6 +78,16 @@ A wait ends after 10 minutes ("expired": knock again). A session not collected w
 account is deactivated). Waiting is kept in memory: a restart of the API turns everyone away (the page says to knock
 again). The link key is 24 random characters (base64url), stored only in `/var/lib/tinhat/api/guests.json`.
 
+**A guest leaving the call when it goes (0.3.7).** A call membership is owned by its user: once a guest is kicked or
+its account deactivated, nobody can withdraw it any more, and until 0.3.6 a guest removed mid-call stayed "in the call"
+in every app until the membership expired (up to 4 hours; turning the guest room off while a guest was in its call).
+So before every removal (Turn off: before the kick; the 12-hour reaper, a session never picked up and every other
+deactivation: before the deactivation) the server reads the room's call memberships and writes `{}` over each live one
+the guest sent, **as the guest** (a short-lived token from Synapse's admin "log in as user", logged out after). Best
+effort: whatever fails is logged and the removal goes on. A membership left behind (a failure here, or one stuck before
+0.3.7, which can't be cleared any more because the account is gone) expires by itself within 4 hours, and the apps
+(12.1+) never show a call member who isn't joined to the room; a stuck one needs nothing done about it.
+
 ## The apps
 - **Where:** (1) Settings → **Guests** (server level): what the guest room is (two sentences), its state, and for
   managers **Turn on the guest room** / **Turn off** · **Copy guest link** · **New link** · **Open the Guests room**.

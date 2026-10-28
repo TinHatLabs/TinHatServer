@@ -180,7 +180,11 @@ class Templates(unittest.TestCase):
             self.assertIn("rewrite * /youtube{uri}", caddy)
             self.assertIn("rewrite * /guest{uri}", caddy)
             self.assertIn("handle_path /api/* {", caddy)
-            self.assertIn("handle /livekit/jwt {\n\t\trewrite * /sfu/get\n\t\treverse_proxy 127.0.0.1:8070", caddy)
+            # call sign-ins: through the API's room check (calltoken.mjs), only the health check straight to lk-jwt
+            self.assertIn("handle /livekit/jwt {\n\t\trewrite * /calltoken/sfu/get\n", caddy)
+            self.assertIn("handle_path /livekit/jwt/* {\n\t\trewrite * /calltoken{path}\n", caddy)
+            self.assertIn("handle /livekit/jwt/healthz {\n\t\trewrite * /healthz\n\t\treverse_proxy 127.0.0.1:8070\n\t}", caddy)
+            self.assertEqual(caddy.count("reverse_proxy 127.0.0.1:8070"), 1)
             self.assertIn("handle_path /api/admin/* {\n\t\trewrite * /tinhat-api/admin{uri}\n\t\treverse_proxy 127.0.0.1:8090", caddy)
             self.assertEqual(caddy.count("/api/admin/*"), 1)  # once, and the manager gets /tinhat-api/admin/… (not /api/…)
             self.assertEqual(caddy.count("header_up X-Forwarded-For {client_ip}") >= 10, True)

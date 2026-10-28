@@ -83,7 +83,7 @@ export { useNavStore, selectSpace, setSpaceOrder, spaceOf, openRoomId, openNavDi
 // 11.0 buttons: the palette host, for the #/__gallery/actions review page (the app mounts it as an overlay)
 export { QuickSwitcherHost };
 export { refreshNow as refreshNav };
-export { markRoomRead, markSpaceRead, parseJoinLink, roomInviteLink } from "./actions";
+export { markRoomRead, markSpaceRead, messageLink, parseJoinLink, roomInviteLink } from "./actions";
 export { createDm };
 
 /** Profile / member menu "Direct message": reuse the 1:1 DM with `mxid` or start one, then open it

@@ -10,9 +10,8 @@ import { getAccessToken, getSession, peekClient } from "@/core/matrix";
 import { MATRIX_ORIGIN, bearerAllowed } from "@/core/bearer";
 import { getPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
-import { stateKeyOwned } from "./keyrules";
+import { applyHostPolicy, normalizeFocusUrl, postSfuGet, callHostsOf, contentLive, focusDecision, ownFoci, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
 import { clientMarker } from "./av1";
-import { focusFromWellKnown } from "./focus";
 import { deviceStateKey, nativeDeviceId, pageOwnsMembership } from "@/features/native";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, MEMBERSHIP_EXPIRES_MS, defaultFocusUrl, displayName, avatarMxc, sleep, withTimeout, errText } from "./util";
 
@@ -20,24 +19,8 @@ const log = createLogger("rtc");
 
 export const WEB_VERSION: string = (import.meta.env.VITE_TW_VERSION as string | undefined) ?? `${(import.meta.env.VITE_TW_SEMVER as string | undefined) ?? "dev"}-web`;
 
-export interface Focus {
-  serviceUrl: string;
-  alias: string;
-}
-
-export interface LiveSession {
-  sender: string;
-  deviceId: string;
-  stateKey: string;
-  createdTs: number;
-  focus: Focus | null;
-  kind: string; // dev.tinhat.client.kind ("" = not Tin Hat)
-  recordOptout: boolean;
-  /** `membershipID` of the session ("" = none) — the only non-derived member.id a key may carry */
-  membershipId: string;
-  /** strict schema (application m.call, scope m.room, call_id "", finite expires > 0): required for keys */
-  wellFormed: boolean;
-}
+export type { Focus, LiveSession } from "./callrules";
+export { contentLive } from "./callrules";
 
 type Content = Record<string, unknown>;
 
@@ -49,82 +32,24 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** Liveness of one session-shaped object (spec §4.2 "Liveness rule"). */
-function entryLive(c: Content, originTs: number, now: number): boolean {
-  if (!c || Object.keys(c).length === 0) return false;
-  const created = num(c.created_ts) ?? (originTs > 0 ? originTs : null);
-  if (created === null) return true;
-  const expires = num(c.expires) ?? MEMBERSHIP_EXPIRES_MS;
-  return now <= created + expires;
-}
-
-/** A membership event's content is live (session form or legacy memberships[]). */
-export function contentLive(c: Content | undefined, originTs: number, now = Date.now()): boolean {
-  if (!c || Object.keys(c).length === 0) return false;
-  if (Array.isArray(c.memberships)) {
-    return (c.memberships as Content[]).some((m) => m && typeof m === "object" && entryLive(m, originTs, now));
-  }
-  return entryLive(c, originTs, now);
-}
-
-function focusOf(c: Content, roomId: string): Focus | null {
-  const list = (Array.isArray(c.foci_preferred) ? c.foci_preferred : Array.isArray(c.foci_active) ? c.foci_active : []) as Content[];
-  for (const f of list) {
-    if (f && f.type === "livekit" && typeof f.livekit_service_url === "string" && f.livekit_service_url) {
-      return { serviceUrl: f.livekit_service_url, alias: typeof f.livekit_alias === "string" && f.livekit_alias ? f.livekit_alias : roomId };
-    }
-  }
-  return null;
-}
-
 function memberEvents(roomId: string, type: string, client: MatrixClient | null = peekClient()): MatrixEvent[] {
   const r = client?.getRoom(roomId);
   return r?.currentState.getStateEvents(type) ?? [];
 }
 
-/** Live msc3401 sessions of a room (typed session format + legacy array), one per (user, device). */
+/** A room's call membership state as raw events (the pure rules in callrules.ts read these). */
+export function rawMemberEvents(roomId: string): RawMemberEvent[] {
+  return memberEvents(roomId, MEMBER_TYPE).map((ev) => ({
+    sender: ev.getSender() ?? "",
+    state_key: ev.getStateKey() ?? "",
+    origin_server_ts: ev.getTs(),
+    content: ev.getContent() as Content,
+  }));
+}
+
+/** Live msc3401 sessions of a room (typed session format + legacy array), one per (user, device) — callrules.ts. */
 export function liveSessions(roomId: string, now = Date.now()): LiveSession[] {
-  const out: LiveSession[] = [];
-  const seen = new Set<string>();
-  for (const ev of memberEvents(roomId, MEMBER_TYPE)) {
-    const c = ev.getContent() as Content;
-    const origin = ev.getTs();
-    const sender = ev.getSender() ?? "";
-    if (!sender || !contentLive(c, origin, now)) continue;
-    const arrayForm = Array.isArray(c.memberships);
-    const entries: Content[] = arrayForm
-      ? (c.memberships as Content[]).filter((m) => m && typeof m === "object" && entryLive(m, origin, now))
-      : [c];
-    const stateKey = ev.getStateKey() ?? "";
-    for (const e of entries) {
-      if (e.application !== undefined && e.application !== "m.call") continue;
-      if (e.scope !== undefined && e.scope !== "m.room") continue;
-      const dev = typeof e.device_id === "string" ? e.device_id : "";
-      // Schema + ownership (Astra finding 3): a device id is required, and the state key must belong
-      // to the sender and that device — a membership someone else's key claims is not a member.
-      if (!dev || !stateKeyOwned(stateKey, sender, dev, arrayForm)) continue;
-      const k = `${sender}|${dev}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      const marker = (e["dev.tinhat.client"] ?? c["dev.tinhat.client"]) as Content | undefined;
-      out.push({
-        sender,
-        deviceId: dev,
-        stateKey,
-        createdTs: num(e.created_ts) ?? origin,
-        focus: focusOf(e, roomId),
-        kind: marker && typeof marker.kind === "string" ? marker.kind : "",
-        recordOptout: !!marker && marker.record_optout === true,
-        membershipId: typeof e.membershipID === "string" ? e.membershipID : "",
-        wellFormed:
-          e.application === "m.call" &&
-          e.scope === "m.room" &&
-          e.call_id === "" &&
-          (num(e.expires) ?? 0) > 0,
-      });
-    }
-  }
-  return out;
+  return sessionsFrom(rawMemberEvents(roomId), roomId, now);
 }
 
 /** "A call is going on" = any live msc3401 membership (rtc.rs:35-38). */
@@ -154,16 +79,17 @@ export function roomCallParticipants(roomId: string, now = Date.now()): CallPart
   return out;
 }
 
-// ---- focus -------------------------------------------------------------------------------------
+// ---- focus (M1: the call host policy, DESIGN §2) ---------------------------------------------------------------
 
-let wellKnown: Promise<string | null> | null = null;
+let wellKnown: Promise<Content | null> | null = null;
 
-function wellKnownFocusUrl(): Promise<string | null> {
+/** The Tin Hat Server's .well-known/matrix/client, on its homeserver origin (= this page's); memoised, retried after a
+ *  failure. */
+function wellKnownDoc(): Promise<Content | null> {
   if (!wellKnown) {
-    // the Tin Hat Server's well-known, on its homeserver origin (= this page's)
     wellKnown = fetch(`${MATRIX_ORIGIN}/.well-known/matrix/client`, { signal: AbortSignal.timeout(8000) })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j: Content | null) => focusFromWellKnown(j))
+      .then((j: unknown) => (j && typeof j === "object" ? (j as Content) : null))
       .catch(() => {
         wellKnown = null;
         return null;
@@ -172,47 +98,82 @@ function wellKnownFocusUrl(): Promise<string | null> {
   return wellKnown;
 }
 
-/** The call JWT service new calls use (.well-known, else the default) — widgets W2's "Is it just me?" probes it. */
-export async function focusServiceUrl(): Promise<string> {
-  return (await wellKnownFocusUrl()) ?? defaultFocusUrl();
+/** Own foci (DESIGN §2.1): the well-known's livekit focus and `<homeserver>/livekit/jwt` (= defaultFocusUrl()). */
+async function own(): Promise<{ start: string; set: Set<string> }> {
+  return ownFoci(await wellKnownDoc(), MATRIX_ORIGIN);
 }
 
-/** The live call's focus (first live session with a livekit focus), else .well-known, else the default. */
-export async function resolveFocus(roomId: string): Promise<Focus> {
-  const live = liveSessions(roomId)
-    .filter((s) => s.focus)
-    .sort((a, b) => a.createdTs - b.createdTs);
-  if (live[0]?.focus) return live[0].focus;
-  const url = (await wellKnownFocusUrl()) ?? defaultFocusUrl();
-  return { serviceUrl: url, alias: roomId };
+/** The call JWT service new calls use (.well-known, else the default) — widgets W2's "Is it just me?" probes it. */
+export async function focusServiceUrl(): Promise<string> {
+  return (await own()).start || defaultFocusUrl();
+}
+
+/** Key rotation is off when the own server's well-known says `features.call_key_rotation: false` (DESIGN §3.10). */
+export async function keyRotationOff(): Promise<boolean> {
+  return rotationOff(await wellKnownDoc());
+}
+
+/** The call hosts the user chose "Always trust" for (account data dev.tinhat.call_hosts, synced across devices). */
+export function trustedCallHosts(): string[] {
+  return callHostsOf(peekClient()?.getAccountData(CALL_HOSTS_TYPE as never)?.getContent());
+}
+
+/** Which call service a join of `roomId` uses, and whether the user must be asked first (callrules.focusDecision). */
+export async function decideFocus(roomId: string): Promise<FocusDecision> {
+  const { start, set } = await own();
+  const now = Date.now(); // after the await: the events read below are judged at the time they are read
+  return applyHostPolicy(focusDecision({ roomId, now, events: rawMemberEvents(roomId), ownSet: set, start, allow: trustedCallHosts() }));
+}
+
+/** A focus the policy (or the user, on "ask") approved — the only thing mintSfuToken accepts. */
+export interface ApprovedFocus extends Focus {
+  readonly approvedAs: "own" | "trusted" | "asked";
+}
+
+/** Turn a decision into an approved focus: own / trusted as is; ask only with `userSaidJoin`; refuse never. */
+export function approveFocus(d: FocusDecision, userSaidJoin = false): ApprovedFocus | null {
+  if (!d.serviceUrl || !d.alias) return null;
+  if (d.decision === "own" || d.decision === "trusted") return { serviceUrl: d.serviceUrl, alias: d.alias, approvedAs: d.decision };
+  if (d.decision === "ask" && userSaidJoin) return { serviceUrl: d.serviceUrl, alias: d.alias, approvedAs: "asked" };
+  return null;
+}
+
+/** The own start service for a LiveKit room that is no Matrix call (the connection speed test's probe room). */
+export async function ownServiceFocus(alias: string): Promise<ApprovedFocus> {
+  const url = (await own()).start;
+  if (!url) throw new Error("this server names no valid https call service");
+  return { serviceUrl: url, alias, approvedAs: "own" };
 }
 
 // ---- OpenID + LiveKit token ---------------------------------------------------------------------
+
 
 export interface SfuToken {
   url: string;
   jwt: string;
 }
 
-export async function mintSfuToken(focus: Focus, deviceId: string): Promise<SfuToken> {
+/** OpenID → `POST {approved service}/sfu/get`, once, never to another URL (DESIGN §2.5); the answer's LiveKit address
+ *  must be wss/https (sfuUrlOk). */
+export async function mintSfuToken(focus: ApprovedFocus, deviceId: string): Promise<SfuToken> {
+  if (!focus?.approvedAs || !focus.serviceUrl) throw new Error("the call service wasn't approved");
+  const n = normalizeFocusUrl(focus.serviceUrl);
+  if (!("url" in n) || n.url !== focus.serviceUrl) throw new Error("the call service's address isn't a valid https address");
   const c = peekClient();
   if (!c) throw new Error("not signed in");
   // (bounded like every step of a join: an unanswered request must not leave the call "Connecting…" forever)
   const openid = await withTimeout(c.getOpenIdToken(), 15000, "the call sign-in (OpenID) request timed out");
-  const res = await fetch(`${focus.serviceUrl.replace(/\/+$/, "")}/sfu/get`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ room: focus.alias, openid_token: openid, device_id: deviceId }),
-    signal: AbortSignal.timeout(20000),
-  }).catch((e: unknown) => {
+  // one POST, no redirect ever followed (callrules.postSfuGet: redirect "error" + any 3xx = failure), answer checked
+  return postSfuGet(
+    (url, init) => fetch(url, init),
+    focus.serviceUrl,
+    JSON.stringify({ room: focus.alias, openid_token: openid, device_id: deviceId }),
+    AbortSignal.timeout(20000),
+  ).catch((e: unknown) => {
     if ((e as { name?: string })?.name === "TimeoutError") throw new Error("lk-jwt-service request timed out (20s)");
-    throw new Error(`lk-jwt-service unreachable: ${errText(e)}`);
+    if (e instanceof TypeError) throw new Error(`lk-jwt-service unreachable or redirected (not followed): ${errText(e)}`);
+    throw e;
   });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`lk-jwt-service HTTP ${res.status}: ${text.slice(0, 300)}`);
-  const j = JSON.parse(text) as { url?: string; jwt?: string };
-  if (!j.url || !j.jwt) throw new Error("lk-jwt-service answered without url/jwt");
-  return { url: j.url, jwt: j.jwt };
 }
 
 // ---- membership content / publish / refresh / tombstone -------------------------------------------

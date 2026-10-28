@@ -14,10 +14,12 @@ import { installPush } from "./push.mjs";
 import { installGameServers } from "./gameservers.mjs";
 import { installWatch } from "./watch.mjs";
 import { installGuests } from "./guests.mjs";
+import { installCallToken } from "./calltoken.mjs";
 import { accessConfig, createAccess, SIGNIN_REQUIRED } from "./access.mjs";
 import { normaliseClipUrl, ClipStore, Admitted, createClipSigner, sameHex, oneDownload } from "./clipcache.mjs";
 import { parseForeignClipUrl, foreignDownload } from "./foreign.mjs";
 import { giphyMediaUrl, sniffImage, readCapped, MEDIA_HEADERS, sniffAudio, sniffClipAudio, SANDBOX_HEADERS } from "./media.mjs";
+import { clearGuestCalls } from "./guestcalls.mjs";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -103,7 +105,8 @@ function rateLimit(req, res, next) {
 // + /gameservers/* (the Game servers widget, 11.1; docs/GAMESERVERS.md in both app repos): the same — per-user limits,
 // its own 2 KB body reader, whoami cached per token (reachcommon).
 // + the guest room (guests.mjs): its own limits (knocks per address), and the waiting page polls every 2 s.
-const REACH_PATH = /^\/(?:presence\/?$|push\/|gameservers\/|guests(?:\/|$)|guest\/(?:door|knock|ticket)$)/;
+// + call sign-ins (calltoken.mjs): their own per-address limit and body reader (lk-jwt's request shapes).
+const REACH_PATH = /^\/(?:presence\/?$|push\/|gameservers\/|guests(?:\/|$)|guest\/(?:door|knock|ticket)$|calltoken(?:\/|$))/;
 
 // ---- this server's own extras (Tin Hat Server) -------------------------------------------------------------------
 // Registered before the limiter and the JSON parser: they read their own bodies (the web server caps the sizes).
@@ -310,7 +313,20 @@ async function registerGuestAccount(displayName) {
     return { user: r.body.user_id, token: r.body.access_token, device: r.body.device_id };
 }
 
+// The homeserver as `call(method, path, token, body)` (guestcalls.mjs).
+const synapseCall = (method, path, token, body) => synapse(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, token);
+/** Withdraw the guest's call memberships in its room as the guest (guestcalls.mjs): before every kick / deactivation. */
+async function endGuestCalls(user, room) {
+    room = room || guestAccounts.find((a) => a.user === user)?.room;
+    if (!ADMIN_TOKEN || !room) return 0;
+    return clearGuestCalls({ call: synapseCall, adminToken: ADMIN_TOKEN, user, room, log: (l) => console.log(l) }).catch((e) => {
+        console.error(`[guest] ending ${user}'s call failed: ${e.message}`);
+        return 0;
+    });
+}
+
 async function deactivateGuest(user) {
+    await endGuestCalls(user);  // first: a deactivated account can't leave its call any more
     const r = await synapse(`/_synapse/admin/v1/deactivate/${encodeURIComponent(user)}`,
         { method: "POST", body: JSON.stringify({ erase: true }) }, ADMIN_TOKEN);
     return r.ok;
@@ -1117,6 +1133,7 @@ if (ADMIN_TOKEN && SYNAPSE_SECRET) {
         isGuest: (mxid) => guestAccounts.some((a) => a.user === mxid) || /^@guest-/.test(mxid),
         isTemporary: (mxid) => guestAccounts.some((a) => a.user === mxid),
         revokeAll: revokeGuestsOf,
+        endCalls: endGuestCalls,
         publishRoom: (room) => publish("guests-room.json", { room }),
         statePath: join(CONF, "guests.json"),
     });
@@ -1130,6 +1147,15 @@ installGameServers(app, {
     auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN,
     configPath: join(CONF, "gameservers.json"),
     keyPath: join(CONF, "pelican.key"),
+});
+
+// Call sign-ins (security review 2026-10-26, calls round M1b; docs/API.md "Call sign-ins"): Caddy sends every
+// /livekit/jwt request but lk-jwt's health check here, and a token is minted only for a Matrix room the caller is
+// joined in. CALL_TOKEN_ROOM_CHECK=off (the owner's switch) hands everything to lk-jwt unchanged.
+installCallToken(app, {
+    hs: reachHs, adminToken: ADMIN_TOKEN, serverName: process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname,
+    lkJwtUrl: (process.env.LK_JWT_URL || "http://127.0.0.1:8070").replace(/\/+$/, ""),
+    enabled: () => String(process.env.CALL_TOKEN_ROOM_CHECK || "on").trim().toLowerCase() !== "off",
 });
 
 app.listen(PORT, "127.0.0.1", () => {

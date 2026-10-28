@@ -1,0 +1,6 @@
+/* CallHostSheet — the body text of "Join a call hosted elsewhere?" (palette text, the Dialog's own spacing) */
+.body {
+  margin: 0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

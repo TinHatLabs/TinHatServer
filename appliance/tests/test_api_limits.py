@@ -39,6 +39,17 @@ class OwnerLimits(unittest.TestCase):
         self.assertEqual(apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1", owner_limits=apiconf.limits(st)),
                          apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1", owner_limits=lim))
 
+    def test_call_token_room_check_is_the_owners_switch(self):
+        # calls round M1b (0.3.7): on unless the owner says off; only on|off reach the API
+        self.assertEqual(apiconf.limit_value("CALL_TOKEN_ROOM_CHECK", "off"), "off")
+        self.assertEqual(apiconf.limit_value("CALL_TOKEN_ROOM_CHECK", " ON "), "on")
+        for bad in ("no", "0", "false", "", True, False, None):
+            self.assertIsNone(apiconf.limit_value("CALL_TOKEN_ROOM_CHECK", bad))
+        self.assertNotIn("CALL_TOKEN_ROOM_CHECK", env_of(apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1")))  # default: the API's (on)
+        env = env_of(apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1",
+                                      owner_limits=apiconf.limits({"api": {"limits": {"CALL_TOKEN_ROOM_CHECK": "off"}}})))
+        self.assertEqual(env["CALL_TOKEN_ROOM_CHECK"], "off")
+
     def test_only_known_names_and_good_values(self):
         st = {"api": {"limits": {"API_LEGACY_ANON": "maybe", "WATCH_USER_UNITS_PER_DAY": "-5", "GIF_FETCH_MAX_MB": "1e9",
                                  "SYNAPSE_INTERNAL": "http://evil", "API_ANON_GIF_PER_HOUR": "12\nSYNAPSE_INTERNAL=x",

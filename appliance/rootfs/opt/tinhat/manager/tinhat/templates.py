@@ -364,13 +364,30 @@ https://{server_name} {{
 	handle /_synapse/client/* {{
 		reverse_proxy 127.0.0.1:8008
 	}}
-	# Older Element Call versions post the sign-in to the focus URL itself (no /sfu/get after it).
-	handle /livekit/jwt {{
-		rewrite * /sfu/get
+	# Call sign-ins go to the Tin Hat API first (calltoken.mjs): it asks lk-jwt for a token only when the caller is in
+	# that room. Only lk-jwt's health check goes to it directly. Older Element Call versions post the sign-in to the
+	# focus URL itself (no /sfu/get after it).
+	handle /livekit/jwt/healthz {{
+		rewrite * /healthz
 		reverse_proxy 127.0.0.1:8070
 	}}
+	handle /livekit/jwt {{
+		rewrite * /calltoken/sfu/get
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
+	}}
 	handle_path /livekit/jwt/* {{
-		reverse_proxy 127.0.0.1:8070
+		rewrite * /calltoken{{path}}
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
 	}}
 	handle_path /livekit/sfu* {{
 		reverse_proxy 127.0.0.1:7880
@@ -459,13 +476,30 @@ https://{server_name} {{
 	handle /_synapse/client/* {{
 		reverse_proxy 127.0.0.1:8008
 	}}
-	# Older Element Call versions post the sign-in to the focus URL itself (no /sfu/get after it).
-	handle /livekit/jwt {{
-		rewrite * /sfu/get
+	# Call sign-ins go to the Tin Hat API first (calltoken.mjs): it asks lk-jwt for a token only when the caller is in
+	# that room. Only lk-jwt's health check goes to it directly. Older Element Call versions post the sign-in to the
+	# focus URL itself (no /sfu/get after it).
+	handle /livekit/jwt/healthz {{
+		rewrite * /healthz
 		reverse_proxy 127.0.0.1:8070
 	}}
+	handle /livekit/jwt {{
+		rewrite * /calltoken/sfu/get
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
+	}}
 	handle_path /livekit/jwt/* {{
-		reverse_proxy 127.0.0.1:8070
+		rewrite * /calltoken{{path}}
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
 	}}
 	handle_path /livekit/sfu* {{
 		reverse_proxy 127.0.0.1:7880
@@ -573,13 +607,30 @@ CADDY_PROXY = """\
 			header_up X-Forwarded-For {{client_ip}}
 		}}
 	}}
-	# Older Element Call versions post the sign-in to the focus URL itself (no /sfu/get after it).
-	handle /livekit/jwt {{
-		rewrite * /sfu/get
+	# Call sign-ins go to the Tin Hat API first (calltoken.mjs): it asks lk-jwt for a token only when the caller is in
+	# that room. Only lk-jwt's health check goes to it directly. Older Element Call versions post the sign-in to the
+	# focus URL itself (no /sfu/get after it).
+	handle /livekit/jwt/healthz {{
+		rewrite * /healthz
 		reverse_proxy 127.0.0.1:8070
 	}}
+	handle /livekit/jwt {{
+		rewrite * /calltoken/sfu/get
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
+	}}
 	handle_path /livekit/jwt/* {{
-		reverse_proxy 127.0.0.1:8070
+		rewrite * /calltoken{{path}}
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
 	}}
 	handle_path /livekit/sfu* {{
 		reverse_proxy 127.0.0.1:7880
@@ -755,13 +806,30 @@ https://{old} {{
 	handle /_synapse/client/* {{
 		reverse_proxy 127.0.0.1:8008
 	}}
-	# Older Element Call versions post the sign-in to the focus URL itself (no /sfu/get after it).
-	handle /livekit/jwt {{
-		rewrite * /sfu/get
+	# Call sign-ins go to the Tin Hat API first (calltoken.mjs): it asks lk-jwt for a token only when the caller is in
+	# that room. Only lk-jwt's health check goes to it directly. Older Element Call versions post the sign-in to the
+	# focus URL itself (no /sfu/get after it).
+	handle /livekit/jwt/healthz {{
+		rewrite * /healthz
 		reverse_proxy 127.0.0.1:8070
 	}}
+	handle /livekit/jwt {{
+		rewrite * /calltoken/sfu/get
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
+	}}
 	handle_path /livekit/jwt/* {{
-		reverse_proxy 127.0.0.1:8070
+		rewrite * /calltoken{{path}}
+		request_body {{
+			max_size 64KB
+		}}
+		reverse_proxy 127.0.0.1:3001 {{
+			header_up X-Forwarded-For {{client_ip}}
+		}}
 	}}
 	handle_path /livekit/sfu* {{
 		reverse_proxy 127.0.0.1:7880

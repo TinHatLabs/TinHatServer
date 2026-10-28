@@ -36,7 +36,7 @@ import { heardSummary, I_HEAR_REASON, NOT_ME_REASON, noteMute } from "./hear";
 import "./stats";
 import "./rxstats";
 import { runConnectionTest } from "./extras";
-import { ingestKeyEvent, installKeyIntake } from "./keys";
+import { receivedKeysForTest, ingestKeyEvent, installKeyIntake } from "./keys";
 import { callActive } from "./rtc";
 import { AFK_TYPE, mxidOf } from "./util";
 import { adoptGuestHandoff } from "./guest";
@@ -58,6 +58,9 @@ export { rnnoiseAvailable } from "./mic";
 // widgets (Call stats) — ADDITIVE: receiver stats per person, ConnectionQuality, tinhat.rxq (WIDGETS.md §5/§6)
 export { useRxStats, useRxStore, watchRxStats, type RxPerson, type RxState } from "./rxstats";
 export { focusServiceUrl } from "./rtc"; // widgets W2: "Is it just me?" probes the call JWT service
+// M1 (calls round): the call-host sheet (callui/CallHostSheet.tsx) and Settings → Calls → "Call hosts you trust"
+export { setHostAsker, trustCallHost, untrustCallHost, type HostAnswer, type HostQuestion } from "./hostsheet";
+export { CALL_HOSTS_TYPE, HOST_SHEET_CANCEL, HOST_SHEET_JOIN, HOST_SHEET_TITLE, callHostsOf, hostSheetAlways } from "./callrules";
 
 const log = createLogger("calls");
 
@@ -337,11 +340,23 @@ function install() {
       engine,
       audio,
       keys: { ingestKeyEvent }, // the app's OWN key-intake instance (tools/calls-security-e2e.mjs)
+      moderation: { disconnectParticipant }, // calls-round gate G3 (c): the moderator's "disconnect" (server API)
       roomCall,
       mxidOf,
       answerIncoming,
       dismissIncoming,
       ringing: () => useIncomingRing.getState().ringing,
+    };
+  }
+  // Calls-round gate G3 (tools/calls-rotation-e2e.mjs): the keys this tab RECEIVED, so a spy can try them after a
+  // leave. DEV builds only — never in a production bundle, not even with __TW_DEBUG__ (security review: `__tw`).
+  if (import.meta.env.DEV) {
+    const d = window as unknown as { __twCallKeys?: unknown };
+    d.__twCallKeys = {
+      received: (roomId: string) => receivedKeysForTest(roomId),
+      own: () => engine.ownKeysForTest(),
+      // the spy's LiveKit room (a connection with a leaver's old keys, no membership)
+      lk: async () => ({ ...(await import("livekit-client")), TinHatKeyProvider: (await import("./keys")).TinHatKeyProvider, E2EEWorker: (await import("livekit-client/e2ee-worker?worker")).default }),
     };
   }
 }

@@ -25,7 +25,6 @@ import {
   lockoutError,
   migrateFromPowerLevels,
   newRoleId,
-  permalink,
   permissionLabel,
   plural,
   reconcileTail,
@@ -37,6 +36,7 @@ import {
 import { effectivePermsWith, loadRolesState, powerLevelOf, type Perms } from "./roles";
 import { rl } from "./ratelimit";
 import { isRoomId } from "@/app/router";
+import { shareLinkNow } from "@/core/server";
 
 const log = createLogger("spaces");
 
@@ -383,7 +383,7 @@ async function buildSnapshot(spaceId: string): Promise<Snapshot> {
     topic: typeof topic === "string" ? topic : "",
     avatar: space.getMxcAvatarUrl() ?? null,
     alias,
-    link: permalink(spaceId, alias),
+    link: shareLinkNow(spaceId, alias),
     joinRule: joinRuleStr(space),
     memberCount: joined ? nJoin : space.getJoinedMemberCount(),
     invitedCount: nInvite,

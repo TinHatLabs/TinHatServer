@@ -7,7 +7,7 @@ import { createLogger } from "@/core/log";
 import { getCall, patch } from "./store";
 import { sess } from "./session";
 import { hooks, playSound, stopSound } from "./engine";
-import { mintSfuToken, resolveFocus } from "./rtc";
+import { mintSfuToken, ownServiceFocus } from "./rtc";
 import { errText, localpart, sleep } from "./util";
 
 const log = createLogger("call-extras");
@@ -125,8 +125,8 @@ export async function runConnectionTest(): Promise<void> {
     const probeRoom = `tinhat-conntest-${lp}-${Math.floor(Date.now() / 1000) % 100000}`;
     let tok;
     try {
-      const focus = await resolveFocus(probeRoom);
-      tok = await mintSfuToken({ serviceUrl: focus.serviceUrl, alias: probeRoom }, s.deviceId ?? "");
+      // (a probe room is no Matrix call: always the own service — never a foreign one)
+      tok = await mintSfuToken(await ownServiceFocus(probeRoom), s.deviceId ?? "");
     } catch (e) {
       throw new Error(`token broker refused the probe room (${errText(e)})`);
     }

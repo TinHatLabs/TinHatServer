@@ -46,6 +46,9 @@ export interface ServerOffer {
   server: string;
   /** the Tin Hat API base it announces; "" when it doesn't say */
   api: string;
+  /** `web`: where its Tin Hat Web lives (server 0.3.5+; as announced, trimmed); "" when it doesn't say. core/links.ts
+   *  webBase decides whether it counts (else the `api` origin). */
+  web: string;
   /** only the features it announced as booleans */
   features: Partial<Record<ServerFeature, boolean>>;
   /** the Memories recorder's Matrix id; "" = this server has none */
@@ -58,7 +61,7 @@ export interface ServerOffer {
   owner: string;
 }
 
-export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", features: Object.freeze({}), recorder: "", passwordReset: "", owner: "" }) as ServerOffer;
+export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", web: "", features: Object.freeze({}), recorder: "", passwordReset: "", owner: "" }) as ServerOffer;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const own = (o: Record<string, unknown>, k: string): unknown => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
@@ -71,6 +74,7 @@ export function parseOffer(wellKnown: unknown): ServerOffer {
   if (!isObj(t)) return NO_OFFER;
   const server = own(t, "server");
   const api = own(t, "api");
+  const w = own(t, "web");
   const f = own(t, "features");
   const features: Partial<Record<ServerFeature, boolean>> = {};
   if (isObj(f)) {
@@ -86,13 +90,14 @@ export function parseOffer(wellKnown: unknown): ServerOffer {
   const passwordReset = isObj(acct) && own(acct, "password_reset") === "owner" ? "owner" : "";
   const ow = isObj(acct) ? own(acct, "owner") : undefined;
   const owner = typeof ow === "string" && MXID.test(ow) ? ow : "";
-  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", features, recorder, passwordReset, owner };
+  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", web: typeof w === "string" ? w.trim() : "", features, recorder, passwordReset, owner };
 }
 
 /** The offer back in the server's own shape (the `dev.tinhat.server` value): what the cache keeps, so parseOffer reads
  *  it back the same. */
 export function offerDoc(o: ServerOffer): Record<string, unknown> {
   const doc: Record<string, unknown> = { server: o.server, api: o.api, features: { ...o.features } };
+  if (o.web) doc.web = o.web;
   if (o.recorder) doc.recorder = o.recorder;
   if (o.passwordReset || o.owner) {
     const a: Record<string, unknown> = {};
@@ -123,7 +128,7 @@ export function featureFor(offer: ServerOffer, f: ServerFeature, guest: boolean)
 
 /** The same offer? (the store notifies only on a real change) */
 export function sameOffer(a: ServerOffer, b: ServerOffer): boolean {
-  if (a.server !== b.server || a.api !== b.api || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset || a.owner !== b.owner) return false;
+  if (a.server !== b.server || a.api !== b.api || a.web !== b.web || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset || a.owner !== b.owner) return false;
   return SERVER_FEATURES.every((k) => a.features[k] === b.features[k]);
 }
 

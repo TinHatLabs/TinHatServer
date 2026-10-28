@@ -66,11 +66,20 @@ export function cleanName(raw) {
  *   isGuest(mxid)                — treat as a guest (fewer rights): a temporary account, or any @guest-… name
  *   isTemporary(mxid)            — an account the API itself made for a guest (only those are ever removed)
  *   revokeAll(room)              — deactivate every account the guest room made (in the room or not) → how many
+ *   endCalls(user, room)         — optional: withdraw the guest's call memberships as the guest (before the kick)
  *   publishRoom(room)            — tell Synapse's tinhat_rules module which room guests may be in
  *   statePath                    — guests.json
- *   now, log, retryMs (the start-up publish's retry: 30 s)
+ *   now, log, retryMs (the start-up publish's retry, fixed; default startRetryMs' 2 s, 5 s, 10 s, then 30 s)
  * }
  */
+/** The start-up publish's wait before try number `tries` + 1 (tries = how many have failed): 2 s, 5 s, 10 s, then 30 s;
+ *  null after 10 tries. `fixed` (tests) replaces the waits, not the count. */
+export const START_RETRY_MS = Object.freeze([2_000, 5_000, 10_000, 30_000]);
+export function startRetryMs(tries, fixed) {
+    if (tries >= 10) return null;
+    return fixed ?? START_RETRY_MS[Math.min(tries, START_RETRY_MS.length) - 1];
+}
+
 export function createGuests(deps) {
     const now = deps.now || wall;
     const log = deps.log || console.log;
@@ -290,6 +299,8 @@ export function createGuests(deps) {
             const m = await hs.call("GET", `/_matrix/client/v3/rooms/${enc(st.room)}/joined_members`, T).catch(() => ({ body: {} }));
             for (const user of Object.keys(isObj(m.body?.joined) ? m.body.joined : {})) {
                 if (!deps.isTemporary(user)) continue;  // never a real person who picked a guest-like name
+                // their call first, as them: once kicked they can't leave it, and the apps showed them in it for hours
+                await Promise.resolve(deps.endCalls?.(user, st.room)).catch(() => 0);
                 await hs.call("POST", `/_matrix/client/v3/rooms/${enc(st.room)}/kick`, T, { user_id: user, reason: "The guest room was turned off" }).catch(() => null);
             }
             removed = await deps.revokeAll(st.room);
@@ -451,8 +462,9 @@ export function createGuests(deps) {
     // On start: Synapse's rules learn the room; the room's state says what is true now (on or off, and nobody waits:
     // the waiting list lived in this process), so every app reads it from sync, also right after an update.
     deps.publishRoom?.(st.room || "");
-    // The chat server may not answer yet (after a restart the API can be up first): tried again every 30 s, 10 times,
-    // in turn with on/off/link changes so an older answer never lands after a newer one.
+    // The chat server may not answer yet (after a restart the API can be up first): tried again after 2 s, 5 s, 10 s,
+    // then every 30 s, 10 tries in all (startRetryMs), in turn with on/off/link changes so an older answer never lands
+    // after a newer one.
     let tries = 0;
     const publishAtStart = () => serial(async () => {
         if (!st.room) return true;
@@ -460,8 +472,15 @@ export function createGuests(deps) {
         const on = await writeOn();
         const waits = await writeWaiting();
         return rules && on && waits;
-    }).catch((e) => { log(`[guests] publishing the Guests room's state: ${e.message}`); return false; })
-        .then((ok) => { if (!ok && ++tries < 10) setTimeout(publishAtStart, deps.retryMs ?? 30_000).unref?.(); });
+    }).catch((e) => e instanceof Error ? e : new Error(String(e)))
+        .then((r) => {
+            if (r === true) return;
+            const wait = startRetryMs(++tries, deps.retryMs);
+            if (r instanceof Error) {
+                log(`[guests] publishing the Guests room's state: ${r.message}${wait === null ? " (giving up until the next start)" : ` (the chat server may still be starting: trying again in ${Math.ceil(wait / 1000)} s)`}`);
+            }
+            if (wait !== null) setTimeout(publishAtStart, wait).unref?.();
+        });
     const ready = st.room && T ? publishAtStart() : Promise.resolve();
     return { h, tick, _st: () => st, _waiting: waiting, _tickets: tickets, _ready: ready };
 }

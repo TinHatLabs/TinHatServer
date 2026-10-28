@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGuests, cleanName, G } from "../guests.mjs";
+import { createGuests, cleanName, G, startRetryMs as G_startRetryMs } from "../guests.mjs";
 import { call, bearer, clock } from "./helpers.mjs";
 
 const SYS = "@tinhat-system:crew.example.org", OWNER = "@owner:crew.example.org", AMY = "@amy:crew.example.org";
@@ -17,6 +17,7 @@ function world(extra = {}, seed = {}) {
     const hs = {
         async call(method, path, token, body) {
             assert.equal(token, "admintoken", `${method} ${path} uses the system account`);
+            if (s.downFor > 0) { s.downFor--; throw new TypeError("fetch failed"); }  // the chat server isn't up yet
             let m;
             if (path === "/_matrix/client/v3/account/whoami") return { ok: true, status: 200, body: { user_id: SYS } };
             if (method === "POST" && path === "/_matrix/client/v3/createRoom") {
@@ -396,4 +397,51 @@ test("a web app address of its own: the link, the door and the hand-off go there
     assert.match(t.body.session.web, /^https:\/\/web\.example\.org\/#\/guest-session\?hs=https%3A%2F%2Fweb\.example\.org&user=/);
     const hs = new URLSearchParams(new URL(t.body.session.web).hash.replace(/^#\/guest-session\?/, "")).get("hs");
     assert.equal(new URL(hs).origin, new URL(t.body.session.web).origin);
+});
+
+test("the start-up publish backs off: 2 s, 5 s, 10 s, then 30 s; 10 tries in all", () => {
+    assert.deepEqual([1, 2, 3, 4, 5, 9].map((n) => G_startRetryMs(n)), [2_000, 5_000, 10_000, 30_000, 30_000, 30_000]);
+    assert.equal(G_startRetryMs(10), null, "no 11th try");
+    assert.equal(G_startRetryMs(3, 5), 5, "a test's fixed wait");
+    assert.equal(G_startRetryMs(10, 5), null);
+});
+
+test("a chat server that isn't up yet at start: the log says a retry is coming, and the retry publishes", async () => {
+    const ROOM = "!older:crew.example.org";
+    const statePath = join(mkdtempSync(join(tmpdir(), "guests-")), "guests.json");
+    writeFileSync(statePath, JSON.stringify({ v: 1, room: ROOM, on: true, since: 5, key: "K".repeat(24) }));
+    const pl = { users: { [SYS]: 100 }, state_default: 50, events: { [G.STATE]: 100, [G.WAITING]: 100, "m.room.encryption": 100 } };
+    const w = world({ statePath, retryMs: 5 }, { rooms: { [ROOM]: { members: new Set([SYS]), pl } }, downFor: 1 });
+    await w.g._ready;
+    assert.ok(w.logs.some((l) => /publishing the Guests room's state: .*trying again in 1 s/.test(l)), w.logs.join("\n"));
+    for (let i = 0; i < 50 && !w.s.writes.some((x) => x.type === G.STATE); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(w.s.writes.some((x) => x.type === G.STATE), "the retry published the on/off state");
+});
+
+test("off ends each guest's call (as the guest) BEFORE kicking it; a real look-alike's call is never touched", async () => {
+    const order = [];
+    const w = world({ endCalls: async (u, r) => { order.push(`end ${u} ${r}`); return 1; } });
+    const on = await call(w.g.h.manage("on"), { method: "POST", headers: bearer("towner") });
+    await call(w.g.h.knock, { method: "POST", body: { g: keyOf(on.body.link), name: "Bea" }, headers: ip("203.0.113.8") });
+    const id = w.s.writes.filter((x) => x.type === G.WAITING).at(-1).content.waiting[0].id;
+    await call(w.g.h.decide("admit"), { method: "POST", body: { id }, headers: bearer("towner") });
+    w.join("@guest-lookalike:crew.example.org");
+    const kicks = w.s.kicks; const push = kicks.push.bind(kicks);
+    kicks.push = (u) => (order.push(`kick ${u}`), push(u));
+    await call(w.g.h.manage("off"), { method: "POST", headers: bearer("towner") });
+    const g1 = "@guest-1:crew.example.org";
+    assert.deepEqual(order.filter((x) => x.includes(g1)), [`end ${g1} ${w.room()}`, `kick ${g1}`]);
+    assert.ok(!order.some((x) => x.includes("lookalike")), "a real person's call is never ended");
+});
+
+test("off still kicks and revokes when ending the call fails", async () => {
+    const w = world({ endCalls: async () => { throw new Error("homeserver said 500"); } });
+    const on = await call(w.g.h.manage("on"), { method: "POST", headers: bearer("towner") });
+    await call(w.g.h.knock, { method: "POST", body: { g: keyOf(on.body.link), name: "Bea" }, headers: ip("203.0.113.8") });
+    const id = w.s.writes.filter((x) => x.type === G.WAITING).at(-1).content.waiting[0].id;
+    await call(w.g.h.decide("admit"), { method: "POST", body: { id }, headers: bearer("towner") });
+    const off = await call(w.g.h.manage("off"), { method: "POST", headers: bearer("towner") });
+    assert.equal(off.body.on, false);
+    assert.ok(w.s.kicks.includes("@guest-1:crew.example.org"));
+    assert.ok(w.s.deactivated.includes("@guest-1:crew.example.org"));
 });

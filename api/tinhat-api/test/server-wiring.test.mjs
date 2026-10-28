@@ -73,6 +73,10 @@ before(async () => {
     hs = createServer((req, res) => {
         const who = { "Bearer good": "@alice:example.org", "Bearer good2": "@bob:example.org", "Bearer guest": "@guest-1:example.org",
             "Bearer good3": "@carol:example.org", "Bearer good4": "@dave:example.org" }[req.headers.authorization];
+        if (req.url === "/_matrix/federation/v1/openid/userinfo?access_token=oid-good") {  // calltoken.mjs: a sign-in from here
+            res.writeHead(200, { "content-type": "application/json" });
+            return res.end(JSON.stringify({ sub: "@alice:example.org" }));
+        }
         res.writeHead(req.url === "/_matrix/client/v3/account/whoami" && who ? 200 : 401, { "content-type": "application/json" });
         res.end(JSON.stringify(who ? { user_id: who, device_id: "D" } : { errcode: "M_UNKNOWN_TOKEN" }));
     });
@@ -286,4 +290,18 @@ test("abuse reports have their own quota: a day of bug reports doesn't stop a re
     for (let i = 0; i < 55; i++) if ((await as({ ...ABUSE, extra: undefined })).status === 200) abuse++;
     assert.equal(abuse, 49, "50 tries a day");
     assert.equal((await as(ABUSE)).status, 429);
+});
+
+test("call sign-ins: own body reader (not the shared parser), room check before lk-jwt, fail closed, nothing else under /calltoken", { skip }, async () => {
+    const post = (path, body) => fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.77" }, body: JSON.stringify(body) });
+    const sign = (room) => ({ room, openid_token: { access_token: "oid-good", token_type: "Bearer", matrix_server_name: "example.org", expires_in: 3600 }, device_id: "D" });
+    const r = await post("/calltoken/sfu/get", sign("somewhere-else"));
+    assert.deepEqual([r.status, await r.json()], [403, { errcode: "M_FORBIDDEN", error: "not in that room", reason: "not-member" }]);
+    assert.equal(r.headers.get("access-control-allow-origin"), "*");
+    // no admin token in this setup: the member list can't be read, so the answer is 502, never a pass-through
+    const r2 = await post("/calltoken/sfu/get", sign("!room:example.org"));
+    assert.deepEqual([r2.status, (await r2.json()).reason], [502, "check-failed"]);
+    assert.equal((await post("/calltoken/get_token", sign("!room:example.org"))).status, 400, "/get_token: the MSC4195 shape only");
+    assert.equal((await post("/calltoken/healthz", {})).status, 404);
+    assert.equal((await post("/calltoken", {})).status, 404);
 });

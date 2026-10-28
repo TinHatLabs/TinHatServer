@@ -32,6 +32,7 @@ import E2EEWorker from "livekit-client/e2ee-worker?worker";
 import { getSession, ensureWritable, getState, sendState, peekClient, fetchMedia, acquireMxcUrl, onClientChanged } from "@/core/matrix";
 import { holdsTabLock } from "@/core/matrix/client";
 import { RoomStateEvent, type MatrixClient, type MatrixEvent } from "matrix-js-sdk";
+import { CryptoEvent } from "matrix-js-sdk/lib/crypto-api/index.js";
 import { apiAuthHeaders } from "@/core/api";
 import { FOREIGN_SOUND_NOTE } from "@/core/clipurl";
 import { clipSrc } from "@/core/clipsrc";
@@ -44,7 +45,7 @@ import { pageEpoch, pageHidden, whenVisible, type ResumeInfo } from "@/core/life
 import type { CallCategory, CallState, Dev, ShareOptions, Tile } from "./contract";
 import { getCall, patch, setStatus, useCallStore } from "./store";
 import { sess, sessFor, setSess, type Sess } from "./session";
-import { advanceKeyIndex, announceKey, mintKey, replayKeys, setKeySink, TinHatKeyProvider, clearKeysFor, onPeerKey, recheckPending } from "./keys";
+import { advanceKeyIndex, announceKeys, currentRecipients, mintKey, type AnnounceResult, type OwnKey, replayKeys, setKeySink, TinHatKeyProvider, clearKeysFor, onPeerKey, recheckPending } from "./keys";
 import {
   mintSfuToken,
   membershipContent,
@@ -52,7 +53,10 @@ import {
   putMembership,
   wantMembership,
   dropMembership,
-  resolveFocus,
+  decideFocus,
+  approveFocus,
+  keyRotationOff,
+  liveSessions,
   sweepOwnGhosts,
   withdrawKeepalive,
   withdrawMembership,
@@ -61,7 +65,9 @@ import {
   ownStateKey,
 } from "./rtc";
 import * as audio from "./audio";
-import { AFK_TYPE, MEMBER_TYPE, avatarMxc, displayName, errText, isRecorder, mxidOf, sleep, withTimeout } from "./util";
+import { AFK_TYPE, MEMBER_TYPE, avatarMxc, b64encode, deviceOf, displayName, errText, isRecorder, mxidOf, sleep, withTimeout } from "./util";
+import { REFUSE_TEXT, RESEND_AFTER_USE_MS, createPlanner, mintAtStep, resendPlan, type FocusDecision, type PlanAction } from "./callrules";
+import { askCallHost, dismissHostAsk, trustCallHost } from "./hostsheet";
 import { buildMicOptions, micProcessorFor, rnnoiseAvailable } from "./mic";
 import { av1Probe, av1Watch } from "./av1";
 import { shareFit, SHARE_MAX_DIM } from "./shareFit";
@@ -124,7 +130,11 @@ function isForbidden(e: unknown): boolean {
   return o.httpStatus === 403 || o.errcode === "M_FORBIDDEN" || o.data?.errcode === "M_FORBIDDEN";
 }
 
+/** M1: the call's host was refused (DESIGN §2.4) — its words are shown as they are. */
+class CallRefused extends Error {}
+
 export function friendly(e: unknown): string {
+  if (e instanceof CallRefused) return e.message;
   const raw = errText(e);
   const t = raw.toLowerCase();
   if (/timed out|timeout|deadline/.test(t)) return "the call server didn't answer. Check your connection and try again.";
@@ -2170,6 +2180,7 @@ function armJoinDeadline(gen: number, ms: number): void {
     // away since it was armed: hidden then (or since), or the timer came due while the page didn't run
     // (fired late — a suspended page / a sleeping machine runs no timers)
     if (hiddenAtArm || pageEpoch() !== epoch || Date.now() - due > 5000) return armJoinDeadline(gen, JOIN_DEADLINE_AFTER_RETURN_MS);
+    if (askingHostFor === gen) return armJoinDeadline(gen, JOIN_DEADLINE_MS); // the user is reading the call-host sheet
     failStuckJoin(gen, "the call didn't connect within a minute. Check your connection and try again.");
   }, ms);
 }
@@ -2267,7 +2278,7 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     const reason = friendly(e);
     lastDropRoom = roomId;
     patch({ connecting: false, reconnecting: false, callFailed: true, failReason: reason });
-    setStatus(`Couldn't join the call — ${reason}`);
+    setStatus(e instanceof CallRefused ? reason : `Couldn't join the call — ${reason}`);
   };
   try {
     if (!me || !dev) throw new Error("not signed in");
@@ -2281,10 +2292,22 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     }
     audio.audioContext(); // created inside the click that started the join (autoplay policy)
     setKeySink({ roomId, myIdentity, provider: null });
-    // 2. focus
-    const focus = await resolveFocus(roomId);
+    // 2. focus — the call host policy (M1, DESIGN §2): own / trusted join, ask shows the sheet, refuse sends nothing
+    const decision = await decideFocus(roomId);
     if (stale(gen)) return fail("superseded");
-    // 3. token
+    const focus = await approveJoin(roomId, decision, gen, me);
+    if (stale(gen)) return fail("superseded");
+    if (!focus) {
+      // Cancel on the sheet: the join ends quietly — no error, no OpenID request, nothing sent anywhere.
+      log.info(`join ${roomId}: the user didn't join the call on ${decision.host}`);
+      setKeySink(null);
+      joinTarget = null;
+      releaseCallLock();
+      patch({ connecting: false, reconnecting: false, callRoomId: "" });
+      setStatus("You didn't join the call");
+      return;
+    }
+    // 3. token (OpenID only now, and only to the approved service)
     const tok = await mintSfuToken(focus, dev);
     if (stale(gen)) return fail("superseded");
     // 4. leftover session
@@ -2340,7 +2363,15 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     const provider = new TinHatKeyProvider();
     provider.ownIndex = keyIndex;
     await provider.setRawKey(myIdentity, keyIndex, key);
-    void announceKey(roomId, keyIndex, key, "join", () => !stale(gen)).catch((e) => log.warn(`[send-key-td] ${errText(e)}`));
+    // M2: the planner starts with the join's key; its holders = recipient rule v2 now (DESIGN §3.3)
+    const sfuGone = new Map<string, number>();
+    const rotation = !(await keyRotationOff());
+    const { planner } = createPlanner(keyIndex, Date.now(), await currentRecipients(roomId, sfuGone), rotation ? undefined : NO_ROTATION);
+    if (stale(gen)) return fail("superseded");
+    void announceKeys(roomId, [{ index: keyIndex, key }], "join", () => !stale(gen) && planner.announceKeys().includes(keyIndex), {
+      sfuGone: () => sfuGone,
+      onSend: (ids, idx) => planner.noteHolders(ids, idx),
+    }).catch((e) => log.warn(`[send-key-td] ${errText(e)}`));
     // 8. connect
     room = new Room({
       adaptiveStream: false,
@@ -2361,8 +2392,15 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
       roomId,
       room,
       provider,
-      key,
-      keyIndex,
+      keyRing: new Map([[keyIndex, key]]),
+      sendingIndex: keyIndex,
+      resend: new Map<string, number>(),
+      switching: null,
+      planner,
+      sfuGone,
+      rotation,
+      planBusy: false,
+      planAgain: false,
       myIdentity,
       me,
       deviceId: dev,
@@ -2391,6 +2429,11 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     // 9. moderation state at join
     const block = hooks.micPublishBlocked(roomId);
     setSess(s);
+    // tracks already published were subscribed DURING connect, while sess() was still null, so their tiles got no
+    // track (a tile kept from an earlier call, or one mounted meanwhile, showed a <video> without a picture until a
+    // remount): give every attached tile its track now
+    for (const tileId of [...attached.keys()]) reattach(tileId);
+    rebuildTiles();
     if (block.muted) {
       s.micWanted = false;
       patch({ serverMuted: true, serverMutedBy: block.by });
@@ -2498,9 +2541,22 @@ function startLoops(s: Sess) {
   s.timers.push(
     setInterval(() => {
       if (sess() !== s) return;
-      void announceKey(s.roomId, s.keyIndex, s.key, "steady", () => live(s)).catch(() => undefined);
+      announceOwn(s, "steady");
     }, 60000),
   );
+  // M2: the rotate-on-leave planner — 1 s ticks while a departure or a pending key exists, else every 5 s
+  let tick = 0;
+  s.timers.push(
+    setInterval(() => {
+      if (sess() !== s) return;
+      tick++;
+      // the switch away from a leaver's key never waits for a recipient read or a send (Astra final pass, P1)
+      if (s.planner.tick(Date.now()).length || s.sendingIndex !== s.planner.inUse) void syncSender(s);
+      if ((s.rotation && s.planner.departing) || s.planner.pending !== null || tick % 5 === 0) planStep(s);
+    }, 1000),
+  );
+  watchCallRoom(s);
+  planStep(s);
   // 30 min membership refresh (same created_ts), then re-announce
   s.timers.push(setInterval(() => void refreshMembership(s), 30 * 60 * 1000));
   // mic health
@@ -2513,7 +2569,7 @@ async function refreshMembership(s: Sess): Promise<boolean> {
   try {
     if (!(await putMembership(s.roomId, membershipContent({ roomId: s.roomId, userId: s.me, deviceId: s.deviceId, createdTs: s.createdTs, focus: s.focus, refresh: true }), s.gen))) return false;
     log.info("membership refreshed");
-    void announceKey(s.roomId, s.keyIndex, s.key, "refresh", () => live(s)).catch(() => undefined);
+    announceOwn(s, "refresh");
     return true;
   } catch (e) {
     log.warn(`membership refresh: ${errText(e)}`);
@@ -2537,10 +2593,308 @@ function announceLadder(s: Sess, who: string) {
     s.timers.push(
       setTimeout(() => {
         if (sess() !== s) return;
-        void announceKey(s.roomId, s.keyIndex, s.key, `ladder ${d}s for ${who}`, () => live(s)).catch(() => undefined);
+        announceOwn(s, `ladder ${d}s for ${who}`);
       }, d * 1000),
     );
   }
+}
+
+// ---- M2: rotate on leave (DESIGN §3) -----------------------------------------------------------------------------
+
+/** Kill switch (the own well-known's features.call_key_rotation === false): the planner tracks, nothing is minted. */
+const NO_ROTATION = { debounceMs: Number.POSITIVE_INFINITY, useDelayMs: 3000, ring: 255 };
+
+/** What every ladder / steady / refresh / resume announce sends: the key in use, then the pending one. */
+function ownKeys(s: Sess): OwnKey[] {
+  const out: OwnKey[] = [];
+  for (const index of s.planner.announceKeys()) {
+    const key = s.keyRing.get(index);
+    if (key) out.push({ index, key });
+  }
+  return out;
+}
+
+/** DEV builds only (gate G3): our own key ring + planner state. */
+export function ownKeysForTest(): { inUse: number; pending: number | null; keys: Array<{ index: number; key: string }> } | null {
+  const s = sess();
+  if (!s) return null;
+  return { inUse: s.planner.inUse, pending: s.planner.pending, keys: ownKeys(s).map((k) => ({ index: k.index, key: b64encode(k.key) })) };
+}
+
+/** These keys are still the ones we announce (an announce started before a rotation must not deliver an old index
+ *  late — at a receiver's cap of 8 it could evict one still in use). */
+function keysCurrent(s: Sess, keys: readonly OwnKey[]): boolean {
+  const now = s.planner.announceKeys();
+  return keys.every((k) => now.includes(k.index));
+}
+
+function announceOpts(s: Sess, only?: readonly string[]) {
+  return { sfuGone: () => s.sfuGone, only: only ? new Set(only) : undefined, onSend: (ids: string[], idx: number[]) => s.planner.noteHolders(ids, idx) };
+}
+
+/** Ladder / steady / refresh / resume: [current, pending] to recipient rule v2; every receiver becomes a holder. */
+function announceOwn(s: Sess, why: string, only?: readonly string[]): Promise<AnnounceResult> {
+  const keys = ownKeys(s);
+  return announceKeys(s.roomId, keys, why, () => live(s) && keysCurrent(s, keys), announceOpts(s, only)).catch(() => ({ sent: [], failed: [] }));
+}
+
+/** Before a planner send starts: these recipients owe-us a delivery of `index` until a send of it (or newer) succeeds
+ *  — so a send still running at the switch, or one that threw, is retried by the ladder (Astra final pass, P2). */
+function markOutstanding(s: Sess, ids: Iterable<string>, index: number): void {
+  for (const id of ids) {
+    const cur = s.resend.get(id);
+    if (cur === undefined || newerIndex(index, cur)) s.resend.set(id, index);
+  }
+}
+
+/** Is index `a` the same as or newer than `b` (indices wrap at 255; at most two are ever live)? */
+function newerIndex(a: number, b: number): boolean {
+  return ((a - b + 255) % 255) < 128;
+}
+
+/** A planner send finished: a delivery of `index` clears only obligations for that index or older (a late success of
+ *  an old key never clears a newer one); failures stay outstanding. */
+function noteFailed(s: Sess, r: AnnounceResult, index: number): void {
+  for (const id of r.failed) markOutstanding(s, [id], index);
+  for (const id of r.sent) {
+    const owed = s.resend.get(id);
+    if (owed !== undefined && newerIndex(index, owed)) s.resend.delete(id);
+  }
+}
+
+/** After a switch: the recipients whose send failed get the keys again at +2 / +5 / +10 s (callrules.resendPlan) —
+ *  not 60 s later with the steady copy. The switch itself never waits for them. */
+function scheduleResends(s: Sess): void {
+  // the rungs are armed even when nothing failed yet: a send still running past its bounded wait may fail later; each
+  // rung sends to whoever is on the list when it fires (callrules.resendPlan describes the same ladder)
+  for (const d of RESEND_AFTER_USE_MS) {
+    s.timers.push(
+      setTimeout(() => {
+        if (!live(s) || !s.resend.size) return;
+        const to = resendPlan(s.resend.keys(), 0)[0]?.to ?? [];
+        const top = Math.max(...s.planner.announceKeys());
+        void announceOwn(s, `resend +${d / 1000}s after the switch to ${to.length} device(s)`, to).then((r) => noteFailed(s, r, top));
+      }, d),
+    );
+  }
+}
+
+/** A planner announce / mint is awaited before the next step, but only up to just under the use delay: the switch must
+ *  never come later than DESIGN's ~6 s because a send is slow (the send itself carries on in the background, and stops
+ *  by itself once a newer rotation supersedes its key). */
+const PLAN_SEND_BOUND_MS = 2_500;
+
+/** Step the planner with recipient rule v2 now (one evaluation at a time; a trigger during one runs another after). */
+function planStep(s: Sess): void {
+  if (s.planBusy) {
+    s.planAgain = true;
+    return;
+  }
+  s.planBusy = true;
+  void (async () => {
+    try {
+      do {
+        s.planAgain = false;
+        if (!live(s)) return;
+        await syncSender(s);
+        const R = await currentRecipients(s.roomId, s.sfuGone);
+        if (!live(s)) return;
+        // an obligation ends when its key is superseded (a newer mint owes its own set) — never because a device is
+        // briefly missing from R (a transient read failure must not erase it)
+        const live2 = s.planner.announceKeys();
+        for (const [id, idx] of [...s.resend]) if (!live2.includes(idx)) s.resend.delete(id);
+        const acts = s.planner.step(Date.now(), R);
+        // W1: this step's new key exists before anything below awaits (the tick may switch to it meanwhile)
+        for (const idx of mintAtStep(acts, s.keyRing, mintKey)) persistMintIndex(idx);
+        for (const a of acts) {
+          if (!live(s)) return;
+          await planAct(s, a);
+        }
+        await syncSender(s);
+      } while (s.planAgain && live(s));
+    } catch (e) {
+      log.warn(`[key-rotate] ${errText(e)}`);
+    } finally {
+      s.planBusy = false;
+    }
+  })();
+}
+
+/** Our sender encrypts with the planner's key in use (a failed switch is retried at every step, never dropped). */
+async function syncSender(s: Sess): Promise<void> {
+  if (s.switching) return s.switching;
+  s.switching = syncSenderOnce(s).finally(() => (s.switching = null));
+  return s.switching;
+}
+
+async function syncSenderOnce(s: Sess): Promise<void> {
+  const want = s.planner.inUse;
+  if (s.sendingIndex === want || !live(s)) return;
+  let key = s.keyRing.get(want);
+  if (!key) {
+    // the mint of this index never completed (an exception after the planner moved on): never stay on the leaver's
+    // key — make it now and hand it to the current recipients first (Astra final pass, P1)
+    key = mintKey();
+    s.keyRing.set(want, key);
+    log.warn(`[key-rotate] key #${want} was never minted — minting it now`);
+    const k = [{ index: want, key }];
+    // bounded: the recovery must not hold the switch behind a slow read (an empty R still switches; the ladder resends)
+    const R = await withTimeout(currentRecipients(s.roomId, s.sfuGone), 1500, "recipients").catch(() => [] as string[]);
+    markOutstanding(s, R, want);
+    const send = announceKeys(s.roomId, k, "rotate (recovery)", () => live(s) && keysCurrent(s, k), announceOpts(s, R));
+    void send.then((r) => noteFailed(s, r, want)).catch(() => undefined);
+    await withTimeout(send, PLAN_SEND_BOUND_MS, "rotate").catch(() => undefined);
+    if (!live(s) || s.planner.inUse !== want) return;
+  }
+  try {
+    // only now: livekit-client switches our sender the moment our own identity's key is set (DESIGN §3.5)
+    s.provider.ownIndex = want;
+    await s.provider.setRawKey(s.myIdentity, want, key);
+    s.sendingIndex = want;
+    log.info(`[key-rotate] use #${want}`);
+    scheduleResends(s);
+  } catch (e) {
+    s.provider.ownIndex = s.sendingIndex;
+    log.warn(`[key-rotate] switching to #${want} failed (retrying at the next step): ${errText(e)}`);
+  }
+  pruneKeys(s);
+}
+
+/** Keep the key our sender uses and the ones the planner announces; drop the rest. */
+function pruneKeys(s: Sess): void {
+  const keep = new Set([s.sendingIndex, ...s.planner.announceKeys()]);
+  for (const i of [...s.keyRing.keys()]) if (!keep.has(i)) s.keyRing.delete(i);
+}
+
+/** Persist a minted index in the device's counter (DESIGN §3.4); the planner's index is the one used. */
+function persistMintIndex(index: number): void {
+  let persisted = index;
+  try {
+    persisted = advanceKeyIndex();
+  } catch (e) {
+    log.warn(`[key-rotate] persisting the key index: ${errText(e)}`);
+  }
+  if (persisted !== index) log.warn(`[key-rotate] the persisted key index moved to #${persisted}, the planner minted #${index} — using the planner's`);
+}
+
+async function planAct(s: Sess, a: PlanAction): Promise<void> {
+  if ("announce" in a) {
+    const keys = a.announce.keys.flatMap((index) => (s.keyRing.has(index) ? [{ index, key: s.keyRing.get(index)! }] : []));
+    const why = `newcomer${a.announce.to.length > 1 ? "s" : ""}`;
+    const top = a.announce.keys[a.announce.keys.length - 1];
+    markOutstanding(s, a.announce.to, top);
+    const send = announceKeys(s.roomId, keys, why, () => live(s) && keysCurrent(s, keys), announceOpts(s, a.announce.to));
+    void send.then((r) => noteFailed(s, r, top)).catch(() => undefined);
+    await withTimeout(send, PLAN_SEND_BOUND_MS, "announce").catch(() => undefined);
+  } else if ("mint" in a) {
+    // the key was made at step time (planStep → mintAtStep); never replace it here: the sender may already use it
+    let key = s.keyRing.get(a.mint.index);
+    if (!key) {
+      key = mintKey();
+      s.keyRing.set(a.mint.index, key);
+    }
+    log.info(`[key-rotate] mint #${a.mint.index} → ${a.mint.to.length} device(s)`);
+    const keys = [{ index: a.mint.index, key }];
+    if (a.mint.to.length) {
+      markOutstanding(s, a.mint.to, a.mint.index);
+      const send = announceKeys(s.roomId, keys, "rotate", () => live(s) && keysCurrent(s, keys), announceOpts(s, a.mint.to));
+      void send.then((r) => noteFailed(s, r, a.mint.index)).catch(() => undefined);
+      await withTimeout(send, PLAN_SEND_BOUND_MS, "rotate").catch(() => undefined);
+    }
+  } else {
+    await syncSender(s); // `use`: the planner moved on — switch our sender (retried at the next step if it fails)
+  }
+}
+
+/** `@u:s:DEV` → `@u:s:DEV` when it splits into an mxid + device (hashed MSC4143 identities are ignored), else "". */
+function sfuMemberId(identity: string): string {
+  const u = mxidOf(identity);
+  const d = deviceOf(identity);
+  return u.startsWith("@") && d ? `${u}:${d}` : "";
+}
+
+/** DESIGN §3.1: a device that left the call server (while ours is connected) holds no right to new keys this session. */
+function noteSfuLeave(s: Sess, identity: string): void {
+  const id = sfuMemberId(identity);
+  if (!id || s.room.state !== ConnectionState.Connected) return;
+  const u = mxidOf(identity);
+  const d = deviceOf(identity);
+  const ses = liveSessions(s.roomId).find((x) => x.sender === u && x.deviceId === d);
+  if (ses) s.sfuGone.set(id, ses.createdTs);
+}
+
+/** Call-room membership / room-member changes and device-list updates step the planner (DESIGN §3.2). */
+function watchCallRoom(s: Sess): void {
+  const c = peekClient();
+  if (!c) return;
+  const onState = (ev: MatrixEvent) => {
+    if (sess() !== s || ev.getRoomId() !== s.roomId) return;
+    const t = ev.getType();
+    if (t === MEMBER_TYPE || t === "m.room.member") planStep(s);
+  };
+  const onDevices = () => sess() === s && planStep(s);
+  c.on(RoomStateEvent.Events, onState);
+  c.on(CryptoEvent.DevicesUpdated, onDevices);
+  s.cleanups.push(() => {
+    c.off(RoomStateEvent.Events, onState);
+    c.off(CryptoEvent.DevicesUpdated, onDevices);
+  });
+}
+
+// ---- M1: the call host sheet (DESIGN §2.4) --------------------------------------------------------------------------
+
+/** Join generation whose call-host sheet is open (the join deadline waits for it). */
+let askingHostFor = -1;
+/** "Join" answers: room → the foreign service the user last said Join to. Auto-rejoin and resume reuse it while the
+ *  call still runs there; any other service asks again (and replaces it); a leave clears them. */
+const joinedOnce = new Map<string, string>();
+
+/** own / trusted → approved; refuse → CallRefused (nothing is requested); ask → the sheet (a remembered Join, or the
+ *  user's answer). null = the user chose Cancel. */
+async function approveJoin(roomId: string, first: FocusDecision, gen: number, me: string) {
+  let d = first;
+  // the call may move while the sheet is open: decide again after every answer, ask again for a different service
+  for (let round = 0; round < 3; round++) {
+    const r = await approveOnce(roomId, d, gen, me);
+    if (r === null || stale(gen)) return null;
+    const again = await decideFocus(roomId);
+    if (stale(gen)) return null;
+    if (again.decision === d.decision && again.serviceUrl === r.serviceUrl && again.alias === r.alias) return r;
+    if (again.decision === "own" || again.decision === "trusted" || (again.decision === "ask" && joinedOnce.get(roomId) === again.serviceUrl)) return approveOnce(roomId, again, gen, me);
+    log.info(`join ${roomId}: the call moved to ${again.serviceUrl ?? again.reason} while deciding — deciding again`);
+    d = again;
+  }
+  throw new CallRefused("This call keeps changing its host, so Tin Hat won't join it.");
+}
+
+async function approveOnce(roomId: string, d: FocusDecision, gen: number, me: string) {
+  if (d.decision === "refuse") {
+    log.warn(`join ${roomId}: refused the call's service (${d.reason}; oldest membership by ${d.advertiser ?? "?"})`);
+    throw new CallRefused(REFUSE_TEXT[d.reason ?? "bad-url"]);
+  }
+  if (d.decision !== "ask") {
+    joinedOnce.delete(roomId); // the call left the foreign service: coming back to it asks again
+    return approveFocus(d);
+  }
+  if (d.serviceUrl && joinedOnce.get(roomId) === d.serviceUrl) return approveFocus(d, true);
+  askingHostFor = gen;
+  let answer: Awaited<ReturnType<typeof askCallHost>>;
+  try {
+    answer = await askCallHost({
+      roomId,
+      host: d.host ?? "",
+      serviceUrl: d.serviceUrl ?? "",
+      me,
+      advertiser: d.advertiser ?? "",
+      advertiserName: d.advertiser ? displayName(roomId, d.advertiser) : "",
+    });
+  } finally {
+    if (askingHostFor === gen) askingHostFor = -1;
+  }
+  if (stale(gen) || answer === "cancel") return null;
+  if (answer === "always") void trustCallHost(d.host ?? "");
+  if (d.serviceUrl) joinedOnce.set(roomId, d.serviceUrl);
+  return approveFocus(d, true);
 }
 
 // ---- room events --------------------------------------------------------------------------------------------------------
@@ -2555,6 +2909,9 @@ function wireRoom(s: Sess) {
   room
     .on(RoomEvent.ParticipantConnected, (p) => {
       if (sess() !== s) return;
+      const sid = sfuMemberId(p.identity);
+      if (sid) s.sfuGone.delete(sid); // back at the call server
+      planStep(s);
       announceLadder(s, p.identity);
       recheckPending(); // a key that arrived before this peer's membership synced
       if (isRecorder(p.identity)) {
@@ -2567,6 +2924,8 @@ function wireRoom(s: Sess) {
     })
     .on(RoomEvent.ParticipantDisconnected, (p) => {
       if (sess() !== s) return;
+      noteSfuLeave(s, p.identity); // (the recorder too: recording off rotates — DESIGN §3.9)
+      planStep(s);
       if (isRecorder(p.identity)) {
         patch({ recActive: [...room.remoteParticipants.values()].some((x) => isRecorder(x.identity)) });
         return;
@@ -2626,6 +2985,8 @@ function wireRoom(s: Sess) {
     })
     .on(RoomEvent.Reconnected, () => {
       if (sess() !== s) return;
+      s.sfuGone.clear(); // our own reconnect: no false departures (DESIGN §3.7)
+      planStep(s);
       patch({ reconnecting: false, callFailed: false });
       s.timers.push(
         setTimeout(() => {
@@ -2782,6 +3143,8 @@ export function leaveCall(): void {
   }
   ++joinGen;
   userHungUp = true;
+  joinedOnce.clear(); // "Join" on the call-host sheet lasts until the user leaves the call
+  dismissHostAsk();
   joinTarget = null; // the canceled join's claim (a switch's target lives in pendingSwitch)
   restoreMute = null;
   rejoinAttempts = 0;

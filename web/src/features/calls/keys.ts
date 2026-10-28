@@ -11,18 +11,23 @@
 //     hashed MSC4143 form); never under our own identity; index 255 refused; ≤ 8 indices per device.
 //     A key whose membership hasn't synced yet waits (bounded, ≤ 30 s) and is re-checked — never
 //     installed on trust. The legacy ROOM-EVENT intake is gone (natives stopped mirroring 2026-09-21).
-//   • Announce (finding 3): only to live call-member devices of JOINED room members, re-checked
-//     against the current membership + call generation right before the batch is queued.
+//   • Announce (finding 3 + the calls round's recipient rule v2, callrules.ts): only to live, well-formed call-member
+//     devices of JOINED room members that still exist in the user's device list and haven't left the call server in
+//     this session; re-checked right before EVERY to-device request (dispatchChecked), not just once before queueing.
+//     Known members first: members the lazy-loaded member list doesn't know yet get the key after it loads.
 //   • Early keys are kept in the registry and replayed into the keyring when the SFU connects.
 import { BaseKeyProvider } from "livekit-client";
 import { ClientEvent, type MatrixClient } from "matrix-js-sdk";
+import { CryptoEvent } from "matrix-js-sdk/lib/crypto-api/index.js";
 import type { ReceivedToDeviceMessage } from "matrix-js-sdk/lib/sync-accumulator";
 import { getSession, onClientChanged, peekClient } from "@/core/matrix";
+import { bearerAllowed } from "@/core/bearer";
 import { getPref, setPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
 import { KEYS_TYPE, b64encode, decodeKey, errText, sha256b64NoPad } from "./util";
 import { liveSessions } from "./rtc";
-import { MAX_INDICES_PER_DEVICE, boundMemberId, checkKeyEvent, claimedDevice, keyRecipients, validIndex, type IntakeCtx, type OlmInfoLike } from "./keyrules";
+import { MAX_INDICES_PER_DEVICE, boundMemberId, checkKeyEvent, claimedDevice, validIndex, type IntakeCtx, type OlmInfoLike } from "./keyrules";
+import { deviceLookup, dispatchChecked, keyRecipientsV2, noteIndex, unknownMembers } from "./callrules";
 
 const log = createLogger("e2ee");
 
@@ -146,12 +151,9 @@ function installSlot(identity: string, owner: string, index: number, raw: Uint8A
   }
   // Per-device index cap: a (legitimate) member can never fill the registry for everyone else.
   const ok = `${roomId}|${owner}`;
-  const held = ownerIndices.get(ok) ?? [];
-  if (!held.includes(index)) {
-    held.push(index);
-    while (held.length > MAX_INDICES_PER_DEVICE) evictOwnerIndex(roomId, owner, held.shift()!);
-    ownerIndices.set(ok, held);
-  }
+  const noted = noteIndex(ownerIndices.get(ok) ?? [], index, MAX_INDICES_PER_DEVICE); // (callrules: the shared intake vectors)
+  for (const old of noted.evicted) evictOwnerIndex(roomId, owner, old);
+  ownerIndices.set(ok, noted.held);
   const k = slotKey(roomId, identity, index);
   const cur = slots.get(k);
   const now = Date.now();
@@ -401,8 +403,11 @@ export function installKeyIntake(): void {
     const c = peekClient();
     if (c === attached) return;
     attached?.off(ClientEvent.ReceivedToDeviceMessage, onToDevice);
+    attached?.off(CryptoEvent.DevicesUpdated, onDevicesUpdated);
     attached = c;
     c?.on(ClientEvent.ReceivedToDeviceMessage, onToDevice);
+    c?.on(CryptoEvent.DevicesUpdated, onDevicesUpdated);
+    devicesSeen.clear(); // per session
     if (!c) {
       slots.clear();
       ownerIndices.clear();
@@ -451,61 +456,240 @@ async function ensureTracked(cryptoApi: object, userIds: string[]): Promise<void
   }
 }
 
+export interface OwnKey {
+  index: number;
+  key: Uint8Array;
+}
+
+export interface AnnounceOpts {
+  /** `user:device` → created_ts of the session that left the call server (engine; DESIGN §3.1) */
+  sfuGone?: () => ReadonlyMap<string, number>;
+  /** restrict to these `user|device` ids (the planner's newcomers / mint set) */
+  only?: ReadonlySet<string>;
+  /** right before a request goes out: these ids get these key indices (the planner registers them as holders) */
+  onSend?: (ids: string[], indices: number[]) => void;
+}
+
+type CryptoApi = NonNullable<ReturnType<MatrixClient["getCrypto"]>>;
+
+interface DeviceRead {
+  /** each user's device-list revision when the read began (a later update voids that user's list — closed) */
+  revAt: Map<string, number>;
+  lists: Map<string, Set<string>>;
+  /** users whose read failed: no devices this round (fail closed — callrules.deviceLookup) */
+  failed: Set<string>;
+}
+
+/** The known device lists of `users` from the crypto store (a user without an entry: unknown → excludes no one). A
+ *  failed batch read is retried per user; a user whose read still fails is listed in `failed`. */
+async function storedDevices(cryptoApi: CryptoApi, users: string[]): Promise<DeviceRead> {
+  const revAt = new Map(users.map((u) => [u, deviceRev.get(u) ?? 0]));
+  const out: DeviceRead = { revAt, lists: new Map(), failed: new Set() };
+  if (!users.length) return out;
+  const take = (map: Map<string, Map<string, unknown>>) => {
+    for (const [u, devs] of map) out.lists.set(u, new Set(devs.keys()));
+  };
+  try {
+    take(await cryptoApi.getUserDeviceInfo(users, false));
+  } catch (e) {
+    log.warn(`[send-key-td] device lists: ${errText(e)} — reading them one by one`);
+    for (const u of users) {
+      try {
+        take(await cryptoApi.getUserDeviceInfo([u], false));
+      } catch {
+        out.failed.add(u);
+      }
+    }
+    if (out.failed.size) log.warn(`[send-key-td] device list of ${[...out.failed].join(", ")} unreadable — no key to them this round`);
+  }
+  // A device-list update that landed DURING the read may not be in it (the SDK reads users one by one and can wait on
+  // a pending query): that user's read counts as failed — closed — and is read again (Astra final pass, P1).
+  for (const u of users) {
+    if ((deviceRev.get(u) ?? 0) !== revAt.get(u)) {
+      out.lists.delete(u);
+      out.failed.add(u);
+    }
+  }
+  return out;
+}
+
+/** Per-user device-list revision, bumped synchronously on every CryptoEvent.DevicesUpdated. */
+const deviceRev = new Map<string, number>();
+function onDevicesUpdated(users: string[]) {
+  for (const u of users) deviceRev.set(u, (deviceRev.get(u) ?? 0) + 1);
+}
+
+const DEVICE_READ_RETRY_MS = 2000;
+
+/** Users whose device list was seen NON-empty in this session: only for them is an empty list "all devices removed". */
+const devicesSeen = new Set<string>();
+function noteSeen(r: DeviceRead): DeviceRead {
+  for (const [u, l] of r.lists) if (l.size) devicesSeen.add(u);
+  return r;
+}
+/** Rule v2's device lookup over a read — re-checked against the live revision on EVERY call, so an update that lands
+ *  after the read but before a request's eligibility check excludes that user from it (Astra confirmation pass). */
+const lookup = (r: DeviceRead) => {
+  const base = deviceLookup(r.lists, r.failed, devicesSeen);
+  const none: ReadonlySet<string> = new Set<string>();
+  return (u: string) => (r.revAt.has(u) && (deviceRev.get(u) ?? 0) !== r.revAt.get(u) ? none : base(u));
+};
+
+/** Senders of live sessions who are JOINED (only their device lists are read: an unknown member never delays a
+ *  known peer — launch-gate's 12.0.5 review). */
+function joinedSenders(roomId: string, room: NonNullable<ReturnType<MatrixClient["getRoom"]>>): string[] {
+  return [...new Set(liveSessions(roomId).map((m) => m.sender))].filter((u) => membershipIn(room, u) === "join");
+}
+
 /**
- * Send our key to every live call-member device of `roomId` whose user is a JOINED room member,
- * except ourselves (the recorder too). Unknown devices → key query, retry once, else skip with a log
- * line. `valid()` = the call/key generation this announce belongs to is still current; the recipient
- * list is re-checked against the room right before the batch is queued.
+ * Recipient rule v2 for our call in `roomId`, now (sorted `user|device` ids) — the planner's R. Device lists come from
+ * the crypto store; members the client doesn't know yet are not joined (they are keyed once the list loads).
  */
-export async function announceKey(roomId: string, index: number, key: Uint8Array, why: string, valid: () => boolean = () => true): Promise<void> {
+export async function currentRecipients(roomId: string, sfuGone: ReadonlyMap<string, number>): Promise<string[]> {
   const c = peekClient();
   const s = getSession();
   const cryptoApi = c?.getCrypto();
-  if (!c || !cryptoApi || !s.userId || !s.deviceId || !valid()) return;
+  const room = c?.getRoom(roomId);
+  if (!c || !cryptoApi || !room || !s.userId || !s.deviceId) return [];
+  const devs = noteSeen(await storedDevices(cryptoApi, joinedSenders(roomId, room)));
+  // (a failed read leaves that user's devices out of R; the 1 s planner tick reads again before the 3 s debounce ends)
+  return keyRecipientsV2(liveSessions(roomId), (u) => membershipIn(room, u), s.userId, s.deviceId, lookup(devs), sfuGone).map((r) => `${r.userId}|${r.deviceId}`);
+}
+
+/**
+ * One to-device request, sent by us (not the SDK): the SDK's sendToDevice can wait for a token refresh after our
+ * check, or replay the body after one — then a recipient removed meanwhile would still get it. A failure (401
+ * included) goes back to dispatchChecked, whose retry re-checks first.
+ */
+async function putToDevice(c: MatrixClient, eventType: string, chunk: Array<{ userId: string; deviceId: string; payload: unknown }>, txnId: string): Promise<void> {
+  const token = c.getAccessToken();
+  const hs = c.getHomeserverUrl().replace(/\/+$/, "");
+  if (!token || !bearerAllowed(hs)) throw new Error("no usable access token");
+  const messages: Record<string, Record<string, unknown>> = {};
+  for (const m of chunk) (messages[m.userId] ??= {})[m.deviceId] = m.payload;
+  const r = await fetch(`${hs}/_matrix/client/v3/sendToDevice/${encodeURIComponent(eventType)}/${encodeURIComponent(txnId)}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messages }),
+    redirect: "error",
+    signal: AbortSignal.timeout(15000),
+  });
+  if (r.status === 401) {
+    // an expired access token: let the SDK refresh it (any authed request does), then dispatchChecked's retry
+    // re-checks the recipients and sends with the new token
+    await c.whoami().catch(() => undefined);
+  }
+  if (!r.ok) throw new Error(`sendToDevice HTTP ${r.status}`);
+}
+
+/**
+ * Send our key(s) to every recipient of rule v2 in `roomId` (callrules.keyRecipientsV2) — the current key first, then
+ * the pending one (one to-device event per key: `keys` is ONE object on the wire). Unknown devices → key query, retry
+ * once, else skip with a log line. `valid()` = the call/key generation this announce belongs to is still current
+ * (the engine also checks that the keys are still the ones in use).
+ * The send boundary (launch-gate's 12.0.5 review): every request of ≤ 20 re-reads the recipients' device lists and
+ * re-checks rule v2 right before it goes out (dispatchChecked + putToDevice). Left open: a change that lands while a
+ * request is on the wire (one round trip). Members the lazy-loaded list doesn't know yet never hold up the others: they
+ * are keyed after the list has loaded. Resolves to the `user|device` ids that got every key.
+ */
+export interface AnnounceResult {
+  /** got every key */
+  sent: string[];
+  /** were due a key but didn't get all of them (send failed / device unresolved) */
+  failed: string[];
+}
+
+export async function announceKeys(roomId: string, keys: readonly OwnKey[], why: string, valid: () => boolean = () => true, opts: AnnounceOpts = {}): Promise<AnnounceResult> {
+  const c = peekClient();
+  const s = getSession();
+  const cryptoApi = c?.getCrypto();
+  if (!c || !cryptoApi || !s.userId || !s.deviceId || !keys.length || !valid()) return { sent: [], failed: [] };
   const room = c.getRoom(roomId);
-  if (!room) return;
-  await room.loadMembersIfNeeded().catch(() => false);
+  if (!room) return { sent: [], failed: [] };
   const me = s.userId;
   const myDev = s.deviceId;
-  const eligible = () => keyRecipients(liveSessions(roomId), (u) => membershipIn(room, u), me, myDev); // (well-formed memberships only)
-  const recips = eligible();
-  if (recips.length === 0 || !valid()) return;
-  // Make sure every recipient device is in the crypto store (download keys; retry once).
-  const users = [...new Set(recips.map((r) => r.userId))];
-  await ensureTracked(cryptoApi, users);
-  let known = new Set<string>();
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const map = await cryptoApi.getUserDeviceInfo(users, true);
-      known = new Set<string>();
-      for (const [u, devs] of map) for (const d of devs.keys()) known.add(`${u}|${d}`);
-    } catch (e) {
-      log.warn(`[send-key-td] key query failed: ${errText(e)}`);
+  const gone = opts.sfuGone ?? (() => new Map<string, number>());
+  const done = new Set<string>();
+  const due = new Set<string>();
+  let readFailed = false;
+  const pass = async (label: string) => {
+    let devs = noteSeen(await storedDevices(cryptoApi, joinedSenders(roomId, room)));
+    if (devs.failed.size) readFailed = true;
+    const eligible = () =>
+      keyRecipientsV2(liveSessions(roomId), (u) => membershipIn(room, u), me, myDev, lookup(devs), gone()).filter((r) => {
+        const id = `${r.userId}|${r.deviceId}`;
+        return !done.has(id) && (!opts.only || opts.only.has(id));
+      });
+    const recips = eligible();
+    if (recips.length === 0 || !valid()) return;
+    // Make sure every recipient device is in the crypto store (download keys; retry once).
+    const users = [...new Set(recips.map((r) => r.userId))];
+    await ensureTracked(cryptoApi, users);
+    let known = new Set<string>();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const map = await cryptoApi.getUserDeviceInfo(users, true);
+        known = new Set<string>();
+        for (const [u, devices] of map) for (const d of devices.keys()) known.add(`${u}|${d}`);
+      } catch (e) {
+        log.warn(`[send-key-td] key query failed: ${errText(e)}`);
+      }
+      if (recips.every((r) => known.has(`${r.userId}|${r.deviceId}`))) break;
     }
-    if (recips.every((r) => known.has(`${r.userId}|${r.deviceId}`))) break;
-  }
-  const targets = recips.filter((r) => {
-    const ok = known.has(`${r.userId}|${r.deviceId}`);
-    if (!ok) log.warn(`[send-key-td] device ${r.userId}/${r.deviceId} unresolved after key-query — skipping`);
-    return ok;
-  });
-  if (!targets.length || !valid()) return;
-  const content = {
-    keys: { index, key: b64encode(key) },
-    room_id: roomId,
-    member: { claimed_device_id: myDev, id: `${me}:${myDev}` },
-    session: { call_id: "", application: "m.call", scope: "m.room" },
-    sent_ts: Date.now(),
+    for (const r of recips) due.add(`${r.userId}|${r.deviceId}`);
+    const targets = recips.filter((r) => {
+      const ok = known.has(`${r.userId}|${r.deviceId}`);
+      if (!ok) log.warn(`[send-key-td] device ${r.userId}/${r.deviceId} unresolved after key-query — skipping`);
+      return ok;
+    });
+    if (!targets.length || !valid()) return;
+    const got = new Map<string, number>(); // id → keys delivered
+    for (const k of keys) {
+      const content = {
+        keys: { index: k.index, key: b64encode(k.key) },
+        room_id: roomId,
+        member: { claimed_device_id: myDev, id: `${me}:${myDev}` },
+        session: { call_id: "", application: "m.call", scope: "m.room" },
+        sent_ts: Date.now(),
+      };
+      const batch = await cryptoApi.encryptToDeviceMessages(KEYS_TYPE, targets, content);
+      const r = await dispatchChecked(batch.batch, {
+        // fresh device lists of this batch's users before every request (a device removed meanwhile is out)
+        // (replaced, never merged: a user whose read fails now has no devices — no stale list survives)
+        refresh: async () => {
+          devs = noteSeen(await storedDevices(cryptoApi, users.filter((u) => membershipIn(room, u) === "join")));
+        },
+        eligible: () => (valid() && peekClient() === c && getSession().deviceId === myDev ? new Set(eligible().map((x) => `${x.userId}|${x.deviceId}`)) : null),
+        beforeSend: (ids) => opts.onSend?.(ids, [k.index]),
+        send: (chunk, txnId) => putToDevice(c, batch.eventType, chunk, txnId),
+        txnId: () => c.makeTxnId(),
+        sleep: (ms) => new Promise((res) => setTimeout(res, ms)),
+      });
+      if (r.dropped.length) log.info(`[send-key-td] ${r.dropped.length} recipient(s) no longer eligible at send time — not sent`);
+      if (r.failed.length) log.warn(`[send-key-td] key #${k.index} not delivered to ${r.failed.length} device(s) after retries`);
+      if (r.sent.length) log.info(`[send-key-td] key #${k.index} → ${r.sent.length} device(s) (${why}${label})`);
+      for (const id of r.sent) got.set(id, (got.get(id) ?? 0) + 1);
+      if (!valid()) break;
+    }
+    for (const [id, n] of got) if (n === keys.length) done.add(id);
   };
-  const batch = await cryptoApi.encryptToDeviceMessages(KEYS_TYPE, targets, content);
-  // Re-check right before queueing: a recipient whose leave / kick synced during the device query or
-  // the encryption must not get the key, nor may a superseded call generation send one.
-  if (!valid() || peekClient() !== c || getSession().deviceId !== myDev) return;
-  const still = new Set(eligible().map((r) => `${r.userId}|${r.deviceId}`));
-  const dropped = batch.batch.filter((m) => !still.has(`${m.userId}|${m.deviceId}`));
-  if (dropped.length) log.info(`[send-key-td] ${dropped.length} recipient(s) left before queueing — not sent`);
-  batch.batch = batch.batch.filter((m) => still.has(`${m.userId}|${m.deviceId}`));
-  if (!batch.batch.length) return;
-  await c.queueToDevice(batch);
-  log.info(`[send-key-td] key #${index} → ${batch.batch.length} device(s) (${why})`);
+  await pass("");
+  // Known peers have their keys; now the members the lazy-loaded list didn't know (launch-gate's 12.0.5 review).
+  if (valid() && unknownMembers(liveSessions(roomId), (u) => membershipIn(room, u), me).length) {
+    await room.loadMembersIfNeeded().catch(() => false);
+    if (valid()) await pass(", after the member list loaded");
+  }
+  // A device-list read failed (those users got nothing — fail closed): read again shortly, once.
+  if (readFailed && valid()) {
+    await new Promise((res) => setTimeout(res, DEVICE_READ_RETRY_MS));
+    readFailed = false;
+    if (valid()) await pass(", device-list retry");
+  }
+  return { sent: [...done], failed: [...due].filter((id) => !done.has(id)) };
+}
+
+/** DEV builds only (gate G3's spy, via index.tsx's import.meta.env.DEV block — tree-shaken from production): every
+ *  key slot this tab received for `roomId`, as identity / index / base64 key. */
+export function receivedKeysForTest(roomId: string): Array<{ identity: string; index: number; key: string }> {
+  return [...slots.values()].filter((sl) => sl.roomId === roomId).map((sl) => ({ identity: sl.identity, index: sl.index, key: b64encode(sl.raw) }));
 }
