@@ -76,6 +76,30 @@ class RecoveryCode(unittest.TestCase):
         recovery.start()
         self.assertIsNotNone(recovery.active())  # a new one on the next "Forgot"
 
+    def test_strangers_cant_burn_the_owners_code_or_keep_it_alive(self):
+        # security review (sec-night-2): 50 wrong tries (more than the limiter lets all strangers make in an hour)
+        # leave the owner's code working; neither wrong tries nor "Forgot" presses move its end
+        recovery.start()
+        code, until = recovery.active(), recovery._until
+        wrong = "0000-0000" if code != "0000-0000" else "1111-1111"
+        for _ in range(50):
+            self.assertFalse(recovery.check(wrong))
+            recovery.start()
+        self.assertEqual(recovery.active(), code)
+        self.assertEqual(recovery._until, until)
+        self.assertTrue(recovery.check(code))
+        self.assertGreaterEqual(recovery.TRIES, 500)
+
+    def test_asking_again_while_a_code_shows_costs_no_try(self):
+        web = (PKG / "web.py").read_text()
+        i = web.index("async def recover_start")
+        body = web[i:web.index("async def recover_finish")]
+        self.assertLess(body.index("if recovery.active():"), body.index('self._limited("recover-start"'))
+
+    def test_the_compare_is_constant_time(self):
+        import inspect
+        self.assertIn("secrets.compare_digest(", inspect.getsource(recovery.check))
+
     def test_an_expired_code_makes_room_for_a_new_one(self):
         recovery.start()
         with mock.patch.object(recovery.time, "time", return_value=recovery._until + 1):

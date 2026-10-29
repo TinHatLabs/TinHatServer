@@ -12,7 +12,7 @@
 import DOMPurify from "dompurify";
 import { mentionFromHref } from "./mention";
 import { linkVerdict } from "@/core/openlink";
-import { claimFor } from "@/core/claims";
+import { claimFor, claimText } from "@/core/claims";
 import { TLDS } from "@/core/tlds";
 
 export { claimedHost, destinationHost } from "@/core/linkgate";
@@ -31,7 +31,7 @@ const ALLOWED_ATTR = ["href", "data-mx-spoiler", "data-mx-color", "data-mx-bg-co
 const CONFIG = {
   ALLOWED_TAGS,
   ALLOWED_ATTR,
-  ADD_ATTR: ["data-mention", "style"],
+  ADD_ATTR: ["data-mention", "data-steam", "tabindex", "role", "style"],
   ALLOW_DATA_ATTR: false,
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|steam):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
 };
@@ -41,6 +41,10 @@ const ALT_MAX = 256;
 
 /** The final pass keeps the two spoiler classes this file writes (the first pass strips them from the member's HTML). */
 let finalPass = false;
+/** Rendering for a bubble (renderFormatted), not the shared vectors (sanitizeFormatted): a steam:// link's address moves
+ *  from href to data-steam on the final pass, so the browser's own link menu (where one still shows) has nothing to open
+ *  without our "Open in Steam?" (assembly verify D, sec-night 2026-10-27); linkgate.ts opens it from data-steam. */
+let appLinks = false;
 const SPOILER_CLASSES = new Set(["tw-spoiler-tag", "tw-spoiler"]);
 
 let hooked = false;
@@ -50,8 +54,8 @@ function hook() {
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     const el = node as Element;
     if (!el.removeAttribute) return;
-    // never trust incoming style / data-mention / target / rel / title: we set our own below (style, data-mention)
-    for (const a of ["style", "data-mention", "target", "rel", "title"]) el.removeAttribute(a);
+    // never trust incoming style / data-mention / data-steam / tabindex / role / target / rel / title: we set our own below
+    for (const a of ["style", "data-mention", "data-steam", "tabindex", "role", "target", "rel", "title"]) el.removeAttribute(a);
     if (el.tagName === "IMG") {
       for (const a of [...el.getAttributeNames()]) if (a !== "alt") el.removeAttribute(a);
       return;
@@ -62,9 +66,16 @@ function hook() {
     if (el.tagName !== "SPAN" && el.hasAttribute("data-mx-spoiler")) el.removeAttribute("data-mx-spoiler");
     if (el.tagName === "A") {
       // the one link rule (core/openlink.ts): anything else loses its href, and finish() unwraps the <a>
-      const href = linkVerdict(el.getAttribute("href"))?.as ?? null; // http(s), mailto, or steam:// (asks at the click)
+      const verdict = linkVerdict(el.getAttribute("href"));
+      const href = verdict?.as ?? null; // http(s), mailto, or steam:// (asks at the click)
       if (!href) el.removeAttribute("href");
-      else {
+      else if (verdict?.ask === "steam" && finalPass && appLinks) {
+        el.removeAttribute("href");
+        el.setAttribute("data-steam", href);
+        // no href = no focus: Tab still reaches it, Enter goes through the same door (linkgate.ts onKeyDown)
+        el.setAttribute("tabindex", "0");
+        el.setAttribute("role", "link");
+      } else {
         el.setAttribute("href", href);
         // W2: never throws (a stray % used to blank the app), %40user%3Aserver counts too
         const mention = mentionFromHref(href);
@@ -108,19 +119,56 @@ function hideSpoilers(doc: Document): void {
   }
 }
 
+/** The bidi controls that reorder text (embeddings, overrides, isolates): dropped from a whole body that holds a kept
+ *  link (an override before a link reorders its text as much as one inside it). The marks (U+200E, U+200F, U+061C) stay:
+ *  they can't reorder letters (shared vector: a spoof note through U+200E). */
+const BIDI_CONTROLS = /[\u202A-\u202E\u2066-\u2069]/g;
+
+/** A body that holds a kept link loses its reordering bidi controls everywhere: text and spoiler reasons. */
+function stripBidi(body: Element, doc: Document): void {
+  const walk = doc.createTreeWalker(body, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+    const t = n.nodeValue ?? "";
+    const u = t.replace(BIDI_CONTROLS, "");
+    if (u !== t) n.nodeValue = u;
+  }
+  for (const sp of body.querySelectorAll("[data-mx-spoiler]")) sp.setAttribute("data-mx-spoiler", (sp.getAttribute("data-mx-spoiler") ?? "").replace(BIDI_CONTROLS, ""));
+}
+
+/** A link the reader follows shows what the claim check reads (assembly-038, launch-gate D-c; the desktop's richtext.rs
+ *  in_kept_link): on the <a> and everything inside it no member colours (text the colour of its background), no spoiler
+ *  (text behind a label), and no folded <details> (text behind a disclosure: it becomes a block, as on the desktop). */
+function showAsChecked(a: Element, doc: Document): void {
+  for (const el of [a, ...a.querySelectorAll("*")]) {
+    for (const at of ["data-mx-color", "data-mx-bg-color", "color", "style", "data-mx-spoiler"]) el.removeAttribute(at);
+  }
+  for (const d of [...a.querySelectorAll("details")]) {
+    for (const s of [...d.querySelectorAll(":scope > summary")]) {
+      const p = doc.createElement("p");
+      const b = doc.createElement("b");
+      b.append(...Array.from(s.childNodes));
+      p.append(b);
+      s.replaceWith(p);
+    }
+    const div = doc.createElement("div");
+    div.append(...Array.from(d.childNodes));
+    d.replaceWith(div);
+  }
+}
+
 /** Second pass over the sanitiser's output in an INERT document (DOMParser: nothing loads, nothing runs): images →
  *  their alt text, an <a> without an allowed href → its text, the spoof note after a link, (rendering) the spoilers. */
 function finish(clean: string, spoilers: boolean): string {
   if (typeof DOMParser === "undefined") return clean;
   const doc = new DOMParser().parseFromString(`<!doctype html><body>${clean}`, "text/html");
   const body = doc.body;
-  for (const img of [...body.querySelectorAll("img")]) img.replaceWith(doc.createTextNode(Array.from(img.getAttribute("alt") ?? "").slice(0, ALT_MAX).join("")));
+  // alt text trimmed, as the desktop (assembly-038: " x" read as a separate word here and as part of the host there)
+  for (const img of [...body.querySelectorAll("img")]) img.replaceWith(doc.createTextNode(Array.from((img.getAttribute("alt") ?? "").trim()).slice(0, ALT_MAX).join("")));
+  for (const a of [...body.querySelectorAll("a")]) if (!a.hasAttribute("href")) a.replaceWith(...Array.from(a.childNodes));
+  if (body.querySelector("a")) stripBidi(body, doc);
   for (const a of [...body.querySelectorAll("a")]) {
-    if (!a.hasAttribute("href")) {
-      a.replaceWith(...Array.from(a.childNodes));
-      continue;
-    }
-    const host = spoofHost(a.getAttribute("href") ?? "", a.textContent ?? "");
+    showAsChecked(a, doc);
+    const host = spoofHost(a.getAttribute("href") ?? "", claimText(a));
     // (not twice: a body that already says it — this app's own output, quoted — keeps one)
     const next = a.nextSibling;
     if (host && !(next && next.nodeType === 3 && (next.textContent ?? "").startsWith(` (${host})`))) a.after(doc.createTextNode(` (${host})`));
@@ -131,14 +179,20 @@ function finish(clean: string, spoilers: boolean): string {
 
 function pipeline(formatted: string, spoilers: boolean): string {
   hook();
-  const noReply = formatted.replace(/<mx-reply>[\s\S]*?<\/mx-reply>/gi, "");
-  const once = DOMPurify.sanitize(noReply, CONFIG) as string;
-  // every transform's serialisation goes through the sanitiser once more, LAST (defence in depth)
-  finalPass = true;
+  // the hook's two modes are module state: set per pass, restored whatever happens (an exception, a nested call)
+  const saved = [finalPass, appLinks] as const;
   try {
-    return DOMPurify.sanitize(finish(once, spoilers), CONFIG) as string;
-  } finally {
     finalPass = false;
+    appLinks = spoilers;
+    const noReply = formatted.replace(/<mx-reply>[\s\S]*?<\/mx-reply>/gi, "");
+    const once = DOMPurify.sanitize(noReply, CONFIG) as string;
+    const done = finish(once, spoilers);
+    // every transform's serialisation goes through the sanitiser once more, LAST (defence in depth)
+    finalPass = true;
+    appLinks = spoilers;
+    return DOMPurify.sanitize(done, CONFIG) as string;
+  } finally {
+    [finalPass, appLinks] = saved;
   }
 }
 

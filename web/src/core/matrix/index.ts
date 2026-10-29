@@ -21,6 +21,7 @@ export {
   type SessionEndReason,
 } from "./client";
 export * from "./session";
+export * from "./replaceConfirm";
 export * from "./crypto";
 export * from "./sasPolicy";
 export * from "./hooks";

@@ -19,6 +19,7 @@ keeps it as a server allowed by name, so the first change made in the dashboard 
 """
 import asyncio
 import logging
+import re
 import secrets
 import time
 
@@ -132,19 +133,36 @@ def adopt() -> list[str]:
     return found
 
 
+# A handshake nonce as this code makes them (secrets.token_urlsafe(16) = 22 characters); anything else is refused
+# before it is put into the peer's confirm URL (security review, server manager lows; sec-night-2 2026-10-27).
+NONCE_RE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+# /_tinhat/federation/disconnect: each call makes us ask the named server back over HTTPS, so it is throttled per
+# caller (and all callers together, limits.OVERALL) like a connection request.
+DISCONNECT_WINDOW, DISCONNECT_MOST = 600, 20
+
+
+def confirm_ok(body: object, server: str, me: str | None) -> bool:
+    """The peer's confirm answer: it is `server`, and the nonce was made for talking to us (`me`)."""
+    if not isinstance(body, dict) or body.get("server") != server or not me or not isinstance(body.get("to"), str):
+        return False
+    return body["to"].strip().lower().rstrip(".") == me.lower().rstrip(".")  # (the peer's normalize() of our name)
+
+
 class Federation:
     def __init__(self, apply_cb, busy=lambda: None):
         self.apply_cb = apply_cb  # async (allowlist) -> (ok, message): rewrite homeserver.yaml + restart Synapse
         self.busy = busy  # () -> why the owner's changes must wait now (a move running), else None
         self.pending: dict[str, tuple[str, float]] = {}  # nonce -> (server we're talking to, expiry)
-        self.fails = limits.Fails("connect")  # wrong connection codes, per caller
+        self.fails = limits.Fails("connect", "disconnect")  # wrong connection codes / disconnect calls, per caller
         self.lock = asyncio.Lock()
         self.apply_lock = asyncio.Lock()
         self.applying = False
 
     # ---- our side of a request ---------------------------------------------------------------------------------
     def confirm(self, nonce: str) -> str | None:
-        hit = self.pending.get(nonce)
+        """The server a pending nonce of ours was made for — once: a nonce answers one confirm (the peer asks exactly
+        once), so an observed one can't be replayed."""
+        hit = self.pending.pop(nonce, None)
         if hit and hit[1] > time.time():
             return hit[0]
         return None
@@ -188,11 +206,18 @@ class Federation:
 
     # ---- their side: a request arrives ------------------------------------------------------------------------
     async def _confirm_caller(self, server: str, nonce: str) -> bool:
-        """Only the real `server` (its DNS name + certificate) can answer its own confirm URL with that nonce."""
+        """Only the real `server` (its DNS name + certificate) can answer its own confirm URL with that nonce, and the
+        nonce must have been made for talking to US (its `to`): one made for another server proves nothing here."""
+        if not NONCE_RE.fullmatch(nonce or ""):
+            return False
+        me = state.load_state().get("server_name")
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
-                async with s.get(f"https://{server}/_tinhat/federation/confirm/{nonce}", ssl=environment.ssl_context()) as r:
-                    return r.status == 200 and (await r.json(content_type=None)).get("server") == server
+                async with s.get(f"https://{server}/_tinhat/federation/confirm/{nonce}", ssl=environment.ssl_context(),
+                                 allow_redirects=False) as r:
+                    if r.status != 200:
+                        return False
+                    return confirm_ok(await r.json(content_type=None), server, me)
         except (aiohttp.ClientError, OSError, asyncio.TimeoutError, ValueError, AttributeError):
             return False
 
@@ -227,12 +252,20 @@ class Federation:
             await self._add(server, f"code {hit['code']}")  # nothing in it awaits: the code and the list in one go
         return 200, {"ok": True, "server": st.get("server_name")}
 
-    async def handle_disconnect(self, frm: str, nonce: str) -> tuple[int, dict]:
+    async def handle_disconnect(self, frm: str, nonce: str, who: str = "") -> tuple[int, dict]:
+        """`who`: the caller's address (web._client). Throttled (each call makes us ask the named server back), counted
+        before the round trip and taken back when the disconnect was real."""
+        if self.fails.limited("disconnect", who, DISCONNECT_WINDOW, DISCONNECT_MOST):
+            return 429, {"ok": False, "error": "Too many attempts. Try again later."}
+        self.fails.failed("disconnect", who)
+        if not NONCE_RE.fullmatch(nonce or ""):
+            return 400, {"ok": False, "error": "Bad request."}
         server = normalize(frm)
         if not server or server not in _connected():  # a server allowed by name is the owner's to remove, not theirs
             return 200, {"ok": True}
         if not await self._confirm_caller(server, nonce):
             return 403, {"ok": False, "error": "Couldn't confirm the request."}
+        self.fails.forgive("disconnect", who)
         async with self.lock:
             await self._remove(server, notify=False)
         return 200, {"ok": True}

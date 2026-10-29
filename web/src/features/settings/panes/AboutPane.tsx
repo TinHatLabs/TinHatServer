@@ -22,7 +22,7 @@ import p from "./panes.module.css";
 function channel(): string {
   // inside a Tin Hat app: which app and its own version (bug reports need both)
   const app = nativeInfo();
-  if (app) return `${app.platform === "ios" ? "iPhone app" : "Android app"}${app.app ? ` ${app.app}` : ""}`;
+  if (app) return `${app.platform === "ios" ? "iPhone app" : app.platform === "macos" ? "Mac app" : "Android app"}${app.app ? ` ${app.app}` : ""}`;
   return /\/next\//.test(location.pathname) ? "Web · staging" : "Web";
 }
 

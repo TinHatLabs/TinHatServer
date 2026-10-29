@@ -10,9 +10,14 @@ from pathlib import Path
 
 CODE_FILE = Path("/run/tinhat/recovery-code")
 LIFETIME = 600
-# Wrong tries one code takes before it stops working (then press "Forgot" again for a new one). With 10^8 codes,
-# guessing is hopeless however many addresses a stranger has.
-TRIES = 20
+# Wrong tries one code takes before it stops working (then press "Forgot" again for a new one). This used to be 20, and
+# that let a stranger burn the owner's code with 20 wrong guesses (security review, server manager lows; sec-night-2
+# 2026-10-27). Guessing is bounded by the dashboard's limiter instead: 10 wrong codes an hour per caller and 50 an hour
+# for all callers outside the home network together (web.py recover_finish, limits.OVERALL) against 10^8 codes that
+# last 10 minutes (at most 50 outside guesses per code: 1 in 2 million). The cap below can only be reached from the
+# home network (which the together-ceiling skips): defence in depth there (1000 guesses: 1 in 100 000); a stranger
+# can't get near it.
+TRIES = 1000
 
 _code: str | None = None
 _until = 0.0
@@ -48,7 +53,8 @@ def minutes_left() -> int:
 
 
 def check(typed: str) -> bool:
-    """The code on the screen? The TRIES-th wrong one ends that code."""
+    """The code on the screen? (Constant-time compare; a wrong try never extends the code's life. The TRIES-th wrong
+    one ends it.)"""
     global _wrong
     code = active()
     if not code:

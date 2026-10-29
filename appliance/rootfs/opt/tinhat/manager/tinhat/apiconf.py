@@ -201,6 +201,22 @@ def sync_synapse_modules() -> bool:
     return changed
 
 
+def publish_protected(owner: str) -> bool:
+    """protected-accounts.json next to the Synapse modules: the owner's id, which tinhat_rules refuses to deactivate
+    (docs/ACCOUNT-SAFETY.md). Written with the well-known (install.write_wellknowns: setup, every update, adopt, a
+    move), so it follows the owner the apps are told about. True when it changed (the module re-reads it by itself)."""
+    MODULES_DIR.mkdir(parents=True, exist_ok=True)
+    path = MODULES_DIR / "protected-accounts.json"
+    text = json.dumps({"owner": owner or ""}) + "\n"
+    try:
+        if path.read_bytes() == text.encode() and path.stat().st_mode & 0o777 == 0o644:
+            return False
+    except OSError:
+        pass  # missing or unreadable: written below
+    state.write_text(path, text, 0o644)
+    return True
+
+
 def gameservers_configured() -> bool:
     return (DIR / "gameservers.json").exists() and (DIR / "pelican.key").exists()
 

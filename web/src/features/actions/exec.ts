@@ -49,6 +49,7 @@ import { libraryDoc } from "@/ui/themeLibrary";
 import { chooseTheme, getThemeState } from "@/ui/themeStore";
 import { copyText } from "@/features/nav/actions";
 import { currentRoomId } from "./providers";
+import { nativeShareOn } from "@/features/native";
 import { pressPad } from "@/features/pad/Entry";
 import { targetsIn } from "@/features/pad/runtime";
 
@@ -205,7 +206,7 @@ export const HANDLERS: Record<string, Handler> = {
   // a hold action: the button's press and release (ActionButton) — never from the palette
   "call.pushToTalk.hold": (ctx) => c().pttHold(ctx.hold !== "up"),
   "call.pushToTalk.toggle": () => c().applyPushToTalk(!c().pushToTalk),
-  "call.screenShare.toggle": () => (c().sharing ? c().stopScreen() : useCallUi.getState().set({ streamPop: true, optsFace: null })),
+  "call.screenShare.toggle": () => (c().sharing ? c().stopScreen() : nativeShareOn() ? c().shareScreen() : useCallUi.getState().set({ streamPop: true, optsFace: null })),
   "call.share.panel": () => {
     const u = useCallUi.getState();
     u.set({ streamPop: !u.streamPop, optsFace: null });

@@ -3,7 +3,7 @@
 
   tinhat-names serve [-c CONFIG]
   tinhat-names code new [--uses N] [--days D] [--note TEXT]   a names code for a new server (invite-only launch)
-  tinhat-names code list | code revoke CODE
+  tinhat-names code list | code revoke CODE|ID      (codes are stored hashed: the list shows each one's id + hint)
   tinhat-names list [STATUS]                                  names and their state
   tinhat-names suspend NAME REASON… | unsuspend NAME | retire NAME [REASON…]
   tinhat-names notice NAME TEXT… | notice --all TEXT…          shown on that server's (every server's) dashboard
@@ -132,14 +132,14 @@ def main():
                 i += 2
             out = admin(cfg, "POST", "codes", {"uses": int(opts["uses"]), "days": float(opts["days"]),
                                                "note": opts["note"]})
-            print(out["code"])
+            print(out["code"])  # shown this once: the service keeps only its hash (give it to the person now)
         elif sub == "revoke":
             print(admin(cfg, "POST", f"revoke/{rest[1]}", {}))
         else:
             for c in admin(cfg, "GET", "codes")["codes"]:
                 state = "revoked" if c["revoked"] else f'{c["uses"]}/{c["max_uses"]} used'
                 exp = time.strftime("%Y-%m-%d", time.localtime(c["expires"])) if c["expires"] else "never"
-                print(f'{c["code"]}  {state:10}  expires {exp}  {c["note"] or ""}')
+                print(f'{c.get("id", ""):>4}  {c["code"]:10}  {state:10}  expires {exp}  {c["note"] or ""}')
     elif cmd == "list":
         q = f"?status={rest[0]}" if rest else ""
         for n in admin(cfg, "GET", "names" + q)["names"]:

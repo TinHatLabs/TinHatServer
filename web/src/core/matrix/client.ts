@@ -29,6 +29,7 @@ import { createLogger } from "@/core/log";
 import { MATRIX_ORIGIN, homeserverAllowed, installBearerGuard, noteMatrixToken, setMatrixTokenSource } from "@/core/bearer";
 import { matrixFetch } from "@/core/net";
 import { guardUnsyncedSends } from "./sendGuard";
+import { deviceDisplayName } from "./deviceName";
 
 installBearerGuard();
 // the guard polices THE Matrix token (lazy: `current` is read at request time)
@@ -44,27 +45,8 @@ export const OWNED_IDB_NAMES = [
   `${CRYPTO_DB_PREFIX}::matrix-sdk-crypto-meta`,
   `matrix-js-sdk:${SYNC_DB_NAME}`,
 ];
-/** initial_device_display_name for new logins (native: "Tin Hat (Linux)" / "Tin Hat (Windows)"). */
-/** D9: "Tin Hat Web (<Browser> on <OS>)" (settings CORE-CHANGES: was the fixed "Tin Hat (Web)"). */
-export const DEVICE_DISPLAY_NAME: string = (() => {
-  if (typeof navigator === "undefined") return "Tin Hat Web";
-  const ua = navigator.userAgent;
-  const br = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
-  const os = /iPhone|iPad|iPod/.test(ua)
-    ? "iOS"
-    : /Android/.test(ua)
-      ? "Android"
-      : /Windows/.test(ua)
-        ? "Windows"
-        : /Mac OS X|Macintosh/.test(ua)
-          ? "macOS"
-          : /CrOS/.test(ua)
-            ? "ChromeOS"
-            : /Linux/.test(ua)
-              ? "Linux"
-              : "the web";
-  return `Tin Hat Web (${br} on ${os})`;
-})();
+/** initial_device_display_name for new logins (native: "Tin Hat (Linux)" / "Tin Hat (Windows)"; deviceName.ts). */
+export const DEVICE_DISPLAY_NAME: string = typeof navigator === "undefined" ? "Tin Hat Web" : deviceDisplayName(navigator.userAgent);
 
 export interface Credentials {
   hsUrl: string;

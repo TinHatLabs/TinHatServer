@@ -212,7 +212,7 @@ const STEP_INFO = {
   dns: "Checks your domain with your DNS provider. With Cloudflare, the server points it at your home's public address itself; with the others, it checks the address is already right and tells you if not.",
   name: "Reserves your name with the Tin Hat names service (a few seconds of number crunching proves this is a real new server), and points it at your home's public address.",
   ports: "Asks your router to open TCP 443, TCP 7881 and UDP 7882 for this server (UPnP or NAT-PMP), and notices if your internet provider or a second router is in the way. Behind carrier NAT it offers the Tin Hat relay instead.",
-  outside: "The names service connects back from outside your home on each port, the way a friend's device would. Calls pause for a few seconds during the check.",
+  outside: "The names service connects back from outside on each port, the way a friend's device would. Calls pause for a few seconds during the check.",
   prepare: "Writes the settings for every part, and makes the server's own secrets: its database password, call keys and the chat server's signing key.",
   database: "Starts PostgreSQL, the database that keeps every account, room and message.",
   chat: "Starts Synapse, the chat server. Its first start builds the database tables, which is the longest step.",
@@ -225,7 +225,7 @@ const STEP_INFO = {
   takeover: "Tells the Tin Hat names service that the server lives on this computer now. The old computer's key to the name stops working, so the two can't fight over it.",
 };
 const STEP_LABELS = {
-  name: "Reserving your server's name", ports: "Opening ports on your router", outside: "Checking from outside your home",
+  name: "Reserving your server's name", ports: "Opening ports on your router", outside: "Checking from outside",
   prepare: "Preparing your server", database: "Starting the database", chat: "Starting the chat server",
   accounts: "Creating your admin account", secure: "Securing connections (HTTPS)", calls: "Starting voice and video calls",
   finish: "Finishing up", dns: "Pointing your domain at your home",
@@ -949,7 +949,7 @@ function viewProgress() {
     }
     if (lostSince === 0) showError(err, "");
     status = st;
-    if (st.phase === "ready") return publicMode(st.mode) ? viewDoneAnywhere() : viewDone(false);
+    if (st.phase === "ready") return isPublic(st) ? viewDoneAnywhere() : viewDone(false);
     if (st.progress) {
       render(st.progress);
       renderQuestion(st.progress.question);
@@ -1223,8 +1223,39 @@ function viewDone(lost) {
 
 // ---- 6b. done, from anywhere: a real certificate, so no trust step; what the outside check found ---------------
 
+// assembly-038: a setup driven from http://<address>/ (how a VPS owner starts) ends on the server's own https address.
+// Port 80 keeps answering only the read-only progress (GET /admin/setup/status) for such a browser; once the server is
+// ready this page tries https://<name>/ and moves there (the dashboard) when it answers, else it says where to go.
+// The target is ONLY the server's own name from its status answer (launch-gate's condition), never the page's address,
+// a query string or what was typed into the form.
+const HOST_RE = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+// Only the cut-down answer port 80 gives an outside address moves the page (it never carries "unlocked", every other
+// answer does): a setup done on the home network over http keeps its last page and the outside check's results.
+const outsideAnswer = (st) => !!st && typeof st === "object" && !("unlocked" in st);
+function hopToHttps() {
+  const sn = status && status.serverName;
+  if (!outsideAnswer(status) || location.protocol !== "http:" || typeof sn !== "string" || !HOST_RE.test(sn) || location.hostname === sn) return null;
+  const go = `https://${sn}/admin/`;
+  const card = h("div.card.stack-sm",
+    h("h2", "Your server is ready at ", h("span.mono", `https://${sn}/`)),
+    h("p.muted", "This page talked to the server over plain http while it set itself up. From now on use its https address:"),
+    h("div.row.wrap", h("a.btn.cta", { href: go }, "Open it"), h("span.small.muted.mono", go)));
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 6000);
+  // no-cors: the answer can't be read from here, but a reply at all means the name and certificate work from this browser
+  fetch(`https://${sn}/admin/setup/status`, { mode: "no-cors", cache: "no-store", signal: ctl.signal })
+    .then(() => { clearTimeout(t); location.href = go; })
+    .catch(() => clearTimeout(t));
+  return card;
+}
+
+// Over plain http from outside the home the status answer carries no mode (OUTSIDE_STATUS_KEYS): a server name that isn't
+// <name>.local is a public one, as is the mode this page chose.
+const isPublic = (st) => publicMode(st.mode) || (!st.mode && (publicMode(answers.mode) || (typeof st.serverName === "string" && !/\.local$/.test(st.serverName))));
+
 async function viewDoneAnywhere() {
   const sn = (status && status.serverName) || serverName();
+  const hop = hopToHttps();
   const own = ((status && status.mode) || answers.mode) === "domain";
   const short = own ? sn : sn.split(".")[0]; // what friends type in the app: a tinhat.me name's first part, or the whole domain
   let net = (status && status.network) || null;
@@ -1238,12 +1269,12 @@ async function viewDoneAnywhere() {
       h(`div.badge${good ? "" : ".warn"}`, { html: good ? ICON.bigcheck : ICON.bigwarn }),
       h("h1", good ? "Your server is ready" : "Your server is set up"),
       h("p.lede", good ? `${at} Friends ${own ? "" : "just "}type “${short}”.`
-        : level === "warn" ? `${at} Friends outside your home can chat; one router setting is left before their calls connect (below).`
+        : level === "warn" ? `${at} Friends outside can chat; one router setting is left before their calls connect (below).`
           : viaProxy() ? `It's ready for your reverse proxy at ${sn}. One thing is left: send the domain to this server (below).`
-            : `${at} One thing is left: friends outside your home can't reach it yet (below).`));
+            : `${at} One thing is left: friends outside can't reach it yet (below).`));
   };
   setHero(net && net.summary ? net.summary.level : status && status.reach && !status.reach.ok ? "bad" : null);
-  const reachCard = h("div.card.stack", h("h2", "Friends outside your home"), h("div.row", h("span.spin"), h("span.muted", "Loading the check's results…")));
+  const reachCard = h("div.card.stack", h("h2", "Friends outside"), h("div.row", h("span.spin"), h("span.muted", "Loading the check's results…")));
   const relayErr = h("div.error.hidden");
   const relayBtn = status && status.setupSession ? h("button.btn.cta", { type: "button" }, "Use the Tin Hat relay") : null;
   if (relayBtn) {
@@ -1285,7 +1316,7 @@ async function viewDoneAnywhere() {
     const chip = h(`span.chip.${sm.level === "good" ? "good" : sm.level === "warn" ? "warn" : "bad"}`, h("span.dot"),
       sm.level === "good" ? "Reachable" : sm.level === "warn" ? "Partly reachable" : "Not reachable yet");
     const viaRelay = n.relay && n.relay.on;
-    reachCard.replaceChildren(...[h("h2", "Friends outside your home"),
+    reachCard.replaceChildren(...[h("h2", "Friends outside"),
       h("div.row.wrap", chip, viaRelay ? h("span.chip.accent", `Through the Tin Hat relay (${n.relay.relayAddress})`) : null),
       h("p", sm.headline), ...(sm.lines || []).map((l) => h("p.muted", l)),
       relayOffer(n),
@@ -1363,9 +1394,9 @@ async function viewDoneAnywhere() {
       h("p", "Your group's Tin Hat is at ", h("b.mono", `https://${sn}`), `: anyone opens it in a browser, on a computer or a phone, with nothing to install (typing just ${sn} also works in browsers that try https first), or uses the Tin Hat app with “${short}” as the server. Tell your friends.`),
       h("p.muted", `The dashboard makes invite links. Friends open the link, or type “${short}” in the Tin Hat app, and create an account with the code.`),
       h("div.row.wrap", h("a.btn.ghost", { href: `https://${sn}/admin/` }, "Open the dashboard"), h("span.small.muted.mono", `https://${sn}/admin`))));
-  const card = h("div.stack-lg", hero, numbered);
+  const card = h("div.stack-lg", ...(hop ? [hop] : []), hero, numbered);
   show(null, net && net.relay && net.relay.on ? INFO.doneRelay : viaProxy() ? INFO.doneProxy : own ? INFO.doneDomain : INFO.doneAnywhere, card);
-  homeReach(sn, homeCheck);
+  if (HOST_RE.test(sn)) homeReach(sn, homeCheck);  // (assembly-038) only a real host name is ever asked
   if (!net) {
     try {
       const st = await api("/admin/setup/status");
@@ -1395,7 +1426,7 @@ async function boot() {
   if (status.zone) zone = status.zone;
   if (status.mode) answers.mode = status.mode;
   if (status.serverName && !answers.name) answers.name = status.serverName.replace(/\.local$/, "").replace(new RegExp(`\\.${zone.replace(".", "\\.")}$`), "");
-  if (status.phase === "ready") return publicMode(status.mode) ? viewDoneAnywhere() : viewDone(false);
+  if (status.phase === "ready") return isPublic(status) ? viewDoneAnywhere() : viewDone(false);
   if (!status.unlocked) return viewUnlock();
   if (status.phase === "installing" || status.phase === "failed") return viewProgress();
   return viewStart();

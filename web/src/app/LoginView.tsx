@@ -18,9 +18,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_HOMESERVER,
   completePasswordReset,
+  hasSavedSession,
+  REPLACE_BACK,
+  REPLACE_CONTINUE,
+  REPLACE_SESSION_TEXT,
+  replaceConfirmNeeded,
   loginWithPassword,
   registerAccount,
   requestPasswordReset,
+  retryRestore,
+  startFresh,
   useSession,
   validateRegistration,
 } from "@/core/matrix";
@@ -172,7 +179,19 @@ export function LoginView() {
     return () => window.clearTimeout(t);
   }, [homeserver]);
 
+  // 12.1.1 (replaceConfirm.ts): a sign-in / new account that would replace this browser's saved session asks first
+  const [confirmReplace, setConfirmReplace] = useState<"" | "login" | "create">("");
+  // any edit or face switch withdraws the question, so Continue always acts on what was asked about (Astra 2026-10-28)
+  useEffect(() => setConfirmReplace(""), [username, password, homeserver, code, newUser, newPw, newPw2, displayName, face]);
   const tryLogin = async () => {
+    if (!username || !password || busy) return;
+    if (replaceConfirmNeeded(hasSavedSession(), false)) {
+      setConfirmReplace("login");
+      return;
+    }
+    await doLogin();
+  };
+  const doLogin = async () => {
     if (!username || !password || busy) return;
     setBusy(true);
     setStatus("Connecting…");
@@ -189,6 +208,14 @@ export function LoginView() {
 
   const createReady = !busy && code.trim().length > 0 && newUser.trim().length > 0 && newPw.length >= 8 && newPw === newPw2;
   const tryCreate = async () => {
+    if (!createReady) return;
+    if (replaceConfirmNeeded(hasSavedSession(), false)) {
+      setConfirmReplace("create");
+      return;
+    }
+    await doCreate();
+  };
+  const doCreate = async () => {
     if (!createReady) return;
     const problem = validateRegistration({ username: newUser.trim(), password: newPw, token: code.trim() });
     if (problem) {
@@ -288,7 +315,8 @@ export function LoginView() {
   // a moved server: the notice above says what happened, not "you were signed out"
   const statusShown = face === "signin" && !moved && (status.length > 0 || (busy && slow));
   const statusText = busy && slow ? `Still trying to reach ${homeserver}…` : status;
-  const statusDim = busy || /^(signed out|you were signed out|your saved session|account created|connecting|signed in)/i.test(status);
+  // 12.1.1: a kept session that didn't start (restoreProblem.ts) is information, not an error — as the desktop
+  const statusDim = busy || !!session.restoreProblem || /^(signed out|you were signed out|your saved session|sign in to set this computer up fresh|account created|connecting|signed in)/i.test(status);
   const glowSize = useGlowSize();
 
   return (
@@ -550,9 +578,56 @@ export function LoginView() {
                 )}
               </div>
             )}
+            {confirmReplace && !busy && (
+              <div
+                className={s.replaceBox}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setConfirmReplace("");
+                }}
+              >
+                <div className={`${s.small} ${s.center}`} role="alert">
+                  {REPLACE_SESSION_TEXT}
+                </div>
+                <div className={s.replaceActions}>
+                  <button
+                    type="button"
+                    className={s.link}
+                    onClick={() => {
+                      const kind = confirmReplace;
+                      setConfirmReplace("");
+                      // the same checks as the first click (doLogin / doCreate re-check fields and busy)
+                      if (kind === "create" && face === "create") void doCreate();
+                      else if (kind === "login" && face === "signin") void doLogin();
+                    }}
+                  >
+                    {REPLACE_CONTINUE}
+                  </button>
+                  {/* the safe answer has the focus when the question opens */}
+                  <button type="button" className={s.link} autoFocus onClick={() => setConfirmReplace("")}>
+                    {REPLACE_BACK}
+                  </button>
+                </div>
+              </div>
+            )}
             {statusShown && (
               <div className={`${s.small} ${s.center}`} style={{ color: statusDim ? "var(--th-login-hint-fg)" : "var(--th-login-error-fg)" }} role="status">
                 {statusText}
+              </div>
+            )}
+            {/* 12.1.1 (restoreProblem.ts): the way out of a kept session that didn't start; only Start fresh forgets it.
+                Try again on "newer" reloads the page (the server's Tin Hat Web may have been updated meanwhile). */}
+            {face === "signin" && !busy && session.restoreProblem && (
+              <div className={s.restoreActions}>
+                <button
+                  type="button"
+                  className={s.link}
+                  onClick={() => (session.restoreProblem === "newer" ? location.reload() : void retryRestore())}
+                >
+                  Try again
+                </button>
+                <button type="button" className={s.link} onClick={() => void startFresh()}>
+                  Start fresh
+                </button>
               </div>
             )}
           </div>

@@ -2,11 +2,13 @@
 // the rising edge of a room's msc3401 membership set rings (first pass only seeds), the falling
 // edge ends the card; join/leave chimes; the desktop notification; the per-room call view the nav
 // strip / join banner / header button read (useRoomCall), refreshed on membership changes, on SFU
-// joins/leaves and 3 × 2.5 s after hanging up.
-import { ClientEvent, RoomStateEvent, type MatrixClient, type MatrixEvent } from "matrix-js-sdk";
+// joins/leaves and 3 × 2.5 s after hanging up. DM ringing glue (RINGING.md §4 / §5, ringglue.ts): inside a Tin Hat app
+// with caps "rings" the page rings only while visible, a ring answered on the phone opens / joins its room, and a
+// `dev.tinhat.call.decline` shows "<name> declined" to the caller (or drops the card on the callee's other devices).
+import { ClientEvent, MatrixEventEvent, RoomEvent, RoomMemberEvent, RoomStateEvent, type IRoomTimelineData, type MatrixClient, type MatrixEvent, type Room, type RoomMember } from "matrix-js-sdk";
 import { create } from "zustand";
 import { getSession, onClientChanged, peekClient } from "@/core/matrix";
-import { openRoom } from "@/core/bus";
+import { openRoom, toast } from "@/core/bus";
 import { closeNotes, showNote } from "@/core/notes";
 import { getPref } from "@/core/prefs";
 import { playCallChime, playUiSound, setCallAudioSession, startRing, stopRing } from "@/core/sounds";
@@ -15,10 +17,12 @@ import type { IncomingCall } from "./contract";
 import { getCall, patch, useCallStore } from "./store";
 import { sess } from "./session";
 import { claimsRoom, hooks, setChimeHook, switchCall } from "./engine";
-import { callActive, liveSessions, roomCallParticipants, type CallParticipant } from "./rtc";
+import { callActive, rosterSessions, roomCallParticipants, type CallParticipant } from "./rtc";
+import { onMemberProbe } from "./memberprobe";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, avatarMxc, displayName, isRecorder, mxidOf } from "./util";
 import { answeredElsewhere, pruneAnnounced, shouldAnnounce } from "./alertrules";
-import { nativeCall, nativeCallIn, onNativeCall } from "@/features/native";
+import { appRings, nativeCall, nativeCallIn, onNativeCall, onRingAnswer, ringInApp } from "@/features/native";
+import { CALL_DECLINE_TYPE, DECLINED_SHOWN_MS, declineOutcome, declinedText, ringSets } from "./ringglue";
 
 const log = createLogger("callwatch");
 
@@ -84,8 +88,11 @@ function present(call: IncomingCall) {
   if (cur.some((c) => c.roomId === call.roomId)) return;
   patch({ incomingCalls: [...cur, call] });
   const st = getCall();
+  // caps "rings": the app rings for us while the page is hidden (no double ring, no second notification)
+  const here = ringInApp(appRings(), pageVisible());
   // (a Tin Hat app's native call counts as being in a call: the short blip, not the ring — features/native)
-  if (st.inCall || st.connecting || nativeCall()) playUiSound("notify");
+  if (!here) log.info(`incoming call in ${call.roomId}: the app rings while the page is hidden`);
+  else if (st.inCall || st.connecting || nativeCall()) playUiSound("notify");
   else {
     if (getPref("snd.ring", "") !== "0") {
       startRing();
@@ -95,7 +102,7 @@ function present(call: IncomingCall) {
   useIncomingRing.setState({ ringing: true });
   if (ringLimit) clearTimeout(ringLimit);
   ringLimit = setTimeout(stopRinging, 25000);
-  notify(call);
+  if (here) notify(call);
   log.info(`incoming call in ${call.roomId} (${call.who || "someone"})`);
 }
 
@@ -141,6 +148,139 @@ export function answerIncoming(roomId: string): void {
   switchCall(roomId);
 }
 
+function pageVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
+
+// ---- a ring answered on the phone (caps "rings": `tinhatnative:call {action: "answer", roomId}`) ----------------------
+
+/** The answer waits (≤ 30 s) for the live sync and the room: a cold start sends it right after the page loads. */
+let pendingAnswer: { roomId: string; until: number } | null = null;
+
+function answerFromApp(roomId: string) {
+  pendingAnswer = { roomId, until: Date.now() + 30_000 };
+  log.info(`ring answered on the phone for ${roomId}`);
+  tryAnswer();
+}
+
+function tryAnswer() {
+  const p = pendingAnswer;
+  if (!p) return;
+  if (Date.now() > p.until) {
+    pendingAnswer = null;
+    log.info(`answer for ${p.roomId}: room or live sync not there in 30 s — dropped`);
+    return;
+  }
+  const c = peekClient();
+  if (!c || !getSession().liveSyncDone || c.getRoom(p.roomId)?.getMyMembership() !== "join") return;
+  pendingAnswer = null;
+  const st = getCall();
+  if (st.callRoomId === p.roomId && (st.inCall || st.connecting)) openRoom(p.roomId);
+  else if (callActive(p.roomId)) answerIncoming(p.roomId); // the room + its call (switches from another call)
+  else openRoom(p.roomId); // the call is over: just the room
+}
+
+// ---- dev.tinhat.call.decline (RINGING.md §5) ------------------------------------------------------------------------------
+// A decline is judged again on every scan until it matters or goes stale (60 s): one that arrives before its incoming
+// card (the phone declined while this page was still syncing) still takes the card down once it shows. Only live
+// timeline events count, decrypted later or not (an encrypted one is remembered live until it decrypts). Join-only
+// (fix/left-member's rule): a decliner who has left is ignored, and a ring names only a live call.member of a joined
+// member (a departed caller's ring names nobody).
+
+const declinesDone = new Set<string>();
+const pendingDeclines = new Map<string, MatrixEvent>();
+const liveEncrypted = new Set<string>();
+
+function bounded(set: Set<string> | Map<string, unknown>, max: number) {
+  while (set.size > max) set.delete(set.keys().next().value as string);
+}
+
+/** The room's ring sets now (ringglue.ts ringSets: live call.member events of joined senders only). */
+function ringIds(room: Room, me: string): { own: string[]; live: string[] } {
+  const events = room.currentState.getStateEvents(MEMBER_TYPE).map((ev) => ({
+    event_id: ev.getId() ?? "",
+    sender: ev.getSender() ?? "",
+    state_key: ev.getStateKey() ?? "",
+    origin_server_ts: ev.getTs(),
+    content: ev.getContent(),
+  }));
+  return ringSets(events, (u) => room.getMember(u)?.membership, me, Date.now());
+}
+
+function judgeDeclines() {
+  if (!pendingDeclines.size) return;
+  const c = peekClient();
+  const me = c?.getUserId() ?? "";
+  if (!c || !me) return;
+  const now = Date.now();
+  for (const [id, ev] of [...pendingDeclines]) {
+    const roomId = ev.getRoomId() ?? "";
+    const room = c.getRoom(roomId);
+    if (!room || Math.abs(now - ev.getTs()) > 60_000) {
+      pendingDeclines.delete(id);
+      continue;
+    }
+    const content = ev.getContent();
+    const ids = ringIds(room, me);
+    const st = getCall();
+    const raw = { type: ev.getType(), sender: ev.getSender(), origin_server_ts: ev.getTs(), content };
+    const out = declineOutcome(raw, {
+      me,
+      now,
+      dm: room.getJoinedMemberCount() === 2,
+      senderJoined: room.getMember(ev.getSender() ?? "")?.membership === "join",
+      inCallHere: st.callRoomId === roomId && (st.inCall || st.connecting),
+      cardUp: st.incomingCalls.some((x) => x.roomId === roomId),
+      ownRings: ids.own,
+      liveRings: ids.live,
+    });
+    if (out === "none") continue;
+    pendingDeclines.delete(id);
+    declinesDone.add(id);
+    bounded(declinesDone, 200);
+    if (out === "declined") {
+      // gates: this log line + <html data-th-declined="<room> <sender> <ring> <ms>"> stay (the toast is requested for
+      // DECLINED_SHOWN_MS; tools/README-gates.md "Declined rings")
+      const ring = typeof content.ring === "string" ? content.ring : "";
+      log.info(`ring in ${roomId} declined by ${ev.getSender()} (ring ${ring})`);
+      try {
+        document.documentElement.dataset.thDeclined = `${roomId} ${ev.getSender() ?? ""} ${ring} ${now}`;
+      } catch {
+        /* no DOM (tests) */
+      }
+      toast(declinedText(displayName(roomId, ev.getSender() ?? "")), { timeoutMs: DECLINED_SHOWN_MS });
+      playCallChime("leave");
+    } else {
+      log.info(`ring in ${roomId} declined on another of my devices — card dismissed`);
+      dismissIncoming(roomId);
+    }
+  }
+}
+
+function takeDecline(ev: MatrixEvent) {
+  const id = ev.getId();
+  if (!id || ev.getType() !== CALL_DECLINE_TYPE || ev.isDecryptionFailure() || declinesDone.has(id)) return;
+  pendingDeclines.set(id, ev);
+  bounded(pendingDeclines, 50);
+  judgeDeclines();
+}
+function onTimelineEv(ev: MatrixEvent, _room: Room | undefined, toStart: boolean | undefined, removed: boolean, data: IRoomTimelineData) {
+  if (toStart || removed || !data?.liveEvent) return;
+  const id = ev.getId();
+  if (id && ev.isEncrypted() && (ev.getType() === "m.room.encrypted" || ev.isDecryptionFailure())) {
+    liveEncrypted.add(id); // not readable yet: Decrypted brings it
+    bounded(liveEncrypted, 200);
+    return;
+  }
+  takeDecline(ev);
+}
+function onDecrypted(ev: MatrixEvent) {
+  const id = ev.getId();
+  if (!id || !liveEncrypted.has(id) || ev.isDecryptionFailure()) return; // history, or still unreadable (a retry comes)
+  liveEncrypted.delete(id);
+  takeDecline(ev);
+}
+
 /** A room's call-membership state events in the raw shape Pad's discovery reads ({sender, state_key, origin_server_ts, content}). */
 function memberRaw(c: MatrixClient, roomId: string): unknown[] {
   return (c.getRoom(roomId)?.currentState.getStateEvents(MEMBER_TYPE) ?? []).map((ev) => ({ sender: ev.getSender() ?? "", state_key: ev.getStateKey() ?? "", origin_server_ts: ev.getTs(), content: ev.getContent() }));
@@ -165,7 +305,7 @@ function scan() {
     if (active && !was) {
       if (claimsRoom(r.roomId) || nativeCallIn(r.roomId) || roomMuted(c, r.roomId)) continue;
       const me = c.getUserId();
-      const first = liveSessions(r.roomId, now)
+      const first = rosterSessions(r.roomId, now)
         .filter((s) => s.sender !== me && !isRecorder(`${s.sender}:x`))
         .sort((a, b) => a.createdTs - b.createdTs)[0];
       if (!first) continue; // our own membership (another device of ours) — natives ring anyway; skip our own
@@ -196,6 +336,8 @@ function scan() {
       dismissIncoming(call.roomId);
     }
   }
+  tryAnswer();
+  judgeDeclines();
   // Seed on the first NETWORK sync (native: its first sync_once) — the IndexedDB cache can predate
   // calls that started while we were away; those still ring once the live sync shows them live.
   if (getSession().liveSyncDone) seeded = true;
@@ -261,6 +403,19 @@ function onStateEv(ev: MatrixEvent) {
     scan();
   }
 }
+// a member stopped (or started) being joined: a call member who was kicked / left drops out of the roster
+// (callrules.rosterCounts). RoomMemberEvent.Membership, not the state event: that fires before the member is updated.
+function onMembership(_ev: MatrixEvent, m: RoomMember, old?: string) {
+  // unknown before (lazy loading): only a non-join answer changes a roster (unknown counted); a loaded join doesn't
+  if (old === undefined ? m.membership === "join" : (old === "join") === (m.membership === "join")) return;
+  bump();
+  scan();
+}
+// a probed call member's membership arrived (memberprobe.ts, via rtc.membershipIn): rosters rebuild
+onMemberProbe(() => {
+  bump();
+  scan();
+});
 function onSync(state: string) {
   if (state === "PREPARED" || state === "SYNCING") scan();
 }
@@ -270,8 +425,16 @@ export function installCallWatch(): void {
     const c = peekClient();
     if (c === attached) return;
     if (attached) {
+      // another account (or none): nothing of the previous one acts for the next (an answer that came before the
+      // first client still waits for it)
+      pendingAnswer = null;
+      pendingDeclines.clear();
+      liveEncrypted.clear();
       attached.off(RoomStateEvent.Events, onStateEv);
+      attached.off(RoomMemberEvent.Membership, onMembership);
       attached.off(ClientEvent.Sync, onSync);
+      attached.off(RoomEvent.Timeline, onTimelineEv);
+      attached.off(MatrixEventEvent.Decrypted, onDecrypted);
     }
     attached = c;
     activeRooms.clear();
@@ -283,7 +446,10 @@ export function installCallWatch(): void {
     if (getCall().incomingCalls.length) patch({ incomingCalls: [] });
     if (c) {
       c.on(RoomStateEvent.Events, onStateEv);
+      c.on(RoomMemberEvent.Membership, onMembership);
       c.on(ClientEvent.Sync, onSync);
+      c.on(RoomEvent.Timeline, onTimelineEv);
+      c.on(MatrixEventEvent.Decrypted, onDecrypted);
       scan();
     } else {
       stopRinging();
@@ -330,6 +496,15 @@ export function installCallWatch(): void {
     dismissIncoming(n.roomId);
     stopRinging();
   });
+  // caps "rings": the page hidden mid-ring hands the ringing to the app (the card stays); answers from the app's ring.
+  if (typeof document !== "undefined")
+    document.addEventListener("visibilitychange", () => {
+      if (ringing && !ringInApp(appRings(), pageVisible())) {
+        stopRing();
+        ringing = false;
+      }
+    });
+  onRingAnswer(answerFromApp);
   hooks.onParticipantJoined.push(() => bump());
   hooks.onParticipantLeft.push(() => bump());
 }

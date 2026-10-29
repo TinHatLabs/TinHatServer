@@ -9,6 +9,7 @@ import asyncio
 import ipaddress
 import logging
 import secrets
+import socket
 import time
 
 from . import compose, hw, names, owndomain, portmap, state
@@ -128,10 +129,22 @@ class Checker:
                 st = state.load_state()
                 if st.get("mode") == "domain":  # no tinhat.me name: the open check (proof of work, no account)
                     res = await names.probe_open(st["server_name"], nonce, checks)
-                else:
+                    out = {"at": int(time.time()), "ok": all(v.get("ok") for v in res["results"].values()),
+                           "results": res["results"], "public_ip": res.get("ip")}
+                elif relayed:
                     res = await names.probe(nonce, checks)
-                out = {"at": int(time.time()), "ok": all(v.get("ok") for v in res["results"].values()),
-                       "results": res["results"], "public_ip": res.get("ip")}
+                    out = {"at": int(time.time()), "ok": all(v.get("ok") for v in res["results"].values()),
+                           "results": res["results"], "public_ip": res.get("ip")}
+                else:
+                    # the tinhat.me name has an A and/or an AAAA record (names.update speaks over both): check each
+                    # family from outside, at once (one pause of the call server), with a nonce each
+                    nonce6 = secrets.token_urlsafe(16)
+                    self.nonces.add(nonce6)
+                    try:
+                        out = await _per_family(nonce, nonce6, checks)
+                    finally:
+                        self.nonces.discard(nonce6)
+                    res = {}
                 if relayed:  # the names service checked the relay's address, on this server's port there
                     out.update(via="relay", target=res.get("target"), ports=res.get("ports"))
             except names.NamesError as e:
@@ -150,6 +163,51 @@ class Checker:
             return out
 
 
+async def _per_family(nonce4: str, nonce6: str, checks: list[str]) -> dict:
+    """The outside check over IPv4 and IPv6 (assembly-038). The overall answer is IPv4's when the box has an IPv4 route
+    (what every friend can use), else IPv6's; `families` keeps both; `only_ipv6` says when IPv4 couldn't be checked at
+    all (no IPv4 route to the names service): then IPv4-only friends can't connect."""
+    async def one(nonce: str, fam: int) -> dict:
+        # IPv6: HTTPS only (the call ports' stand-ins listen on IPv4 only), and a shorter bound, so a black-holed IPv6
+        # path can't keep the call server paused much longer than before (Astra, assembly-038)
+        cks, tmo = (checks, 45) if fam == socket.AF_INET else ([c for c in checks if c == "tls443"], 25)
+        try:
+            r = await names.probe(nonce, cks, family=fam, timeout=tmo)
+            return {"ok": all(v.get("ok") for v in r["results"].values()), "results": r["results"], "ip": r.get("ip")}
+        except names.NamesError as e:
+            return {"ok": False, "results": {}, "error": str(e), "offline": e.code == "offline"}
+    v4, v6 = await asyncio.gather(one(nonce4, socket.AF_INET), one(nonce6, socket.AF_INET6))
+    fams = {"ipv4": v4, "ipv6": v6}
+    if v4.get("offline") and v6.get("offline"):
+        raise names.NamesError(v4.get("error") or "Can't reach the Tin Hat names service.", "offline")
+    main = v6 if v4.get("offline") else v4
+    out = {"at": int(time.time()), "ok": main["ok"], "results": main["results"], "public_ip": main.get("ip"),
+           "families": {k: {x: v.get(x) for x in ("ok", "ip", "error", "offline") if v.get(x) is not None} | {"results": v["results"]}
+                        for k, v in fams.items()}}
+    if v4.get("offline") and v6.get("ok"):
+        out["only_ipv6"] = True
+    if "error" in main and not main["results"]:
+        out["error"] = main["error"]
+    return out
+
+
+def family_lines(o: dict) -> list[str]:
+    """What the per-family check adds to the words (assembly-038)."""
+    f = o.get("families") or {}
+    v4, v6 = f.get("ipv4") or {}, f.get("ipv6") or {}
+    if o.get("only_ipv6"):
+        return ["The check over IPv4 didn't get through (this server may have no IPv4 connection to the outside); "
+                "over IPv6 friends can reach it. Friends whose internet has no IPv6 may not be able to connect."]
+    if v4.get("ok") and v6 and not v6.get("offline") and not v6.get("ok"):
+        return [f"Over IPv6 ({v6.get('ip') or 'its IPv6 address'}) HTTPS isn't reachable from outside; friends connect "
+                "over IPv4 instead (a firewall rule for IPv6 would let them use it)."]
+    https4 = ((v4.get("results") or {}).get("tls443") or {}).get("ok")
+    https6 = ((v6.get("results") or {}).get("tls443") or {}).get("ok")
+    if https6 and not https4 and not v4.get("offline"):
+        return ["Over IPv6 friends can reach this server's HTTPS; over IPv4 they can't yet (below)."]
+    return []
+
+
 CHECK_KEY = {("TCP", 443): "tls443", ("TCP", 7881): "tcp7881", ("UDP", 7882): "udp7882"}
 
 
@@ -158,6 +216,22 @@ def _list(keys) -> str:
 
 
 def summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = None) -> dict:
+    """_summary plus what the per-family check adds (assembly-038): said plainly when only IPv6 reaches the server."""
+    out = _summary(ports_rep, outside, proxy)
+    extra = [x for x in family_lines(outside or {}) if x not in out.get("lines", [])]
+    if extra:
+        out = {**out, "lines": list(out.get("lines") or []) + extra}
+    o = outside or {}
+    if o.get("only_ipv6") and out.get("level") == "good":
+        out = {**out, "level": "warn", "headline": "Friends with IPv6 can reach your server; friends without it can't yet."}
+    v6 = (o.get("families") or {}).get("ipv6") or {}
+    if (ports_rep or {}).get("kind") == "cgnat" and ((v6.get("results") or {}).get("tls443") or {}).get("ok"):
+        out = {**out, "level": "warn", "headline": "Over IPv4 your provider blocks incoming connections; friends with "
+                                                   "IPv6 can still reach your server."}
+    return out
+
+
+def _summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = None) -> dict:
     """What the wizard and the dashboard say, in words, plus the exact router settings if they must be set by hand.
 
     Per port it puts together what the router answered (opened it / another device holds it / refused / no answer)
@@ -169,7 +243,7 @@ def summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = N
         from . import relay
         return relay.summary(o)
     if o.get("ok"):
-        return {"level": "good", "headline": "Friends outside your home can reach your server.", "lines": [], "fix": []}
+        return {"level": "good", "headline": "Friends outside can reach this server.", "lines": [], "fix": []}
     if kind == "cgnat":
         return {"level": "bad", "headline": "Your internet provider doesn't allow incoming connections.",
                 "lines": ["It shares one public address between many homes (\"carrier NAT\"). T-Mobile and Verizon 5G "
@@ -261,6 +335,6 @@ def summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = N
         if name or where:
             lines.append("Your router: " + ", ".join(x for x in (name, where) if x) + ".")
     level = "warn" if (res.get("tls443") or {}).get("ok") else "bad"
-    head = ("Friends outside your home can chat, but calls from outside may not connect." if level == "warn"
-            else "Friends outside your home can't reach your server yet.")
+    head = ("Friends outside can chat, but calls from outside may not connect." if level == "warn"
+            else "Friends outside can't reach this server yet.")
     return {"level": level, "headline": head, "lines": lines, "fix": fix}

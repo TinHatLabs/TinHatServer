@@ -24,7 +24,7 @@ from aiohttp import web
 from . import config as config_mod
 from . import pow as pow_mod
 from . import applinks, probe, rules
-from .db import DB, code_hint
+from .db import DB, code_hint, code_key
 from .dns_cloudflare import Cloudflare, DNSError
 from .relay_api import RelayAPI
 
@@ -42,8 +42,8 @@ class Service:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         os.makedirs(os.path.dirname(cfg["db"]), exist_ok=True)
-        self.db = DB(cfg["db"])
         self.key = pow_mod.load_key(cfg["secret_key_file"])
+        self.db = DB(cfg["db"], code_key=code_key(self.key))  # server codes are stored as HMACs keyed from it
         self.zone = cfg["zone"]
         self.reserved = frozenset(str(x).strip().lower() for x in cfg.get("reserved") or [])
         with open(cfg["dns"]["token_file"]) as f:
@@ -216,13 +216,15 @@ class Service:
         if self.db.new_since(now - DAY) >= lim["new_per_day"]:
             return jerr(429, "limit-global", "Lots of new servers today. Please try again in a few hours.")
         self.used_nonces[nonce] = now + 900
-        try:
-            box_id, secret = self.db.create(name, ip, code or None)
-        except Exception:
+        # the name and one use of its code in one transaction (db.register): a crash or a taken name spends nothing, and
+        # two registrations can't both spend a single-use code; names.code keeps the hint, names.code_id the code's id
+        res = self.db.register(name, ip, code or None, need_code=bool(self.cfg["invite_only"]))
+        if res == "code":
+            self.db.event("register-refused", name, ip, "code")
+            return jerr(403, "code", "That server code isn't valid (or was already used).")
+        if res == "taken":
             return jerr(409, "taken", "That name was just taken. Pick another one.")
-        if code:
-            self.db.use_code(code)
-            self.db.set(name, code=code)
+        box_id, secret = res
         self.db.set(name, version=str(body.get("version") or "")[:32])
         try:
             await self.set_address(name, ip)
@@ -553,9 +555,9 @@ Report abuse: <a href="mailto:{html.escape(self.cfg['abuse_contact'])}">{html.es
         if what == "codes" and req.method == "POST":
             code = self.db.new_code(int(body.get("uses", 1)), body.get("days", 30), str(body.get("note", "")))
             self.db.event("code-new", detail=f"{code_hint(code)} {body.get('note', '')}")
-            return web.json_response({"ok": True, "code": code})
+            return web.json_response({"ok": True, "code": code, "hint": code_hint(code)})  # the only time it's shown
         if what == "codes" and req.method == "GET":
-            return web.json_response({"ok": True, "codes": [dict(r) for r in self.db.codes()]})
+            return web.json_response({"ok": True, "codes": self.db.codes()})
         if what == "revoke":
             return web.json_response({"ok": self.db.revoke_code(arg)})
         if what == "names":

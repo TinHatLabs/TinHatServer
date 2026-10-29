@@ -12,7 +12,7 @@ import { previewSound } from "@/core/sounds";
 import { Button, Slider, ToolButton } from "@/ui";
 import { disablePush, enablePush, sendTest, setQuiet, usePushStore } from "@/features/push";
 import { BLOCKED_LINE, ON_LINE, QUIET_CAPTION, STUCK_LINE } from "@/features/push/ThisDevice";
-import { hasNativeCap, inTinHatApp, nativeNotifications, NOTIFY_CHANGE_MS, NOTIFY_READ_MS, phoneNotifyText, type PhoneNotifyAnswer } from "@/features/native";
+import { hasNativeCap, inPhoneApp, inTinHatApp, nativeNotifications, NOTIFY_CHANGE_MS, NOTIFY_READ_MS, phoneNotifyText, type PhoneNotifyAnswer } from "@/features/native";
 import { notificationPermission, requestNotificationPermission, useNotificationPermission } from "../notify";
 import { ComboRow, Hint, NoteRow, Row, Section, SwitchRow } from "../rows";
 import p from "./panes.module.css";
@@ -55,8 +55,8 @@ export function NotificationsPane() {
   return (
     <>
       <ThisDevice />
-      {inTinHatApp() ? (
-        // the apps' web views have no Notification API: the pop-up switches would do nothing (docs/NATIVE-APPS.md);
+      {inPhoneApp() ? (
+        // the phone apps' web views have no Notification API (the Mac app's has: it keeps the desktop switches): the pop-up switches would do nothing (docs/NATIVE-APPS.md);
         // an app with "notifications" gets its own switch for THIS phone instead
         hasNativeCap("notifications") ? (
           <PhoneNotificationsSection />

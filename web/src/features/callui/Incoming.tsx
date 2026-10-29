@@ -7,7 +7,10 @@ import { useRealWinState } from "@/core/winstate";
 import { openRoom } from "@/core/bus";
 import { OnThisPhone } from "@/features/native";
 import { playUiSound, startRing, stopRing } from "@/core/sounds";
+import { RoomMemberEvent, type MatrixClient, type RoomMember } from "matrix-js-sdk";
 import { peekClient, useRoomStateEvents } from "@/core/matrix";
+import { callerMembership, onMemberProbe } from "@/features/calls/memberprobe";
+import { rosterCounts } from "@/features/calls/callrules";
 import { isRecorder } from "@/core/server";
 import { act, getC, useC } from "./store";
 import { PadButton, padCallText, pickTarget, useDeviceName, usePadTargets } from "@/features/pad";
@@ -36,8 +39,45 @@ function live(c: MemberContent, ts: number, now: number): boolean {
   return created + exp > now;
 }
 
-/** Bare mxids with a live call membership in the room (arrival order), minus the recorder. */
+// A room's "who's joined" revision: bumps when someone joins it or stops being joined (kicked, left), so a roster whose
+// call memberships didn't change still drops a member who left (callrules.rosterCounts). One client listener for all.
+const joinRevs = new Map<string, number>();
+const joinSubs = new Set<() => void>();
+let joinClient: MatrixClient | null = null;
+function bumpJoins(roomId: string, notify = true) {
+  joinRevs.set(roomId, (joinRevs.get(roomId) ?? 0) + 1);
+  if (notify) for (const f of joinSubs) f();
+}
+function onJoinChange(_ev: unknown, m: RoomMember, old?: string) {
+  // old undefined = a member just loaded (lazy loading): its membership is known now
+  if (old !== undefined && (old === "join") === (m.membership === "join")) return;
+  bumpJoins(m.roomId);
+}
+function watchJoins(): void {
+  const c = peekClient();
+  if (c === joinClient) return;
+  joinClient?.off(RoomMemberEvent.Membership, onJoinChange);
+  joinClient = c;
+  joinRevs.clear();
+  probeRooms.clear();
+  c?.on(RoomMemberEvent.Membership, onJoinChange);
+}
+// a probed membership arrived (memberprobe.ts): every roster re-reads (rare: once per unknown caller), one notify
+onMemberProbe(() => {
+  for (const id of new Set([...joinRevs.keys(), ...probeRooms])) bumpJoins(id, false);
+  for (const f of joinSubs) f();
+});
+const probeRooms = new Set<string>();
+const subscribeJoins = (f: () => void) => {
+  joinSubs.add(f);
+  return () => void joinSubs.delete(f);
+};
+
+/** Bare mxids with a live call membership in the room (arrival order), minus the recorder and anyone no longer joined
+ *  to the room (callrules.rosterCounts). */
 export function useCallParticipants(roomId: string | null | undefined): string[] {
+  watchJoins();
+  const joinRev = useSyncExternalStore(subscribeJoins, () => joinRevs.get(roomId ?? "") ?? 0);
   const a = useRoomStateEvents<MemberContent>(roomId, MEMBER_TYPES[0]);
   const b = useRoomStateEvents<MemberContent>(roomId, MEMBER_TYPES[1]);
   const c = useRoomStateEvents<MemberContent>(roomId, MEMBER_TYPES[2]);
@@ -49,13 +89,15 @@ export function useCallParticipants(roomId: string | null | undefined): string[]
   // GPU.md §2.8 (D6): the same array while nobody joined / left / expired, so the 30 s expiry re-read re-renders nothing
   const prev = useRef<string[]>([]);
   return useMemo(() => {
-    const all = [...a, ...b, ...c].filter((e) => live(e.content, e.ts, now)).sort((x, y) => (x.content.created_ts ?? x.ts) - (y.content.created_ts ?? y.ts));
+    if (roomId) probeRooms.add(roomId);
+    // a caller with no member event here (lazy loading) is probed once (memberprobe.ts) and counts until the answer
+    const all = [...a, ...b, ...c].filter((e) => live(e.content, e.ts, now) && rosterCounts(roomId ? callerMembership(roomId, e.sender) : undefined)).sort((x, y) => (x.content.created_ts ?? x.ts) - (y.content.created_ts ?? y.ts));
     const out: string[] = [];
     for (const e of all) if (!out.includes(e.sender) && !isRecorder(e.sender)) out.push(e.sender);
     if (out.length === prev.current.length && out.every((x, i) => x === prev.current[i])) return prev.current;
     prev.current = out;
     return out;
-  }, [a, b, c, now]);
+  }, [a, b, c, now, joinRev, roomId]);
 }
 
 function displayName(roomId: string, mxid: string): string {

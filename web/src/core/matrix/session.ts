@@ -24,6 +24,9 @@
 //                             the IndexedDB cache on warm starts — that is the fast path)
 //   SessionInfo.otherTab      state "error" because another tab owns the session → takeOverSession()
 //   SessionInfo.storeKind     "worker" | "local" | "memory" (sync store in use — diagnostics)
+//   SessionInfo.restoreProblem 12.1.1 (restoreProblem.ts): the saved session didn't start and was KEPT — "newer"
+//                             (this browser's data was written by a newer Tin Hat) | "unreadable"; status says why.
+//                             retryRestore() / startFresh() (the old forget-everything path, on the person's click)
 //   registerAccount({…, displayName?, onCreated?})  displayName is set on the new account
 //                             (native create_account); onCreated fires between "account created"
 //                             and the automatic sign-in (native registerStage "created" — show
@@ -37,6 +40,7 @@
 //                             native app only deletes local state — see FOUNDATION-NOTES.md)
 //   getAccessToken()          bearer for same-origin /api calls (api.ts uses it)
 import { create } from "zustand";
+import { classifyRestore, noteWriter, readWriter, restoreText, WRITER_KEY, type RestoreKind } from "./restoreProblem";
 import { SyncState, createClient, type SyncStateData } from "matrix-js-sdk";
 import {
   acquireTabLock,
@@ -77,7 +81,11 @@ export interface SessionInfo {
   liveSyncDone: boolean;
   otherTab?: boolean;
   storeKind?: "worker" | "local" | "memory";
+  restoreProblem?: RestoreKind;
 }
+
+/** This build's version (deploy sets VITE_TW_SEMVER; "dev" builds record nothing — restoreProblem.ts). */
+const MY_VERSION: string | undefined = import.meta.env?.VITE_TW_SEMVER as string | undefined;
 
 /** The homeserver: the Tin Hat Server's own origin, which serves this page (bearer.ts). */
 export const DEFAULT_HOMESERVER = MATRIX_ORIGIN;
@@ -184,6 +192,15 @@ async function serverLogout(c: Credentials): Promise<void> {
 function isChunkLoadError(e: unknown): boolean {
   const m = String((e as Error)?.message ?? e);
   return /dynamically imported module|Importing a module script failed|error loading dynamically|ChunkLoadError|Failed to fetch dynamically/i.test(m);
+}
+
+/** 12.1.1 (replaceConfirm.ts): does this browser hold a saved session a sign-in would replace? (read at the click) */
+export function hasSavedSession(): boolean {
+  try {
+    return readSaved() !== null;
+  } catch {
+    return false;
+  }
 }
 
 /** The current access token (for same-origin /api calls), or undefined when signed out. */
@@ -303,6 +320,7 @@ async function startFor(creds: Credentials): Promise<void> {
     hsUrl: creds.hsUrl,
     error: undefined,
     otherTab: undefined,
+    restoreProblem: undefined,
     firstSyncDone: false,
     liveSyncDone: false,
     syncDown: false,
@@ -317,11 +335,74 @@ async function startFor(creds: Credentials): Promise<void> {
   );
   try {
     const { storeKind } = await run;
+    try {
+      noteWriter(localStorage, MY_VERSION); // the newest Tin Hat that opened these stores (restoreProblem.ts)
+    } catch {
+      /* storage unavailable: nothing to record */
+    }
     // startClient resolved = the sync loop runs; PREPARED may already have flipped us to ready.
     if (getSession().state === "starting") set({ state: "syncing", storeKind });
     else set({ storeKind });
   } finally {
     starting = null;
+  }
+}
+
+/** The saved session the last failed restore kept (startFresh acts on that one only — another tab may have replaced it). */
+let failedSession: { userId: string; deviceId: string } | null = null;
+
+/** "Try again" on a kept session that didn't start (restoreProblem.ts). */
+export async function retryRestore(): Promise<boolean> {
+  set({ restoreProblem: undefined, status: undefined });
+  return restoreSession();
+}
+
+/**
+ * "Start fresh" on a kept session that didn't start (restoreProblem.ts): what a failed restore did before 12.1.1, now
+ * only on the person's click — end the session on the server, forget it, wipe this browser's stores.
+ */
+export async function startFresh(): Promise<void> {
+  // one session operation at a time (Astra 2026-10-28): sign-in, restore and this share `inflight`; the card's
+  // buttons go away at once (restoreProblem cleared before the first await)
+  if (inflight) return;
+  const failed = failedSession;
+  set({ restoreProblem: undefined, status: "Starting fresh…" });
+  const run = (async () => {
+    // this tab must own the session first (assembly-038 review): after our restore failed, another tab may have
+    // restored the SAME device — the identity check below can't tell, so a tab that can't take the lock forgets nothing
+    if (!(await acquireTabLock({ onLost: onTabLost }))) {
+      failedSession = null;
+      log.info("start fresh: Tin Hat is open in another tab; nothing forgotten");
+      set({ state: "error", error: "Tin Hat is already open in another tab. Use that tab, or take over here.", otherTab: true });
+      return false;
+    }
+    const saved = readSaved();
+    // only the session that failed here: another tab may have signed in meanwhile (that one is left alone)
+    const same = !!saved && !!failed && saved.userId === failed.userId && saved.deviceId === failed.deviceId;
+    if (same && saved) {
+      clearSaved();
+      void serverLogout(saved);
+      await stopClient({ wipe: false });
+      await wipeLocalStores();
+      try {
+        localStorage.removeItem(WRITER_KEY);
+      } catch {
+        /* storage unavailable */
+      }
+      log.info("start fresh: the saved session is forgotten (the person's choice)");
+    } else {
+      log.info("start fresh: the saved session changed meanwhile; nothing forgotten");
+    }
+    failedSession = null;
+    releaseTabLock(); // the next sign-in takes it again
+    set({ state: "loggedOut", status: "Sign in to set this computer up fresh.", restoreProblem: undefined, userId: undefined, deviceId: undefined });
+    return true;
+  })();
+  inflight = run;
+  try {
+    await run;
+  } finally {
+    inflight = null;
   }
 }
 
@@ -343,7 +424,7 @@ export async function restoreSession(): Promise<boolean> {
   }
   const run = (async () => {
     await adoptSavedOrigin(saved);
-    set({ state: "starting", userId: saved.userId, deviceId: saved.deviceId, hsUrl: saved.hsUrl });
+    set({ state: "starting", userId: saved.userId, deviceId: saved.deviceId, hsUrl: saved.hsUrl, restoreProblem: undefined });
     if (!(await acquireTabLock({ onLost: onTabLost }))) {
       set({ state: "error", error: "Tin Hat is already open in another tab. Use that tab, or take over here.", otherTab: true });
       return false;
@@ -361,13 +442,23 @@ export async function restoreSession(): Promise<boolean> {
         set({ state: "error", error: "Part of Tin Hat couldn't load — reload the page to try again." });
         return false;
       }
-      // The saved session is unusable: end it on the server, forget it, sign in fresh.
-      clearSaved();
-      void serverLogout(saved);
-      await wipeLocalStores();
+      // 12.1.1 (restoreProblem.ts): NOTHING is forgotten here any more. It used to end the session on the server,
+      // forget it and wipe this browser's stores for every failure — a newer store (a server that went back a
+      // version) or a passing IndexedDB failure cost the device. The card says which case it is and offers Try
+      // again / Start fresh; only startFresh() (the person's click) does what this did.
+      let writer: string | null = null;
+      try {
+        writer = readWriter(localStorage);
+      } catch {
+        /* storage unavailable */
+      }
+      const problem = classifyRestore(e, writer, MY_VERSION);
+      failedSession = { userId: saved.userId, deviceId: saved.deviceId };
+      log.warn(`restore failed; kept the saved session; the card offers: ${problem.kind}`);
       set({
         state: "loggedOut",
-        status: "Your saved session couldn't be restored — please sign in again.",
+        status: restoreText(problem),
+        restoreProblem: problem.kind,
         userId: undefined,
         deviceId: undefined,
       });

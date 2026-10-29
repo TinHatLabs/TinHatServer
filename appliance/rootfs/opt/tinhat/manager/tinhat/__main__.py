@@ -143,7 +143,15 @@ def api_limits(args: list[str], st: dict | None = None, apply=None) -> int:
             return rc == 0
     if not apply(new):
         return 1
-    print("\n".join(f"{k}={v}" for k, v in sorted(new.items())) or "Every limit is the API's default again.")
+    if args[0] == "--reset" and new:
+        # assembly-037 note: say what --reset did before listing what is still set
+        print("\n".join(f"{name} is back to its default." for name in dict.fromkeys(args[1:])))
+        print("Still set: " + ", ".join(f"{k}={v}" for k, v in sorted(new.items())))
+    elif args[0] == "--reset":
+        print("\n".join(f"{name} is back to its default." for name in dict.fromkeys(args[1:])))
+        print("No other limit is set: every limit is the API's default.")
+    else:
+        print("\n".join(f"{k}={v}" for k, v in sorted(new.items())) or "Every limit is the API's default again.")
     return 0
 
 

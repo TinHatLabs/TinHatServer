@@ -7,10 +7,11 @@
 // `dev.tinhat.client {kind:"web", version, record_optout}`.
 import type { MatrixClient, MatrixEvent } from "matrix-js-sdk";
 import { getAccessToken, getSession, peekClient } from "@/core/matrix";
+import { callerMembership } from "./memberprobe";
 import { MATRIX_ORIGIN, bearerAllowed } from "@/core/bearer";
 import { getPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
-import { applyHostPolicy, normalizeFocusUrl, postSfuGet, callHostsOf, contentLive, focusDecision, ownFoci, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
+import { applyHostPolicy, normalizeFocusUrl, postSfuGet, callHostsOf, contentLive, focusDecision, ownFoci, rosterCounts, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
 import { clientMarker } from "./av1";
 import { deviceStateKey, nativeDeviceId, pageOwnsMembership } from "@/features/native";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, MEMBERSHIP_EXPIRES_MS, defaultFocusUrl, displayName, avatarMxc, sleep, withTimeout, errText } from "./util";
@@ -52,9 +53,20 @@ export function liveSessions(roomId: string, now = Date.now()): LiveSession[] {
   return sessionsFrom(rawMemberEvents(roomId), roomId, now);
 }
 
-/** "A call is going on" = any live msc3401 membership (rtc.rs:35-38). */
+/** The sender's membership in the room (memberprobe.ts: the member event, else probed once; undefined = not known yet,
+ *  callwatch rebuilds when the answer arrives). */
+export function membershipIn(roomId: string, userId: string): string | undefined {
+  return callerMembership(roomId, userId);
+}
+
+/** Live sessions of people still in the room (callrules.rosterCounts): what rosters and "a call is going on" read. */
+export function rosterSessions(roomId: string, now = Date.now()): LiveSession[] {
+  return liveSessions(roomId, now).filter((s) => rosterCounts(membershipIn(roomId, s.sender)));
+}
+
+/** "A call is going on" = any live msc3401 membership of someone still in the room (rtc.rs:35-38 + roster rule). */
 export function callActive(roomId: string): boolean {
-  return liveSessions(roomId).length > 0;
+  return rosterSessions(roomId).length > 0;
 }
 
 export interface CallParticipant {
@@ -72,6 +84,7 @@ export function roomCallParticipants(roomId: string, now = Date.now()): CallPart
       const sender = ev.getSender() ?? "";
       if (!sender || seen.has(sender)) continue;
       if (!contentLive(ev.getContent() as Content, ev.getTs(), now)) continue;
+      if (!rosterCounts(membershipIn(roomId, sender))) continue; // kicked / left: their membership can't be withdrawn
       seen.add(sender);
       out.push({ mxid: sender, name: displayName(roomId, sender), avatar: avatarMxc(roomId, sender) });
     }

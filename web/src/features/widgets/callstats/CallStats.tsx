@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { openRoom } from "@/core/bus";
 import { useSession } from "@/core/matrix";
 import { Avatar, BusyIndicator, Popover, cx } from "@/ui";
-import { useCall, useRxStats, watchRxStats, type PublishStat, type RxPerson } from "@/features/calls";
+import { callCompanions, foldPeers, useCall, useRxStats, watchRxStats, type FoldedPeer, type PublishStat, type RxPerson } from "@/features/calls";
 import { messageUser } from "@/features/nav";
 import { bandOf, cqBand, fmtLoss, fmtRate, rateFillPm, resChip, sparkPoints, worstBand, type Band, type TrackNumbers } from "@/widgets/quality";
 import { callPeople, fmtRatePair, type CallSummary } from "@/widgets/people";
@@ -48,6 +48,10 @@ export interface PersonView {
   outTracks: TrackNumbers[];
   /** worstBand(cq, incoming, outgoing) — callPeople's band */
   band: Band | null;
+  /** screen share P3: their phone's share (a companion, foldPeers) — one row per person, the share as a sub-line */
+  share?: PersonView;
+  /** a companion of OUR OWN device: its row reads "Your screen" */
+  ownShare?: boolean;
 }
 export interface YouTrack {
   label: string;
@@ -83,6 +87,13 @@ function mainChips(tracks: readonly TrackNumbers[]): string[] {
   return out;
 }
 
+function foldedView(p: FoldedPeer<RxPerson>, name: string, nowMono: number): PersonView {
+  const v = personView(p, p.ownShare ? "Your screen" : name, nowMono);
+  if (p.ownShare) v.ownShare = true;
+  if (p.share) v.share = personView(p.share, name, nowMono);
+  return v;
+}
+
 function personView(p: RxPerson, name: string, nowMono: number): PersonView {
   const incBand = worstBand(p.incoming.map(bandOf));
   const never = !p.outgoing;
@@ -108,7 +119,10 @@ function personView(p: RxPerson, name: string, nowMono: number): PersonView {
 
 /** Order + bands + summary from the shared callPeople. */
 function arrange(views: PersonView[]): { people: PersonView[]; summary: CallSummary } {
-  const cp = callPeople(views.map((v) => ({ id: v.identity, name: v.name, cq: v.cqRaw, inBand: v.inc.band, outBand: v.out.band })));
+  // (a folded share counts for its person's band: its connection, incoming and outgoing — a poor phone share isn't hidden)
+  const cp = callPeople(
+    views.map((v) => ({ id: v.identity, name: v.name, cq: v.cqRaw, inBand: v.share ? worstBand([v.inc.band, v.share.inc.band, v.share.cq, v.share.out.band]) : v.inc.band, outBand: v.out.band })),
+  );
   const by = new Map(views.map((v) => [v.identity, v]));
   const people = cp.order.map((id, i) => ({ ...by.get(id)!, band: cp.bands[i] ?? null }));
   return { people, summary: cp.summary };
@@ -146,7 +160,11 @@ function useCallStatsModel(ctx: WidgetCtx): CallStatsModel {
   useEffect(() => (inCall && !ctx.preview ? watchRxStats() : undefined), [inCall, ctx.preview]);
   const hist = useCallHistory(!inCall || ctx.preview);
   const nowMono = performance.now();
-  const views = inCall ? Object.values(rx.people).map((p) => personView(p, nameNow(p.mxid, roomId), nowMono)) : [];
+  const session = useSession();
+  const own = `${session.userId ?? ""}:${session.deviceId ?? ""}`;
+  // screen share P3: a phone's share-only companion is its person's sub-line, not a second person (foldPeers)
+  const peers = inCall ? foldPeers(Object.values(rx.people), (p) => p.identity, callCompanions(roomId), own) : [];
+  const views = peers.map((p) => foldedView(p, nameNow(p.mxid, roomId), nowMono));
   const { people, summary } = arrange(views);
   const you = inCall ? youTracks(publish) : [];
   return {
@@ -154,7 +172,7 @@ function useCallStatsModel(ctx: WidgetCtx): CallStatsModel {
     roomId,
     people,
     summary,
-    totalIn: people.reduce((a, p) => a + p.inc.kbps, 0),
+    totalIn: people.reduce((a, p) => a + p.inc.kbps + (p.share?.inc.kbps ?? 0), 0),
     totalOut: you.reduce((a, t) => a + t.kbps, 0),
     you,
     hist,
@@ -219,7 +237,7 @@ const CQ_WORD: Record<string, string> = { excellent: "excellent", good: "good", 
 
 function PersonRow({ p, roomId, ctx }: { p: PersonView; roomId: string | null; ctx: WidgetCtx }) {
   const who = usePerson(p.mxid, roomId);
-  const name = who.name || p.name;
+  const name = p.ownShare ? p.name : who.name || p.name;
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const outTitle = p.out.never ? "No report from their app yet" : p.out.none ? "No report for a while" : `How ${name} gets you`;
@@ -255,6 +273,19 @@ function PersonRow({ p, roomId, ctx }: { p: PersonView; roomId: string | null; c
             </span>
             <Spark values={p.spark} samples={p.samples} />
           </span>
+          {p.share && (
+            <span className={s.shareLine} data-callstats-share={p.share.identity}>
+              <span className={s.chip}>Screen</span>
+              {p.share.chips.map((c) => (
+                <span key={c} className={s.chip}>
+                  {c}
+                </span>
+              ))}
+              <span className={s.laneCol}>
+                <LaneBar arrow="↓" lane={p.share.inc} title={`${name}'s screen, shared from their phone`} />
+              </span>
+            </span>
+          )}
         </span>
       </div>
       {open && (

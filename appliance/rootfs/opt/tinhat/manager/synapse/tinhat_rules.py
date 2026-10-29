@@ -1,4 +1,5 @@
-"""tinhat_rules — a Synapse module: guests stay in the guest room (docs/GUESTS.md).
+"""tinhat_rules — a Synapse module: guests stay in the guest room (docs/GUESTS.md), and the owner's account can't be
+deactivated (docs/ACCOUNT-SAFETY.md).
 
 The guest room hands strangers a real Matrix account for a few hours. Without this module that account could do what
 any account can: join the server's other public rooms by their address, accept invitations, start rooms and DMs.
@@ -13,6 +14,13 @@ With it, Synapse itself enforces, whatever an app or a copied token tries:
 
 The API publishes three small, non-secret files into /var/lib/tinhat/api/public (mounted read-only here): the guest
 accounts, the names it is about to register, and the Guests room's id. They are re-read when they change.
+
+The owner: nobody may deactivate the server owner's account or the box's own system account (`@tinhat-system:…`),
+from any app, with a password or through the admin API (Synapse answers 403 M_FORBIDDEN "Deactivation of this user is
+forbidden"). Deleting the owner would leave the server without anyone who can sign in to its dashboard; the apps
+already refuse it, this makes it true for every Matrix client. The manager writes the owner's id into
+protected-accounts.json next to this file (apiconf.publish_protected, whenever it writes the well-known); without that
+file only the system account is protected.
 """
 import json
 import logging
@@ -26,6 +34,7 @@ from synapse.spam_checker_api import RegistrationBehaviour
 logger = logging.getLogger(__name__)
 
 PREFIX = "guest-"
+SYSTEM_LOCALPART = "tinhat-system"  # config.SYSTEM_LOCALPART
 ALLOW_FOR_S = 120  # a name in guest-allow.json may be registered for this long after it was written
 
 
@@ -58,6 +67,8 @@ class GuestRules:
         self.accounts = _File(os.path.join(d, "guest-accounts.json"), [])
         self.allow = _File(os.path.join(d, "guest-allow.json"), {})
         self.room = _File(os.path.join(d, "guests-room.json"), {})
+        self.protected = _File(config.get("protected", os.path.join(os.path.dirname(os.path.abspath(__file__)), "protected-accounts.json")), {})
+        api.register_third_party_rules_callbacks(check_can_deactivate_user=self.check_can_deactivate_user)
         api.register_spam_checker_callbacks(
             user_may_join_room=self.user_may_join_room,
             user_may_invite=self.user_may_invite,
@@ -124,3 +135,31 @@ class GuestRules:
             return RegistrationBehaviour.ALLOW
         logger.info("tinhat_rules: %r is a guest name; only the Tin Hat API registers those", username)
         return RegistrationBehaviour.DENY
+
+    # ---- the owner ---------------------------------------------------------------------------------------------------
+    def is_protected(self, user_id: str) -> bool:
+        """The owner (protected-accounts.json, written by the manager) and this server's system account. Once an owner
+        was read, it stays protected when the file later goes missing or breaks (the last good value is kept)."""
+        uid = str(user_id or "")
+        if uid.startswith(f"@{SYSTEM_LOCALPART}:") and self.api.is_mine(uid):
+            return True
+        p = self.protected.get()
+        owner = p.get("owner") if isinstance(p, dict) else None
+        if isinstance(owner, str) and owner.startswith("@") and ":" in owner:
+            self.last_owner = owner
+        elif isinstance(owner, str) and owner == "" and isinstance(p, dict):
+            self.last_owner = ""  # the manager said: no owner known (setup not finished, or an owner who isn't local)
+        return bool(getattr(self, "last_owner", "")) and self.last_owner == uid
+
+    async def check_can_deactivate_user(self, user_id: str, by_admin: bool) -> bool:
+        # Synapse treats an exception here as "allowed": decide inside a try and refuse when that fails.
+        try:
+            protected = self.is_protected(user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("tinhat_rules: couldn't tell whether %s is the owner; refusing its deactivation", user_id)
+            return False
+        if not protected:
+            return True
+        logger.warning("tinhat_rules: refused to deactivate %s (the server owner or its system account; by_admin=%s)",
+                       user_id, by_admin)
+        return False

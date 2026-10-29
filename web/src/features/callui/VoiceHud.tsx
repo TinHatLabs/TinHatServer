@@ -50,10 +50,10 @@ export function hudPills(mode: "speaking" | "always", last: Record<string, numbe
   const selfLinger = (last.__self ?? 0) + LINGER > now;
   const warnLinger = c.micMuted && (last.__mutedtalk ?? 0) + LINGER > now;
   if (!speakingOnly || selfSpeaking || selfLinger || warnLinger)
-    out.push({ key: "__self", label: "You", speaking: selfSpeaking, muted: c.micMuted, deafened: c.deafened, self: true, sharing: c.sharing, more: false, warn: warnLinger });
+    out.push({ key: "__self", label: "You", speaking: selfSpeaking, muted: c.micMuted, deafened: c.deafened, self: true, sharing: c.sharing || c.tiles.some((t) => t.companionOf === "You"), more: false, warn: warnLinger }); // (or our phone shares for us)
   const seen = new Map<string, { key: string; label: string; muted: boolean; sharing: boolean }>();
   for (const t of c.tiles) {
-    const p = t.participant || "";
+    const p = t.companionOf || t.participant || ""; // a companion's share counts as its person's (screen share P3)
     if (!p || p === "You" || t.id === SELF_ID || isRecorder(p)) continue;
     const r = seen.get(p);
     if (!r) seen.set(p, { key: p, label: t.name || localpartOf(tileMxid(p)), muted: !!t.muted, sharing: !!t.screenshare || t.kind === "screenshare" });

@@ -109,6 +109,14 @@
   color: var(--th-widget-chip-fg);
   white-space: nowrap;
 }
+/* screen share P3: a person's phone share under their lanes (one row per person) */
+.shareLine {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
 .lanes {
   margin-top: 2px;
   display: flex;

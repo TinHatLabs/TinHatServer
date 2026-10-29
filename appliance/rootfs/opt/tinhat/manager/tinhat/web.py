@@ -26,7 +26,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from . import apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
-from . import pyenv, templates
+from . import pyenv, restoresafe, templates
 from .install import Installer, validate, write_synapse_config
 from .synapse import Synapse
 
@@ -35,6 +35,11 @@ log = logging.getLogger("tinhat.web")
 SETUP_COOKIE = "tinhat_setup"
 ADMIN_COOKIE = "tinhat_admin"
 SESSION_HOURS = 12
+# however busy: a dashboard sign-in ends this long after it was made (sessions.py); setup sign-ins after a day
+SESSION_MAX_HOURS = 7 * 24
+# how often the background loop asks the chat server whether each signed-in account is still an admin (a deadline on
+# the monotonic clock, run as its own task: the loop's other work can't stretch it)
+ADMIN_RECHECK_SECONDS = 300
 CODE_RE_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-")
 
 
@@ -92,6 +97,45 @@ def _client(req: web.Request) -> str:
 
 def _home(req: web.Request) -> bool:
     return limits.home(_client(req), _home_nets())
+
+
+#: set by Caddy on port 80's outside route to GET /admin/setup/status (templates.py, the public modes' :80 site), which
+#: replaces whatever a caller sent: that request gets the cut-down answer whatever the state says, also after a manager
+#: restart reset the steps or a failed install (Astra on baf2224), unless the caller is on the home network by the
+#: manager's own definition (_home). A caller adding it elsewhere only cuts its own answer.
+PLAIN_OUTSIDE_HEADER = "X-Tinhat-Plain-Outside"
+
+
+def _plain_outside(req: web.Request, st: dict, progress) -> bool:
+    """A setup status asked over plain http by an address outside the home network, once a public-mode server's web
+    server holds its certificate (from the "secure" step on: its port 80 then answers outsiders only this GET)."""
+    if _home(req):  # the manager's home networks, wider than Caddy's private_ranges (on-link global IPv6; Astra)
+        return False
+    if req.headers.get(PLAIN_OUTSIDE_HEADER):
+        return True
+    if _https(req) or not state.public_mode(st):
+        return False
+    if st.get("phase") == "ready":
+        return True
+    p = progress() if callable(progress) else progress
+    return any(x.get("id") == "secure" and x.get("status") in ("running", "done") for x in (p or {}).get("steps") or [])
+
+
+#: what a setup status over plain http to an outside address may carry (assembly-038, launch-gate's condition): where the
+#: page is (phase), the steps' names and states, whether one still runs, and the server's own name (the page hops to
+#: https://<that name>) — no owner, no code, no error text, no addresses, no version.
+OUTSIDE_STATUS_KEYS = ("phase", "serverName", "progress")
+OUTSIDE_STEP_KEYS = ("id", "label", "status")
+
+
+def status_for_outside(out: dict) -> dict:
+    """The fixed allow-list of OUTSIDE_STATUS_KEYS / OUTSIDE_STEP_KEYS over a setup status answer."""
+    doc = {k: out.get(k) for k in OUTSIDE_STATUS_KEYS if k != "progress"}
+    p = out.get("progress") if isinstance(out.get("progress"), dict) else {}
+    doc["progress"] = {"steps": [{k: x.get(k) for k in OUTSIDE_STEP_KEYS} for x in p.get("steps") or []
+                                 if isinstance(x, dict)],
+                       "running": bool(p.get("running"))}  # always the same keys (no steps once ready)
+    return doc
 
 
 def _peer(req: web.Request) -> str:
@@ -187,13 +231,15 @@ class Manager:
             self._apply_federation, busy=lambda: "The server is moving to its new address; try again when it's done."
             if self.mover.running else None)
         # The setup page's unlock survives the manager restarting too (an update before a restore restarts it).
-        self.setup_sessions = sessions.Sessions(4, config.STATE_DIR / "setup-sessions.json")
-        self.sessions = sessions.Sessions(SESSION_HOURS)  # survives the manager restarting (updates)
+        self.setup_sessions = sessions.Sessions(4, config.STATE_DIR / "setup-sessions.json", max_hours=24)
+        self.sessions = sessions.Sessions(SESSION_HOURS, max_hours=SESSION_MAX_HOURS)  # survives the manager restarting
         # "Move to your own domain" (move.py); the owner's dashboard sign-in follows the account to its new name
         self.mover = move.Mover(self.synapse, self.checker, on_switched=self.sessions.rename)
         self._move_checking = asyncio.Lock()
         self.fails = limits.Fails("unlock", "login", "restore", "recover", "recover-start", "backup-pw", "people-password")
         self.operators: dict[str, tuple[bool, float]] = {}
+        self._admin_recheck_at = 0.0  # monotonic: when the next dashboard admin re-check is due
+        self._bg_admin_recheck: asyncio.Task | None = None
         self.bench: dict | None = None      # processor + disk, measured on the box (bench.py)
         self.net: dict | None = None        # what the wizard's browser measured between itself and the box
         self._bench_lock = asyncio.Lock()
@@ -327,6 +373,8 @@ class Manager:
             if st.get("phase") == "failed":
                 out["error"] = st.get("error")
                 out["errorDetails"] = st.get("error_details", "")
+        if _plain_outside(req, st, lambda: self.installer.progress()):
+            out = status_for_outside(out)
         return _json(out)
 
     async def setup_unlock(self, req: web.Request) -> web.Response:
@@ -1248,6 +1296,8 @@ class Manager:
             return _err("This server isn't set up yet.", 409)
         if not self._csrf_ok(req):
             return _err("Bad request.", 400)
+        if recovery.active():  # the code already on the screen stays as it is (same end); asking again costs nothing
+            return _json({"ok": True, "minutes": recovery.minutes_left()})
         if self._limited("recover-start", req, 3600, 6):
             return _err("Too many tries. Wait an hour, then try again.", 429)
         self._failed("recover-start", req)
@@ -1479,12 +1529,23 @@ class Manager:
         shutil.rmtree(work / "upload", ignore_errors=True)
         work.mkdir(parents=True, exist_ok=True)
         tar = work / "upload.tar"
-        with open(tar, "wb") as f:
-            async for chunk in req.content.iter_chunked(1 << 20):
-                f.write(chunk)
+        # bounded while it arrives (restoresafe: this disk's free space minus a reserve) and again before extracting
+        limit = restoresafe.upload_limit(shutil.disk_usage(work).free)
+        got = 0
         try:
-            await asyncio.to_thread(_untar, tar, work / "upload")
+            with open(tar, "wb") as f:
+                async for chunk in req.content.iter_chunked(1 << 20):
+                    got += len(chunk)
+                    if got > limit:
+                        tar.unlink(missing_ok=True)
+                        return _err("That backup is bigger than the free space on this computer.", 413)
+                    f.write(chunk)
+            await asyncio.to_thread(restoresafe.extract_tar, tar, work / "upload", shutil.disk_usage(work).free)
+        except restoresafe.UnsafeBackup as e:
+            shutil.rmtree(work / "upload", ignore_errors=True)
+            return _err(str(e), 400)
         except (tarfile.TarError, OSError) as e:
+            shutil.rmtree(work / "upload", ignore_errors=True)
             return _err(f"That file isn't a Tin Hat backup ({e}).", 400)
         finally:
             tar.unlink(missing_ok=True)
@@ -1740,7 +1801,8 @@ class Manager:
             body = await req.json()
         except ValueError:
             return _json({"ok": False, "error": "Bad request."}, 400)
-        st, out = await self.federation.handle_disconnect(str(body.get("from", "")), str(body.get("nonce", "")))
+        st, out = await self.federation.handle_disconnect(str(body.get("from", "")), str(body.get("nonce", "")),
+                                                           _client(req))
         return _json(out, st)
 
     async def connections_get(self, req: web.Request) -> web.Response:
@@ -2097,11 +2159,6 @@ async def _guard(what: str, coro) -> None:
         log.exception("%s failed", what)
 
 
-def _untar(tar: Path, dest: Path) -> None:
-    with tarfile.open(tar) as t:
-        t.extractall(dest, filter="data")
-
-
 async def _background(m: Manager) -> None:
     """Keep the console banner current, keep tinhat.local answering, drop expired sessions, stay reachable."""
     tick = 0
@@ -2123,6 +2180,10 @@ async def _background(m: Manager) -> None:
                 await _guard("repair: General's calls", repairs.general_calls(m.synapse))
         if state.phase() == "ready" and not moved.is_moved():  # new people land in #general (never guests)
             await _guard("newcomers", newcomers.tick(m.synapse))
+        if time.monotonic() >= m._admin_recheck_at and state.phase() == "ready" and m.sessions.mxids() \
+                and (m._bg_admin_recheck is None or m._bg_admin_recheck.done()):
+            m._admin_recheck_at = time.monotonic() + ADMIN_RECHECK_SECONDS
+            m._bg_admin_recheck = asyncio.create_task(_guard("dashboard admin re-check", _recheck_admins(m)))
         try:
             console.refresh()
             await mdns.keep_setup_alias(state.phase() == "ready")
@@ -2132,6 +2193,16 @@ async def _background(m: Manager) -> None:
         except Exception:  # noqa: BLE001
             log.exception("background tick failed")
         await asyncio.sleep(10)
+
+
+async def _recheck_admins(m: Manager) -> None:
+    """Dashboard sign-ins of an account that isn't an admin any more end within ADMIN_RECHECK_TICKS (sessions.recheck)."""
+    tok = m._system_token()
+    ended = await sessions.recheck(m.sessions, lambda mxid: m.synapse.user(mxid, tok))
+    for mxid in ended:
+        # and the 60 s operator cache can't sign them in again with a cached "admin" (a negative entry instead)
+        m.operators[mxid] = (False, time.time())
+        log.info("dashboard sign-ins of %s ended: not an admin of this server any more", mxid)
 
 
 def startup_checks() -> None:

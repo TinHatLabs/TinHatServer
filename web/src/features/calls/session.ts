@@ -27,6 +27,10 @@ export interface Sess {
   rotation: boolean;
   planBusy: boolean;
   planAgain: boolean;
+  /** the one-shot wake at the planner's next due time (engine.ts armPlanWake) */
+  planWake?: ReturnType<typeof setTimeout> | null;
+  /** the due time that wake was armed for (an overdue one is retried once at once, then at the tick's pace) */
+  planWakeAt?: number;
   myIdentity: string; // "@me:server:DEVICE"
   me: string; // "@me:server"
   deviceId: string;

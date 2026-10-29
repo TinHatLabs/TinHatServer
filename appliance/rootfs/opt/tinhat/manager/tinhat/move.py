@@ -44,7 +44,7 @@ STEPS = [
     ("chat", "Starting chat under the new name"),
     ("secure", "Opening the new address (HTTPS)"),
     ("tell", "Pointing the old address to the new one"),
-    ("outside", "Checking from outside your home"),
+    ("outside", "Checking from outside"),
 ]
 # Once these are done the move stays done, even across a restart: chat runs under the new name and people may use it.
 POINT_OF_NO_RETURN = "secure"
@@ -237,7 +237,7 @@ class Mover:
                 warnings.append(f"{own['domain']} isn't in public DNS yet: point it at your reverse proxy (an A record) "
                                 "before you move, or friends outside won't find the server.")
             elif ip and ip not in points:
-                warnings.append(f"In public DNS {own['domain']} points to {', '.join(points)}, not your home ({ip}). "
+                warnings.append(f"In public DNS {own['domain']} points to {', '.join(points)}, not this server ({ip}). "
                                 "Fine if your reverse proxy runs elsewhere (a rented server); if it runs at home, point "
                                 "the name there first. The move's own check uses this server's DNS, which may differ.")
             if st.get("mode", "lan") == "lan":
@@ -248,7 +248,7 @@ class Mover:
                                 "the router sends them to the proxy instead; calls still need ports 7881 and 7882 "
                                 f"sent to this server. {old} keeps working only if your proxy sends it here too.")
         elif ip and ip not in points and not keeps:
-            warnings.append(f"{own['domain']} doesn't point to your home ({ip}) yet: point it there (an A record) "
+            warnings.append(f"{own['domain']} doesn't point to this server ({ip}) yet: point it there (an A record) "
                             f"in your {label} settings before you move, or friends won't find the server.")
         if st.get("mode", "lan") == "lan":
             warnings.append("This server was set up for your home network only. With its own domain friends can "
@@ -654,7 +654,7 @@ class Mover:
         state.save_state(livekit_public_ip=ip, **({"domain_status": {"ip4": ip, "updated": True, "error": None}}
                                                  if pointed else {}))
         install.refresh_configs(force=True)  # livekit.yaml: calls announce the home's address from the start
-        return f"{new} now points to your home ({ip}) through {label}." if pointed else f"{new} should point to your home ({ip})."
+        return f"{new} points to this server ({ip}) through {label}." if pointed else f"{new} should point to this server ({ip})."
 
     async def _secure(self, new: str, own: dict) -> str:
         from . import install

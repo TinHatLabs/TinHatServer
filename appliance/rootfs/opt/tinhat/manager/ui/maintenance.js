@@ -284,7 +284,7 @@ const MOVE_STEP_INFO = {
   chat: "Starting chat under the new name…",
   secure: "Opening the new address…",
   tell: "Pointing the old address to the new one…",
-  outside: "Checking from outside your home…",
+  outside: "Checking from outside…",
 };
 
 /** Move to your own domain (move.py): the same server, people, rooms and messages, at a domain the owner owns. */

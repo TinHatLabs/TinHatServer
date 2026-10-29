@@ -21,10 +21,12 @@ def base() -> list[str]:
     return ["docker", "compose", "--ansi", "never", "-p", "tinhat", "-f", str(config.COMPOSE_FILE), "--env-file", str(config.COMPOSE_ENV)]
 
 
-async def run(*args: str, timeout: float = 600) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(*base(), *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+async def run(*args: str, timeout: float = 600, stdin: bytes | None = None) -> tuple[int, str]:
+    """stdin: bytes fed to the command (psql reads SQL there so it can interpolate a quoted variable)."""
+    proc = await asyncio.create_subprocess_exec(*base(), *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                                                stdin=asyncio.subprocess.PIPE if stdin is not None else None)
     try:
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+        out, _ = await asyncio.wait_for(proc.communicate(stdin), timeout)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()

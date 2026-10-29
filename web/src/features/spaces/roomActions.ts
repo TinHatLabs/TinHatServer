@@ -8,6 +8,7 @@ import { openRoom, toast } from "@/core/bus";
 import { peekClient, sendState } from "@/core/matrix";
 import { createLogger } from "@/core/log";
 import { rl } from "./ratelimit";
+import { goneText } from "./leftWords";
 
 const log = createLogger("spaces.room");
 
@@ -47,6 +48,11 @@ export async function inviteToRoom(roomId: string, mxid: string) {
 }
 
 export async function kickFromRoom(roomId: string, mxid: string, reason = "") {
+  // they left (or someone else removed them) while the confirmation was open: the server would only answer with an
+  // error about permissions (leftWords.ts)
+  const m = peekClient()?.getRoom(roomId)?.getMember(mxid);
+  const gone = goneText("room", m?.rawDisplayName || mxid, m?.membership);
+  if (gone) return void toast(gone, { timeoutMs: 4000 });
   try {
     await rl(() => peekClient()!.kick(roomId, mxid, reason.trim() || undefined));
   } catch (e) {

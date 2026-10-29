@@ -1,8 +1,8 @@
 // push.mjs — Tin Hat web push: the Matrix push gateway + its helper endpoints (Reach, 10.6; contract
 // docs/REACH.md §3.1, §3.4 and amendments A2.5–A2.7, A2.12).
 //
-//   GET    /push/config                          -> {vapid, gateway, app_id}                     (no auth)
-//   POST   /push/register  {endpoint, p256dh, auth, quietWhileActive}   (bearer)
+//   GET    /push/config                          -> {vapid, gateway, app_id, ring: 1, relay?}     (no auth)
+//   POST   /push/register  {endpoint, p256dh, auth, quietWhileActive, rings?}   (bearer; rings: ring.mjs / docs/API.md)
 //                          -> 200 {ok, pushkey, quietWhileActive}; the SERVER derives pushkey = base64url(sha256(endpoint));
 //                             409 {error: "pushkey_owned"} when another account registered that subscription;
 //                             503 when the registration couldn't be saved (nothing changed — try again)
@@ -11,6 +11,9 @@
 //   GET    /push/quiet-wanted                    (bearer) -> {wanted}: does any registration of mine want §3.4?
 //   POST   /push/active    {pushkey|null, visible, instance}   (bearer) -> {ok, ttl: 35, wanted}
 //   POST   /push/test      {pushkey}             (bearer, own registration only, 1 per 10 s per user)
+//   POST   /push/ring/decline {room, ring}       (bearer) the callee declined a ring: its other devices stop (ring.mjs)
+//   POST   /_tinhat/v1/call-member               the Synapse module's call-membership poke (ring.mjs), on the gateway's
+//                                                own listener like the gateway route below
 //   POST   /_matrix/push/v1/notify               Matrix Push Gateway API — NOT on the public app: served by its own
 //                                                listener (deps.gatewayListen) that only Synapse reaches (A2.5).
 //                                                Body ≤ 64 KB.
@@ -42,12 +45,15 @@ import { readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { RateLimit, isObj, mono, noStore, readJson, safe, wall } from "./reachcommon.mjs";
 import { b64u, loadOrCreateVapid, parseSubscription, pushkeyFor, relayOrigin, sendWebPush } from "./webpush.mjs";
+import { RING, createRing, parseRings } from "./ring.mjs";
 
 export const PUSH = Object.freeze({
     APP_ID: "dev.tinhat.web",
     // The Tin Hat phone apps (docs/PHONE-PUSH.md): their pushers are taken only with an endpoint at the relay named by
     // PUSH_RELAY (deps.relay), never a browser push service; without PUSH_RELAY they are refused like any other app id.
-    PHONE_APP_IDS: Object.freeze(["dev.tinhat.ios", "dev.tinhat.android"]),
+    // dev.tinhat.macos = the Mac app (same relay, same push format as the iPhone app); /push/config lists these as
+    // `phone_apps` so a Mac app uses its own id only where the server takes it (older servers: dev.tinhat.ios).
+    PHONE_APP_IDS: Object.freeze(["dev.tinhat.ios", "dev.tinhat.android", "dev.tinhat.macos"]),
     GATEWAY_URL: "http://127.0.0.1:3091/_matrix/push/v1/notify", // deps.gatewayUrl: where Synapse reaches the gateway
     GATEWAY_PATH: "/_matrix/push/v1/notify",
     SUBJECT: "https://tinhat.dev", // deps.subject: VAPID's contact (an https URL or a mailto:); the project's site by default
@@ -231,7 +237,8 @@ export function outcome(r) {
 
 /**
  * The store + handlers, without Express. deps: {auth, hs, adminToken, dir | (vapid + ownersFile), fetchImpl?,
- * now? (monotonic ms), wallNow?, log?, logError?, gatewayUrl?, pushTimeoutMs?, relay? (PUSH_RELAY: the phone apps' relay)}.
+ * now? (monotonic ms), wallNow?, log?, logError?, gatewayUrl?, pushTimeoutMs?, relay? (PUSH_RELAY: the phone apps' relay),
+ * serverName? (who is local: only local callees ring), isGuest? (mxid -> bool; default `@guest-…`)}.
  */
 export function createPush(deps) {
     const { auth, hs, adminToken } = deps;
@@ -258,8 +265,12 @@ export function createPush(deps) {
         const raw = JSON.parse(readFileSync(regsFile, "utf8"));
         if (!isObj(raw)) throw new Error("not an object");
         for (const [k, v] of Object.entries(raw)) {
-            if (isObj(v) && typeof v.mxid === "string" && parseSubscription(v, RELAY, "any").ok && pushkeyFor(v.endpoint) === k)
-                regs.set(k, { mxid: v.mxid, quiet: v.quiet === true, at: Number(v.at) || 0, endpoint: v.endpoint, p256dh: v.p256dh, auth: v.auth });
+            const sub = isObj(v) ? parseSubscription(v, RELAY, "any") : { ok: false };
+            if (isObj(v) && typeof v.mxid === "string" && sub.ok && pushkeyFor(v.endpoint) === k) {
+                const rings = parseRings(v.rings, { relay: RELAY, viaRelay: sub.viaRelay });
+                regs.set(k, { mxid: v.mxid, quiet: v.quiet === true, at: Number(v.at) || 0, endpoint: v.endpoint, p256dh: v.p256dh, auth: v.auth,
+                    ...(rings.ok && rings.rings ? { rings: rings.rings } : {}) });
+            }
         }
     } catch (e) {
         if (e.code !== "ENOENT") logError(`[push] ${regsFile} unreadable (${e.message}) — starting with no registrations`);
@@ -376,9 +387,9 @@ export function createPush(deps) {
     const validPushkey = (k) => typeof k === "string" && k.length >= 1 && k.length <= 512 && !/[\u0000-\u001f\u007f]/.test(k);
     const tooMany = (res, lim, key) => { res.set("Retry-After", String(lim.retryAfter(key))); return res.status(429).json({ error: "too many requests" }); };
 
-    async function send(sub, payload, topic) {
+    async function send(sub, payload, topic, ttl = P.PUSH_TTL) {
         const r = await gate.run(() => sendWebPush({
-            sub, payload, vapid, subject: SUBJECT, ttl: P.PUSH_TTL, urgency: "high", topic,
+            sub, payload, vapid, subject: SUBJECT, ttl, urgency: "high", topic,
             fetchImpl, timeoutMs, now, wallNow,
         }));
         return r.busy ? { status: 0, ms: 0, reason: "busy", busy: true } : r;
@@ -395,8 +406,10 @@ export function createPush(deps) {
     // ── handlers ──
     function config(_req, res) {
         noStore(res);
-        // `relay` only when PUSH_RELAY is set: the phone apps subscribe there (browsers ignore it)
-        res.json({ vapid: vapid.publicKey, gateway: GATEWAY_URL, app_id: P.APP_ID, ...(RELAY ? { relay: RELAY } : {}) });
+        // `relay` only when PUSH_RELAY is set: the phone apps subscribe there (browsers ignore it). `ring: 1`: this server
+        // rings DM calls by push (ring.mjs) and takes `rings` in a registration.
+        res.json({ vapid: vapid.publicKey, gateway: GATEWAY_URL, app_id: P.APP_ID, ring: 1,
+            ...(RELAY ? { relay: RELAY, phone_apps: P.PHONE_APP_IDS } : {}) });
     }
 
     async function register(req, res) {
@@ -415,9 +428,15 @@ export function createPush(deps) {
         const existing = regs.get(pushkey);
         if (existing && existing.mxid !== who.user) return res.status(409).json({ error: "pushkey_owned" });
         const quiet = v.quietWhileActive !== false;
+        const rings = parseRings(v.rings, { relay: RELAY, viaRelay: sub.viaRelay });
+        if (!rings.ok) return res.status(400).json({ error: "rings_refused", reason: rings.reason });
+        if (rings.rings?.voip) {
+            for (const [k, r] of regs) if (k !== pushkey && r.rings?.voip === rings.rings.voip && r.mxid !== who.user) return res.status(409).json({ error: "voip_owned" });
+        }
         try {
             commitRegs((next) => {
-                next.set(pushkey, { mxid: who.user, quiet, at: wallNow(), endpoint: v.endpoint, p256dh: v.p256dh, auth: v.auth });
+                next.set(pushkey, { mxid: who.user, quiet, at: wallNow(), endpoint: v.endpoint, p256dh: v.p256dh, auth: v.auth,
+                    ...(rings.rings ? { rings: rings.rings } : {}) });
                 const mine = [...next].filter(([, r]) => r.mxid === who.user).sort((a, c) => a[1].at - c[1].at);
                 while (mine.length > P.MAX_REGISTRATIONS_PER_USER) {
                     const [k] = mine.shift();
@@ -429,7 +448,8 @@ export function createPush(deps) {
             logError(`[push] could not save registrations: ${e.message}`);
             return res.status(503).json({ error: "could not save the registration, try again" });
         }
-        res.json({ ok: true, pushkey, quietWhileActive: quiet });
+        // `rings` is answered only when it was asked about: what this server took (null = no ringing, the downgrade)
+        res.json({ ok: true, pushkey, quietWhileActive: quiet, ...(v.rings !== undefined ? { rings: rings.rings } : {}) });
     }
 
     function ownReg(req, res, who, pk) {
@@ -445,7 +465,7 @@ export function createPush(deps) {
         if (!who) return;
         const r = ownReg(req, res, who, req.query?.pushkey);
         if (r === undefined) return;
-        res.json({ registered: !!r, quietWhileActive: !!r?.quiet });
+        res.json({ registered: !!r, quietWhileActive: !!r?.quiet, ...(r?.rings ? { rings: r.rings } : {}) });
     }
 
     async function unregister(req, res) {
@@ -620,8 +640,25 @@ export function createPush(deps) {
             `${regs.size} registration(s)`);
     }
 
+    // ── DM ringing (ring.mjs): the same registrations, keys, gate and answer handling ──
+    function clearVoip(pk, voip) {
+        const r = regs.get(pk);
+        if (!r?.rings || r.rings.voip !== voip) return;
+        try { commitRegs((next) => { const { voip: _gone, ...rest } = r.rings; next.set(pk, { ...r, rings: rest }); return [r.mxid]; }); }
+        catch (e) { logError(`[push] could not save registrations (a gone VoIP subscription stays until the next try): ${e.message}`); }
+    }
+    const ring = createRing({
+        hs, adminToken, auth, serverName: deps.serverName, relay: RELAY, topicKey, kindOf, regs, send, outcome, dropGone, clearVoip,
+        suppressed, now, wallNow, log, logError, isGuest: deps.isGuest,
+        messagePayload: (f, phone) => payloadBytes({ ...f, kind: "message", unread: null }, phone ? P.PHONE_PAYLOAD_MAX : P.PAYLOAD_MAX),
+        messageTopic: (pk, room, event, phone) => (phone ? topicForEvent(topicKey, pk, room, event) : topicFor(topicKey, pk, room)),
+    });
+    const sweepAll = () => { sweep(); ring.sweep(); };
+    const reportAll = () => { report(); ring.report(); };
+
     return {
-        config, register, registration, unregister, quietWanted, active: activeHandler, test, notify, report, sweep, suppressed,
+        config, register, registration, unregister, quietWanted, active: activeHandler, test, notify, report: reportAll, sweep: sweepAll, suppressed,
+        callHook: ring.callHook, ringDecline: ring.decline, _ring: ring,
         _regs: regs, _active: active, _topicKey: topicKey, vapidPublic: vapid.publicKey,
     };
 }
@@ -640,9 +677,10 @@ export function startGatewayServer(p, { host = "127.0.0.1", port = 3091, log = c
         };
         let path = "";
         try { path = new URL(req.url, "http://gateway").pathname; } catch { /* malformed */ }
-        if (req.method !== "POST" || path !== PUSH.GATEWAY_PATH) { req.resume(); return res.status(404).json({ error: "not found" }); }
+        const handler = req.method !== "POST" ? null : path === PUSH.GATEWAY_PATH ? p.notify : path === RING.HOOK_PATH && p.callHook ? p.callHook : null;
+        if (!handler) { req.resume(); return res.status(404).json({ error: "not found" }); }
         // Even an internal failure is a 200 to Synapse: replaying a notification that crashes us would stall the pusher.
-        Promise.resolve(p.notify(req, res)).catch((e) => {
+        Promise.resolve(handler(req, res)).catch((e) => {
             console.error(`[push] gateway error: ${e?.message || e}`);
             if (!res.headersSent) res.json({ rejected: [] });
         });
@@ -664,7 +702,7 @@ export function installPush(app, deps) {
         console.error(`[push] could not start (${e.message}) -> web push DISABLED`);
         const off = (_req, res) => { noStore(res); res.status(503).json({ error: "web push isn't set up on this server" }); };
         app.get("/push/config", off); app.post("/push/register", off); app.get("/push/register", off); app.delete("/push/register", off);
-        app.get("/push/quiet-wanted", off); app.post("/push/active", off); app.post("/push/test", off);
+        app.get("/push/quiet-wanted", off); app.post("/push/active", off); app.post("/push/test", off); app.post("/push/ring/decline", off);
         return null;
     }
     app.get("/push/config", p.config);
@@ -674,6 +712,7 @@ export function installPush(app, deps) {
     app.get("/push/quiet-wanted", safe("push", p.quietWanted));
     app.post("/push/active", safe("push", p.active));
     app.post("/push/test", safe("push", p.test));
+    app.post("/push/ring/decline", safe("ring", p.ringDecline));
     startGatewayServer(p, { ...(deps.gatewayListen || {}), log: deps.log || console.log });
     setInterval(() => { try { p.sweep(); } catch { /* never fatal */ } }, PUSH.SWEEP_MS).unref?.();
     const every = deps.reportEveryMs ?? 10 * 60_000;

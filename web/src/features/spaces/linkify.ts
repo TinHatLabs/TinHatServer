@@ -2,18 +2,27 @@
 // Pure (relative imports only): linkify.test.ts runs it under Node.
 import { safeExternalUrl } from "../../core/openlink";
 
-/** RightPanel.linkify: escape, then wrap http(s) URLs (trailing punctuation stays outside) — only what the one link rule
- *  allows (core/openlink safeExternalUrl: no user name before the host, no controls; launch-gate review), with the
- *  normalised address as the href. The containers open them through core/linkgate (linkContainerEvents). */
+const esc = (x: string) => x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const escText = (x: string) => esc(x).replace(/\n/g, "<br>");
+
+/** RightPanel.linkify: wrap http(s) URLs (trailing punctuation stays outside) — only what the one link rule allows
+ *  (core/openlink safeExternalUrl: no user name before the host, no controls; launch-gate review), with the normalised
+ *  address as the href — and escape everything. URLs are found and trimmed in the RAW text, then escaped (assembly verify
+ *  C, sec-night 2026-10-27: trimming the escaped text cut the `;` off `&quot;`, so the link got `&quot` in its query).
+ *  The desktop's RightPanel.qml linkify is the same walk. The containers open links through core/linkgate. */
 export function linkify(s: string): string {
-  const esc = (x: string) => x.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const unesc = (x: string) => x.replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
-  const t = esc(String(s || "")).replace(/\n/g, "<br>");
-  return t.replace(/(https?:\/\/[^\s<]+)/g, (u) => {
-    const trail = /[.,;:!?)]+$/.exec(u);
-    const core = trail ? u.slice(0, -trail[0].length) : u;
-    const href = safeExternalUrl(unesc(core));
-    if (!href) return u; // shown as the text it is, no link
-    return `<a href="${esc(href)}">${core}</a>${trail ? trail[0] : ""}`;
-  });
+  const raw = String(s || "");
+  const re = /https?:\/\/\S+/g;
+  let out = "";
+  let last = 0;
+  for (let m = re.exec(raw); m; m = re.exec(raw)) {
+    const u = m[0];
+    const trail = /[.,;:!?)]+$/.exec(u)?.[0] ?? "";
+    const core = u.slice(0, u.length - trail.length);
+    const href = safeExternalUrl(core);
+    out += escText(raw.slice(last, m.index));
+    out += href ? `<a href="${esc(href)}">${esc(core)}</a>${esc(trail)}` : esc(u); // refused: shown as the text it is
+    last = m.index + u.length;
+  }
+  return out + escText(raw.slice(last));
 }

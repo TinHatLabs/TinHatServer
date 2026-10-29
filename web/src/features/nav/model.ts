@@ -21,6 +21,8 @@ import { onClientChanged, peekClient } from "@/core/matrix";
 import { getPref, onPrefChange, setPref } from "@/core/prefs";
 import { EMPTY_DM_STRIP, dmStrip, type DmStrip, type DmStripRoom } from "./dmstrip";
 import { adjustedUnread } from "./rollup";
+import { rosterCounts } from "@/features/calls/callrules";
+import { callerMembership, onMemberProbe } from "@/features/calls/memberprobe";
 
 // ---- types -----------------------------------------------------------------------------------
 
@@ -229,7 +231,9 @@ export function callMemberUsers(room: Room, now = Date.now()): string[] {
       if (Array.isArray(content.memberships)) live = (content.memberships as unknown[]).some((m) => !!m && typeof m === "object" && liveAt(m as Content));
       else if (!content || Object.keys(content).length === 0) live = false;
       else live = liveAt(content);
-      if (live && !users.includes(sender)) users.push(sender);
+      // kicked / left: they can't withdraw their membership any more (callrules.rosterCounts); no member event here
+      // (lazy loading): probed once (memberprobe.ts), counts until the answer, which rebuilds the nav
+      if (live && !users.includes(sender) && rosterCounts(callerMembership(room.roomId, sender))) users.push(sender);
     }
   }
   return users;
@@ -869,6 +873,7 @@ export function setEditingRoom(id: string): void {
 let detach: (() => void) | null = null;
 let tick = 0;
 
+let offProbe: (() => void) | null = null;
 function attach(c: MatrixClient) {
   const f = () => scheduleRefresh();
   const stateF = (ev: MatrixEvent) => {
@@ -922,6 +927,8 @@ function attach(c: MatrixClient) {
   c.on(RoomEvent.Receipt, f);
   c.on(RoomEvent.Timeline, f);
   c.on(RoomStateEvent.Events, stateF);
+  offProbe?.();
+  offProbe = onMemberProbe(f); // a probed call member's membership arrived (memberprobe.ts)
   bindUnread();
   // participants / statuses: expiry is time-based → one timeout at the next expiry (armExpiry, after each build)
   const offPref = onPrefChange("space_order", f);

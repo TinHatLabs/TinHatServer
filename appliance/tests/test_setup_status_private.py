@@ -47,7 +47,8 @@ class SetupStatus(unittest.TestCase):
             return None
         m._relay_offer = offer
         m._network_doc = lambda: {}
-        req = Req({"X-Forwarded-For": client})
+        # the https pages (welcome, sign-in); plain http from outside gets the fixed allow-list (test_setup_http_status)
+        req = Req({"X-Forwarded-For": client, "X-Forwarded-Proto": "https"})
         with mock.patch.object(web.state, "load_state", return_value=st or self.ST), \
                 mock.patch.object(web.environment, "env", return_value={"zone": "tinhat.me"}), \
                 mock.patch.object(web, "_proxies", return_value=None), \

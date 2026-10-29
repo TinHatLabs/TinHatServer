@@ -25,16 +25,24 @@ class FakeApi:
     def register_spam_checker_callbacks(self, **kw):
         self.cb = kw
 
+    def register_third_party_rules_callbacks(self, **kw):
+        self.tpr = kw
+
+    def is_mine(self, user_id):
+        return str(user_id).endswith(":example.org")
+
     async def get_room_state(self, room_id, types_):
         raise AssertionError("the rules never read a room's state: only the Guests room takes guests")
 
 
-def rules(accounts):
+def rules(accounts, owner=None):
     d = tempfile.mkdtemp()
+    if owner is not None:
+        Path(d, "protected-accounts.json").write_text(json.dumps({"owner": owner}))
     if accounts is not None:
         Path(d, "guest-accounts.json").write_text(json.dumps(accounts))
     Path(d, "guests-room.json").write_text(json.dumps({"room": G}))
-    return tinhat_rules.GuestRules({"dir": d}, FakeApi())
+    return tinhat_rules.GuestRules({"dir": d, "protected": str(Path(d, "protected-accounts.json"))}, FakeApi())
 
 
 def ok(coro):
@@ -73,6 +81,64 @@ class Rules(unittest.TestCase):
         self.assertTrue(ok(r.user_may_invite("@alice:example.org", NEW, G)))
         self.assertFalse(ok(r.user_may_invite("@alice:example.org", NEW, OTHER)))
         self.assertTrue(ok(r.user_may_invite("@alice:example.org", "@bob:example.org", OTHER)))
+
+
+class OwnerGuard(unittest.TestCase):
+    def test_a_vanished_or_broken_file_keeps_the_last_owner(self):
+        import os, time
+        r = rules([], owner=self.OWNER)
+        self.assertFalse(self.can(r, self.OWNER))
+        p = r.protected.path
+        Path(p).write_bytes(b"\xff not json")
+        os.utime(p, ns=(time.time_ns() + 10_000_000,) * 2)
+        self.assertFalse(self.can(r, self.OWNER), "broken file: the last owner stays protected")
+        os.unlink(p)
+        self.assertFalse(self.can(r, self.OWNER), "missing file: the last owner stays protected")
+        Path(p).write_text(json.dumps({"owner": ""}))
+        self.assertTrue(self.can(r, self.OWNER), "the manager saying 'no owner' is a real answer")
+
+    def test_an_error_refuses(self):
+        r = rules([], owner=self.OWNER)
+
+        def boom(_):
+            raise RuntimeError("x")
+        r.is_protected = boom
+        self.assertFalse(self.can(r, "@alice:example.org"), "Synapse would allow on an exception: we refuse instead")
+
+    OWNER = "@owner:example.org"
+
+    def can(self, r, user, by_admin=False):
+        return asyncio.run(r.check_can_deactivate_user(user, by_admin))
+
+    def test_the_owner_and_the_system_account_are_never_deactivated(self):
+        r = rules([], owner=self.OWNER)
+        self.assertIn("check_can_deactivate_user", r.api.tpr, "registered as a third-party rule")
+        for by_admin in (False, True):
+            self.assertFalse(self.can(r, self.OWNER, by_admin), f"owner, by_admin={by_admin}")
+            self.assertFalse(self.can(r, "@tinhat-system:example.org", by_admin))
+        self.assertTrue(self.can(r, "@alice:example.org"), "everyone else may delete their account")
+        self.assertTrue(self.can(r, "@owner:other.org"), "the same name elsewhere isn't ours")
+        self.assertTrue(self.can(r, "@tinhat-system:other.org"), "another server's system account isn't ours")
+        self.assertTrue(self.can(r, "@TinHat-System:example.org"), "exactly the system account's id, nothing like it")
+        self.assertTrue(self.can(r, NEW), "guests are deactivated by the API")
+
+    def test_no_file_protects_only_the_system_account(self):
+        r = rules([])
+        self.assertTrue(self.can(r, self.OWNER))
+        self.assertFalse(self.can(r, "@tinhat-system:example.org"))
+        r = rules([], owner="")
+        self.assertTrue(self.can(r, self.OWNER), "an unknown owner protects nobody by mistake")
+        self.assertTrue(self.can(r, ""))
+
+    def test_the_file_is_reread_when_it_changes(self):
+        r = rules([], owner=self.OWNER)
+        self.assertFalse(self.can(r, self.OWNER))
+        import os, time
+        p = r.protected.path
+        Path(p).write_text(json.dumps({"owner": "@new:example.org"}))
+        os.utime(p, ns=(time.time_ns() + 10_000_000, time.time_ns() + 10_000_000))
+        self.assertTrue(self.can(r, self.OWNER))
+        self.assertFalse(self.can(r, "@new:example.org"))
 
 
 if __name__ == "__main__":

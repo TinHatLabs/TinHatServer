@@ -63,6 +63,18 @@ function entryLive(c: Content, originTs: number, now: number): boolean {
   return now <= created + expires;
 }
 
+// ---- roster rule (guest-leave, 12.1) ------------------------------------------------------------------------------
+
+/** Who shows "in the call" (rosters, the nav strip, the join banner, "a call is going on"): a call membership counts
+ *  only while its sender's room membership is `join`. Someone kicked (a guest when the guest room is turned off) can't
+ *  withdraw their own membership any more, so it would show them in the call until it expires (up to 4 h). Unknown
+ *  (a lazily-loaded room whose member event isn't here yet) counts: better a stray bubble than a hidden peer.
+ *  NOT for keys (keyrules: a joined member only, unknown = no key) and not for the focus rule. Native: rtc.rs
+ *  roster_counts. */
+export function rosterCounts(membership: string | null | undefined): boolean {
+  return membership === undefined || membership === null || membership === "" || membership === "join";
+}
+
 /** A membership event's content is live (session form or legacy memberships[]). */
 export function contentLive(c: Content | undefined, originTs: number, now = Date.now()): boolean {
   if (!c || Object.keys(c).length === 0) return false;
@@ -478,6 +490,11 @@ export interface Planner {
   readonly pending: number | null;
   /** a holder of the upcoming key has left and the debounce runs */
   readonly departing: boolean;
+  /** when the pending key goes into use (null = nothing pending); desktop `use_at` */
+  readonly useAt: number | null;
+  /** when a step mints for the current departure (its debounce ends; null = no departure, a key already pending, or
+   *  rotation off); desktop `mint_at`. The driver wakes at min(useAt, mintAt) instead of waiting for its 1 s tick. */
+  readonly mintAt: number | null;
   /** what every ladder / steady / refresh / resume announce sends: [current, pending?] */
   announceKeys(): number[];
   step(now: number, R: Iterable<string>): PlanAction[];
@@ -516,6 +533,13 @@ export function createPlanner(index: number, now: number, R: Iterable<string>, c
     },
     get departing() {
       return departAt !== null;
+    },
+    get useAt() {
+      return pending ? pending.useAt : null;
+    },
+    get mintAt() {
+      const at = departAt !== null && !pending ? departAt + cfg.debounceMs : null;
+      return at !== null && Number.isFinite(at) ? at : null;
     },
     announceKeys,
     tick(t: number): PlanAction[] {

@@ -18,6 +18,7 @@ import type { ItemOut } from "@/actions/evaluate";
 import { callRowSnapshot } from "@/actions/decisions";
 import { useActionsSnapshot } from "@/actions/snapshot";
 import { Dim, EditableRow, RowButton, bespokeOk, runRowItem, shownItems, useRow, type RowState } from "@/actions/ui/rowHost";
+import { nativeShareOn } from "@/features/native";
 import s from "./CallBar.module.css";
 import { pttKeys } from "@/actions/shortcutsStore";
 
@@ -241,6 +242,7 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
           onMenu={() => ui().set({ streamPop: !ui().streamPop, optsFace: null })}
           onClick={() => {
             if (sharing) act("stopScreen")();
+            else if (nativeShareOn()) act("shareScreen")(); // the Android app's consent is the picker
             else ui().set({ streamPop: !ui().streamPop, optsFace: null });
           }}
         />

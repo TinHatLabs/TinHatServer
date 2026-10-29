@@ -37,6 +37,7 @@ import { effectivePermsWith, loadRolesState, powerLevelOf, type Perms } from "./
 import { rl } from "./ratelimit";
 import { isRoomId } from "@/app/router";
 import { shareLinkNow } from "@/core/server";
+import { goneText } from "./leftWords";
 
 const log = createLogger("spaces");
 
@@ -753,7 +754,8 @@ async function doMembership(sid: string, mxidIn: string, reasonIn: string, actio
   const cur = membershipOf(c.space, mxid);
   try {
     if (action === "kick") {
-      if (cur !== "join" && cur !== "invite") throw `${name} isn't in the space`;
+      const gone = goneText("space", name, cur); // (leftWords.ts: they may have left while the confirmation was open)
+      if (gone) throw gone;
       await rl(() => c.client.kick(sid, mxid, reason)).catch((e) => {
         throw `Couldn't remove ${name}: ${errText(e)}`;
       });

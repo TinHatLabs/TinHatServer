@@ -262,6 +262,15 @@ def settings() -> tuple[str | None, dict]:
 IP_ECHOES = ("https://1.1.1.1/cdn-cgi/trace", "https://api.ipify.org")
 
 
+def is_public_v6(ip: str | None) -> bool:
+    """A global IPv6 address (not link-local, ULA, loopback, documentation or a v4-mapped one)."""
+    try:
+        a = ipaddress.ip_address(ip or "")
+    except ValueError:
+        return False
+    return a.version == 6 and a.is_global and a.ipv4_mapped is None
+
+
 def is_public_v4(ip: str | None) -> bool:
     """A public IPv4 address. A private one means the answer came back through the router's NAT loopback (the server
     is in the same house as the service it asked): announcing that to callers outside would break their calls."""
@@ -279,7 +288,16 @@ async def public_ip() -> str | None:
         ip = (await names.info()).get("your_ip")
         if is_public_v4(ip):
             return ip
-        if ip:
+        if is_public_v6(ip):
+            # a public address too, just IPv6 (assembly-038: a dual-stack box reached the service over IPv6)
+            log.info("the names service sees this server over IPv6 (%s); asking for its IPv4 address", ip)
+            try:
+                ip4 = (await names.info(socket.AF_INET)).get("your_ip")
+                if is_public_v4(ip4):
+                    return ip4
+            except names.NamesError:
+                pass
+        elif ip:
             log.info("the names service sees this server at %s (not a public address): asking elsewhere", ip)
     except names.NamesError:
         pass

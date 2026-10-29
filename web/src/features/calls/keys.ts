@@ -691,5 +691,6 @@ export async function announceKeys(roomId: string, keys: readonly OwnKey[], why:
 /** DEV builds only (gate G3's spy, via index.tsx's import.meta.env.DEV block — tree-shaken from production): every
  *  key slot this tab received for `roomId`, as identity / index / base64 key. */
 export function receivedKeysForTest(roomId: string): Array<{ identity: string; index: number; key: string }> {
+  if (!import.meta.env.DEV) return []; // assembly-037 W5: the body is dead code in a production bundle
   return [...slots.values()].filter((sl) => sl.roomId === roomId).map((sl) => ({ identity: sl.identity, index: sl.index, key: b64encode(sl.raw) }));
 }

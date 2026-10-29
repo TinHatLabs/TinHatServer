@@ -9,7 +9,7 @@
 // The pure rules live in core/claims.ts; this adds the store the dialog reads and the container events.
 import { create } from "zustand";
 import { openExternal, safeExternalUrl, steamUrl } from "./openlink";
-import { claimFor, destinationHost, linkHoverText, normHost } from "./claims";
+import { claimFor, claimText, destinationHost, linkHoverText, normHost } from "./claims";
 import { TLDS } from "./tlds";
 
 export { destinationHost, linkHoverText, normHost };
@@ -67,8 +67,10 @@ export function linkContainerEvents(onMention?: (mxid: string, a: HTMLAnchorElem
     e.preventDefault();
     e.stopPropagation();
     const mx = a.getAttribute("data-mention");
+    // a bubble's steam:// link carries its address in data-steam, not href (html.ts appLinks)
+    const href = a.getAttribute("href") || a.getAttribute("data-steam");
     if (mx && onMention) onMention(mx, a);
-    else if (!mx && a.getAttribute("href")) openMessageLink(a.getAttribute("href")!, a.textContent ?? "");
+    else if (!mx && href) openMessageLink(href, claimText(a));
   };
   return {
     onClick: activate,
@@ -76,12 +78,17 @@ export function linkContainerEvents(onMention?: (mxid: string, a: HTMLAnchorElem
     onAuxClick: (e: { button: number; target: EventTarget | null; preventDefault(): void; stopPropagation(): void }) => {
       if (e.button === 1) activate(e);
     },
+    // a bubble's steam:// link has no href (html.ts), so the browser gives it no Enter: the same door here
+    onKeyDown: (e: { key: string; target: EventTarget | null; preventDefault(): void; stopPropagation(): void }) => {
+      if (e.key === "Enter" && anchor(e)?.hasAttribute("data-steam")) activate(e);
+    },
     onMouseDown: (e: { button: number; target: EventTarget | null; preventDefault(): void }) => {
       if (e.button === 1 && anchor(e)) e.preventDefault(); // no autoscroll / paste on a link
     },
     onMouseOver: (e: { target: EventTarget | null }) => {
       const a = anchor(e);
-      if (a && a.hasAttribute("href") && !a.getAttribute("data-mention") && !a.hasAttribute("title")) a.setAttribute("title", linkHoverText(a.getAttribute("href") ?? ""));
+      const href = a ? a.getAttribute("href") || a.getAttribute("data-steam") : null;
+      if (a && href && !a.getAttribute("data-mention") && !a.hasAttribute("title")) a.setAttribute("title", linkHoverText(href));
     },
     onDragStart: (e: { target: EventTarget | null; preventDefault(): void }) => {
       if (anchor(e)) e.preventDefault(); // dropping it on the tab bar would open it without the door

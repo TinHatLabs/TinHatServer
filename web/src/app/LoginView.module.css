@@ -131,6 +131,15 @@
   line-height: var(--th-line-small);
   cursor: pointer;
 }
+/* 12.1.1: Try again / Start fresh side by side under the status line (the desktop's restoreActions row) */
+.restoreActions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+.restoreActions .link {
+  width: auto;
+}
 .link:hover:not(:disabled) {
   color: var(--th-login-link-fg-hover);
   text-decoration: underline;
@@ -151,4 +160,19 @@
    44 tall themselves */
 :root[data-touch] .link {
   min-height: 44px;
+}
+
+/* 12.1.1 (replaceConfirm.ts): "This replaces the saved session on this device. Continue?" with Continue / Back side by side */
+.replaceBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.replaceActions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+.replaceActions .link {
+  width: auto;
 }

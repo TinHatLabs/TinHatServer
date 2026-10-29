@@ -63,7 +63,7 @@ test("config_is_public_and_names_the_lan_gateway", async () => {
         const r = await call(fx.p.config);
         assert.equal(r.statusCode, 200);
         assert.equal(r.headers["cache-control"], "no-store");
-        assert.deepEqual(Object.keys(r.body).sort(), ["app_id", "gateway", "vapid"]);
+        assert.deepEqual(Object.keys(r.body).sort(), ["app_id", "gateway", "ring", "vapid"]);
         assert.equal(r.body.gateway, "http://127.0.0.1:3091/_matrix/push/v1/notify"); // the default; a server passes its own
         assert.equal(r.body.app_id, "dev.tinhat.web");
         assert.equal(Buffer.from(r.body.vapid, "base64url").length, 65);
@@ -782,7 +782,7 @@ test("phone_without_push_relay_is_refused_like_any_other_app_id", async () => {
             assert.deepEqual([r.statusCode, r.body], [200, { rejected: [sub.pushkey] }], app);
         }
         assert.equal(fx.fetchImpl.calls.length, 0);
-        assert.deepEqual(Object.keys((await call(fx.p.config)).body).sort(), ["app_id", "gateway", "vapid"], "config unchanged");
+        assert.deepEqual(Object.keys((await call(fx.p.config)).body).sort(), ["app_id", "gateway", "ring", "vapid"], "config unchanged");
         const r = await fx.reg("ta", sub);
         assert.deepEqual([r.statusCode, r.body.reason], [400, "host_not_allowed"], "no relay: its endpoints aren't registrable");
     } finally { fx.cleanup(); }
@@ -792,6 +792,8 @@ test("phone_pushers_go_to_the_relay_with_a_per_event_topic_and_the_phone_cap", a
     const fx = setup({ relay: RELAY + "/" });
     try {
         assert.equal((await call(fx.p.config)).body.relay, RELAY, "config names the relay for the apps");
+        assert.deepEqual((await call(fx.p.config)).body.phone_apps, ["dev.tinhat.ios", "dev.tinhat.android", "dev.tinhat.macos"],
+            "config lists the app ids this server takes, so a Mac app knows it may use its own");
         for (const [i, app] of PUSH.PHONE_APP_IDS.entries()) {
             const sub = subscription(relayEndpoint(`AbCdEfGhIjKlMnOpQrSt${i}v`));
             assert.equal((await fx.reg("ta", sub)).statusCode, 200, "a phone's relay subscription registers");
@@ -909,4 +911,28 @@ test("topics_are_keyed_per_subscription_and_the_key_survives_a_restart", () => {
         writeFileSync(path, "short\n");
         assert.throws(() => loadOrCreateTopicKey(path), /bad push-topic.key/, "a damaged key is never silently replaced");
     } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("mac_app_id_is_a_phone_app_and_never_a_browser", async () => {
+    // dev.tinhat.macos: same relay, same payload as the iPhone app; without a relay it is refused like the others
+    assert.ok(PUSH.PHONE_APP_IDS.includes("dev.tinhat.macos"));
+    assert.ok(Object.isFrozen(PUSH.PHONE_APP_IDS));
+    const fx = setup({ relay: RELAY });
+    try {
+        const sub = subscription(relayEndpoint("MacMacMacMacMacMacMa0v"));
+        assert.equal((await fx.reg("ta", sub)).statusCode, 200);
+        const r = await fx.notify(phoneNote(sub, "dev.tinhat.macos"));
+        assert.deepEqual([r.statusCode, r.body], [200, { rejected: [] }]);
+        assert.equal(fx.fetchImpl.calls.at(-1).url, sub.endpoint, "a Mac pusher goes to the relay");
+        const browser = subscription();
+        assert.equal((await fx.reg("ta", browser)).statusCode, 200, "a browser subscription registers");
+        const sent = fx.fetchImpl.calls.length;
+        const web = await fx.notify(phoneNote(browser, "dev.tinhat.macos"));
+        assert.deepEqual(web.body, { rejected: [browser.pushkey] }, "a Mac pusher with a browser push endpoint is refused");
+        const other = await fx.notify(phoneNote(sub, "dev.tinhat.macos.evil"));
+        assert.deepEqual(other.body, { rejected: [sub.pushkey] }, "only the exact id");
+        assert.equal(fx.fetchImpl.calls.length, sent, "nothing is fetched for a refused pusher");
+        // (without a relay the Mac id is refused and config has neither relay nor phone_apps:
+        // phone_without_push_relay_is_refused_like_any_other_app_id walks every PHONE_APP_IDS entry)
+    } finally { fx.cleanup(); }
 });

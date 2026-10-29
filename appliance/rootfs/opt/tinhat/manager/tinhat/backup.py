@@ -38,9 +38,12 @@ NIGHT_AT = (2, 30)  # owner's time
 KEEP = ["--keep-daily", "7", "--keep-weekly", "4"]
 # The manager's own state: small files; the signing key is the server's identity.
 STATE_ITEMS = ["state.json", "secrets.json", "compose.env", "environment.json", "caddy/etc",
-               "synapse/homeserver.yaml", "synapse/log.config", "synapse/signing.key", "livekit", "wellknown", "ca",
-               # a home-network server's own certificate authority (its key): restored, devices keep trusting it
-               "caddy/data/caddy/pki",
+               "synapse/homeserver.yaml", "synapse/log.config", "synapse/signing.key", "livekit", "wellknown",
+               # "ca": the public root only (+ the lab's bundles). NOT the home-network certificate authority's private key
+               # (caddy/data/caddy/pki) since 0.3.8 (security review, server manager lows): whoever holds a backup could
+               # issue certificates every device of the owner's trusts. A restored home-network server makes a new CA; each
+               # device installs its certificate once (the restore says so; docs/LAUNCH-READINESS.md §2).
+               "ca",
                # the Tin Hat API's own data: people's uploaded sounds, the games catalogue, push registrations, the Guests
                # room (guests.json: which room, on/off, its link) and its guest accounts, the game-servers config (its keys
                # come back from secrets.json; the clip cache is just a cache)

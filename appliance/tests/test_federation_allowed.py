@@ -227,7 +227,7 @@ class NeverDropped(Base):
 
     def test_their_disconnect_never_removes_a_server_allowed_by_name(self):
         self.write(**HAND_SET)
-        st, out = self.run_(self.f.handle_disconnect("matrix.example.org", "nonce"))  # no network: refused before any call
+        st, out = self.run_(self.f.handle_disconnect("matrix.example.org", "AbCdEfGhIjKlMnOpQrStUv"))  # no network: refused before any call
         self.assertEqual((st, out), (200, {"ok": True}))
         self.assertEqual(self.st()["federation"], ["matrix.example.org"])
         self.assertEqual(self.applied, [])

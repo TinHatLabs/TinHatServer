@@ -18,7 +18,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp.abc import AbstractResolver
 
-from . import apiconf, compose, config, console, environment, hw, names, owndomain, relay, state, templates
+from . import apiconf, compose, config, console, environment, hw, names, owndomain, relay, restoresafe, state, templates
 from .synapse import Synapse
 
 log = logging.getLogger("tinhat.install")
@@ -43,7 +43,7 @@ STEPS_ANYWHERE = [
     ("secure", "Getting a certificate (HTTPS)"),
     ("ports", "Opening ports on your router"),
     ("calls", "Starting voice and video calls"),
-    ("outside", "Checking from outside your home"),
+    ("outside", "Checking from outside"),
     ("finish", "Finishing up"),
 ]
 
@@ -58,7 +58,7 @@ STEPS_DOMAIN = [
     ("secure", "Getting a certificate (HTTPS)"),
     ("ports", "Opening ports on your router"),
     ("calls", "Starting voice and video calls"),
-    ("outside", "Checking from outside your home"),
+    ("outside", "Checking from outside"),
     ("finish", "Finishing up"),
 ]
 
@@ -80,7 +80,7 @@ STEPS_RESTORE_ANYWHERE = [
     ("secure", "Getting a certificate (HTTPS)"),
     ("ports", "Opening ports on your router"),
     ("calls", "Starting voice and video calls"),
-    ("outside", "Checking from outside your home"),
+    ("outside", "Checking from outside"),
     ("finish", "Finishing up"),
 ]
 
@@ -279,10 +279,13 @@ class Installer:
         try:
             res = await names.register(a["name"], a.get("code", ""))
         except names.NamesError as e:
-            raise InstallError(str(e) + (" Go back to the Name step to change it." if e.code in ("taken", "code", "format",
+            raise InstallError(names.explain(e) + (" Go back to the Name step to change it." if e.code in ("taken", "code", "format",
                                "system", "brand", "phish", "offensive", "punycode") else ""), e.code)
-        state.save_state(names_status={"status": "active", "ip4": res.get("ip"), "checked": int(time.time()), "reason": None})
-        return f"{res['fqdn']} now points to your home ({res.get('ip')})."
+        ip4 = res.get("ip4") or (res.get("ip") if ":" not in str(res.get("ip") or "") else None)
+        ip6 = res.get("ip6") or (res.get("ip") if ":" in str(res.get("ip") or "") else None)
+        state.save_state(names_status={"status": "active", "ip4": ip4, "ip6": ip6, "checked": int(time.time()), "reason": None})
+        where = " and ".join(x for x in (ip4 and f"IPv4 {ip4}", ip6 and f"IPv6 {ip6}") if x) or res.get("ip")
+        return f"{res['fqdn']} points to this server ({where})."
 
     async def _s_prepare(self, a: dict) -> str:
         s = state.load_secrets()
@@ -500,11 +503,11 @@ class Installer:
                                f"this domain's DNS, then press Try again.")
         if moved:
             state.save_state(domain_status={"ip4": ip, "updated": True, "error": None}, livekit_public_ip=ip)
-            return f"{sn} now points to your home ({ip}) through {label}."
+            return f"{sn} points to this server ({ip}) through {label}."
         state.save_state(livekit_public_ip=ip)
         now = await asyncio.to_thread(owndomain.resolves_to, sn)
         if ip in now:
-            return f"{sn} already points to your home ({ip})."
+            return f"{sn} already points to this server ({ip})."
         where = "at your domain's DNS provider" if own["provider"] == "proxy" else f"in your {label} settings"
         return ("warn", f"Point {sn} at {ip} (an A record) {where}; friends need it to find the server. If your "
                         "home's address changes, your router's dynamic DNS can keep it current.")
@@ -580,8 +583,21 @@ class Installer:
         if res.returncode != 0:
             raise InstallError("Couldn't read the backup.", backup._why(res))
         root = files / str(backup.STAGING).lstrip("/")
-        if not (root / "db.dump").exists() or not (root / "state" / "synapse" / "signing.key").exists():
+        # untrusted input (restoresafe): no link or special file survives to be followed by a copy below
+        try:
+            removed = await asyncio.to_thread(restoresafe.strip_specials, files)
+        except restoresafe.UnsafeBackup as e:
+            raise InstallError(str(e))
+        if removed:
+            log.warning("restore: removed %d link(s)/special file(s) from the backup: %s", len(removed), ", ".join(removed[:20]))
+        if not (root / "db.dump").is_file() or not (root / "state" / "synapse" / "signing.key").is_file():
             raise InstallError("The backup is missing the database or the server's identity (signing key).")
+        try:
+            restoresafe.check_secrets(state.read_json(root / "state" / "secrets.json", None))
+        except restoresafe.UnsafeBackup as e:
+            raise InstallError(str(e))
+        # since 0.3.8 a backup holds no home-network CA key (backup.STATE_ITEMS): Caddy makes a new CA in "secure"
+        new_ca = a.get("mode", "lan") == "lan" and not (root / "state" / "caddy" / "data" / "caddy" / "pki").exists()
         for item in backup.STATE_ITEMS:
             if item in ("state.json", "environment.json"):  # state is merged below; the environment is this box's
                 continue
@@ -591,9 +607,11 @@ class Installer:
             dst.parent.mkdir(parents=True, exist_ok=True)
             if src.is_dir():
                 shutil.rmtree(dst, ignore_errors=True)
-                shutil.copytree(src, dst)
+                shutil.copytree(src, dst, symlinks=True)
             else:
-                shutil.copy2(src, dst)
+                if dst.is_symlink():  # never write through a link on this side either
+                    dst.unlink()
+                shutil.copy2(src, dst, follow_symlinks=False)
         old = state.read_json(root / "state" / "state.json", {})
         drop = {"phase", "ports", "reach", "assessment", "failed_step", "error", "error_details", "names_notices",
                 "connect_codes", "names_status", "restoring", "livekit_public_ip",
@@ -619,16 +637,25 @@ class Installer:
         c = meta.get("counts") or {}
         return (f"The backup from {(meta.get('created') or '?')[:16].replace('T', ' ')} UTC"
                 + (f": {_n(c.get('people'), 'person', 'people')}, {_n(c.get('rooms'), 'room', 'rooms')}, "
-                   f"{_n(c.get('messages'), 'message', 'messages')}." if c else "."))
+                   f"{_n(c.get('messages'), 'message', 'messages')}." if c else ".")
+                + (" This computer makes a new certificate for your home network: install it once more on each phone "
+                   "and computer (the welcome page shows how)." if new_ca else ""))
 
     async def _s_restoredb(self, a: dict) -> str:
         await self._s_database(a)  # the database server, empty
         pw = state.load_secrets()["postgres_password"]
+        if not restoresafe.CONFIG_SECRETS["postgres_password"].fullmatch(str(pw)):  # (checked in _s_restore already)
+            raise InstallError("The backup's database password doesn't look like Tin Hat's own; it wasn't restored.")
         dump = config.STATE_DIR / "restore" / "db.dump"
         psql = ("exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "synapse", "-d", "postgres", "-c")
         # The restored settings carry the database password; a database server started before on this box may
-        # have another one, so set it, then replace the empty database with the backup's.
-        for sql in (f"ALTER ROLE synapse WITH PASSWORD '{pw}'", "DROP DATABASE IF EXISTS synapse WITH (FORCE)",
+        # have another one, so set it — as a psql variable on stdin, quoted by psql (restoresafe.alter_role_sql),
+        # never pasted into SQL — then replace the empty database with the backup's.
+        rc, out = await compose.run("exec", "-T", "postgres", "psql", "-X", "-v", "ON_ERROR_STOP=1", "-v", f"pw={pw}", "-U",
+                                    "synapse", "-d", "postgres", timeout=300, stdin=restoresafe.alter_role_sql().encode())
+        if rc != 0:
+            raise InstallError("Couldn't prepare the database for the backup.", _tail(out))
+        for sql in ("DROP DATABASE IF EXISTS synapse WITH (FORCE)",
                     "CREATE DATABASE synapse ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0"):
             rc, out = await compose.run(*psql, sql, timeout=300)
             if rc != 0:
@@ -887,6 +914,7 @@ def write_wellknowns(st: dict, sn: str, calls: bool) -> None:
     held = {f["name"] for f in st.get("former_names") or [] if isinstance(f, dict) and f.get("name") and not f.get("released")}
     feats, rec, web = apiconf.features(st), apiconf.recorder(st), apiconf.settings(st)["web"]
     owner = apiconf.owner(st | {"server_name": sn})
+    apiconf.publish_protected(owner)  # Synapse's tinhat_rules refuses to deactivate this account (docs/ACCOUNT-SAFETY.md)
     state.write_text(wk / "client", templates.wellknown_client(sn, calls, config.VERSION, former, features=feats, recorder=rec,
                                                                web=web, owner=owner), 0o644)
     state.write_text(wk / "server", templates.wellknown_server(sn), 0o644)

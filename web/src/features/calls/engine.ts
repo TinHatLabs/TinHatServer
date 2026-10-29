@@ -57,6 +57,7 @@ import {
   approveFocus,
   keyRotationOff,
   liveSessions,
+  rawMemberEvents,
   sweepOwnGhosts,
   withdrawKeepalive,
   withdrawMembership,
@@ -71,10 +72,11 @@ import { askCallHost, dismissHostAsk, trustCallHost } from "./hostsheet";
 import { buildMicOptions, micProcessorFor, rnnoiseAvailable } from "./mic";
 import { av1Probe, av1Watch } from "./av1";
 import { shareFit, SHARE_MAX_DIM } from "./shareFit";
+import { companions, foldCompanions } from "./companions";
 import { setCallAudioSession } from "@/core/sounds";
 import type { Stamp } from "./envclock";
 // Tin Hat apps (bridge 2): the phone's native device does the call — Join goes to the app, never this engine
-import { joinNatively, nativeDeviceId, pageOwnsMembership } from "@/features/native";
+import { joinNatively, nativeDeviceId, nativeShareOn, nativeShareStart, nativeShareStop, pageOwnsMembership } from "@/features/native";
 
 const log = createLogger("call");
 
@@ -311,7 +313,10 @@ export function rebuildTiles(): void {
       ...hooks.shieldFor(p.identity),
     });
   }
-  patch({ tiles, recOnlyFlags });
+  // Screen-share companions (the Android app's native device sharing for a person): their share joins that person's
+  // tiles instead of a second avatar + name (companions.ts, SCREEN-SHARE.md §4). Orphans stay ordinary participants.
+  const folded = foldCompanions(tiles, companions(rawMemberEvents(s.roomId), liveSessions(s.roomId)), s.myIdentity);
+  patch({ tiles: folded, recOnlyFlags });
   reconcileVideo();
 }
 
@@ -1589,6 +1594,14 @@ let shareOp = 0;
 export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
   const s = sess();
   if (!s) return;
+  // Inside the Android app the WebView can't capture: the app shares as a companion of this page's call device
+  // (features/native/screenShare.ts); its consent replaces the picker. Its share is a room participant, so "for the
+  // recording only" can't be kept: refused rather than broadcast.
+  if (opts.recordingOnly && nativeShareOn()) {
+    setStatus("Sharing for the recording only isn't available in the Tin Hat app");
+    return;
+  }
+  if (nativeShareStart(s.roomId, peekClient()?.getDeviceId() ?? getSession().deviceId ?? "")) return;
   if (!navigator.mediaDevices?.getDisplayMedia) {
     setStatus("Share failed: your browser can't share the screen");
     return;
@@ -1675,6 +1688,7 @@ export async function stopScreen(quiet = false): Promise<void> {
   shareOp++; // a start / codec re-publish still in flight stands down
   const s = sess();
   if (!s) return;
+  if (!s.screen && nativeShareStop()) return; // the app's share (it reports "stopped"; the flag drops at once)
   await takeDownScreen(s, quiet);
 }
 
@@ -2556,6 +2570,10 @@ function startLoops(s: Sess) {
     }, 1000),
   );
   watchCallRoom(s);
+  s.cleanups.push(() => {
+    if (s.planWake) clearTimeout(s.planWake);
+    s.planWake = null;
+  });
   planStep(s);
   // 30 min membership refresh (same created_ts), then re-announce
   s.timers.push(setInterval(() => void refreshMembership(s), 30 * 60 * 1000));
@@ -2616,6 +2634,7 @@ function ownKeys(s: Sess): OwnKey[] {
 
 /** DEV builds only (gate G3): our own key ring + planner state. */
 export function ownKeysForTest(): { inUse: number; pending: number | null; keys: Array<{ index: number; key: string }> } | null {
+  if (!import.meta.env.DEV) return null; // assembly-037 W5: the body is dead code in a production bundle
   const s = sess();
   if (!s) return null;
   return { inUse: s.planner.inUse, pending: s.planner.pending, keys: ownKeys(s).map((k) => ({ index: k.index, key: b64encode(k.key) })) };
@@ -2697,7 +2716,10 @@ function planStep(s: Sess): void {
         s.planAgain = false;
         if (!live(s)) return;
         await syncSender(s);
-        const R = await currentRecipients(s.roomId, s.sfuGone);
+        // bounded (assembly-037 W2): a local crypto-store read that hangs would keep planBusy set, so no departure is
+        // evaluated and no key minted while it hangs. A read past the bound skips this round (the catch below; the 1 s
+        // tick and the next trigger step again) — never an empty set, which would read as everyone gone.
+        const R = await withTimeout(currentRecipients(s.roomId, s.sfuGone), 1500, "recipients read timed out");
         if (!live(s)) return;
         // an obligation ends when its key is superseded (a newer mint owes its own set) — never because a device is
         // briefly missing from R (a transient read failure must not erase it)
@@ -2706,6 +2728,7 @@ function planStep(s: Sess): void {
         const acts = s.planner.step(Date.now(), R);
         // W1: this step's new key exists before anything below awaits (the tick may switch to it meanwhile)
         for (const idx of mintAtStep(acts, s.keyRing, mintKey)) persistMintIndex(idx);
+        armPlanWake(s); // a mint's use time: armed now, not after the sends below
         for (const a of acts) {
           if (!live(s)) return;
           await planAct(s, a);
@@ -2716,8 +2739,31 @@ function planStep(s: Sess): void {
       log.warn(`[key-rotate] ${errText(e)}`);
     } finally {
       s.planBusy = false;
+      armPlanWake(s);
     }
   })();
+}
+
+/** Wake at the planner's next due time — a departure's debounce end (→ step: mint) or a pending key's use time (→ tick:
+ *  switch) — instead of up to a second later on the 1 s tick, which stays as the fallback (sec-night, 12.1.x: the web
+ *  sender went silent ~1 s later than the desktop after a leave; the desktop's driver sleeps to the same times). */
+function armPlanWake(s: Sess): void {
+  if (s.planWake) clearTimeout(s.planWake);
+  s.planWake = null;
+  if (!live(s)) return;
+  const due = [s.planner.useAt, s.planner.mintAt].filter((x): x is number => x !== null);
+  if (!due.length) return;
+  const at = Math.min(...due);
+  // an overdue time gets one immediate wake; still overdue at the next look (a step that failed before stepping) →
+  // back to the tick's cadence, never a tight loop
+  const wait = at > Date.now() ? at - Date.now() : s.planWakeAt === at ? 1000 : 0;
+  s.planWakeAt = at;
+  s.planWake = setTimeout(() => {
+    s.planWake = null;
+    if (sess() !== s) return;
+    if (s.planner.tick(Date.now()).length || s.sendingIndex !== s.planner.inUse) void syncSender(s);
+    planStep(s);
+  }, wait + 5);
 }
 
 /** Our sender encrypts with the planner's key in use (a failed switch is retried at every step, never dropped). */
@@ -2831,6 +2877,7 @@ function watchCallRoom(s: Sess): void {
     if (sess() !== s || ev.getRoomId() !== s.roomId) return;
     const t = ev.getType();
     if (t === MEMBER_TYPE || t === "m.room.member") planStep(s);
+    if (t === MEMBER_TYPE) rebuildTiles(); // a companion's main came or went (fold / unfold)
   };
   const onDevices = () => sess() === s && planStep(s);
   c.on(RoomStateEvent.Events, onState);

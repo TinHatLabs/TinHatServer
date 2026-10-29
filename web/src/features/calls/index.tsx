@@ -23,7 +23,7 @@ import { onClientChanged, onSessionEnding, peekClient, useRoomStateAll, useSessi
 import { onPrefChange } from "@/core/prefs";
 import { createLogger } from "@/core/log";
 import type { CallStore, HearSnapshot } from "./contract";
-import { useCallStore, getCall } from "./store";
+import { useCallStore, getCall, patch, setStatus } from "./store";
 import * as engine from "./engine";
 import * as audio from "./audio";
 import { applyGameChat, applyShareRecordingOnly, joinCorner, leaveCorner, pullAside, setTileTunedIn } from "./topics";
@@ -37,14 +37,15 @@ import "./stats";
 import "./rxstats";
 import { runConnectionTest } from "./extras";
 import { receivedKeysForTest, ingestKeyEvent, installKeyIntake } from "./keys";
-import { callActive } from "./rtc";
+import { callActive, liveSessions, rawMemberEvents } from "./rtc";
+import { companions as companionsOf } from "./companions";
 import { AFK_TYPE, mxidOf } from "./util";
 import { adoptGuestHandoff } from "./guest";
 import { rnnoiseAvailable as rnnoiseAvailableProbe } from "./mic";
 import { installCallResume, resumeFromTap } from "./resume";
 import { eventKeyName } from "@/core/shortcuts";
 import { pttKeys } from "@/actions/shortcutsStore";
-import { installWebCallBridge } from "@/features/native";
+import { installScreenShareBridge, installWebCallBridge } from "@/features/native";
 
 export type * from "./contract";
 export { useCallStore } from "./store";
@@ -57,6 +58,11 @@ export const joinSoundHandledByEngine = true;
 export { rnnoiseAvailable } from "./mic";
 // widgets (Call stats) — ADDITIVE: receiver stats per person, ConnectionQuality, tinhat.rxq (WIDGETS.md §5/§6)
 export { useRxStats, useRxStore, watchRxStats, type RxPerson, type RxState } from "./rxstats";
+export { foldPeers, type FoldedPeer } from "./companions";
+/** The screen-share companions of a room's call (companions.ts over the live sessions): `[companion, main]` pairs. */
+export function callCompanions(roomId: string | null | undefined): Array<[string, string]> {
+  return roomId ? companionsOf(rawMemberEvents(roomId), liveSessions(roomId)) : [];
+}
 export { focusServiceUrl } from "./rtc"; // widgets W2: "Is it just me?" probes the call JWT service
 // M1 (calls round): the call-host sheet (callui/CallHostSheet.tsx) and Settings → Calls → "Call hosts you trust"
 export { setHostAsker, trustCallHost, untrustCallHost, type HostAnswer, type HostQuestion } from "./hostsheet";
@@ -235,6 +241,16 @@ function install() {
       },
       leave: () => engine.leaveCall(),
     },
+  });
+  // The Android app shares the screen for the page (its WebView can't): the Share button asks it, and its events drive
+  // the call's "sharing" flag for the room we're in a call in (features/native/screenShare.ts). A no-op elsewhere.
+  installScreenShareBridge({
+    callRoom: () => {
+      const s = getCall();
+      return !s.fake && (s.inCall || s.connecting || s.reconnecting) ? s.callRoomId : "";
+    },
+    setSharing: (on) => patch(on ? { sharing: true } : { sharing: false, shareRecOnly: false }),
+    status: (text) => setStatus(text),
   });
   // A killed tab's ghost membership: sweep again once the first NETWORK sync is in (the IndexedDB
   // cache the onReady sweep sees can predate the ghost), and once more 20 s later.

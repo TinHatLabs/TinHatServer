@@ -7,10 +7,11 @@
 // wrapped (a broken or hostile object can't throw into a click handler). The page passes the app ids only: a room id,
 // a room name, the signed-in mxid — never a token, key or password.
 
-export type NativeCap = "calls" | "servers" | "haptics" | "notifications" | "trust";
+export type NativeCap = "calls" | "servers" | "haptics" | "notifications" | "trust" | "screenshare";
 
 export interface NativeInfo {
-  platform: "ios" | "android";
+  /** "macos" = the Mac app (WEB-PROPOSAL-MACOS.md): the web's desktop layout in a WKWebView, caps ["servers"] + webCall */
+  platform: "ios" | "android" | "macos";
   bridge: number;
   caps: readonly string[];
   /** the app's own version ("0.1.0"); "" when it doesn't say (About & help, bug reports) */
@@ -29,6 +30,7 @@ interface RawNative {
   notifications?: unknown;
   signedOut?: unknown;
   trust?: unknown;
+  screenShare?: unknown;
 }
 
 function raw(): RawNative | null {
@@ -57,7 +59,7 @@ export function nativeInfo(): NativeInfo | null {
   try {
     const i = n.info as { platform?: unknown; bridge?: unknown; caps?: unknown; app?: unknown } | undefined;
     if (!i || typeof i !== "object") return null;
-    if (i.platform !== "ios" && i.platform !== "android") return null;
+    if (i.platform !== "ios" && i.platform !== "android" && i.platform !== "macos") return null;
     if (typeof i.bridge !== "number" || !Number.isFinite(i.bridge) || i.bridge < 1) return null;
     const caps = Array.isArray(i.caps) ? i.caps.filter((c): c is string => typeof c === "string").slice(0, 32) : [];
     const app = typeof i.app === "string" && /^[0-9A-Za-z.+-]{1,32}$/.test(i.app) ? i.app : "";
@@ -70,6 +72,14 @@ export function nativeInfo(): NativeInfo | null {
 /** The page runs inside a Tin Hat app (iOS or Android). The web-push / Home Screen rows key off this. */
 export function inTinHatApp(): boolean {
   return nativeInfo() !== null;
+}
+
+/** The page runs inside a Tin Hat PHONE app (iOS / Android): the phone-only words and rows (its web view has no
+ *  Notification API; "Notifications on this phone"). The Mac app ("macos") keeps the desktop's notification switches:
+ *  it routes the page's Notification to Notification Center. */
+export function inPhoneApp(): boolean {
+  const i = nativeInfo();
+  return !!i && (i.platform === "ios" || i.platform === "android");
 }
 
 /** The app CLAIMS the calls (bridge ≥ 2 and "calls"), whether or not its call functions work: then the page never
@@ -89,6 +99,7 @@ export function hasNativeCap(cap: NativeCap): boolean {
   if (cap === "servers") return typeof member("chooseServer") === "function";
   if (cap === "notifications") return (["state", "enable", "disable"] as const).every((k) => notifyFn(k) !== null);
   if (cap === "trust") return trustFn("pending") !== null && trustFn("result") !== null;
+  if (cap === "screenshare") return shareFn("start") !== null && shareFn("stop") !== null;
   return true;
 }
 
@@ -315,5 +326,99 @@ export const nativeTrust = {
   async resultRaw(userId: string, deviceId: string, result: string, ms = TRUST_ASK_MS): Promise<unknown> {
     if (!hasNativeCap("trust") || !userIdOk(userId)) return null;
     return askTrust("result", { userId, deviceId, result }, ms);
+  },
+};
+
+// ---- screen share through the app (caps "screenshare"; Android, SCREEN-SHARE.md §7) ---------------------------------
+// The WebView has no getDisplayMedia: the app's native device joins the page's call as a share-only companion of the
+// page's own call device and publishes the screen. The page only asks (room id + its own device id) and shows the
+// state the app reports. Nothing secret crosses.
+
+export type ShareState = "sharing" | "denied" | "failed" | "stopped";
+export interface ShareAnswer {
+  state: ShareState;
+  /** a sentence for the person ("" = none) */
+  error: string;
+}
+export interface ShareEvent {
+  state: "sharing" | "stopped";
+  roomId: string;
+}
+const SHARE_STATES: readonly string[] = ["sharing", "denied", "failed", "stopped"];
+
+const oneLine = (v: unknown): string => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f]+/g, " ").trim().slice(0, 300) : "");
+
+/** The app's answer to start() / stop(), checked: an unknown state → null. */
+export function parseShareAnswer(v: unknown): ShareAnswer | null {
+  try {
+    if (!v || typeof v !== "object") return null;
+    const { state, error } = v as { state?: unknown; error?: unknown }; // each property read once
+    if (typeof state !== "string" || !SHARE_STATES.includes(state)) return null;
+    return { state: state as ShareState, error: oneLine(error) };
+  } catch {
+    return null;
+  }
+}
+
+/** A "tinhatnative:screenshare" event's detail, checked ({state: "sharing" | "stopped", roomId}: the contract's two
+ *  event states — denied / failed only ever come as start()'s answer); anything else → null. */
+export function parseShareEvent(v: unknown): ShareEvent | null {
+  try {
+    if (!v || typeof v !== "object") return null;
+    const { state, roomId } = v as { state?: unknown; roomId?: unknown };
+    if ((state !== "sharing" && state !== "stopped") || !roomIdOk(roomId)) return null;
+    return { state, roomId };
+  } catch {
+    return null;
+  }
+}
+
+/** A Matrix device id as the page passes it (the page's own `client.getDeviceId()`): short, no spaces. */
+export function deviceIdOk(v: unknown): v is string {
+  return typeof v === "string" && v.length > 0 && v.length <= 255 && !/[\s\0]/.test(v);
+}
+
+/** `tinhatNative.screenShare[name]`, bound, or null (guarded reads: getters may throw). */
+function shareFn(name: "start" | "stop"): ((arg?: unknown) => unknown) | null {
+  try {
+    const o = member("screenShare");
+    if (!o || typeof o !== "object") return null;
+    const f = (o as Record<string, unknown>)[name];
+    return typeof f === "function" ? (arg?: unknown) => (f as (a?: unknown) => unknown).call(o, arg) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** How long the page waits for start(): the app may show its one-time setup sheet, the host sheet and Android's
+ *  consent first. A late answer is ignored (the app's event still tells the page). */
+export const SHARE_START_MS = 150_000;
+export const SHARE_STOP_MS = 10_000;
+
+async function askShare(name: "start" | "stop", arg: unknown, ms: number): Promise<ShareAnswer | null> {
+  const f = shareFn(name);
+  if (!f) return null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const p = Promise.resolve(f(arg));
+    const late = new Promise<null>((r) => (timer = setTimeout(() => r(null), ms)));
+    return parseShareAnswer(await Promise.race([p, late]));
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const nativeScreenShare = {
+  /** Ask the app to share the screen into the page's call in `roomId`, as a companion of `deviceId` (the page's own
+   *  call device). null = no usable answer (no app / no cap / bad ids / no answer in time). */
+  async start(roomId: string, deviceId: string, ms = SHARE_START_MS): Promise<ShareAnswer | null> {
+    if (!hasNativeCap("screenshare") || !roomIdOk(roomId) || !deviceIdOk(deviceId)) return null;
+    return askShare("start", { roomId, deviceId }, ms);
+  },
+  async stop(ms = SHARE_STOP_MS): Promise<ShareAnswer | null> {
+    if (!hasNativeCap("screenshare")) return null;
+    return askShare("stop", undefined, ms);
   },
 };

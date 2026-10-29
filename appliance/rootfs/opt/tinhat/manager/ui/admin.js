@@ -1002,7 +1002,7 @@ async function tabNetwork(el, quiet) {
     notices.length ? h("div.card.stack", h("h2", "From the Tin Hat names service"), ...notices,
       h("div.row.end", h("button.btn.ghost", { onclick: async () => { await api("/admin/api/network/notices-seen", { json: {} }); tabNetwork(el, true); } }, "Dismiss"))) : null,
     h("div.card.stack",
-      h("div.row.wrap.between", h("h2", "Friends outside your home"), h(`span.chip.${level}`, h("span.dot"), level === "good" ? "Reachable" : level === "warn" ? "Partly" : "Not reachable")),
+      h("div.row.wrap.between", h("h2", "Friends outside"), h(`span.chip.${level}`, h("span.dot"), level === "good" ? "Reachable" : level === "warn" ? "Partly" : "Not reachable")),
       h("p", sm.headline || "Not checked yet."),
       ...(sm.lines || []).map((l) => h("p.muted", l)),
       (sm.fix || []).length ? h("div.stack-sm", h("div.k", "In your router's settings (often its phone app):"), h("ul.fix", sm.fix.map((f) => h("li", f)))) : null,

@@ -3,8 +3,10 @@
 // banner. The calls engine will expose `useRoomCall(roomId)` with SFU truth for OUR call; this is the
 // chat's read-only fallback until integration wires that in (see CORE-CHANGES / integration notes).
 import { useEffect, useState } from "react";
-import { RoomStateEvent, type MatrixEvent } from "matrix-js-sdk";
+import { RoomMemberEvent, RoomStateEvent, type MatrixEvent, type RoomMember } from "matrix-js-sdk";
 import { peekClient, useClient } from "@/core/matrix";
+import { callerMembership, onMemberProbe } from "@/features/calls/memberprobe";
+import { rosterCounts } from "@/features/calls/callrules";
 
 const TYPES = ["org.matrix.msc3401.call.member", "m.call.member", "m.rtc.member"];
 const DEFAULT_EXPIRE = 14400000;
@@ -44,6 +46,8 @@ export function readRoomCall(roomId: string): RoomCallInfo {
       if (!isLive(ev, now)) continue;
       const u = ev.getSender() ?? "";
       if (!u || seen.has(u)) continue;
+      // kicked / left: they can't withdraw it any more; no member event here (lazy loading): probed once, counts till then
+      if (!rosterCounts(callerMembership(roomId, u))) continue;
       seen.add(u);
       const m = room.getMember(u);
       out.push({ userId: u, name: m?.name && m.name !== u ? m.name : u.replace(/^@/, "").split(":")[0] });
@@ -65,12 +69,20 @@ export function useRoomCallInfo(roomId: string): RoomCallInfo {
     upd();
     if (!client) return;
     const on = (ev: MatrixEvent) => {
-      if (ev.getRoomId() === roomId && TYPES.includes(ev.getType())) upd();
+      if (ev.getRoomId() === roomId && (TYPES.includes(ev.getType()) || ev.getType() === "m.room.member")) upd();
+    };
+    const offProbe = onMemberProbe(upd);
+    // RoomStateEvent.Events fires before the RoomMember is updated: a kick is seen here, once the member says so
+    const onMember = (_ev: MatrixEvent, m: RoomMember) => {
+      if (m.roomId === roomId) upd();
     };
     client.on(RoomStateEvent.Events, on);
+    client.on(RoomMemberEvent.Membership, onMember);
     const t = window.setInterval(upd, 30000);
     return () => {
       client.off(RoomStateEvent.Events, on);
+      client.off(RoomMemberEvent.Membership, onMember);
+      offProbe();
       window.clearInterval(t);
     };
   }, [client, roomId]);

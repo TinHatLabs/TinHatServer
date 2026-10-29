@@ -30,15 +30,25 @@ export function linkTarget(input: string): LinkTarget {
   // a link to a message (`!room:server/$event`, matrix.to's and ours): the room. Only a `/` followed by an event id
   // (`$…`) ends the room part (`/` is legal in an alias: a bare `#a/b:server` stays whole). Cut before decoding, so an
   // encoded `%2F` inside an alias stays in it and a broken escape in the event part can't stop the room decoding …
-  const slash = s.indexOf("/");
-  if (slash > 0 && /^[!#]/.test(s) && s.charAt(slash + 1) === "$") s = s.slice(0, slash);
+  s = cutAtEvent(s);
   // anything still encoded (a non-ASCII alias); a malformed escape keeps the text as it is
   s = decodeOrKeep(s).trim();
   // … and again after it, for a link that encoded the `/$` too
-  const ev = s.indexOf("/$");
-  if (ev > 0 && /^[!#]/.test(s)) s = s.slice(0, ev);
+  s = cutAtEvent(s);
   if (s.startsWith("@") && s.includes(":")) return { kind: "person", who: s };
   // `!id:server` / `#alias:server` (something on both sides of the `:`), or a room-version-12 id `!opaque`
   if (/^[!#][^:]+:[^]+$/.test(s) || /^![^\s:]+$/.test(s)) return { kind: "room", target: s, via };
   return { kind: "none" };
+}
+
+/** `!room:server/$event` → the room: cut at the first `/$` whose head is a whole room (`!id:server`, `#alias:server`
+ *  or a v12 `!opaque`). An alias may itself hold `/$` (`#a/$b:server`, legal): its `#a` is no room, so it stays whole
+ *  (assembly-037 W4; room.rs cut_at_event is the same rule). */
+function cutAtEvent(s: string): string {
+  if (!/^[!#]/.test(s)) return s;
+  for (let i = s.indexOf("/$"); i > 0; i = s.indexOf("/$", i + 1)) {
+    const head = s.slice(0, i);
+    if (/^[!#][^:]+:[^]+$/.test(head) || /^![^\s:]+$/.test(head)) return head;
+  }
+  return s;
 }

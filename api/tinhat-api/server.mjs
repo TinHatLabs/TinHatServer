@@ -11,6 +11,7 @@ import { createHs, createMatrixAuth, RateLimit, clientKey, ipBucket, trustProxy 
 import { createLimits } from "./limits.mjs";
 import { installPresence } from "./presence.mjs";
 import { installPush } from "./push.mjs";
+import { RING } from "./ring.mjs";
 import { installGameServers } from "./gameservers.mjs";
 import { installWatch } from "./watch.mjs";
 import { installGuests } from "./guests.mjs";
@@ -1119,7 +1120,12 @@ installPush(app, {
     gatewayListen: { host: process.env.PUSH_GATEWAY_HOST || "127.0.0.1", port: Number(process.env.PUSH_GATEWAY_PORT || 3091) },
     gatewayUrl: required("PUSH_GATEWAY_URL"), subject: required("PUSH_SUBJECT"),
     relay: process.env.PUSH_RELAY || null, // the Tin Hat phone apps' relay (docs/PHONE-PUSH.md); unset = phones refused
+    // DM ringing (ring.mjs): only local callees ring; never a guest on either side
+    serverName: process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname,
+    isGuest: (mxid) => guestAccounts.some((a) => a.user === mxid) || /^@guest-/i.test(mxid),
 });
+// Where Synapse's tinhat_calls module pokes us about call membership changes: the gateway's own listener (ring.mjs).
+publish("call-hook.json", { url: new URL(RING.HOOK_PATH, new URL(required("PUSH_GATEWAY_URL")).origin).href });
 
 // The guest room (docs/GUESTS.md in the server repository): one optional Guests room, a link that can be renewed,
 // guests wait at the door until a member lets them in. Needs the system account (a Synapse admin) and the

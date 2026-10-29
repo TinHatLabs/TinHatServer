@@ -96,6 +96,11 @@ modules:
   - module: tinhat_rules.GuestRules
     config:
       dir: /tinhat-api
+  # DM ringing: the Tin Hat API hears about call membership changes (pokes only; it reads the room itself) and asks
+  # whether a room is muted for someone before a phone rings (docs/API.md "Ringing").
+  - module: tinhat_calls.CallHook
+    config:
+      dir: /tinhat-api
 
 # New people land in the server's first room: the manager joins them (newcomers.py), not Synapse's auto_join_rooms,
 # which would join the guest room's temporary accounts to #general too.
@@ -401,8 +406,19 @@ https://{server_name} {{
 		root * /srv/web
 {web_csp}		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/*
+		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/* /guest /guest/*
 		header @fresh Cache-Control "no-cache"
+		# Old guest links (the call-only scheme removed in 0.3.1: /call/legacy.html?room=…, /?join=…, /guest/…) get the
+		# door page, which says what happened instead of the web app guessing at an unknown address (docs/GUESTS.md).
+		@oldguest {{
+			path /call/legacy.html /guest /guest/*
+		}}
+		@oldjoin {{
+			path / /index.html
+			query join=*
+		}}
+		rewrite @oldguest /call/index.html
+		rewrite @oldjoin /call/index.html
 		try_files {{path}} {{path}}index.html /index.html
 		file_server
 	}}
@@ -512,8 +528,19 @@ https://{server_name} {{
 		root * /srv/web
 {web_csp}		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/*
+		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/* /guest /guest/*
 		header @fresh Cache-Control "no-cache"
+		# Old guest links (the call-only scheme removed in 0.3.1: /call/legacy.html?room=…, /?join=…, /guest/…) get the
+		# door page, which says what happened instead of the web app guessing at an unknown address (docs/GUESTS.md).
+		@oldguest {{
+			path /call/legacy.html /guest /guest/*
+		}}
+		@oldjoin {{
+			path / /index.html
+			query join=*
+		}}
+		rewrite @oldguest /call/index.html
+		rewrite @oldjoin /call/index.html
 		try_files {{path}} {{path}}index.html /index.html
 		file_server
 	}}
@@ -523,7 +550,8 @@ https://{server_name} {{
 # (the router sends port 80 here when it can), or the server's address on the home network. The one exception: the
 # browser that did the setup, on the home network over http, keeps asking the setup how it's going while the web
 # server switches to these settings, and checks from outside from its last page (/admin/setup/*, which needs that
-# setup session and closes a few hours after setup). Nothing else on port 80 reaches the manager.
+# setup session and closes a few hours after setup), and from any address only the setup's read-only progress
+# (GET /admin/setup/status: a VPS owner's browser is a public address). Nothing else on port 80 reaches the manager.
 :80 {{
 	import tinhat_headers
 	@setup {{
@@ -532,6 +560,19 @@ https://{server_name} {{
 	}}
 	handle @setup {{
 		reverse_proxy 127.0.0.1:8090
+	}}
+	# (assembly-038) the setup page's progress from an outside address (a VPS owner's browser is a public one): read-only,
+	# marked so the manager answers only phase, name and steps; every other /admin/setup/* stays home-only. "not
+	# remote_ip" keeps home out of it: Caddy orders these handle blocks itself, it doesn't take them as written
+	@setupstatus {{
+		method GET
+		path /admin/setup/status
+		not remote_ip private_ranges
+	}}
+	handle @setupstatus {{
+		reverse_proxy 127.0.0.1:8090 {{
+			header_up X-Tinhat-Plain-Outside 1
+		}}
 	}}
 	handle {{
 		redir https://{server_name}{{uri}} 308
@@ -648,8 +689,19 @@ CADDY_PROXY = """\
 		root * /srv/web
 {web_csp}		@immutable path /assets/*
 		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/*
+		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/* /guest /guest/*
 		header @fresh Cache-Control "no-cache"
+		# Old guest links (the call-only scheme removed in 0.3.1: /call/legacy.html?room=…, /?join=…, /guest/…) get the
+		# door page, which says what happened instead of the web app guessing at an unknown address (docs/GUESTS.md).
+		@oldguest {{
+			path /call/legacy.html /guest /guest/*
+		}}
+		@oldjoin {{
+			path / /index.html
+			query join=*
+		}}
+		rewrite @oldguest /call/index.html
+		rewrite @oldjoin /call/index.html
 		try_files {{path}} {{path}}index.html /index.html
 		file_server
 	}}

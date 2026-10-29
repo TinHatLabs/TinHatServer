@@ -213,6 +213,12 @@ export function barPlan(on: boolean, role: GuestRole): BarPlan | null {
   return role.canManage ? { text: WORDS.barOffManager, buttons: ["turnOn"] } : { text: WORDS.barOff, buttons: [] };
 }
 
+/** "Copy guest link" in the Guests room's menu and header (launch-gate's guests QoL, 2026-10-27; the desktop's
+ *  guests.rs `copy_offered`): exactly when the bar offers Copy — the room is on and this user may see the link. */
+export function copyOffered(on: boolean, role: GuestRole): boolean {
+  return barPlan(on, role)?.buttons.includes("copy") ?? false;
+}
+
 export const BAR_LABEL: Readonly<Record<BarButton, string>> = { copy: WORDS.copy, newLink: WORDS.newLink, turnOff: WORDS.turnOff, turnOn: WORDS.turnOn };
 
 /** The rows under the bar: everyone waiting, while the room is on, for those who may let them in. */

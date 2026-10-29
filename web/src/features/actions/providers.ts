@@ -23,7 +23,7 @@ import { callBarPinned } from "@/features/callui/chrome";
 import { useNavStore, getNavMode, useUpdate, type RoomRow } from "@/features/nav";
 import { usePresenceStore } from "@/features/presence";
 import { usePushStore } from "@/features/push";
-import { inTinHatApp, onNativeCall } from "@/features/native";
+import { inTinHatApp, nativeShareOn, onNativeCall } from "@/features/native";
 import { useCal } from "@/features/calendar";
 import { useGames } from "@/features/calendar/gamesStore";
 import { useSoundboard, useWatchParty, isSoundboardOpen, onSoundboardOpenChange } from "@/features/media";
@@ -205,7 +205,7 @@ function navPart(): SnapshotPart {
     "app.dev": /[?&]dev=1\b/.test(location.search + location.hash),
     "app.portable": false,
     "platform.windows": false,
-    "platform.screenCapture": typeof navigator.mediaDevices?.getDisplayMedia === "function",
+    "platform.screenCapture": typeof navigator.mediaDevices?.getDisplayMedia === "function" || nativeShareOn(),
     "gif.available": true,
     "overlay.available": overlayAvailable(),
   };

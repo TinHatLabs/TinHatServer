@@ -75,11 +75,27 @@ class WrittenOnSetupAndUpdate(unittest.TestCase):
     def test_write_wellknowns_announces_the_owner(self):
         from tinhat import config, install
         with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "WELLKNOWN_DIR", Path(d)), \
+                mock.patch.object(install.apiconf, "MODULES_DIR", Path(d) / "modules"), \
                 mock.patch.object(install, "write_app_links", lambda: None):
             st = {"server_name": SN, "admin": f"@owner:{SN}", "phase": "ready"}
             install.write_wellknowns(st, SN, True)
             doc = (Path(d) / ".well-known" / "matrix" / "client").read_text()
             self.assertEqual(owner_of(doc), f"@owner:{SN}")
+            # the same owner goes to Synapse's tinhat_rules, which refuses to deactivate it
+            self.assertEqual(json.loads((Path(d) / "modules" / "protected-accounts.json").read_text()), {"owner": f"@owner:{SN}"})
+
+
+class ProtectedAccountsFile(unittest.TestCase):
+    def test_written_only_when_it_changes_and_empty_when_unknown(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(apiconf, "MODULES_DIR", Path(d) / "m"):
+            self.assertTrue(apiconf.publish_protected(f"@owner:{SN}"))
+            self.assertFalse(apiconf.publish_protected(f"@owner:{SN}"), "same owner: untouched")
+            f = Path(d) / "m" / "protected-accounts.json"
+            self.assertEqual(f.stat().st_mode & 0o777, 0o644, "Synapse's container reads it")
+            f.write_bytes(b"\xff")  # broken: repaired, never an error
+            self.assertTrue(apiconf.publish_protected(f"@owner:{SN}"))
+            self.assertTrue(apiconf.publish_protected(""))
+            self.assertEqual(json.loads(f.read_text()), {"owner": ""})
 
 
 class ReportsCard(unittest.TestCase):

@@ -239,7 +239,9 @@ export function createGuests(deps) {
                 { type: "m.room.guest_access", state_key: "", content: { guest_access: "forbidden" } },
             ],
             power_level_content_override: {
-                users: { [sys]: 100, [caller]: G.MANAGE_LEVEL },  // the room's own state stays the server's
+                // the room's own state stays the server's; the system account stays at 100 also when it is the caller
+                // itself (assembly-038, vps-038-lab: { [sys]: 100, [caller]: 50 } with caller == sys dropped it to 50)
+                users: { [caller]: G.MANAGE_LEVEL, [sys]: 100 },
                 events: { [G.STATE]: 100, [G.WAITING]: 100, "m.room.power_levels": 100, "m.room.encryption": 100,
                     "m.room.history_visibility": 100, "m.room.tombstone": 100, "m.room.server_acl": 100,
                     "m.room.join_rules": 100, "m.room.canonical_alias": 100, [CALL_MEMBER]: 0 },

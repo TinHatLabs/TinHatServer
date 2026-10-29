@@ -2,7 +2,7 @@
 // each pane's title (SETTINGS-WINDOW.md §3 — the same table as the desktop's SettingsWindow.qml). The components come
 // from the registry (r.settingsPanes); a contributed pane this table doesn't know goes to the end of APP.
 import type { PaneId } from "./store";
-import { inTinHatApp } from "@/features/native/bridge";
+import { inPhoneApp } from "@/features/native/bridge";
 
 export interface PaneMeta {
   key: PaneId;
@@ -33,7 +33,7 @@ export const PANE_META: ReadonlyArray<PaneMeta> = [
   { key: "audio", group: "voice", label: "Audio", icon: "audio-volume-high-symbolic", description: "Microphone, speaker, echo and noise" },
   { key: "calls", group: "voice", label: "Calls & video", icon: "call-start-symbolic", description: "Push to talk, camera, screen share and connection", phoneDescription: "Camera, screen share and connection" },
   { key: "appearance", group: "app", label: "Appearance", icon: "contrast-symbolic", description: "Theme, sounds, navigation and motion" },
-  { key: "notifications", group: "app", label: "Notifications", icon: "notifications", description: inTinHatApp() ? "Alerts and sounds" : "Desktop alerts and sounds" },
+  { key: "notifications", group: "app", label: "Notifications", icon: "notifications", description: inPhoneApp() ? "Alerts and sounds" : "Desktop alerts and sounds" },
   { key: "shortcuts", group: "app", label: "Shortcuts", icon: "input-keyboard-symbolic", description: "Give any action a key" },
   { key: "overlay", group: "app", label: "Overlay", icon: "window-pin-symbolic", description: "See who's talking over fullscreen games" },
   { key: "about", group: "tinhat", label: "About & help", icon: "help-about-symbolic", description: "Version, updates, help and sign out" },

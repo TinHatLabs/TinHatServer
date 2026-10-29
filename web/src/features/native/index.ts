@@ -4,6 +4,8 @@
 // the iOS keyboard path (tokens.css / App.tsx / core/device.ts read <html data-tinhat-ios-app> directly).
 //
 //   inTinHatApp()                 the page runs in a Tin Hat app (hides web push + "Add to Home Screen")
+//   inPhoneApp()                  …a phone app (iOS / Android): phone-only notification rows; the Mac app ("macos")
+//                                 keeps the desktop's notification switches
 //   hasNativeCap(cap)             "calls" | "servers" | "haptics" | "notifications"
 //   nativeNotifications           "notifications": state / enable / disable (+ optional openSettings) of THIS phone's
 //                                 notifications (Settings → Notifications → "Notifications on this phone")
@@ -14,7 +16,11 @@
 //   <OnThisPhone roomId>          "You're in this call on this phone" · Open · Leave around a room's Join entry point
 //   pageOwnsMembership(...)       the page sweeps / corrects only its OWN device's call membership
 //   installWebCallBridge(...)     an app without "calls" (Android) follows the WEB's call: webCall reports + commands
+//   installScreenShareBridge(...) "screenshare" (Android): the Share button asks the app (nativeShareOn /
+//                                 nativeShareStart / nativeShareStop), the page never captures itself there
 //   (on "loggedOut" by the person) tinhatNative.signedOut({userId}): the app signs its native device out too
+//   appRings() / ringInApp(…) / onRingAnswer(cb)   "rings": the app rings while the page is hidden; a ring answered on
+//                                 the phone → `tinhatnative:call {action: "answer", roomId}` (rings.ts, callwatch.ts)
 //   installTrustBridge()          "trust": cross-sign the device the app set up (pending → check → sign → result;
 //                                 trust.ts + trustGlue.ts, docs/TRUST.md); trustLookupFor() = the Devices "Trust…" sheet
 import { bus } from "@/core/bus";
@@ -23,13 +29,15 @@ import { nativeSignedOut } from "./bridge";
 import { installTrustBridge } from "./trustGlue";
 import { joinNatively as joinNativelyWith, joinNativelyOrHere, type JoinWho } from "./joinCall";
 
-export { inTinHatApp, hasNativeCap, chooseServer, nativeInfo, type NativeCap, type NativeInfo } from "./bridge";
+export { inTinHatApp, inPhoneApp, hasNativeCap, chooseServer, nativeInfo, type NativeCap, type NativeInfo } from "./bridge";
 export { nativeNotifications, phoneNotifyText, NOTIFY_CHANGE_MS, NOTIFY_READ_MS, type PhoneNotifyAnswer, type PhoneNotifyState } from "./bridge";
 export { nativeCall, nativeCallIn, nativeDeviceId, onNativeCall, type NativeCall, type NativeCallPhase } from "./callState";
 export { deviceStateKey, pageOwnsMembership } from "./membership";
 export { OnThisPhone, useNativeCall } from "./OnThisPhone";
 export { installWebCallBridge, type WebCallSnapshot } from "./webCall";
+export { installScreenShareBridge, nativeShareOn, nativeShareStart, nativeShareStop } from "./screenShare";
 export { trustLookupFor } from "./trustGlue";
+export { appRings, onRingAnswer, parseRingAnswer, ringInApp } from "./rings";
 export { DEVICES_FALLBACK, fallbackOffersTrust, fingerprintText, isNativePhoneDevice, trustDevice, trustDoneText, trustResultText, TRUST_WORDS, WAIT_MS, type TrustResult } from "./trust";
 
 // A sign-out the person chose ends the phone's native device of that account too (its calls and notifications);

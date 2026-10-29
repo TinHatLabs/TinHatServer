@@ -110,3 +110,12 @@ guest link isn't open any more — ask for a new one".
 A home-network server makes its own certificate, so a guest's device has to trust it once, like any new device
 (open `http://<name>.local`, follow the two steps). The apps say so next to the guest link on such a server ("Guests on
 your Wi-Fi: they open http://<name>.local first, once"). Guests from outside can't reach a home-network server at all.
+
+## Old guest links (0.3.8)
+The call-only guest links of Tin Hat before 0.3.1 (`/call/?room=…-guest-…`, `/call/legacy.html?room=…`, `/?join=…`,
+`/guest/…`) are gone with their calls. They are still out there in old chats, so every Caddy mode serves them the door
+page (`/call/legacy.html`, `/guest`, `/guest/*` and `/` or `/index.html` with a `join` parameter are rewritten to
+`/call/index.html`; the address stays as it was), and the page says: "This is an old guest link. Guest links changed:
+guests now knock at the server's Guests room. Ask whoever sent this for the new guest link (in Tin Hat: the Guests
+room, then Copy guest link)." It asks the server nothing for such a link. A link with `g=` is always a current one.
+The API's `/api/guest/*` routes are unchanged.

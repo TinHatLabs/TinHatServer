@@ -24,7 +24,7 @@ import { freshNsContext, nsContextState, resumeNsContext } from "./mic";
 import { getCall, patch, setStatus } from "./store";
 import { sess } from "./session";
 import { errText, isRecorder, sleep } from "./util";
-import { liveSessions } from "./rtc";
+import { rosterSessions } from "./rtc";
 
 const log = createLogger("call-resume");
 
@@ -204,7 +204,7 @@ function maybeRejoinAfterReload() {
 function othersInCall(roomId: string) {
   const me = getSession().userId;
   const dev = getSession().deviceId;
-  return liveSessions(roomId).filter((x) => !(x.sender === me && x.deviceId === dev) && !isRecorder(`${x.sender}:${x.deviceId}`));
+  return rosterSessions(roomId).filter((x) => !(x.sender === me && x.deviceId === dev) && !isRecorder(`${x.sender}:${x.deviceId}`));
 }
 
 let installed = false;

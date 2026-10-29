@@ -12,6 +12,7 @@ import { act, callStore, getC, ui, useC, useCallUi, SELF_SHARE_ID } from "./stor
 import { heardSummary, snap } from "./hear";
 import { useHoldChrome } from "./chrome";
 import { fakeGuard, parseShareQuality } from "./menus";
+import { nativeShareOn } from "@/features/native";
 import s from "./popovers.module.css";
 
 // ---- level meter (16 bars; GPU.md §2.7: ≤ 10 updates/s with a short ease while the motion switch is on, flat and
@@ -285,10 +286,10 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
   const title = sharing ? "Sharing your screen" : musicPlaying ? "Sharing audio" : "Share your screen";
   const preset = PRESETS.find((p) => p.w === q.w && p.h === q.h && p.fps === q.fps);
   const summary = qualitySummary(q);
-  const canDisplay = typeof navigator.mediaDevices?.getDisplayMedia === "function";
+  const canDisplay = typeof navigator.mediaDevices?.getDisplayMedia === "function" || nativeShareOn();
   const start = () => {
     setPref("share-audio", audio);
-    act("shareScreen")({ audio, recordingOnly: memoriesOn && recOnly, quality: { w: q.w, h: q.h, fps: q.fps, kbps: q.kbps } });
+    act("shareScreen")({ audio, recordingOnly: memoriesOn && recOnly && !nativeShareOn(), quality: { w: q.w, h: q.h, fps: q.fps, kbps: q.kbps } });
     close();
   };
   const primary = sharing ? "Done" : "Start sharing";
@@ -342,7 +343,7 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
       </div>
       <div className={s.hint}>Your browser shares a tab's sound (or, on Windows and ChromeOS, all system sound) — tick "Share audio" in its picker. Per-app audio needs the desktop app.</div>
       {/* selfhost/firstrun item 1: only where the server records (Memories) */}
-      {memoriesOn && (
+      {memoriesOn && !nativeShareOn() && (
         <div className={s.recRow}>
           <Switch checked={recOnly} onToggled={(v) => (setRecOnly(v), sharing && act("applyShareRecordingOnly")(v))} aria-label="For the recording only" />
           <div>

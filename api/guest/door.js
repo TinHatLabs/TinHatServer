@@ -11,9 +11,16 @@ const finish = (title, text, again = false) => {
   show("done");
 };
 const closed = () => finish("This guest link isn't open", "Ask whoever sent it for a new one.");
+// An old guest link (the call-only links of Tin Hat before 0.3.1: /call/?room=…-guest-…, /call/legacy.html, /?join=…,
+// /guest/…): those calls are gone. Guests now knock at the server's Guests room, through a link of the form /call/?g=….
+const OLD_LINK = !qs.has("g") && (qs.has("room") || qs.has("join") || /^\/(guest(\/|$)|call\/legacy\.html$)/i.test(location.pathname));
+const oldLink = () => finish("This is an old guest link",
+  "Guest links changed: guests now knock at the server's Guests room. Ask whoever sent this for the new guest link " +
+  "(in Tin Hat: the Guests room, then Copy guest link).");
 try { const saved = localStorage.getItem("tinhat-guest-name"); if (saved) $("name").value = saved; } catch { /* private window */ }
 
 async function door() {
+  if (OLD_LINK) return oldLink();
   if (!/^[A-Za-z0-9_-]{24}$/.test(g)) return closed();
   try {
     const r = await fetch(`/api/guest/door?g=${encodeURIComponent(g)}`, { cache: "no-store" });

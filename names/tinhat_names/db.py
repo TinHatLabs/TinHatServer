@@ -3,9 +3,11 @@
 Small and synchronous on purpose: every call is a few rows, far below a millisecond, so handlers call it directly.
 """
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
+import re
 import secrets
 import sqlite3
 import stat
@@ -28,7 +30,10 @@ CREATE TABLE IF NOT EXISTS names (
     old_hashes TEXT                    -- JSON: earlier secrets' hashes (a restored server rotated its key; see rotate)
 );
 CREATE TABLE IF NOT EXISTS codes (
-    code TEXT PRIMARY KEY, created REAL NOT NULL, expires REAL, uses INTEGER NOT NULL DEFAULT 0,
+    id INTEGER PRIMARY KEY,
+    code_hash TEXT UNIQUE NOT NULL,    -- HMAC-SHA256(code key, the code): the code itself is never stored
+    hint TEXT NOT NULL,                -- what admins see: code_hint() (its first two letters)
+    created REAL NOT NULL, expires REAL, uses INTEGER NOT NULL DEFAULT 0,
     max_uses INTEGER NOT NULL DEFAULT 1, note TEXT, revoked INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS notices (
@@ -44,6 +49,21 @@ CREATE TABLE IF NOT EXISTS txt (name TEXT NOT NULL, value TEXT NOT NULL, ts REAL
 """
 
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # same as invite codes: no 0/O, 1/I
+CODE_RE = re.compile(r"TN-[A-Z0-9]{4}-[A-Z0-9]{4}")
+# Server codes are stored hashed (security review, names lows; sec-night-2 2026-10-27): a copy of the database (a backup,
+# a stolen file) holds no working code. A code has ~40 bits, so a plain hash could be brute-forced offline: the hash is
+# an HMAC whose key derives from the service's secret key file (pow.key, kept 0600 outside the database and in the
+# encrypted backup with it). code_key() derives it; tests and tools without the file get an unkeyed default.
+UNKEYED = b"tinhat-names: no code key (tests only)"
+
+
+def code_key(secret: bytes) -> bytes:
+    """The server-code HMAC key from the service's secret key (pow.key): its own derivation, never the PoW key itself."""
+    return hmac.new(secret, b"tinhat-names server codes v1", hashlib.sha256).digest()
+
+
+def norm_code(code: str | None) -> str:
+    return (code or "").strip().upper()
 
 
 def hash_secret(secret: str) -> str:
@@ -115,7 +135,8 @@ def private_files(path: str) -> None:
 
 
 class DB:
-    def __init__(self, path: str):
+    def __init__(self, path: str, code_key: bytes | None = None):
+        self.code_key = code_key or UNKEYED
         self.c = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.c.row_factory = sqlite3.Row
         self.c.execute("PRAGMA journal_mode=WAL")
@@ -133,6 +154,62 @@ class DB:
             self.c.execute("ALTER TABLE names ADD COLUMN move_open_until REAL")
         if "moved_to" not in cols:  # the server moved to its own domain: the name's page points there
             self.c.execute("ALTER TABLE names ADD COLUMN moved_to TEXT")
+        if "code_id" not in cols:  # which server code set it up (codes.id): names.code keeps only the hint
+            self.c.execute("ALTER TABLE names ADD COLUMN code_id INTEGER")
+        self._migrate_codes()
+        self._vacuum_after_codes()
+
+    def _migrate_codes(self):
+        """An older database kept server codes in plain text (codes.code; names.code = the one used): one transaction
+        turns each into its HMAC + hint (same uses, limits, note, state) and names.code into the hint."""
+        cols = {r[1] for r in self.c.execute("PRAGMA table_info(codes)")}
+        if "code_hash" in cols or "code" not in cols:
+            return
+        self.c.execute("BEGIN IMMEDIATE")
+        try:
+            # again under the lock: another start may have migrated meanwhile
+            if "code_hash" in {r[1] for r in self.c.execute("PRAGMA table_info(codes)")}:
+                self.c.execute("ROLLBACK")
+                return
+            self.c.execute("""CREATE TABLE codes_hashed (
+                id INTEGER PRIMARY KEY, code_hash TEXT UNIQUE NOT NULL, hint TEXT NOT NULL,
+                created REAL NOT NULL, expires REAL, uses INTEGER NOT NULL DEFAULT 0,
+                max_uses INTEGER NOT NULL DEFAULT 1, note TEXT, revoked INTEGER NOT NULL DEFAULT 0)""")
+            rows = self.c.execute("SELECT * FROM codes ORDER BY created").fetchall()
+            for r in rows:
+                self.c.execute("INSERT INTO codes_hashed(code_hash,hint,created,expires,uses,max_uses,note,revoked) "
+                               "VALUES(?,?,?,?,?,?,?,?)", (self._code_hash(r["code"]), code_hint(r["code"]), r["created"],
+                                                          r["expires"], r["uses"], r["max_uses"], r["note"], r["revoked"]))
+            self.c.execute("DROP TABLE codes")
+            self.c.execute("ALTER TABLE codes_hashed RENAME TO codes")
+            for r in self.c.execute("SELECT name, code FROM names WHERE code IS NOT NULL").fetchall():
+                hit = self.c.execute("SELECT id FROM codes WHERE code_hash=?", (self._code_hash(r["code"]),)).fetchone()
+                self.c.execute("UPDATE names SET code=?, code_id=? WHERE name=?",
+                               (code_hint(r["code"]), hit["id"] if hit else None, r["name"]))
+            self.c.execute("INSERT INTO events(ts,kind,detail) VALUES(?,?,?)",
+                           (time.time(), "codes-hashed", f"{len(rows)} server code(s) now stored hashed"))
+            self.c.execute("COMMIT")
+        except Exception:
+            self.c.execute("ROLLBACK")
+            raise
+
+    def _vacuum_after_codes(self):
+        """The dropped table's pages (and the WAL) still hold the plain codes until rewritten: VACUUM + a checkpoint,
+        recorded when done (an event), retried at the next start if it failed (another reader held it, a full disk)."""
+        done = lambda k: self.c.execute("SELECT COUNT(*) FROM events WHERE kind=?", (k,)).fetchone()[0] > 0  # noqa: E731
+        if not done("codes-hashed") or done("codes-vacuumed"):
+            return
+        try:
+            self.c.execute("VACUUM")
+            busy, _, _ = self.c.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if busy:
+                return
+            self.c.execute("INSERT INTO events(ts,kind,detail) VALUES(?,?,?)", (time.time(), "codes-vacuumed", ""))
+        except sqlite3.Error:
+            pass  # next start
+
+    def _code_hash(self, code: str | None) -> str:
+        return hmac.new(self.code_key, norm_code(code).encode(), hashlib.sha256).hexdigest()
 
     def name(self, name: str):
         return self.c.execute("SELECT * FROM names WHERE name=?", (name,)).fetchone()
@@ -175,6 +252,33 @@ class DB:
         self.c.executemany("INSERT INTO notices(name,ts,level,text) VALUES(?,?,?,?)", [(n, now, level, text) for n in names])
         return len(names)
 
+    def register(self, name: str, ip: str, code: str | None, need_code: bool) -> tuple[str, str] | str:
+        """A new name and its credentials, spending one use of `code` in the same transaction (a crash or a taken
+        name spends nothing; two registrations can't both spend a single-use code). Returns (box_id, secret), or
+        "code" (no usable code where one is needed) / "taken" (the name exists)."""
+        self.c.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.code(code) if code else None
+            spent = bool(row) and self.c.execute(
+                "UPDATE codes SET uses=uses+1 WHERE id=? AND revoked=0 AND uses<max_uses AND (expires IS NULL OR expires>?)",
+                (row["id"], time.time())).rowcount > 0
+            if need_code and not spent:
+                self.c.execute("ROLLBACK")
+                return "code"
+            try:
+                box_id, secret = self.create(name, ip, None)
+            except sqlite3.IntegrityError:
+                self.c.execute("ROLLBACK")
+                return "taken"
+            if spent:
+                self.c.execute("UPDATE names SET code=?, code_id=? WHERE name=?", (code_hint(code), row["id"], name))
+            self.c.execute("COMMIT")
+            return box_id, secret
+        except Exception:
+            if self.c.in_transaction:
+                self.c.execute("ROLLBACK")
+            raise
+
     def create(self, name: str, ip: str, code: str | None) -> tuple[str, str]:
         box_id, secret = secrets.token_hex(12), secrets.token_urlsafe(32)
         now = time.time()
@@ -215,28 +319,46 @@ class DB:
 
     # ---- codes ----
     def new_code(self, max_uses: int = 1, days: float | None = 30, note: str = "") -> str:
+        """A new server code, returned once (only its HMAC and hint are kept)."""
         code = "TN-" + "-".join("".join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(2))
         now = time.time()
-        self.c.execute("INSERT INTO codes(code,created,expires,max_uses,note) VALUES(?,?,?,?,?)",
-                       (code, now, now + days * 86400 if days else None, max_uses, note))
+        self.c.execute("INSERT INTO codes(code_hash,hint,created,expires,max_uses,note) VALUES(?,?,?,?,?,?)",
+                       (self._code_hash(code), code_hint(code), now, now + days * 86400 if days else None, max_uses, note))
         return code
 
     def code(self, code: str):
-        return self.c.execute("SELECT * FROM codes WHERE code=?", ((code or "").strip().upper(),)).fetchone()
+        if not CODE_RE.fullmatch(norm_code(code)):
+            return None
+        return self.c.execute("SELECT * FROM codes WHERE code_hash=?", (self._code_hash(code),)).fetchone()
 
     def code_ok(self, code: str) -> bool:
         row = self.code(code)
         return bool(row) and not row["revoked"] and row["uses"] < row["max_uses"] and \
             (row["expires"] is None or row["expires"] > time.time())
 
-    def use_code(self, code: str):
-        self.c.execute("UPDATE codes SET uses=uses+1 WHERE code=?", (code.strip().upper(),))
+    def use_code(self, code: str) -> bool:
+        """Spend one use, only while the code is still good (one statement: two registrations can't both spend a
+        single-use code). False when it wasn't."""
+        return self.c.execute("UPDATE codes SET uses=uses+1 WHERE code_hash=? AND revoked=0 AND uses<max_uses AND "
+                              "(expires IS NULL OR expires>?)", (self._code_hash(code), time.time())).rowcount > 0
+
+    def unuse_code(self, code: str) -> None:
+        """Give back a use spent by a registration that didn't happen (the name was taken meanwhile)."""
+        self.c.execute("UPDATE codes SET uses=uses-1 WHERE code_hash=? AND uses>0", (self._code_hash(code),))
 
     def codes(self):
-        return self.c.execute("SELECT * FROM codes ORDER BY created DESC").fetchall()
+        """Every code as admins see it: `code` is the hint (the code itself isn't kept), `id` revokes it."""
+        return [{**dict(r), "code": r["hint"]} for r in
+                self.c.execute("SELECT id,hint,created,expires,uses,max_uses,note,revoked FROM codes ORDER BY created DESC")]
 
-    def revoke_code(self, code: str) -> bool:
-        return self.c.execute("UPDATE codes SET revoked=1 WHERE code=?", (code.strip().upper(),)).rowcount > 0
+    def revoke_code(self, code_or_id: str) -> bool:
+        """Revoke by the code itself (TN-XXXX-XXXX) or by its id (the list's)."""
+        s = str(code_or_id or "").strip()
+        if s.isdigit():
+            return self.c.execute("UPDATE codes SET revoked=1 WHERE id=?", (int(s),)).rowcount > 0
+        if not CODE_RE.fullmatch(norm_code(s)):
+            return False
+        return self.c.execute("UPDATE codes SET revoked=1 WHERE code_hash=?", (self._code_hash(s),)).rowcount > 0
 
     # ---- notices for a box's owner (shown on their dashboard) ----
     def notice(self, name: str, text: str, level: str = "info"):

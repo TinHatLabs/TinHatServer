@@ -296,7 +296,8 @@
 .bubbleMine .rich :global(a) {
   color: var(--th-bubble-own-link-fg);
 }
-.rich :global(a[data-mention]) {
+.rich :global(a[data-mention]),
+.rich :global(a[data-steam]) {
   cursor: pointer;
 }
 .rich :global(.tw-spoiler-tag) {

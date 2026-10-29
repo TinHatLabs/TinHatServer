@@ -19,6 +19,7 @@ import { callRowSnapshot, recClipRoom } from "@/actions/decisions";
 import { useChatStore } from "@/features/chat/store";
 import { useActionsSnapshot } from "@/actions/snapshot";
 import { Dim, EditableRow, RowButton, bespokeOk, runRowItem, shownItems, useRow } from "@/actions/ui/rowHost";
+import { nativeShareOn } from "@/features/native";
 import s from "./Mobile.module.css";
 
 export function MobileCallStage({ roomId }: { roomId: string }) {
@@ -205,7 +206,7 @@ function MobileBar({ roomId, hide }: { roomId: string; hide: boolean }) {
   const items = useSlotItems("controls");
   const sb = items.find((i) => i.order >= 75 && i.order < 85);
   const wp = items.find((i) => i.id === "media-watchparty"); // 11.4 Media Party: media's bespoke button
-  const canShare = typeof navigator.mediaDevices?.getDisplayMedia === "function";
+  const canShare = typeof navigator.mediaDevices?.getDisplayMedia === "function" || nativeShareOn();
   const snap = useActionsSnapshot();
   const barSnap = useMemo(() => callRowSnapshot(snap), [snap]);
   const rowCtx = useMemo(() => ({ room: roomId }), [roomId]);
@@ -231,7 +232,7 @@ function MobileBar({ roomId, hide }: { roomId: string; hide: boolean }) {
     ),
     "call.camera.toggle": <CallButton icon="camera-video-symbolic" tip={cameraOn ? "Turn camera off" : "Turn camera on"} active={cameraOn} slash={!cameraOn} onClick={() => act("toggleCamera")()} />,
     "call.camera.flip": <CallButton icon="view-refresh-symbolic" tip="Flip camera" live={cameraOn || cameras.length > 1} onClick={flip} />,
-    "call.screenShare.toggle": canShare ? <CallButton icon="video-display-brightness-symbolic" tip={sharing ? "Stop sharing" : "Share your screen…"} active={sharing} onClick={() => (sharing ? act("stopScreen")() : ui().set({ streamPop: true }))} /> : null,
+    "call.screenShare.toggle": canShare ? <CallButton icon="video-display-brightness-symbolic" tip={sharing ? "Stop sharing" : "Share your screen…"} active={sharing} onClick={() => (sharing ? act("stopScreen")() : nativeShareOn() ? act("shareScreen")() : ui().set({ streamPop: true }))} /> : null,
     "call.deafen.toggle": <CallButton icon={deafened ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"} tip={deafened ? "Undeafen" : "Deafen"} danger={deafened} onClick={() => act("applyDeafen")(!deafened)} />,
     "soundboard.open": sb ? <sb.component roomId={roomId} /> : <CallButton icon="emblem-music-symbolic" tip="Soundboard" onClick={() => toast("The soundboard arrives with the media feature")} />,
     "watchParty.open": wp ? <wp.component roomId={roomId} /> : <CallButton icon="video-television-symbolic" tip="Media Party" onClick={() => toast("The Media Party arrives with the media feature")} />,

@@ -15,6 +15,7 @@ import { openOrCreateDm, spaceOf } from "./roomActions";
 import { openSpaceSettingsIntent } from "./intents";
 import { askConfirm } from "./confirmHost";
 import { banIn, kickIn } from "./store";
+import { goneText } from "./leftWords";
 
 const call = () => useCallStore.getState();
 const me = () => peekClient()?.getUserId() ?? "";
@@ -55,6 +56,16 @@ function mutedBy(mxid: string, ctx?: MemberMenuCtx): { muted: boolean; by: strin
     : tiles.find((x) => isTileOf(x.participant, mxid) && x.serverMuted);
   return { muted: !!t, by: t?.serverMutedBy ?? "" };
 }
+/** "They're not in the call", or that they already left the room when that's why (leftWords.ts: they went while the
+ *  Disconnect confirmation was open, or between the menu opening and the click). */
+function notThere(ctx: MemberMenuCtx): string {
+  const membership = peekClient()?.getRoom(callRoom(ctx))?.getMember(ctx.userId)?.membership;
+  return goneText("call", displayName(ctx.userId, callRoom(ctx)), membership) ?? "They're not in the call";
+}
+/** Mute / Disconnect act on the call server: only while they have a tile there (a left member has none to act on). */
+function onCallServer(ctx: MemberMenuCtx): boolean {
+  return canModerate(ctx) && !!identityFor(ctx.userId, ctx);
+}
 function canModerate(ctx: MemberMenuCtx): boolean {
   if (ctx.userId === me() || !inMyCall(ctx)) return false;
   // PVM canModerate = mCanModerateCall only: the engine derives it from the roles model (setPermsProvider)
@@ -93,10 +104,10 @@ export function registerMemberMenu(r: Registries) {
       return m.muted ? `Muted by ${m.by ? displayName(m.by, callRoom(ctx)) : "a moderator"} — lets them talk again` : "Nobody in the call hears their mic until a moderator unmutes them";
     },
     tooltipDelay: 600,
-    visible: canModerate,
+    visible: onCallServer,
     run: async (ctx) => {
       const id = identityFor(ctx.userId, ctx);
-      if (!id) return void toast("They're not in the call", { timeoutMs: 4000 });
+      if (!id) return void toast(notThere(ctx), { timeoutMs: 4000 });
       const c = call();
       const f = mutedBy(ctx.userId, ctx).muted ? c.serverUnmute : c.serverMute;
       const why = f ? await f(id) : "Call moderation isn't available";
@@ -109,7 +120,7 @@ export function registerMemberMenu(r: Registries) {
     section: "Moderation",
     label: "Disconnect from the call…",
     icon: "call-stop-symbolic",
-    visible: canModerate,
+    visible: onCallServer,
     run: (ctx) => {
       const name = displayName(ctx.userId, callRoom(ctx));
       askConfirm({
@@ -119,7 +130,7 @@ export function registerMemberMenu(r: Registries) {
         destructive: true,
         onConfirmed: async () => {
           const id = identityFor(ctx.userId, ctx);
-          if (!id) return void toast("They're not in the call", { timeoutMs: 4000 });
+          if (!id) return void toast(notThere(ctx), { timeoutMs: 4000 });
           const f = call().disconnectParticipant;
           const why = f ? await f(id) : "Call moderation isn't available";
           if (why) toast(why, { kind: "error", timeoutMs: 4000 });

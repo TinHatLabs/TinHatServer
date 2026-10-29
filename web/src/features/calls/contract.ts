@@ -25,6 +25,9 @@ export interface Tile {
   tunedIn?: boolean;
   serverMuted: boolean;
   serverMutedBy: string;
+  /** a screen-share companion's share folded into its person (companions.ts): the main participant ("You" for our
+   *  own device). The tile's `participant` stays the companion (its track lives there). Additive (screen share P3). */
+  companionOf?: string;
 }
 
 export interface PublishStat {

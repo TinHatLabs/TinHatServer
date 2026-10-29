@@ -54,8 +54,18 @@ class PortEighty(unittest.TestCase):
         setup = setup[: setup.index("}")]
         self.assertIn("remote_ip private_ranges", setup)
         self.assertIn("path /admin/setup/*", setup)
-        self.assertEqual(site.count("reverse_proxy"), 1)
+        # (assembly-038) plus, from any address, only the setup's read-only progress: GET, that one path
+        st = site[site.index("@setupstatus {"):]
+        st = st[: st.index("}")]
+        self.assertEqual([l.strip() for l in st.splitlines()[1:] if l.strip()],
+                         ["method GET", "path /admin/setup/status", "not remote_ip private_ranges"])
+        self.assertEqual(site.count("reverse_proxy"), 2)
         self.assertIn("reverse_proxy 127.0.0.1:8090", site[site.index("handle @setup {"):])
+        self.assertIn("reverse_proxy 127.0.0.1:8090", site[site.index("handle @setupstatus {"):])
+        h = site[site.index("handle @setupstatus {"):site.index("\thandle {")]
+        self.assertIn("header_up X-Tinhat-Plain-Outside 1", h, "the manager cuts this answer down by this mark")
+        self.assertNotIn("X-Tinhat-Plain-Outside", site[:site.index("handle @setupstatus {")], "never on the home route")
+        self.assertLess(site.index("handle @setupstatus {"), site.index("\thandle {"), "the catch-all redirect comes last")
         self.assertNotIn("8008", site)  # never chat
         lines = [l.strip() for l in site.splitlines()]
         self.assertEqual(sum(l.endswith("{") for l in lines), sum(l == "}" for l in lines))

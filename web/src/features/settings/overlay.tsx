@@ -105,11 +105,11 @@ function livePills(e: Partial<CallStore>, now: number): Pill[] {
   const selfLinger = (lastSpoke.get("__self") ?? 0) + LINGER_MS > now;
   const warn = !!e.micMuted && !!e.hear && (e.hear as { mutedTalk?: boolean }).mutedTalk === true;
   if (!speakingOnly || selfSpeaking || selfLinger || warn) {
-    out.push({ key: "__self", label: "You", speaking: selfSpeaking, muted: !!e.micMuted, deafened: !!e.deafened, self: true, sharing: !!e.sharing, more: false, warn });
+    out.push({ key: "__self", label: "You", speaking: selfSpeaking, muted: !!e.micMuted, deafened: !!e.deafened, self: true, sharing: !!e.sharing || (e.tiles ?? []).some((t) => t.companionOf === "You"), more: false, warn }); // (or our phone shares for us)
   }
   const seen = new Map<string, { key: string; label: string; muted: boolean; sharing: boolean }>();
   for (const t of e.tiles ?? []) {
-    const p = t.participant;
+    const p = t.companionOf || t.participant; // a companion's share counts as its person's (screen share P3)
     if (!p || p === "You" || t.id === "vid_selfview") continue;
     const r = seen.get(p);
     if (!r) seen.set(p, { key: p, label: t.name || p.replace(/^@/, "").split(":")[0], muted: !!t.muted, sharing: !!t.screenshare });

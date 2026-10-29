@@ -21,7 +21,7 @@ function relayHome(st) {
       try {
         const n = await api("/admin/home/relay", { json: { username: user.value.trim(), password: pw.value } });
         form.replaceChildren(h("span.chip.good", h("span.dot"), "Reachable through the Tin Hat relay"),
-          h("p.muted", (n.summary && n.summary.headline) || "Friends outside your home can reach your server again."));
+          h("p.muted", (n.summary && n.summary.headline) || "Friends outside can reach this server again."));
       } catch (ex) {
         go.disabled = false;
         go.textContent = "Turn on the Tin Hat relay";
