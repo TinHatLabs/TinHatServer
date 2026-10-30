@@ -5,7 +5,7 @@
 // Failures toast "Couldn't <verb> — you may not have permission in this room" (room.rs mod_err).
 import { EventType, Method, Preset, Visibility, type MatrixClient } from "matrix-js-sdk";
 import { openRoom, toast } from "@/core/bus";
-import { peekClient, sendState } from "@/core/matrix";
+import { peekClient, powerLevelsForWrite, sendPowerLevels, withPowerLevelLock } from "@/core/matrix";
 import { createLogger } from "@/core/log";
 import { rl } from "./ratelimit";
 import { goneText } from "./leftWords";
@@ -79,12 +79,15 @@ export async function unbanInRoom(roomId: string, mxid: string) {
 /** users[mxid] = power in THIS room's m.room.power_levels (not reconciled with space roles). */
 export async function setMemberPower(roomId: string, mxid: string, power: number) {
   try {
-    const c = peekClient()!;
-    const room = c.getRoom(roomId);
-    const cur = (room?.currentState.getStateEvents(EventType.RoomPowerLevels, "")?.getContent() ?? {}) as Record<string, unknown>;
-    const users = { ...((cur.users as Record<string, number>) ?? {}) };
-    users[mxid] = power;
-    await rl(() => sendState(roomId, EventType.RoomPowerLevels, "", { ...cur, users }));
+    // a person-chosen moderator action (allowed in any room); in the room's power-level queue so it can't race
+    // ensureWritable / the roles reconciler (state.ts withPowerLevelLock)
+    await withPowerLevelLock(roomId, async () => {
+      const cur = powerLevelsForWrite(roomId);
+      if (!cur) throw new Error("the room's power levels are still updating — try again in a moment");
+      const users = { ...((cur.users as Record<string, number>) ?? {}) };
+      users[mxid] = power;
+      await rl(() => sendPowerLevels(roomId, { ...cur, users }));
+    });
   } catch (e) {
     fail("change that power level", e);
   }

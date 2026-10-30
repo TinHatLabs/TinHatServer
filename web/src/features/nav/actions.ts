@@ -7,7 +7,7 @@
 import { EventType, Preset, type ICreateRoomOpts, type MatrixClient } from "matrix-js-sdk";
 import { SERVER_LABEL } from "@/core/bearer";
 import { toast } from "@/core/bus";
-import { ensureWritable, getClient, getSession, getState, peekClient, provisionNewRoom, sendState } from "@/core/matrix";
+import { childViaFor, ensureWritable, getClient, getSession, getState, inviterServerHere, peekClient, pickVia, provisionNewRoom, sendState } from "@/core/matrix";
 import { setRecordCall } from "@/features/media";
 import { invalidateHierarchy, noteLeft, notePendingChild, userDefinedMode, readSpaceOrder, refreshNow, scheduleRefresh, useNavStore, type NotifyMode } from "./model";
 import { openRoomId } from "./open";
@@ -297,7 +297,11 @@ export async function rejectInvite(roomId: string, name: string): Promise<void> 
 export async function joinRoom(roomId: string): Promise<void> {
   status("Joining…");
   try {
-    await getClient().joinRoom(roomId, { viaServers: [serverOf(roomId)] });
+    // B1 pickVia: the space child's via (and who added it), never a server read off a v12 opaque id (the v12 bug sent
+    // via=[""]-or-my-own; the desktop's join_room asks the same servers)
+    const child = childViaFor(roomId);
+    const via = pickVia({ target: roomId, childVia: child.via, hints: [...child.senders, inviterServerHere(roomId)] });
+    await getClient().joinRoom(roomId, via.length ? { viaServers: via } : {});
     invalidateHierarchy();
     scheduleRefresh();
   } catch {
@@ -357,7 +361,11 @@ export async function joinByLink(text: string): Promise<string | null> {
   }
   status("Joining…");
   try {
-    const r = await getClient().joinRoom(p.target, { viaServers: p.via.length ? p.via : [serverOf(p.target)] });
+    // the link's via first; for a room id also what my spaces and my invite know (the same collector as joinRoom)
+    const child = p.target.startsWith("!") ? childViaFor(p.target) : { via: [], senders: [] };
+    const hints = p.target.startsWith("!") ? [...child.senders, inviterServerHere(p.target)] : [];
+    const via = pickVia({ target: p.target, linkVia: p.via, childVia: child.via, hints });
+    const r = await getClient().joinRoom(p.target, via.length ? { viaServers: via } : {});
     invalidateHierarchy();
     scheduleRefresh();
     return r.roomId;

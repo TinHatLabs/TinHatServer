@@ -1,7 +1,71 @@
 diff --git a/dist/livekit-client.e2ee.worker.mjs b/dist/livekit-client.e2ee.worker.mjs
-index ad55a83819c0e24fde8a65784395b2f797bab99f..a0b81064aa97cbb764e20b50bebff67334545a82 100644
+index ad55a83..51b796e 100644
 --- a/dist/livekit-client.e2ee.worker.mjs
 +++ b/dist/livekit-client.e2ee.worker.mjs
+@@ -1,33 +1,33 @@
+-/******************************************************************************
+-Copyright (c) Microsoft Corporation.
+-
+-Permission to use, copy, modify, and/or distribute this software for any
+-purpose with or without fee is hereby granted.
+-
+-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+-REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+-AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+-INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+-LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+-OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+-PERFORMANCE OF THIS SOFTWARE.
+-***************************************************************************** */
+-/* global Reflect, Promise, SuppressedError, Symbol, Iterator */
+-
+-
+-function __awaiter(thisArg, _arguments, P, generator) {
+-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+-    return new (P || (P = Promise))(function (resolve, reject) {
+-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+-        step((generator = generator.apply(thisArg, _arguments || [])).next());
+-    });
+-}
+-
+-typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
+-    var e = new Error(message);
+-    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
++/******************************************************************************
++Copyright (c) Microsoft Corporation.
++
++Permission to use, copy, modify, and/or distribute this software for any
++purpose with or without fee is hereby granted.
++
++THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
++REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
++AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
++INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
++LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
++OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
++PERFORMANCE OF THIS SOFTWARE.
++***************************************************************************** */
++/* global Reflect, Promise, SuppressedError, Symbol, Iterator */
++
++
++function __awaiter(thisArg, _arguments, P, generator) {
++    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
++    return new (P || (P = Promise))(function (resolve, reject) {
++        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
++        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
++        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
++        step((generator = generator.apply(thisArg, _arguments || [])).next());
++    });
++}
++
++typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
++    var e = new Error(message);
++    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
+ };
+ 
+ var loglevel$1 = {exports: {}};
 @@ -6744,6 +6744,88 @@ class BaseFrameCryptor extends eventsExports.EventEmitter {
   * Cryptor is responsible for en-/decrypting media frames.
   * Each Cryptor instance is responsible for en-/decrypting a single mediaStreamTrack.
@@ -100,7 +164,51 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..a0b81064aa97cbb764e20b50bebff673
      /** grace period for a teardown or a resubscribe to land before we report a stalled track */
      this.UNDECRYPTED_TRACK_GRACE_MS = 2000;
      /**
-@@ -7224,6 +7308,10 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7045,9 +7129,12 @@ class FrameCryptor extends BaseFrameCryptor {
+       if (encodedFrame.data.byteLength === 0) {
+         return controller.enqueue(encodedFrame);
+       }
+-      if (!this.isEnabled()) {
+-        this.appendFrameMetadata(encodedFrame);
+-        return controller.enqueue(encodedFrame);
++      // PATCH (Tin Hat Web) cryptor-not-ready + never-unencrypted: a frame leaves ONLY encrypted. Unknown state (no
++      // participant on this cryptor / no 'enable' seen yet) or encryption switched off -> DROP, never send it as is
++      // (the desktop's discard_frame_when_cryptor_not_ready). Tin Hat calls are always end-to-end encrypted.
++      if (this.isEnabled() !== true) {
++        workerLogger.debug('dropping frame: sender cryptor not ready / not encrypting', this.logContext);
++        return;
+       }
+       const keySet = this.keys.getKeySet();
+       if (!keySet) {
+@@ -7160,18 +7247,17 @@ class FrameCryptor extends BaseFrameCryptor {
+         return;
+       }
+       if (!encryptionEnabled) {
+-        // participant is known to publish unencrypted media
+-        return controller.enqueue(encodedFrame);
++        // PATCH (Tin Hat Web) never-trust-NONE: the publication ADVERTISES no encryption. That flag comes from the SFU
++        // (trackInfo), so trusting it would let a hostile call host play its own media as this participant. Tin Hat
++        // plays only media that decrypts: DROP (the desktop attaches a cryptor whatever is advertised).
++        this.emitThrottledError(new CryptorError("unencrypted media from ".concat(this.participantIdentity, " dropped: Tin Hat plays only end-to-end encrypted media"), CryptorErrorReason.InternalError, this.participantIdentity));
++        return;
+       }
+       if (isFrameServerInjected(encodedFrame.data, this.sifTrailer)) {
+-        encodedFrame.data = encodedFrame.data.slice(0, encodedFrame.data.byteLength - this.sifTrailer.byteLength);
+-        if (yield identifySifPayload(encodedFrame.data)) {
+-          workerLogger.debug('enqueue SIF', this.logContext);
+-          return controller.enqueue(encodedFrame);
+-        } else {
+-          workerLogger.warn('Unexpected SIF frame payload, dropping frame', this.logContext);
+-          return;
+-        }
++        // PATCH (Tin Hat Web) no SIF: a server-injected frame is made by the SFU, unauthenticated -> DROP, never play it
++        // (upstream stripped the trailer and played it). Mute / leave show the placeholder from the track events.
++        workerLogger.debug('dropping server-injected frame', this.logContext);
++        return;
+       }
+       const data = new Uint8Array(encodedFrame.data);
+       const keyIndex = data[encodedFrame.data.byteLength - 1];
+@@ -7224,6 +7310,10 @@ class FrameCryptor extends BaseFrameCryptor {
          if (!ratchetOpts.encryptionKey && !keySet) {
            throw new TypeError("no encryption key found for decryption of ".concat(_this.participantIdentity));
          }
@@ -111,7 +219,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..a0b81064aa97cbb764e20b50bebff673
          let frameInfo = _this.getUnencryptedBytes(encodedFrame);
          // Construct frame trailer. Similar to the frame header described in
          // https://tools.ietf.org/html/draft-omara-sframe-00#section-4.2
-@@ -7410,6 +7498,37 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7410,6 +7500,37 @@ class FrameCryptor extends BaseFrameCryptor {
    /**
     * inspects frame mimetype if available. falls back to payloadtype and maps it to the codec specified in rtpMap
     */
@@ -149,7 +257,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..a0b81064aa97cbb764e20b50bebff673
    getVideoCodec(frame) {
      const metadata = frame.getMetadata();
      if (metadata.mimeType) {
-@@ -7671,6 +7790,10 @@ onmessage = ev => {
+@@ -7671,6 +7792,10 @@ onmessage = ev => {
        case 'setLogLevel':
          workerLogger.setLevel(data.level);
          break;

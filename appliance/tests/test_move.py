@@ -202,7 +202,7 @@ class FormerNames(unittest.TestCase):
                                             own_sites=templates.CADDY_PROXY_OWN_SITES.format(server_name="chat.example.com"),
                                             api_routes=templates.CADDY_API, date="today", trusted="private_ranges", admitted="private_ranges",
                                             headers_snippet=templates.HEADERS_SNIPPET, web_csp="",
-                                            app_links=templates.APP_LINKS_ROUTE)
+                                            app_links=templates.APP_LINKS_ROUTE, admin_gate="")
         port = site[site.index("http://:8080 {"):]
         port = port[: port.index("\n}\n")]
         self.assertIn("handle /_tinhat/move-check {", port)  # the proxy port only: not :80, not the box's own HTTPS

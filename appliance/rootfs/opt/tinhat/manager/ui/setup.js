@@ -10,6 +10,7 @@ const answers = {
   code: "", // a server code (TN-XXXX-XXXX) for a from-anywhere name, while names are invite-only
   admin: { displayName: "", username: "", password: "" },
   features: null, // {calls, previews, directory, uploadMb}, filled from the recommendations
+  dashboardAccess: "anywhere", // asked on the Account page when this browser isn't on the server's home network
 };
 let status = null;
 let assessment = null; // {probe, bench, net, advice}
@@ -118,10 +119,10 @@ const INFO = {
     ],
     tech: [
       "Home network: mDNS announces name.local, the way printers show up; the server is its own certificate authority.",
-      "Friends anywhere: the Tin Hat names service points name.tinhat.me at your home's public address and keeps it current. Let's Encrypt issues the certificate through a DNS check that only your server can pass, so no port needs to be open for it.",
+      "Friends anywhere: the Tin Hat names service points name.tinhat.me at your server's public address and keeps it current. Let's Encrypt issues the certificate through a DNS check that only your server can pass, so no port needs to be open for it.",
       "Ports: TCP 443 (the app and chat), TCP 7881 and UDP 7882 (calls). The server asks your router to open them (UPnP or NAT-PMP).",
       "Own domain behind your own reverse proxy: your proxy keeps port 443 and its certificate and sends the domain to this server's port 8080 (home-network addresses only); the server opens only the call ports on your router.",
-      "Own domain: the certificate comes from Let's Encrypt by a DNS check through your provider's API (Cloudflare, Porkbun, deSEC or DuckDNS). With Cloudflare the server also keeps the domain's address record pointing at your home; with the others that stays your job (your router's dynamic DNS can do it). The token is kept on your server only, and goes in its backups.",
+      "Own domain: the certificate comes from Let's Encrypt by a DNS check through your provider's API (Cloudflare, Porkbun, deSEC or DuckDNS). With Cloudflare the server also keeps the domain's address record pointing at this server; with the others that stays your job (at home, your router's dynamic DNS can do it). The token is kept on your server only, and goes in its backups.",
       "Behind carrier NAT (5G home internet, Starlink), no port can be opened. Setup then offers the Tin Hat relay: your server keeps a connection open to it and friends reach the server through it. The certificate and its key stay on your server, so the relay can't read what passes through.",
     ],
   },
@@ -161,12 +162,12 @@ INFO.doneDomain = {
   title: "Why there's no certificate step",
   body: [
     "Your server has a real certificate from Let's Encrypt for your own domain, so every phone and computer trusts it already.",
-    "The outside check is the same thing a friend's device does: it connects to your home's public address on each port.",
+    "The outside check is the same thing a friend's device does: it connects to your server's public address on each port.",
   ],
   tech: [
     "The certificate renews by itself every couple of months, by the same DNS check through your provider's API.",
-    "With Cloudflare, the server keeps the domain's address record pointing at your home (checked every ten minutes). With the other providers, keep it current yourself, for example with your router's dynamic DNS.",
-    "Nothing here depends on tinhat.me. The outside check still asks the Tin Hat names service to connect back, because something outside your home has to.",
+    "With Cloudflare, the server keeps the domain's address record pointing at this server (checked every ten minutes). With the other providers, keep it current yourself, for example with your router's dynamic DNS.",
+    "Nothing here depends on tinhat.me. The outside check still asks the Tin Hat names service to connect back, because something outside has to.",
   ],
 };
 
@@ -179,7 +180,7 @@ INFO.doneProxy = {
   tech: [
     "Port 8080 only answers home-network addresses. It takes the visitor's address from your proxy's X-Forwarded-For header.",
     "This server's own services reach it over its own certificate on its own loopback address, never through your proxy.",
-    "The outside check connects to your home's public address on each port the way a friend's device would, with your domain's name, so it goes through your proxy too.",
+    "The outside check connects to your server's public address on each port the way a friend's device would, with your domain's name, so it goes through your proxy too.",
   ],
 };
 
@@ -187,11 +188,11 @@ INFO.doneAnywhere = {
   title: "Why there's no certificate step",
   body: [
     "From anywhere, your server has a real certificate from Let's Encrypt, the same kind websites use, so every phone and computer trusts it already.",
-    "The outside check is the same thing a friend's device does: it connects to your home's public address on each port.",
+    "The outside check is the same thing a friend's device does: it connects to your server's public address on each port.",
   ],
   tech: [
     "The certificate renews by itself every couple of months, through the Tin Hat names service's DNS check.",
-    "Your server keeps its name pointed at your home: if your internet provider changes your address, it updates within ten minutes.",
+    "Your server keeps its name pointed at its public address: if that address changes (a home's internet provider does that now and then), it updates within ten minutes.",
   ],
 };
 
@@ -209,8 +210,8 @@ INFO.doneRelay = {
 };
 
 const STEP_INFO = {
-  dns: "Checks your domain with your DNS provider. With Cloudflare, the server points it at your home's public address itself; with the others, it checks the address is already right and tells you if not.",
-  name: "Reserves your name with the Tin Hat names service (a few seconds of number crunching proves this is a real new server), and points it at your home's public address.",
+  dns: "Checks your domain with your DNS provider. With Cloudflare, the server points it at its own public address itself; with the others, it checks the address is already right and tells you if not.",
+  name: "Reserves your name with the Tin Hat names service (a few seconds of number crunching proves this is a real new server), and points it at your server's public address.",
   ports: "Asks your router to open TCP 443, TCP 7881 and UDP 7882 for this server (UPnP or NAT-PMP), and notices if your internet provider or a second router is in the way. Behind carrier NAT it offers the Tin Hat relay instead.",
   outside: "The names service connects back from outside on each port, the way a friend's device would. Calls pause for a few seconds during the check.",
   prepare: "Writes the settings for every part, and makes the server's own secrets: its database password, call keys and the chat server's signing key.",
@@ -228,7 +229,7 @@ const STEP_LABELS = {
   name: "Reserving your server's name", ports: "Opening ports on your router", outside: "Checking from outside",
   prepare: "Preparing your server", database: "Starting the database", chat: "Starting the chat server",
   accounts: "Creating your admin account", secure: "Securing connections (HTTPS)", calls: "Starting voice and video calls",
-  finish: "Finishing up", dns: "Pointing your domain at your home",
+  finish: "Finishing up", dns: "Pointing your domain at your server",
 };
 // Only the steps a new server runs (the restore steps have their own screen).
 INFO.review.tech = Object.keys(STEP_LABELS).map((k) => `${STEP_LABELS[k]}: ${STEP_INFO[k]}`);
@@ -321,7 +322,38 @@ function levelChip(level, text) {
 
 // ---- 0. setup code ------------------------------------------------------------------------------------------------
 
+// P2 (assembly-038 / NEXT-ROUND): over plain http from outside the server's own network (a VPS owner's first page),
+// nothing secret is typed: not the setup code, not the password. The server refuses it too (web.py _secret_ok); this
+// page sends the owner to the server's own https setup page (a self-signed certificate whose fingerprint install.sh
+// printed), or, where there is none, says how to come in through an SSH tunnel.
+function viewPrivatePage() {
+  const host = location.hostname; // an IPv6 address keeps its brackets here
+  const port = status.proxyOnly ? "8080" : "80";
+  const tunnel = h("p.muted", "Or come in through an SSH tunnel from your computer: ",
+    h("code", `ssh -L 8080:127.0.0.1:${port} you@${host.replace(/^\[|\]$/g, "")}`), ", then open ", h("span.mono", "http://127.0.0.1:8080/"), ".");
+  // the cut-down answer doesn't say whether there is an https page (follow-up review): offer it unless told there's none
+  const card = status.secureSetup !== false
+    ? h("div.card.stack-lg",
+      h("div.stack-sm",
+        h("h1", "Continue on the private setup page"),
+        h("p.lede", "This page reaches your server over the internet without encryption, so the setup code and your password can't be typed here.")),
+      h("div.row.wrap", h("a.btn.cta", { href: `https://${host}/` }, "Open the private setup page"), h("span.small.muted.mono", `https://${host}/`)),
+      h("div.note", h("p", "Your browser will warn that it doesn't know the page's certificate: your server made it itself, because it has no certificate of its own yet."),
+        h("p", "Before you continue past the warning, open the certificate's details and check that its SHA-256 fingerprint is the one the installer printed (", h("code", "sudo tinhat setup-code"), " on the server shows it again). If it isn't, stop: someone is in between.")),
+      tunnel)
+    : h("div.card.stack-lg",
+      h("div.stack-sm",
+        h("h1", "Set up from a private connection"),
+        h("p.lede", "This page reaches your server over the internet without encryption, so the setup code and your password can't be typed here, and this server can't offer an https setup page.")),
+      tunnel);
+  show(null, INFO.unlockOwn, card);
+}
+
 function viewUnlock(message) {
+  // the cut-down answer port 80 gives an outside address (OUTSIDE_STATUS_KEYS) has no plainOutside: plain http plus that
+  // answer means outside too (Astra on 01b6fc4); the setup site serves https until setup is done
+  if (status && !status.plainOutside && location.protocol === "http:" && outsideAnswer(status)) status.plainOutside = true;
+  if (status && status.plainOutside) return viewPrivatePage();
   const err = errorBox();
   if (message) showError(err, message);
   const input = h("input.code", { type: "text", inputmode: "numeric", autocomplete: "one-time-code", placeholder: "0000-0000", maxlength: "9", "aria-label": "Setup code" });
@@ -752,6 +784,36 @@ function viewConnect() {
 
 // ---- 4. admin account ------------------------------------------------------------------------------------------------
 
+// Who can open the dashboard (access.py): asked only for a server friends reach from outside, and only when this browser
+// isn't on the server's own network (a VPS owner at home, say). The address is the one the server saw; "Only from the
+// home network" isn't offered from outside: it would close the dashboard on the owner at the end of setup.
+const ownerOutside = () => publicMode(answers.mode) && !!(status && status.owner && status.owner.address && !status.owner.atHome);
+const accessWords = (choice) => choice === "address" ? `Only from ${status.owner.address}` : "Anywhere, with your password";
+
+function accessChoice() {
+  const o = status.owner;
+  const net = o.address.includes("/");
+  const pick = (v) => {
+    answers.dashboardAccess = v;
+    for (const b of [any, mine]) b.setAttribute("aria-checked", String(b.dataset.v === v));
+  };
+  const any = h("button.choice", { type: "button", role: "radio", "data-v": "anywhere", onclick: () => pick("anywhere") },
+    h("div.t", "Anywhere, with your password"),
+    h("div.d", "How every Tin Hat server starts. Handy if you'll look after it from different places: home, work, your phone."));
+  const mine = h("button.choice", { type: "button", role: "radio", "data-v": "address", onclick: () => pick("address") },
+    h("div.t", net ? "Only from this network" : "Only from this address"),
+    h("div.d", net ? ["Only from addresses in ", h("span.mono", o.address), " (where you are now) and the server's own network."]
+      : ["Only from ", h("span.mono", o.address), " (where you are now) and the server's own network."]),
+    h("div.d", "If your internet provider gives you a new address, you'll need the server's console to open the dashboard again: ",
+      h("code", "sudo tinhat dashboard-access anywhere"), "."));
+  pick(answers.dashboardAccess === "address" ? "address" : "anywhere");
+  return h("div.stack-sm",
+    h("h2", "Who can open the dashboard"),
+    h("p.muted", ["You're setting this up from ", h("span.mono", o.address), ", which isn't on the server's own network. Who should be able to open its dashboard?"]),
+    h("div.choices", { role: "radiogroup", "aria-label": "Who can open the dashboard" }, any, mine),
+    h("p.small.muted", "Chat, calls and the Tin Hat apps' invite codes work from anywhere either way. You can change this later under Network, and choose “only from the home network” there."));
+}
+
 function viewAccount() {
   const err = errorBox();
   const sn = serverName();
@@ -790,8 +852,10 @@ function viewAccount() {
   h("label.field", h("span", "Username"), user, idHelp),
   h("label.field", h("span", "Password"), pw, h("small", "At least 8 characters. This server can't email you a reset link, so keep it somewhere safe.")),
   h("label.field", h("span", "Password again"), pw2),
+  ownerOutside() ? accessChoice() : null,
   err,
   h("div.row.end", h("button.btn.ghost", { type: "button", onclick: viewConnect }, "Back"), h("button.btn.cta", { type: "submit" }, "Continue")));
+  if (!ownerOutside()) answers.dashboardAccess = "anywhere";
   show("account", INFO.account, card);
 }
 
@@ -815,6 +879,7 @@ function viewReview() {
     ["Server address", sn],
     ["Who connects", answers.mode === "anywhere" ? `Friends anywhere (they type “${answers.name}”)` : answers.mode === "domain" ? (!answers.domain ? "Friends anywhere, at your own domain (as set up before)" : answers.domain.provider === "proxy" ? "Friends anywhere, at your own domain, through your own reverse proxy" : `Friends anywhere, at your own domain (${OWN_PROVIDERS[answers.domain.provider].label})`) : "People on this home network"],
     ["Admin account", `${answers.admin.displayName} (@${answers.admin.username}:${sn})`],
+    ...(ownerOutside() ? [["Dashboard opens from", accessWords(answers.dashboardAccess)]] : []),
     ...featureSummary(),
   ];
   const go = h("button.btn.cta", { type: "button" }, "Install Tin Hat Server");
@@ -1234,17 +1299,25 @@ const HOST_RE = /^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,
 const outsideAnswer = (st) => !!st && typeof st === "object" && !("unlocked" in st);
 function hopToHttps() {
   const sn = status && status.serverName;
-  if (!outsideAnswer(status) || location.protocol !== "http:" || typeof sn !== "string" || !HOST_RE.test(sn) || location.hostname === sn) return null;
+  // over plain http only the cut-down answer moves the page (a home setup keeps its last page); the setup page's own
+  // https://<address>/ (P2: a VPS owner's private page) always moves to the server's name
+  const plain = location.protocol === "http:" && outsideAnswer(status);
+  // ... except right after a restore: its finish page offers "Set a new admin password", which needs this page's setup
+  // session (the cookie doesn't go to the name): the card links there, it doesn't move by itself (Astra on 01b6fc4)
+  const own = location.protocol === "https:" && !HOST_RE.test(location.hostname);
+  const stay = own && !!(status && status.restoredFrom);
+  if (!(plain || own) || typeof sn !== "string" || !HOST_RE.test(sn) || location.hostname === sn) return null;
   const go = `https://${sn}/admin/`;
   const card = h("div.card.stack-sm",
     h("h2", "Your server is ready at ", h("span.mono", `https://${sn}/`)),
-    h("p.muted", "This page talked to the server over plain http while it set itself up. From now on use its https address:"),
+    h("p.muted", plain ? "This page talked to the server over plain http while it set itself up. From now on use its https address:"
+      : "This page used the setup's own certificate while the server set itself up. From now on use its real https address:"),
     h("div.row.wrap", h("a.btn.cta", { href: go }, "Open it"), h("span.small.muted.mono", go)));
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 6000);
   // no-cors: the answer can't be read from here, but a reply at all means the name and certificate work from this browser
   fetch(`https://${sn}/admin/setup/status`, { mode: "no-cors", cache: "no-store", signal: ctl.signal })
-    .then(() => { clearTimeout(t); location.href = go; })
+    .then(() => { clearTimeout(t); if (!stay) location.href = go; })
     .catch(() => clearTimeout(t));
   return card;
 }

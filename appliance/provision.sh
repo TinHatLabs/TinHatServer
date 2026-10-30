@@ -64,8 +64,11 @@ if [ -n "$CADDY_REF" ]; then
 else
   docker build -q -t tinhat/caddy:2.10.2-dns /opt/tinhat/build/caddy
 fi
+# the module list read whole first: `docker run … | grep -q` under pipefail failed at random (grep stops at the first
+# match, docker's next write gets a broken pipe, the pipeline counts as failed: "caddy is missing" for a module it has)
+CADDY_MODULES=$(docker run --rm tinhat/caddy:2.10.2-dns caddy list-modules)
 for m in acmedns cloudflare porkbun desec duckdns; do
-  docker run --rm tinhat/caddy:2.10.2-dns caddy list-modules | grep -q "^dns.providers.$m\$" || { echo "caddy is missing dns.providers.$m" >&2; exit 1; }
+  grep -q "^dns.providers.$m\$" <<<"$CADDY_MODULES" || { echo "caddy is missing dns.providers.$m" >&2; exit 1; }
 done
 docker image rm -f caddy:2.10.2-builder >/dev/null 2>&1 || true
 # The Tin Hat API (api/ in the repository: the soundboard, GIFs, presence, push, game servers, the games catalogue).

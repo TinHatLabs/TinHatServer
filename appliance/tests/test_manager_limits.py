@@ -32,8 +32,11 @@ def stubs():
         sys.modules["tinhat"] = pkg
         for m in ("config", "environment", "state"):
             sys.modules[f"tinhat.{m}"] = types.ModuleType(f"tinhat.{m}")
+        sys.modules["tinhat.state"].load_state = lambda: {}  # the dashboard's access gate (access.py): anywhere
+        sys.modules["tinhat.state"].public_mode = lambda st=None: False
         hw = types.ModuleType("tinhat.hw")
         hw.addresses = lambda: ["192.168.1.30"]
+        hw.ipv6_nets = lambda: []
         sys.modules["tinhat.hw"] = hw
         pkg.hw = hw
         yield

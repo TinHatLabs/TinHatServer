@@ -29,7 +29,8 @@ import {
   type VideoCodec,
 } from "livekit-client";
 import E2EEWorker from "livekit-client/e2ee-worker?worker";
-import { getSession, ensureWritable, getState, sendState, peekClient, fetchMedia, acquireMxcUrl, onClientChanged } from "@/core/matrix";
+import { videoTileShown } from "./tilerules";
+import { getSession, ensureWritable, CALL_MEMBER_STATE_EVENTS, getState, sendState, peekClient, fetchMedia, acquireMxcUrl, onClientChanged } from "@/core/matrix";
 import { holdsTabLock } from "@/core/matrix/client";
 import { RoomStateEvent, type MatrixClient, type MatrixEvent } from "matrix-js-sdk";
 import { CryptoEvent } from "matrix-js-sdk/lib/crypto-api/index.js";
@@ -283,6 +284,7 @@ export function rebuildTiles(): void {
       if (!pub.track || !pub.trackSid) continue;
       const ss = pub.source === Track.Source.ScreenShare;
       if (!ss && pub.source !== Track.Source.Camera) continue;
+      if (!videoTileShown(ss, pub.isMuted)) continue; // 12.1.3: a muted camera is the avatar (tilerules.ts)
       if (!ss) camOwners.add(p.identity);
       const id = `vid_${pub.trackSid}`;
       const [recOnly, tuned] = ss ? hooks.recOnly(p.identity, pub.trackSid) : [false, false];
@@ -2329,7 +2331,10 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     if (left) await closeSession(left, "leftover");
     if (stale(gen)) return fail("superseded");
     await av1Probe(); // AV1 hook: the marker below needs the (memoised, early-started) capability probe
-    // 5. membership (0 / 1 / 3 s, then every 15 s in the background)
+    // 5. membership (0 / 1 / 3 s, then every 15 s in the background). Joining is the use that needs members able to
+    // publish it: in my own server's rooms an admin lets them (once, logged; rooms are no longer provisioned on open).
+    await ensureWritable(roomId, CALL_MEMBER_STATE_EVENTS).catch(() => undefined);
+    if (stale(gen)) return fail("superseded");
     const createdTs = ownLiveCreatedTs(roomId, me, dev) ?? Date.now();
     const content = () => membershipContent({ roomId, userId: me, deviceId: dev, createdTs, focus, refresh: Date.now() - createdTs > 60000 });
     wantMembership(roomId, gen); // this generation owns our membership in roomId until it leaves
@@ -2984,6 +2989,9 @@ function wireRoom(s: Sess) {
     })
     .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub: RemoteTrackPublication, p: RemoteParticipant) => {
       if (sess() !== s && s.gen !== joinGen) return;
+      // The advertised "unencrypted" comes from the SFU (trackInfo); the patched E2EE worker drops such a track's frames
+      // instead of playing them (never-trust-NONE, with the desktop). Say so in the log.
+      if (!pub.isEncrypted) log.warn(`[e2ee] ${p.identity} ${pub.source} ${pub.trackSid} is advertised as UNENCRYPTED: not played (Tin Hat plays only end-to-end encrypted media)`);
       if (track.kind === Track.Kind.Audio) subscribeAudio(track as RemoteAudioTrack, pub, p);
       else {
         reattach(`vid_${pub.trackSid}`);

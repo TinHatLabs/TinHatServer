@@ -1114,7 +1114,7 @@ if (process.env.TINHAT_BOX === "1") {
 // this app, whose routes /api/soundboard/ exposes wholesale), reachable by Synapse only (on a Tin Hat Server: the box's
 // address on the compose network, the one private address Synapse's ip_range_whitelist allows).
 // reachHs / reachAuth: created next to HS_INTERNAL above (pinned at start, REACH A2.4).
-installPresence(app, { auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN });
+installPresence(app, { auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN, serverName: process.env.SERVER_NAME || "" });
 installPush(app, {
     auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN, dir: CONF,
     gatewayListen: { host: process.env.PUSH_GATEWAY_HOST || "127.0.0.1", port: Number(process.env.PUSH_GATEWAY_PORT || 3091) },

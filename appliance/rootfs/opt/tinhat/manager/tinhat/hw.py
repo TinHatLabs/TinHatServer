@@ -111,6 +111,24 @@ def addresses() -> list[str]:
     return out
 
 
+def ipv6_addresses() -> list[str]:
+    """The box's global IPv6 addresses on real interfaces (as ipv6_nets picks them): the setup page's own https
+    listens on them too behind the owner's proxy (setuptls.py), and its certificate names them."""
+    out = []
+    try:
+        r = subprocess.run(["ip", "-6", "-o", "addr", "show", "scope", "global"], capture_output=True, text=True, timeout=3)
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            ifname, addr = parts[1], parts[3].split("/")[0]
+            if ifname == "lo" or ifname.startswith(("lo:", "loopback", "docker", "br-", "veth", "wg-")):
+                continue
+            if addr not in out:
+                out.append(addr)
+    except (OSError, subprocess.SubprocessError, IndexError):
+        pass
+    return out
+
+
 def ipv6_nets() -> list:
     """The box's own on-link IPv6 networks (global addresses on real interfaces, as addresses() picks them): a device
     connecting from inside one of them is on the home network, even over its global IPv6 address."""

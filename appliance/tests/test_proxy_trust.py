@@ -210,7 +210,8 @@ class NetworkProxy(unittest.TestCase):
         self.assertEqual(saved["domain"], {"provider": "proxy", "proxies": ["192.168.50.2"]})
         self.assertTrue(refresh.called and reload.await_count == 1)
         # written beside the live file, checked there, then swapped in (review of 116d103, #5)
-        self.assertEqual(self.validated.await_args.args[0], "/etc/caddy/Caddyfile.new")
+        # (its own name since sec-round2: two writers never validate each other's file)
+        self.assertRegex(self.validated.await_args.args[0], r"^/etc/caddy/Caddyfile\.new-[0-9a-f]{8}$")
         self.assertTrue(self.live.read_text().startswith("NEW"))
 
     def test_a_lock_out_is_refused_and_nothing_changes(self):

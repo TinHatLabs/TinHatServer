@@ -95,6 +95,58 @@ def proxy_addresses(args: list[str], st: dict | None = None, apply=None) -> int:
     return 0
 
 
+def dashboard_access(args: list[str], st: dict | None = None, apply=None) -> int:
+    """`tinhat dashboard-access [anywhere | home | only ADDR[,ADDR…] | add ADDR]`: who may open the dashboard (access.py;
+    Network → Who can open this dashboard). The console is the way back in when the owner's own address changed or a
+    choice locked them out, so it checks no caller: `anywhere` always opens it again."""
+    from . import access, state
+    if apply is None:
+        from . import web
+        apply = web.apply_dashboard_access
+    st = state.load_state() if st is None else st
+    cur = access.policy(st)
+    words = {"anywhere": "anywhere, with your password", "home": "only the home network",
+             "addresses": "only the home network and " + ", ".join(cur["addresses"])}
+    if not args:
+        print(f"The dashboard opens from: {words[cur['mode']]}.")
+        if not access.applies(st):
+            print("(This server is for its home network: nothing outside reaches it, so the setting changes nothing.)")
+        return 0
+    if args == ["anywhere"] or args == ["home"]:
+        mode, addrs = args[0], []
+    elif args[0] in ("only", "add") and len(args) >= 2:
+        new, problem = access.parse_addresses(" ".join(args[1:]))
+        if problem is not None or not new:
+            print(problem or "Name at least one address.")
+            return 2
+        mode = "addresses"
+        addrs = new if args[0] == "only" else list(dict.fromkeys(cur["addresses"] + new))
+        if len(addrs) > access.MAX_ADDRESSES:
+            print(f"At most {access.MAX_ADDRESSES} addresses.")
+            return 2
+    else:
+        print("usage: tinhat dashboard-access [anywhere | home | only ADDR[,ADDR...] | add ADDR[,ADDR...]]")
+        return 2
+    ok, why = asyncio.run(apply(mode, addrs, "console"))
+    if not ok:
+        if mode == "anywhere":  # the way back in must work: at least the manager's own check opens now
+            async def save_locked():  # under the apply lock when it can be had soon (no rollback can undo it then)
+                from . import web
+                try:
+                    async with web._CaddyLock(seconds=10):
+                        access.save("anywhere", [], "console")
+                except TimeoutError:
+                    access.save("anywhere", [], "console")
+            asyncio.run(save_locked())
+            print(f"Saved: the server's manager opens the dashboard now and writes the web server's settings again within "
+                  f"a minute (they didn't go in just now:\n{why})")
+            return 1
+        print(f"The web server didn't take it; nothing changed.\n{why}")
+        return 1
+    print(f"The dashboard opens from: {'anywhere, with your password' if mode == 'anywhere' else 'only the home network' if mode == 'home' else 'only the home network and ' + ', '.join(addrs)}.")
+    return 0
+
+
 def api_limits(args: list[str], st: dict | None = None, apply=None) -> int:
     """`tinhat api-limits [NAME=VALUE … | --reset NAME … | --reset-all]`: the owner's own numbers for the Tin Hat API's
     limits (apiconf.LIMITS, docs/API.md "Who may use the extras"), kept in state and written into the API's environment
@@ -159,6 +211,9 @@ def main() -> None:
     if sys.argv[1:2] == ["api-limits"]:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
         sys.exit(api_limits(sys.argv[2:]))
+    if sys.argv[1:2] == ["dashboard-access"]:
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+        sys.exit(dashboard_access(sys.argv[2:]))
     if sys.argv[1:2] == ["proxy-addresses"]:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
         sys.exit(proxy_addresses(sys.argv[2:]))

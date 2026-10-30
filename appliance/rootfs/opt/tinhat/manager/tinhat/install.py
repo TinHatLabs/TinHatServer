@@ -50,7 +50,7 @@ STEPS_ANYWHERE = [
 # The owner's own domain: nothing depends on tinhat.me. The domain is pointed at the home first (through the provider's
 # API where we can), the certificate comes by DNS-01 through the same provider.
 STEPS_DOMAIN = [
-    ("dns", "Pointing your domain at your home"),
+    ("dns", "Pointing your domain at your server"),
     ("prepare", "Preparing your server"),
     ("database", "Starting the database"),
     ("chat", "Starting the chat server"),
@@ -494,7 +494,7 @@ class Installer:
         label = owndomain.PROVIDERS[own["provider"]]["label"]
         ip = await owndomain.public_ip()
         if not ip:
-            return ("warn", "Couldn't find your home's public address, so the domain wasn't pointed yet. "
+            return ("warn", "Couldn't find this server's public address, so the domain wasn't pointed yet. "
                             "The dashboard keeps trying.")
         try:
             moved = await owndomain.set_address(sn, ip)
@@ -712,7 +712,8 @@ class Installer:
         installed = state.load_state().get("installed_at") if a.get("restore") else None
         state.save_state(phase="ready", server_name=a["server_name"], mode=a["mode"], calls=a["calls"], features=a["features"],
                          installed_at=installed or datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                         version=config.VERSION, failed_step=None, error=None, restoring=None)
+                         version=config.VERSION, failed_step=None, error=None, restoring=None,
+                         ready_at=int(time.time()))  # this install's or restore's end (installed_at survives a restore)
         try:
             config.SETUP_CODE_FILE.unlink()
         except FileNotFoundError:

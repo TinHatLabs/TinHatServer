@@ -23,7 +23,7 @@ function setup(over = {}, opts = {}) {
         ...over,
     });
     const logs = [];
-    const p = createPresence({ auth: authFor(hs, now), hs, adminToken: "admintoken", now, wallNow, log: (s) => logs.push(s), getMinMs: opts.getMinMs ?? 0 });
+    const p = createPresence({ auth: authFor(hs, now), hs, adminToken: "admintoken", now, wallNow, log: (s) => logs.push(s), getMinMs: opts.getMinMs ?? 0, serverName: opts.serverName });
     const put = (tok, body) => call(p.put, { method: "PUT", headers: bearer(tok), body });
     const get = (tok, query = {}) => call(p.get, { headers: bearer(tok), query });
     const del = (tok, query = {}) => call(p.del, { method: "DELETE", headers: bearer(tok), query });
@@ -535,3 +535,28 @@ test("tz_logs_are_counts_only", async () => {
     assert.ok(!text.includes("New_York") && !text.includes("carol") && !text.includes("@"), "no zone, no user in the logs");
 });
 
+
+// ---- remote users (BACKLOG-SERVER-037, 0.3.9): Synapse's admin API only answers for local users ----------------------
+
+test("remote_members_are_not_sharing_and_never_read_through_the_admin_api", async () => {
+    const D = "@dave:other.example", E = "@eve:EXAMPLE.ORG.evil";
+    const { get, put, hs, p, logs } = setup({
+        rooms: { [A]: [SHARED], [B]: [SHARED], [C]: [], [D]: [SHARED], [E]: [SHARED] },
+        share: { [A]: true, [B]: false, [D]: true, [E]: true }, tz: { [A]: TYO, [D]: NYC, [E]: NYC },
+    }, { serverName: "Example.org" });
+    await put("ta1", online);
+    const r = await get("tb", { tz: "1" });
+    assert.deepEqual(r.body.users, { [A]: { state: "online", tz: "Asia/Tokyo" } }, "only the local sharer; remote members are not listed");
+    const remoteReads = hs.calls.filter((c) => /accountdata$/.test(c) && /dave|eve/.test(decodeURIComponent(c)));
+    assert.deepEqual(remoteReads, [], "no admin account-data read for a remote mxid");
+    p.report();
+    assert.match(logs.at(-1), /remote users skipped/);
+    assert.ok(!logs.join("\n").includes("dave"), "logs carry counts only");
+});
+
+test("without_a_server_name_every_user_is_read_as_before", async () => {
+    const D = "@dave:other.example";
+    const { get, hs } = setup({ rooms: { [A]: [SHARED], [B]: [SHARED], [D]: [SHARED] }, tz: { [D]: NYC } });
+    await get("tb", { tz: "1" });
+    assert.ok(hs.calls.some((c) => /accountdata$/.test(c) && decodeURIComponent(c).includes(D)), "old behaviour kept");
+});

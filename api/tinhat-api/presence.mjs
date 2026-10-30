@@ -135,6 +135,11 @@ export class Generations {
  */
 export function createPresence(deps) {
     const { auth, hs, adminToken } = deps;
+    // Account data lives on the user's own homeserver: Synapse's admin API answers 400 "Can only look up local users"
+    // for anyone else. A remote user (another server's member of a shared room) is treated as not sharing, without a
+    // read. Unknown server name (deps.serverName empty) = the old behaviour: every user is read.
+    const ownSuffix = deps.serverName ? `:${String(deps.serverName).toLowerCase()}` : "";
+    const isRemote = (mxid) => !!ownSuffix && !String(mxid).toLowerCase().endsWith(ownSuffix);
     const now = deps.now || mono;
     const wallNow = deps.wallNow || wall;
     const log = deps.log || ((s) => console.log(s));
@@ -149,7 +154,7 @@ export function createPresence(deps) {
     const roomsInflight = new Map(); // mxid -> Promise (joined rooms are not consent: plain coalescing is fine)
     const putLimit = new RateLimit(60, 60_000, now);          // per user
     const getLimit = new RateLimit(1, deps.getMinMs ?? C.GET_MIN_MS, now); // per token (A2.4)
-    const stats = { beats: 0, coalesced: 0, notSharing: 0, deletes: 0, gets: 0, adminReads: 0, errors: 0, limited: 0, tzGets: 0, tzListed: 0, tzOff: 0 };
+    const stats = { beats: 0, coalesced: 0, notSharing: 0, deletes: 0, gets: 0, adminReads: 0, errors: 0, limited: 0, tzGets: 0, tzListed: 0, tzOff: 0, remoteSkips: 0 };
     const tzCache = new Map();      // mxid -> {exp, tz|null}   (both answers, 20 s; the owner's DELETE ?what=tz drops it)
     const tzGens = new Generations(); // mxid: retired by DELETE ?what=tz (a read that raced it is not cached)
     const membersCache = new Map(); // room -> {members: Set, exp}
@@ -189,6 +194,7 @@ export function createPresence(deps) {
             const c = optCache.get(mxid);
             if (c && c.exp > now()) return Promise.resolve({ share: true, status: c.status });
         }
+        if (isRemote(mxid)) { stats.remoteSkips++; return Promise.resolve({ share: false, status: null }); }
         const slot = fresh ? "freshRead" : "read";
         if (g[slot]) return g[slot];
         const p = (async () => {
@@ -256,6 +262,7 @@ export function createPresence(deps) {
     async function tzOf(mxid, g) {
         const c = tzCache.get(mxid);
         if (c && c.exp > now()) return c.tz;
+        if (isRemote(mxid)) { stats.remoteSkips++; return null; }
         stats.adminReads++;
         const r = await hs.get(`/_synapse/admin/v1/users/${encodeURIComponent(mxid)}/accountdata`, adminToken);
         let tz = null;
@@ -459,7 +466,7 @@ export function createPresence(deps) {
         if (!c.users && !Object.values(s).some(Boolean)) return;
         log(`[presence] live ${c.users} user(s) / ${c.devices} device(s); last period: ${s.beats} beats (+${s.coalesced} coalesced), ` +
             `${s.notSharing} not sharing, ${s.deletes} off/sign-out, ${s.gets} reads, ${s.adminReads} admin lookups, ` +
-            `${s.limited} rate-limited, ${s.errors} errors; time zones: ${s.tzGets} reads listing ${s.tzListed}, ${s.tzOff} off`);
+            `${s.limited} rate-limited, ${s.errors} errors, ${s.remoteSkips} remote users skipped; time zones: ${s.tzGets} reads listing ${s.tzListed}, ${s.tzOff} off`);
     }
 
     return { put, del, get, counts, report, sweep, _users: users, _optCache: optCache, _gens: gens, _devGens: devGens, _tzCache: tzCache, _tzGens: tzGens };

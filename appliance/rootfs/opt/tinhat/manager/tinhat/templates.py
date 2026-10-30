@@ -219,6 +219,19 @@ CADDY_SETUP = """\
 }
 """
 
+# The same with the setup page's own https (setuptls.py): a self-signed certificate on port 443 for any address, made at
+# the manager's first start. On a public address (a VPS) the wizard takes the setup code and the owner's password only
+# there, or over plain http from the home network (web.py _secret_ok); install.sh prints the certificate's fingerprint.
+SETUP_TLS_SITE = """
+# The setup page's own https (self-signed until the server has its own certificate; install.sh printed its fingerprint)
+https:// {
+	tls /data/tinhat-setup/cert.pem /data/tinhat-setup/key.pem
+	header -Server
+	reverse_proxy 127.0.0.1:8090
+}
+"""
+CADDY_SETUP_TLS = CADDY_SETUP + SETUP_TLS_SITE
+
 # Before setup on a machine where another web server has 80 and 443 (install.sh --behind-proxy): the setup wizard on
 # port 8080 instead.
 CADDY_SETUP_PROXY_ONLY = """\
@@ -330,6 +343,53 @@ def web_csp_line(csp: str | None = None) -> str:
         log.warning("web app Content-Security-Policy refused: %s", why)
         return ""
     return f'\t\theader Content-Security-Policy "{csp}"\n'
+
+
+# Who may open the dashboard (access.py; the owner's choice at setup or in Network → Who can open the dashboard): on a
+# server friends reach from outside, every route to /admin starts with this. "Anywhere" (the default) writes nothing;
+# otherwise any caller outside the home network and the named addresses gets a 403 before the manager sees the request.
+# client_ip is the caller as Caddy worked it out: the connecting address, the relay's PROXY-protocol address, or behind
+# the owner's reverse proxy the visitor its trusted proxies name. The manager checks the same again (web.py).
+#: an X-Forwarded-For made of addresses only (IPv4, IPv6, brackets, ports, commas, spaces)
+XFF_ADDRESSES = "`^[0-9A-Fa-f:.,\\[\\] ]+$`"
+
+
+def admin_gate(st: dict | None = None, own_nets=None, proxy: bool = False) -> str:
+    try:
+        from . import access, hw, state
+        st = state.load_state() if st is None else st
+        nets = hw.ipv6_nets() if own_nets is None else own_nets
+    except (ImportError, AttributeError):  # only the template tests' stubbed package (the manager checks again anyway)
+        log.warning("no dashboard access gate: the manager's modules aren't all there")
+        return ""
+    ranges = access.caddy_ranges(st, nets)
+    if ranges is None:
+        return ""
+    # right after `handle @admin {` on its line (so the line after it is still the manager's reverse_proxy, where
+    # limit_manager finds it): a newline first, none after
+    # /admin/name-check stays open (access.GATE_OPEN): a restored copy elsewhere tells this one to stand down there
+    out = (f"\n\t\t@tinhat_admin_away {{"
+           f"\n\t\t\tnot client_ip {ranges}"
+           f"\n\t\t\tnot path {' '.join(access.GATE_OPEN)}"
+           f"\n\t\t}}"
+           f"\n\t\trespond @tinhat_admin_away \"{access.REFUSED}\" 403")
+    if proxy:
+        # behind the owner's proxy, a request without X-Forwarded-For has the proxy's own (home) address as its
+        # client_ip: a proxy that doesn't say who the visitor is would let everyone in (Astra on be9372e). Refused,
+        # except from this machine's own loopback (its services, an SSH tunnel to the box's own https).
+        # Present isn't enough: "unknown" or garbage also leaves Caddy with the proxy's address (follow-up review #1),
+        # so the header must be addresses only; and only the box's own https on loopback (an SSH tunnel) goes without
+        # one, never the proxy port (a proxy on this same machine connects over loopback too).
+        out += (f"\n\t\t@tinhat_admin_unnamed {{"
+                f"\n\t\t\tnot header_regexp X-Forwarded-For {XFF_ADDRESSES}"
+                f"\n\t\t\tnot {{"
+                f"\n\t\t\t\tremote_ip 127.0.0.0/8 ::1"
+                f"\n\t\t\t\tprotocol https"
+                f"\n\t\t\t}}"
+                f"\n\t\t\tnot path {' '.join(access.GATE_OPEN)}"
+                f"\n\t\t}}"
+                f"\n\t\trespond @tinhat_admin_unnamed \"{access.REFUSED_UNNAMED}\" 403")
+    return out
 
 
 # One origin serves the web app, the homeserver, calls and the dashboard (the Tin Hat Web self-host build
@@ -521,7 +581,7 @@ https://{server_name} {{
 		reverse_proxy 127.0.0.1:7880
 	}}
 	@admin path /admin /admin/*
-	handle @admin {{
+	handle @admin {{{admin_gate}
 		reverse_proxy 127.0.0.1:8090
 	}}
 {api_routes}	handle {{
@@ -578,7 +638,7 @@ https://{server_name} {{
 		redir https://{server_name}{{uri}} 308
 	}}
 }}
-"""
+{setup_site}"""
 
 
 # Behind the owner's own reverse proxy: their proxy has 443 and the certificate for the domain, and sends everything to
@@ -677,7 +737,7 @@ CADDY_PROXY = """\
 		reverse_proxy 127.0.0.1:7880
 	}}
 	@admin path /admin /admin/*
-	handle @admin {{
+	handle @admin {{{admin_gate}
 		reverse_proxy 127.0.0.1:8090 {{
 			header_up X-Forwarded-For {{client_ip}}
 			# the address that connected to this port (the owner's proxy): the dashboard shows it, and won't save a
@@ -758,12 +818,15 @@ def caddy_proxy(server_name: str, port: int, shared: bool = False, proxies: list
     """shared: another web server on this machine has ports 80 and 443 (config.proxy_only). proxies: the owner's
     reverse proxy address(es) (owndomain.parse_proxies; None/empty = every home-network address, as before)."""
     own = "" if shared else CADDY_PROXY_OWN_SITES.format(server_name=server_name)
+    if not shared:  # the setup page's own https while the install runs (an owner who set up from outside keeps it)
+        from . import hw
+        own += setup_site(server_name, own_addresses=True)
     # A proxy on this same machine connects from the machine's own addresses: on a rented server that's a public one.
     from . import hw
     own_ips = "".join(f" {a}/32" for a in hw.addresses() if ":" not in a)
     return CADDY_PROXY.format(server_name=server_name, port=port, own_sites=own, app_links=APP_LINKS_ROUTE, own_ips=own_ips, api_routes=CADDY_API,
                               trusted=proxy_words(proxies), admitted=admit_words(proxies), headers_snippet=HEADERS_SNIPPET,
-                              web_csp=web_csp_line(),
+                              web_csp=web_csp_line(), admin_gate=admin_gate(proxy=True),
                               date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
 
 
@@ -829,6 +892,49 @@ def acmedns_tls(acme: dict) -> str:
             f"\t\t\tsubdomain {acme['subdomain']}\n\t\t\tserver_url {acme['server_url']}\n\t\t}}\n")
 
 
+# While the install runs (the server isn't ready yet), a public mode's Caddyfile keeps the setup page's own https
+# (setuptls.py) for any address that isn't the server's name, so the wizard a VPS owner opened at https://<address>/
+# keeps its page through the "secure" step to the end (it then moves to https://<name>/). Only the wizard's paths;
+# anything else goes to the server's name. Gone from the first Caddyfile written after setup.
+PUBLIC_SETUP_SITE = """
+# The setup page's own https while the install runs (setuptls.py); gone once the server is set up.
+https:// {{
+{bind}	tls /data/tinhat-setup/cert.pem /data/tinhat-setup/key.pem
+	import tinhat_headers
+	@setup path / /admin/ui/* /admin/setup/*
+	handle @setup {{
+		reverse_proxy 127.0.0.1:8090
+	}}
+	handle {{
+		redir https://{server_name}{{uri}} 308
+	}}
+}}
+"""
+
+
+def setup_site(server_name: str, own_addresses: bool = False) -> str:
+    """PUBLIC_SETUP_SITE for this name, only before the server is ready and when the certificate is there. bind:
+    behind the owner's reverse proxy the box's own https site holds 443 on its loopback addresses, so this one listens
+    on the machine's other addresses only (own_addresses: a wildcard 443 couldn't open next to it), IPv4 and IPv6."""
+    bind = None
+    try:
+        from . import setuptls, state
+        st = state.load_state()
+        if not setuptls.available() or (st.get("phase") == "ready" and not setuptls.in_grace(st)):
+            return ""
+        if own_addresses:
+            from . import hw
+            bind = hw.addresses() + hw.ipv6_addresses()
+    except (ImportError, AttributeError):  # only the template tests' stubbed package
+        return ""
+    if bind is not None:
+        bind = [a for a in bind if _PROXY_WORD.fullmatch(a) and not a.startswith("127.")]
+        if not bind:
+            return ""
+    return _limited(PUBLIC_SETUP_SITE, template=True, define=False).format(
+        server_name=server_name, bind=f"\tbind {' '.join(bind)}\n" if bind else "")
+
+
 def caddy_anywhere(server_name: str, acme: dict, acme_directory: str, extra_roots: bool,
                    proxy_from: str | None = None) -> str:
     """A tinhat.me name. proxy_from: the relay's tunnel address, when friends come through the Tin Hat relay."""
@@ -887,7 +993,7 @@ https://{old} {{
 		reverse_proxy 127.0.0.1:7880
 	}}
 	@admin path /admin /admin/*
-	handle @admin {{
+	handle @admin {{{admin_gate}
 		reverse_proxy 127.0.0.1:8090
 	}}
 	handle {{
@@ -979,6 +1085,7 @@ def with_former_names(caddyfile: str, new: str, former: list[tuple[str, str | No
     if not names:
         return caddyfile
     media = former_media(new, names)
+    gate = admin_gate()
     out = caddyfile.replace("\timport tinhat_headers\n", "\timport tinhat_headers\n" + media)
     for old, tls in former:
         if old not in names or tls is None:
@@ -986,7 +1093,7 @@ def with_former_names(caddyfile: str, new: str, former: list[tuple[str, str | No
         tls_block = "\ttls internal\n" if tls == "internal" else f"\ttls {{\n{tls}\t\tpropagation_timeout 3m\n\t}}\n"
         # a publicly trusted certificate (a tinhat.me name, an own domain) gets HSTS like the server's own name; a
         # .local name (the server's own CA) never does
-        out += CADDY_FORMER_SITE.format(old=old, new=new, tls=tls_block, media=media,
+        out += CADDY_FORMER_SITE.format(old=old, new=new, tls=tls_block, media=media, admin_gate=gate,
                                         hsts="" if tls == "internal" else HSTS)
     return out
 
@@ -1005,14 +1112,22 @@ def caddy_domain(server_name: str, tls_dns: str, acme_directory: str, extra_root
     return _caddy_public(server_name, tls_dns, acme_directory, extra_roots)
 
 
+#: the setup site is a catch-all on 443 with a certificate loaded from files; without a TLS connection policy of its own,
+#: the named site's handshakes fell to the catch-all's policy and got the SETUP certificate (Astra on 01b6fc4; proven
+#: with Caddy 2.10.2 on the lab VM). Any option in the named site's tls block gives it an SNI-matched policy first;
+#: this one changes nothing (Caddy's defaults).
+NAMED_TLS_POLICY = "\t\tprotocols tls1.2 tls1.3\n"
+
+
 def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roots: bool,
                   proxy_from: str | None = None) -> str:
+    setup = setup_site(server_name)
     return CADDY_ANYWHERE.format(
         app_links=APP_LINKS_ROUTE,
-        api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line(),
-        relay_servers=CADDY_RELAY_SERVERS.format(proxy_from=proxy_from) if proxy_from else "", hsts=HSTS,
+        api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line(), admin_gate=admin_gate(),
+        setup_site=setup, relay_servers=CADDY_RELAY_SERVERS.format(proxy_from=proxy_from) if proxy_from else "", hsts=HSTS,
         server_name=server_name, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        acme_directory=acme_directory, tls_dns=tls_dns,
+        acme_directory=acme_directory, tls_dns=tls_dns + (NAMED_TLS_POLICY if setup else ""),
         acme_ca_root="\tacme_ca_root /etc/tinhat-ca/extra-roots.pem\n" if extra_roots else "")
 
 
@@ -1406,6 +1521,7 @@ def _limited(t: str, **kw) -> str:
 
 CADDY_SETUP = _limited(CADDY_SETUP, template=False, manager_only=True)
 CADDY_SETUP_PROXY_ONLY = _limited(CADDY_SETUP_PROXY_ONLY, template=False, manager_only=True)
+CADDY_SETUP_TLS = _limited(CADDY_SETUP_TLS, template=False, manager_only=True)
 CADDY_LAN = _limited(CADDY_LAN, template=True)
 CADDY_ANYWHERE = _limited(CADDY_ANYWHERE, template=True)
 CADDY_PROXY = _limited(CADDY_PROXY, template=True)

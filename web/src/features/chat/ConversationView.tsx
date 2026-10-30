@@ -7,7 +7,7 @@
 // renders into the composer island (Composer `portal`) — one view, two frames (ISLANDS-ARCH §0.9). The island draws the
 // fill, so the view paints no background there; the divider above the typing strip stays (ConversationView.qml).
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { peekClient, useClient, useRoomState, ensureWritable, liveTimelineChain, TINHAT_MEMBER_STATE_EVENTS } from "@/core/matrix";
+import { peekClient, useClient, useRoomState, liveTimelineChain, provisionOnOpen } from "@/core/matrix";
 import { bus, useBus } from "@/core/bus";
 import { useRegistry, menuValue, type MessageMenuCtx } from "@/core/registry";
 import { usePref } from "@/core/prefs";
@@ -497,11 +497,12 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     const c = peekClient();
     const r = c?.getRoom(roomId);
     if (!c || !r) return;
-    // CHAT-127: keys from backup for this room; admins provision member-state power levels
+    // CHAT-127: keys from backup for this room; admins provision member-state power levels — once per room per
+    // session and only in my own server's rooms (the must-fix round, MATRIX-FRONTEND-DESIGN.md B5 rule 1: this used to
+    // rewrite rooms on other servers too). The desktop's room.rs does the same.
     const crypto = c.getCrypto() as unknown as { restoreKeyBackup?: (o?: unknown) => Promise<unknown> } | undefined;
     void crypto;
-    const me2 = c.getUserId() ?? "";
-    if (r.currentState.maySendStateEvent("m.room.power_levels", me2)) void ensureWritable(roomId, TINHAT_MEMBER_STATE_EVENTS).catch(() => {});
+    provisionOnOpen(roomId);
   }, [primary, roomId]);
 
   // CHAT-131 debug hooks: ?debug=layout logs the composer position; ?debug=bubble pops the room out after 6 s

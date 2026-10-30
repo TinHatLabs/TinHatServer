@@ -918,6 +918,49 @@ function proxyTrustCard(px, el) {
     h("div.row.wrap", save, use, clear), err);
 }
 
+/** Who can open this dashboard (access.py): anywhere with the password (the default), the home network and named
+ * addresses, or the home network only. The server refuses a choice that leaves out the address this page came from;
+ * the console's `sudo tinhat dashboard-access anywhere` is the way back in. */
+function accessCard(a, el) {
+  let mode = a.mode;
+  const err = h("div.error.hidden");
+  const input = h("input", { type: "text", value: (a.addresses || []).join(", "), placeholder: a.yourEntry || "203.0.113.7", autocomplete: "off", spellcheck: "false", "aria-label": "Addresses that may open the dashboard" });
+  const field = h("label.field", h("span", "Addresses"), input,
+    h("small", "Several with commas. An IPv6 address counts with its whole /64 (a device's IPv6 address changes within it)."));
+  const pick = (v) => {
+    mode = v;
+    for (const b of choices) b.setAttribute("aria-checked", String(b.dataset.v === v));
+    field.classList.toggle("hidden", v !== "addresses");
+  };
+  const choice = (v, t, d) => h("button.choice", { type: "button", role: "radio", "data-v": v, onclick: () => pick(v) }, h("div.t", t), h("div.d", d));
+  const choices = [
+    choice("anywhere", "Anywhere, with your password", "Any address on the internet gets the sign-in page. Only your password (and the other admins') opens it."),
+    choice("addresses", "The home network and these addresses", "Everywhere else gets a refusal before the sign-in page. Good for a fixed address, like your home's or an office's."),
+    choice("home", "Only the home network", "From outside, the dashboard doesn't open at all. Nothing else changes: chat, calls and the apps' invite codes still work from anywhere."),
+  ];
+  const save = h("button.btn", { type: "button" }, "Save");
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    err.classList.add("hidden");
+    try {
+      await api("/admin/api/network/dashboard-access", { json: { mode, addresses: input.value.split(/[\s,]+/).filter(Boolean) } });
+      toast(mode === "anywhere" ? "The dashboard opens from anywhere again" : "Only the chosen places open the dashboard now");
+      tabNetwork(el, true);
+    } catch (ex) { err.textContent = ex.message; err.classList.remove("hidden"); save.disabled = false; }
+  });
+  const add = a.yourEntry && !a.youAtHome && !(a.addresses || []).includes(a.yourEntry)
+    ? h("button.btn.ghost", { type: "button", onclick: () => { pick("addresses"); input.value = [...input.value.split(/[\s,]+/).filter(Boolean), a.yourEntry].join(", "); } }, `Add ${a.yourEntry}`) : null;
+  const label = a.mode === "anywhere" ? "Anywhere" : a.mode === "home" ? "Home network only" : "Home network + " + (a.addresses || []).length;
+  pick(mode);
+  return h("div.card.stack",
+    h("div.row.wrap.between", h("h2", "Who can open this dashboard"), h(`span.chip.${a.mode === "anywhere" ? "muted" : "good"}`, h("span.dot"), label)),
+    h("div.choices", { role: "radiogroup", "aria-label": "Who can open this dashboard" }, ...choices),
+    field,
+    a.you ? h("p.small", "This page reached the server from ", h("span.mono", a.you), a.youAtHome ? " (the home network)." : ".") : null,
+    a.mode !== "anywhere" ? h("p.small.muted", "Locked out (say your internet provider changed your address)? On the server's console: ", h("code", "sudo tinhat dashboard-access anywhere")) : null,
+    h("div.row.wrap", save, add), err);
+}
+
 async function tabNetwork(el, quiet) {
   if (!quiet) loading(el);
   let n;
@@ -1011,6 +1054,7 @@ async function tabNetwork(el, quiet) {
     n.domain ? domainCard(n) : null,
     n.proxy ? proxyCard(n.proxy) : null,
     n.proxy ? proxyTrustCard(n.proxy, el) : null,
+    n.dashboardAccess && n.dashboardAccess.applies ? accessCard(n.dashboardAccess, el) : null,
     relayCard(n, el),
     h("div.grid2",
       h("div.card.flat.stack-sm",

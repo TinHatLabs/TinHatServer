@@ -5,6 +5,7 @@
 //   hooks    useRooms/useRoom/useMembers/useRoomState/useUnread/useTyping/useTimeline/…
 //   timeline liveTimelineChain/paginateChainBack — the live timeline + everything linked behind it
 //   state    sendState/ensureWritable/containerOf + Tin Hat event-type constants
+//   foreign  rooms on another server: managedHere (may Tin Hat change power levels?), pickVia (join servers)
 //   media    useMxcUrl/useEncryptedMedia/uploadFile/decryptAttachment
 //   errors   friendlyLoginError/UserFacingError
 export {
@@ -26,6 +27,8 @@ export * from "./crypto";
 export * from "./sasPolicy";
 export * from "./hooks";
 export * from "./state";
+export * from "./foreign";
+export * from "./foreignHere";
 export * from "./media";
 export * from "./errors";
 export { useDerived, readDerived, type DeriveSpec } from "./derive";

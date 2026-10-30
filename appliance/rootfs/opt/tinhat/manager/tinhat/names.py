@@ -191,8 +191,19 @@ LIMIT_HINTS = {
 }
 
 
+#: where the box says it in its own words instead of the service's: "already registered a server today. Try tomorrow."
+#: plus the hint read twice over on a VPS reinstalled the same day (sec-round2 item 3)
+LIMIT_WORDS = {
+    "limit-ip": "This internet address already got a new Tin Hat name in the last 24 hours, and the names service gives "
+                "one a day per address. If you reinstalled this server today, set it up again tomorrow: the limit "
+                "clears within a day of that registration.",
+}
+
+
 def explain(e: NamesError) -> str:
-    """The service's words, plus when a limit clears."""
+    """The service's words, plus when a limit clears (or the box's own words for it: LIMIT_WORDS)."""
+    if e.code in LIMIT_WORDS:
+        return LIMIT_WORDS[e.code]
     return str(e) + LIMIT_HINTS.get(e.code, "")
 
 

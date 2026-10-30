@@ -224,17 +224,38 @@ done
 # The machine's home-network addresses: not Docker's, not a VPN or tunnel's (WireGuard, Tailscale, …)
 addrs=$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth|wg|tun|tap|tailscale|zt)/ {split($4, a, "/"); print a[1]}' \
   | grep -v '^198\.18\.' | head -3)
+# the setup page's own https certificate (setuptls.py): made by the manager at its first start
+for _ in $(seq 1 20); do [ -s /var/lib/tinhat/setup-fingerprint ] && break; sleep 1; done
+FP=$(cat /var/lib/tinhat/setup-fingerprint 2>/dev/null || true)
 echo
 echo "Tin Hat Server $VER is installed. Set it up in a browser:"
-for a in $addrs; do [ "$BEHIND" = 1 ] && echo "    http://$a:8080/" || echo "    http://$a/"; done
+if [ "$HOME_NET" = 1 ] || [ "$BEHIND" = 1 ] || [ -z "$FP" ]; then
+  for a in $addrs; do [ "$BEHIND" = 1 ] && echo "    http://$a:8080/" || echo "    http://$a/"; done
+else
+  # a public address: the setup code and the owner's password are typed only on the private (https) page (P2)
+  for a in $addrs; do echo "    https://$a/"; done
+fi
 echo
 echo "    Setup code: $(cat /var/lib/tinhat/setup-code)"
 echo
 if [ "$HOME_NET" = 1 ]; then
   echo "Open it from a computer or phone on the same network. \`sudo tinhat setup-code\` shows the code again."
+elif [ -n "$FP" ] && [ "$BEHIND" != 1 ]; then
+  echo "Your browser will warn that it doesn't know the page's certificate: this server made it itself, because it has"
+  echo "no certificate of its own until setup gets one. Before you go past the warning, check that the certificate's"
+  echo "SHA-256 fingerprint is this one (\`sudo tinhat setup-code\` shows it and the code again):"
+  echo
+  echo "    ${FP:0:47}"
+  echo "    ${FP:48}"
+  echo
+  echo "Only the code above unlocks the page (ten wrong tries lock it for ten minutes). Choose \"Friends anywhere\" or"
+  echo "\"My own domain\" at setup. If the provider has a firewall in front of the machine, let in TCP 80, 443 and 7881"
+  echo "and UDP 7882."
 else
-  echo "This machine has its own public address, so the setup page is open to the internet until setup is done: only"
-  echo "the code above unlocks it (ten wrong tries lock it for ten minutes). Choose \"Friends anywhere\" or \"My own"
+  echo "This machine has its own public address, and the setup code and your password must not cross the internet"
+  echo "unencrypted: open the setup page through an SSH tunnel from your computer:"
+  echo "    ssh -L 8080:127.0.0.1:$([ "$BEHIND" = 1 ] && echo 8080 || echo 80) you@<this server>   then   http://127.0.0.1:8080/"
+  echo "Only the code above unlocks it (ten wrong tries lock it for ten minutes). Choose \"Friends anywhere\" or \"My own"
   echo "domain\" at setup. If the provider has a firewall in front of the machine, let in TCP 80, 443 and 7881 and UDP 7882."
 fi
 if [ "$BEHIND" = 1 ]; then

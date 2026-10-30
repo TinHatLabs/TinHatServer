@@ -645,7 +645,7 @@ class Mover:
                 install.refresh_configs(force=True)  # livekit.yaml: calls announce the home's address from the start
             return f"Your reverse proxy sends {new} here (checked before the move)."
         if not ip:
-            return "Couldn't find your home's public address; the dashboard keeps trying."
+            return "Couldn't find this server's public address; the dashboard keeps trying."
         try:
             pointed = await owndomain.set_address(new, ip)
         except owndomain.DNSAPIError as e:

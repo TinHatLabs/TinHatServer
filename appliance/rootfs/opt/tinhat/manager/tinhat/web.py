@@ -25,8 +25,8 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
-from . import pyenv, restoresafe, templates
+from . import access, apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
+from . import pyenv, restoresafe, setuptls, templates
 from .install import Installer, validate, write_synapse_config
 from .synapse import Synapse
 
@@ -99,6 +99,13 @@ def _home(req: web.Request) -> bool:
     return limits.home(_client(req), _home_nets())
 
 
+def _secret_ok(req: web.Request) -> bool:
+    """May this request carry a setup secret (the setup code, the owner's password, a backup's password, the setup
+    cookie)? Over https (the setup page's own, setuptls.py, or the server's), or over plain http from the home network
+    and this machine (an SSH tunnel). Never plain http from outside: a VPS's first page crosses the internet (P2)."""
+    return _https(req) or _home(req)
+
+
 #: set by Caddy on port 80's outside route to GET /admin/setup/status (templates.py, the public modes' :80 site), which
 #: replaces whatever a caller sent: that request gets the cut-down answer whatever the state says, also after a manager
 #: restart reset the steps or a failed install (Astra on baf2224), unless the caller is on the home network by the
@@ -153,42 +160,138 @@ async def apply_proxy_addresses(new: list[str]) -> tuple[bool, str]:
     #5: a manager restart between writing and validating must never leave an unchecked file for Caddy's next start).
     A refused file changes nothing; a failed reload puts the previous Caddyfile and state back and reloads them. The
     caller holds _apply_lock (the dashboard) or is the console; the state is read here, under it. -> (ok, why not)."""
+    def change(st: dict) -> tuple[dict, dict]:  # read under the apply lock (Astra, follow-up #2)
+        before = dict(st.get("domain") or {})
+        dom = {k: v for k, v in before.items() if k != "proxies"}
+        if new:
+            dom["proxies"] = new
+        return {"domain": dom}, {"domain": before}
+    return await _apply_with_caddy(change)
+
+
+async def apply_dashboard_access(mode: str, addresses: list[str], who: str) -> tuple[bool, str]:
+    """Save who may open the dashboard (access.py) and put it live, the same way as apply_proxy_addresses: a Caddyfile
+    the web server refused or couldn't reload changes nothing, the earlier choice stays. A server that isn't reachable
+    from outside has no Caddy gate to write: there the choice is only kept. -> (ok, why not)."""
+    doc = {"mode": mode, "addresses": addresses if mode == "addresses" else [], "set_at": int(time.time()), "set_by": who}
+    if not access.applies():
+        state.save_state(dashboard_access=doc)
+        return True, ""
+    return await _apply_with_caddy(lambda st: ({"dashboard_access": doc}, {"dashboard_access": st.get("dashboard_access")}))
+
+
+#: one Caddyfile change at a time across processes (the dashboard, the background loop and the console's `tinhat
+#: dashboard-access` / `proxy-addresses` all come through _apply_with_caddy): Astra on be9372e
+APPLY_LOCK = config.STATE_DIR / "caddy-apply.lock"
+
+
+class _CaddyLock:
+    """async with _CaddyLock(): an exclusive flock on APPLY_LOCK, waited for without blocking the event loop (2 minutes
+    at most, then TimeoutError). The descriptor is closed on every way out: a cancelled wait, an exception inside."""
+    def __init__(self, seconds: float = 120):
+        self.seconds, self.fd = seconds, None
+
+    async def __aenter__(self):
+        import fcntl
+        fd = os.open(APPLY_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            for _ in range(int(self.seconds * 10)):
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.fd = fd
+                    return self
+                except BlockingIOError:
+                    await asyncio.sleep(0.1)
+            raise TimeoutError("another change to the web server's settings is still running")
+        except BaseException:
+            os.close(fd)
+            raise
+
+    async def __aexit__(self, *exc):
+        os.close(self.fd)  # the flock goes with the descriptor
+        return False
+
+
+async def _settle(coro) -> bool:
+    """Run coro to its end even when this task is cancelled meanwhile (a rollback must finish before the lock goes).
+    -> whether a cancel arrived (the caller raises it afterwards)."""
+    t = asyncio.ensure_future(coro)
+    cancelled = False
+    while not t.done():
+        try:
+            await asyncio.shield(t)
+        except asyncio.CancelledError:
+            cancelled = True
+        except BaseException:  # noqa: BLE001  (its own error: logged below)
+            break
+    if t.done() and not t.cancelled() and t.exception() is not None:
+        log.error("couldn't put the previous web server settings back: %s", t.exception())
+    return cancelled
+
+
+async def _apply_with_caddy(change=None) -> tuple[bool, str]:
+    """change(state) -> (after, before): the state keys to save and the ones that put it back, worked out from the
+    state as it is under the lock (follow-up review #2: a snapshot taken before waiting could restore another
+    writer's half-done change). None: write the Caddyfile again from the state as it is.
+    Save `after`, write the Caddyfile beside the live one, validate, swap in and reload; on any failure (an exception or
+    a cancel too) `before` goes back and, once the new file was swapped in, the previous Caddyfile (reloaded, best
+    effort), finished before the lock is released. Serialised across processes (APPLY_LOCK: the dashboard, the
+    background loop, the console); the staged file has a name of its own."""
     from . import install
-    st = state.load_state()
-    before = dict(st.get("domain") or {})
-    dom = {k: v for k, v in before.items() if k != "proxies"}
-    if new:
-        dom["proxies"] = new
-    live = config.CADDYFILE
-    staged = live.with_name(live.name + ".new")
-    old = live.read_bytes() if live.exists() else None
-    old_mode = (live.stat().st_mode & 0o777) if live.exists() else 0o644
-    state.save_state(domain=dom)
     try:
-        install.refresh_configs(caddyfile_to=staged)
-        if not staged.exists():
-            state.save_state(domain=before)
-            return False, "no Caddyfile was written"
-        rc, out = await compose.caddy_validate(f"/etc/caddy/{staged.name}")
-        if rc != 0:
-            state.save_state(domain=before)
-            return False, f"validate: {out[-400:]}"
-        os.replace(staged, live)
-        rc, out = await compose.caddy_reload()
-        if rc == 0:
-            return True, ""
-        why = f"reload: {out[-400:]}"
-        state.save_state(domain=before)
-        if old is not None:
+        async with _CaddyLock():
+            return await _apply_locked(change, install)
+    except TimeoutError as e:
+        return False, str(e)
+
+
+async def _apply_locked(change, install) -> tuple[bool, str]:
+    live = config.CADDYFILE
+    staged = live.with_name(f"{live.name}.new-{secrets.token_hex(4)}")
+    swapped = False
+    old, old_mode, before = None, 0o644, {}
+
+    async def put_back() -> None:
+        state.save_state(**before)
+        if swapped and old is not None:
             fd, tmp = tempfile.mkstemp(dir=live.parent, prefix=f".{live.name}.")
             with os.fdopen(fd, "wb") as f:
                 f.write(old)
             os.chmod(tmp, old_mode)
             os.replace(tmp, live)
-        await compose.caddy_reload()  # best effort: the previous Caddyfile is what ran before
-        return False, why
+            await compose.caddy_reload()  # best effort: the previous Caddyfile is what ran before
+    try:
+        old = live.read_bytes() if live.exists() else None
+        old_mode = (live.stat().st_mode & 0o777) if live.exists() else 0o644
+        after, before = change(state.load_state()) if change else ({}, {})
+        state.save_state(**after)
+        install.refresh_configs(caddyfile_to=staged)
+        if not staged.exists():
+            await put_back()
+            return False, "no Caddyfile was written"
+        rc, out = await compose.caddy_validate(f"/etc/caddy/{staged.name}")
+        if rc != 0:
+            await put_back()
+            return False, f"validate: {out[-400:]}"
+        os.replace(staged, live)
+        swapped = True
+        rc, out = await compose.caddy_reload()
+        if rc == 0:
+            return True, ""
+        await put_back()
+        return False, f"reload: {out[-400:]}"
+    except BaseException as e:  # noqa: BLE001  an exception or a cancel: never leave the new state with the old file
+        cancelled = await _settle(put_back()) or isinstance(e, asyncio.CancelledError)
+        if cancelled:
+            raise asyncio.CancelledError() from e
+        if not isinstance(e, Exception):
+            raise
+        return False, f"{type(e).__name__}: {e}"
     finally:
-        staged.unlink(missing_ok=True)
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _page(name: str) -> web.FileResponse:
@@ -262,6 +365,8 @@ class Manager:
         self.fails.forgive(kind, _client(req))
 
     def _setup_ok(self, req: web.Request) -> bool:
+        if not _secret_ok(req):  # a setup cookie that crossed plain http from outside counts for nothing
+            return False
         t = req.cookies.get(SETUP_COOKIE, "")
         return self.setup_sessions.get(t) is not None
 
@@ -355,6 +460,8 @@ class Manager:
                "edition": config.edition(), "platform": "windows" if updates.wsl() else None}
         if told:
             out.update(version=config.VERSION, proxyOnly=config.proxy_only())
+        if not ready and not _secret_ok(req):  # the page offers the private (https) page instead of asking for the code
+            out.update(plainOutside=True, secureSetup=setuptls.available() and not config.proxy_only())
         rf = st.get("restored_from") or {}
         if ready and session and rf and time.time() - rf.get("at", 0) < 86400:
             out["restoredFrom"] = {"at": rf.get("at"), "backupTime": rf.get("backup_time"),  # the last page says so
@@ -369,6 +476,8 @@ class Manager:
         if out["unlocked"] and st.get("phase") != "ready":
             out["progress"] = {**self.installer.progress(), "question": relay.question()}
             out["addresses"] = hw.addresses()
+            if session:  # the Account page asks who may open the dashboard when this browser isn't at home (access.py)
+                out["owner"] = {"address": access.owner_entry(_client(req)), "atHome": _home(req)}
             out["restoring"] = bool(st.get("restoring"))  # a restore under way or stopped: the page keeps its words
             if st.get("phase") == "failed":
                 out["error"] = st.get("error")
@@ -382,6 +491,8 @@ class Manager:
             return _err("This server is already set up.", 409)
         if not self._csrf_ok(req):
             return _err("Bad request.", 400)
+        if not _secret_ok(req):  # checked before the code is even read: it must not cross plain http from outside
+            return _err("This page isn't private: open the server's https setup page to type the setup code.", 403)
         if self._limited("unlock", req, 600, 10):
             return _err("Too many wrong codes. Wait a few minutes, then try again.", 429)
         self._failed("unlock", req)  # counted before anything is awaited; taken back when right
@@ -393,7 +504,8 @@ class Manager:
         self._forgive("unlock", req)
         tok = self.setup_sessions.new("setup")
         resp = _json({"ok": True})
-        resp.set_cookie(SETUP_COOKIE, tok, httponly=True, samesite="Strict", path="/", max_age=4 * 3600)
+        resp.set_cookie(SETUP_COOKIE, tok, httponly=True, samesite="Strict", path="/", max_age=4 * 3600,
+                        secure=_https(req))  # made over https: the browser never sends it over plain http
         return resp
 
     async def setup_probe(self, req: web.Request) -> web.Response:
@@ -482,13 +594,24 @@ class Manager:
             return _err("Enter the setup code first.", 401)
         if self.installer.running:
             return _err("Setup is already running.", 409)
-        answers, problem = validate(await req.json())
+        body = await req.json()
+        answers, problem = validate(body)
         if problem:
             return _err(problem, 400)
+        if answers["mode"] in state.PUBLIC_MODES:
+            choice = body.get("dashboardAccess") if isinstance(body, dict) else None
+            dash, problem = access.from_setup(choice, _client(req), _home(req))
+            if problem:
+                return _err(problem, 400)
+        else:
+            dash = {"mode": "anywhere", "addresses": []}
         p = await asyncio.to_thread(hw.probe)
         if not hw.advise(p)["ready"]:
             return _err("This machine is too small for Tin Hat Server (it needs 2 GB of memory and 4 GB of free disk).", 400)
-        state.save_state(assessment={"bench": self.bench, "net": self.net, "at": int(time.time())})
+        state.save_state(assessment={"bench": self.bench, "net": self.net, "at": int(time.time())},
+                         dashboard_access={**dash, "set_at": int(time.time()), "set_by": "setup"})
+        if dash["mode"] != "anywhere":
+            log.info("setup: the dashboard opens only from %s", ", ".join(["the home network", *dash["addresses"]]))
         self.installer.start(answers)
         return _json({"ok": True, "serverName": answers["server_name"]}, 202)
 
@@ -1060,6 +1183,7 @@ class Manager:
         await self._relay_offer(doc)
         if isinstance(doc.get("proxy"), dict):  # where this page came through: the proxy card offers it
             doc["proxy"]["peer"] = _peer(req) or None
+        doc["dashboardAccess"] = access.doc(caller=_client(req), own_nets=_home_nets())
         if doc.get("domain"):  # where the domain points now, next to where the home is: the owner's job for most providers
             doc["domain"]["resolves"] = await asyncio.to_thread(owndomain.resolves_to, doc["serverName"])
             doc["domain"]["home"] = await owndomain.public_ip()
@@ -1110,6 +1234,43 @@ class Manager:
         _cache.pop("proxies", None)
         log.info("%s set the reverse proxy's addresses: %s", s["mxid"], ", ".join(new) or "any home-network address")
         return _json({"ok": True, "trusted": new})
+
+    async def network_dashboard_access(self, req: web.Request) -> web.Response:
+        """Dashboard → Network → Who can open this dashboard (access.py). A choice that leaves out the address this
+        request came from is refused (it would close the page on its owner; the console's `tinhat dashboard-access`
+        is the way back in)."""
+        s = self._admin(req)
+        if not s or not self._csrf_ok(req):
+            return _err("Sign in first.", 401)
+        if (busy := self._moving()) is not None:
+            return busy
+        if not access.applies():
+            return _err("Only a server friends reach from outside has a dashboard the internet could reach.", 400)
+        try:
+            body = await req.json()
+        except ValueError:
+            return _err("Bad request.", 400)
+        body = body if isinstance(body, dict) else {}
+        mode = body.get("mode")
+        if mode not in access.MODES:
+            return _err("Choose who can open the dashboard.", 400)
+        addrs: list[str] = []
+        if mode == "addresses":
+            addrs, problem = access.parse_addresses(body.get("addresses"))
+            if problem is not None:
+                return _err(problem, 400)
+            if not addrs:
+                return _err("Name at least one address (or choose the home network only).", 400)
+        if (refused := access.lockout_problem(mode, addrs, _client(req), _home_nets())) is not None:
+            return _err(refused, 409)
+        async with self._apply_lock:
+            ok, why = await apply_dashboard_access(mode, addrs, s["mxid"])
+            if not ok:
+                log.warning("dashboard access %s %s not applied: %s", mode, addrs, why)
+                return _err("The web server didn't take this setting; nothing changed.", 500)
+        log.info("%s set who can open the dashboard: %s", s["mxid"],
+                 "anywhere" if mode == "anywhere" else ", ".join(["the home network", *addrs]))
+        return _json({"ok": True, **access.doc(caller=_client(req), own_nets=_home_nets())})
 
     async def setup_network_check(self, req: web.Request) -> web.Response:
         """Check again from the setup page's last screen, on the home network. Right after setup is when owners fix
@@ -1931,11 +2092,26 @@ class Manager:
         return await self.invites_delete(req, who=who)
 
 
+@web.middleware
+async def dashboard_gate(req: web.Request, handler):
+    """Who can open the dashboard (access.py), the manager's own half: Caddy refuses the same addresses first
+    (templates.admin_gate). Once the server is set up, every /admin path; the wizard's own pages before that."""
+    p = req.path
+    if (p == "/admin" or p.startswith("/admin/")) and p not in access.GATE_OPEN:
+        st = state.load_state()
+        if st.get("phase") == "ready" and access.restricted(st) and not access.allowed(_client(req), st, _home_nets()):
+            if p.startswith(("/admin/api/", "/admin/setup/", "/admin/recover/", "/admin/home/")):
+                return _err(access.REFUSED, 403)
+            return web.Response(status=403, text=access.REFUSED + "\n", headers={"Cache-Control": "no-store"})
+    return await handler(req)
+
+
 def build_app() -> web.Application:
     m = Manager()
     # Request bodies are never decompressed here: nothing sends the manager a compressed one, and an upload that
     # inflates (restore_upload writes what it reads to disk) is a disk-filling bomb (M15; Caddy refuses them first).
-    app = web.Application(client_max_size=1024 * 64, handler_args={"auto_decompress": False})
+    app = web.Application(client_max_size=1024 * 64, handler_args={"auto_decompress": False},
+                          middlewares=[dashboard_gate])
     app["manager"] = m
     r = app.router
     r.add_get("/", m.root)
@@ -1989,6 +2165,7 @@ def build_app() -> web.Application:
     r.add_post("/admin/api/updates/settings", m.updates_settings)
     r.add_post("/admin/api/network/relay", m.network_relay)
     r.add_post("/admin/api/network/proxy", m.network_proxy)
+    r.add_post("/admin/api/network/dashboard-access", m.network_dashboard_access)
     r.add_post("/admin/setup/relay", m.setup_relay)
     r.add_post("/admin/home/relay", m.home_relay)
     r.add_get("/_tinhat/federation/confirm/{nonce}", m.fed_confirm)
@@ -2184,6 +2361,9 @@ async def _background(m: Manager) -> None:
                 and (m._bg_admin_recheck is None or m._bg_admin_recheck.done()):
             m._admin_recheck_at = time.monotonic() + ADMIN_RECHECK_SECONDS
             m._bg_admin_recheck = asyncio.create_task(_guard("dashboard admin re-check", _recheck_admins(m)))
+        if tick % 6 == 5 and state.phase() == "ready":
+            await _guard("dashboard access", _keep_access_gate(m))
+            await _guard("setup https site", _drop_setup_site(m))
         try:
             console.refresh()
             await mdns.keep_setup_alias(state.phase() == "ready")
@@ -2193,6 +2373,67 @@ async def _background(m: Manager) -> None:
         except Exception:  # noqa: BLE001
             log.exception("background tick failed")
         await asyncio.sleep(10)
+
+
+_gate_reloaded = False  # this manager made Caddy load its file once since it started
+
+
+async def _keep_access_gate(m: Manager) -> None:
+    """Once a minute, the web server's dashboard gate follows the owner's choice (Astra on be9372e):
+    - the Caddyfile is written again when its gate isn't what the choice and this machine's own on-link IPv6
+      networks (a new prefix from the internet provider) make it, or when it still has a gate the choice dropped
+      (a console `anywhere` whose apply failed: retried here);
+    - once after the manager starts, Caddy is told to load its file (a no-op when it runs that already): a manager that
+      stopped between swapping a file in and reloading it left Caddy on the previous one."""
+    global _gate_reloaded
+    st = state.load_state()
+    if m.mover.running or not access.applies(st):
+        return
+    # the plain gate starts every route's gate (behind the proxy the proxy's extra block follows it; former names have
+    # the plain one): one per /admin route (follow-up review #7)
+    want = templates.admin_gate(st, _home_nets())
+    try:
+        live = config.CADDYFILE.read_text()
+    except OSError:
+        return
+    stale = (want and live.count(want) != live.count("@admin path /admin /admin/*")) or \
+        (not want and "@tinhat_admin_away" in live)
+    if want and not stale and state.behind_proxy(st):  # and the proxy's own block, as this version writes it
+        extra = templates.admin_gate(st, _home_nets(), proxy=True)[len(want):]
+        stale = extra not in live
+    if stale:
+        async with m._apply_lock:
+            ok, why = await _apply_with_caddy()
+        if ok:
+            _gate_reloaded = True
+            log.info("dashboard access: the web server's gate follows the owner's choice again")
+        else:
+            log.warning("dashboard access: couldn't write the gate: %s", why)
+        return
+    if not _gate_reloaded:  # also when the choice dropped the gate (follow-up review #6): a no-op when Caddy runs it
+        rc, out = await compose.caddy_reload()
+        _gate_reloaded = rc == 0
+        if rc != 0:
+            log.warning("dashboard access: the web server didn't load its settings: %s", out[-300:])
+
+
+async def _drop_setup_site(m: Manager) -> None:
+    """The setup page's own https site (setuptls.py) leaves the Caddyfile once the server has been ready for
+    setuptls.GRACE (from ready_at, which every install and restore sets: installed_at survives a restore). The
+    Caddyfile writes in between keep it (templates.setup_site checks the same)."""
+    st = state.load_state()
+    if m.mover.running or setuptls.in_grace(st):
+        return
+    try:
+        if "/data/tinhat-setup/" not in config.CADDYFILE.read_text():
+            return
+    except OSError:
+        return
+    ok, why = await _apply_with_caddy()
+    if ok:
+        log.info("the setup page's own https site is gone (the server is set up)")
+    else:
+        log.warning("couldn't take the setup page's own https site out: %s", why)
 
 
 async def _recheck_admins(m: Manager) -> None:
@@ -2231,10 +2472,26 @@ def startup_checks() -> None:
         d.mkdir(parents=True, exist_ok=True)
     if state.phase() != "ready":
         state.setup_code()
-        if not config.CADDYFILE.exists():
-            from . import templates
-            state.write_text(config.CADDYFILE, templates.CADDY_SETUP_PROXY_ONLY if config.proxy_only() else templates.CADDY_SETUP, 0o644)
+        setup_caddyfile()
     console.refresh(force=True)
+
+
+def setup_caddyfile() -> bool:
+    """Before setup: the setup page's certificate (setuptls.py) and the setup Caddyfile with its https site. A setup
+    Caddyfile an older version wrote (no https site) is written again; a public mode's file of an install that stopped
+    half way is left alone (its Try again writes it). -> whether the file changed (bring_up reloads Caddy)."""
+    tls = not config.proxy_only() and setuptls.ensure() is not None
+    want = templates.CADDY_SETUP_PROXY_ONLY if config.proxy_only() else templates.CADDY_SETUP_TLS if tls else templates.CADDY_SETUP
+    try:
+        have = config.CADDYFILE.read_text()
+    except FileNotFoundError:
+        have = None
+    except OSError:
+        return False
+    if have is not None and (have == want or not have.startswith("# Tin Hat Server — not set up yet")):
+        return False
+    state.write_text(config.CADDYFILE, want, 0o644)
+    return have is not None
 
 
 async def bring_up() -> None:
@@ -2251,3 +2508,9 @@ async def bring_up() -> None:
     rc, out = await compose.up(*services)
     if rc != 0:
         log.error("compose up %s failed: %s", services, out[-800:])
+    elif st.get("phase") != "ready":  # a running Caddy keeps an older setup file until it is told (setup_caddyfile);
+        # a setup certificate under an unchanged file needs --force, also one a manager made before it stopped (else
+        # the fingerprint printed isn't the one served): forced on every start before setup (follow-up review #9)
+        rc, out = await compose.caddy_reload(force=setuptls.available())
+        if rc != 0:
+            log.warning("the web server didn't take the setup settings: %s", out[-400:])

@@ -10,7 +10,7 @@
 // when a relevant state event arrives for the open space or one of its children.
 import { create } from "zustand";
 import { EventType, RoomStateEvent, type MatrixClient, type MatrixEvent, type Room } from "matrix-js-sdk";
-import { ensureMembersLoaded, peekClient, uploadFile } from "@/core/matrix";
+import { ensureMembersLoaded, managedHere, peekClient, powerLevelsForWrite, sendPowerLevels, uploadFile, withPowerLevelLock } from "@/core/matrix";
 import { toast } from "@/core/bus";
 import { createLogger } from "@/core/log";
 import {
@@ -609,22 +609,32 @@ class Ctx {
     let written = 0,
       failed = 0;
     for (const [room, isSpace] of targets) {
-      const cur = plContent(room);
-      if (!cur) continue;
-      const next = derivePowerLevels(cur, st, isSpace);
-      if (jsonEqual(next, cur)) continue;
-      if (!canWritePowerLevels(room, this.me)) {
-        log.warn(`reconcile: no power-level rights in ${room.roomId}`);
-        failed++;
-        continue;
-      }
-      try {
-        await rl(() => this.client.sendStateEvent(room.roomId, EventType.RoomPowerLevels, next as never, ""));
-        written++;
-      } catch (e) {
-        log.warn(`reconcile ${room.roomId} failed: ${errText(e)}`);
-        failed++;
-      }
+      // read + write inside the room's power-level queue (state.ts withPowerLevelLock, shared with ensureWritable)
+      const r = await withPowerLevelLock(room.roomId, async (): Promise<"skip" | "ok" | "fail"> => {
+        if (plContent(room) && !powerLevelsForWrite(room.roomId)) return "fail"; // our last write hasn't come back yet
+        const cur = powerLevelsForWrite(room.roomId);
+        if (!cur) return "skip";
+        const next = derivePowerLevels(cur, st, isSpace);
+        if (jsonEqual(next, cur)) return "skip";
+        // B0/B5: a room on another server keeps the power levels its owners set (space.rs reconcile, the same rule)
+        if (!managedHere(room.roomId)) {
+          log.warn(`reconcile: ${room.roomId} lives on another server, its power levels are left alone`);
+          return "fail";
+        }
+        if (!canWritePowerLevels(room, this.me)) {
+          log.warn(`reconcile: no power-level rights in ${room.roomId}`);
+          return "fail";
+        }
+        try {
+          await rl(() => sendPowerLevels(room.roomId, next));
+          return "ok";
+        } catch (e) {
+          log.warn(`reconcile ${room.roomId} failed: ${errText(e)}`);
+          return "fail";
+        }
+      }).catch(() => "fail" as const);
+      if (r === "ok") written++;
+      else if (r === "fail") failed++;
     }
     return [written, failed];
   }

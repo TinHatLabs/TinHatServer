@@ -12,6 +12,9 @@
 #                                 behind your own reverse proxy: which address(es) count as the proxy; --set names them
 #                                 (the way back in if a wrong list locked the dashboard out), --clear lets any
 #                                 home-network address count again
+#   tinhat dashboard-access [anywhere | home | only ADDR[,ADDR...] | add ADDR[,ADDR...]]
+#                                 who may open the dashboard (a server friends reach from outside): show, or set it;
+#                                 `anywhere` is the way back in when your own address changed or a choice locked you out
 #   tinhat api-limits [NAME=VALUE ... | --reset NAME ... | --reset-all]
 #                                 the extras' limits (GIFs, sounds, YouTube; docs/API.md): show, set, back to default
 #   tinhat adopt-synapse DIR @owner:server
@@ -55,6 +58,12 @@ PY
     ;;
   setup-code)
     cat "$STATE/setup-code" 2>/dev/null || echo "This server is already set up (no setup code)."
+    if [ -s "$STATE/setup-code" ] && [ -s "$STATE/setup-fingerprint" ]; then
+      FP=$(cat "$STATE/setup-fingerprint")
+      echo "The private setup page (https://<this server's address>/) has the certificate with this SHA-256 fingerprint:"
+      echo "    ${FP:0:47}"
+      echo "    ${FP:48}"
+    fi
     ;;
   recovery-code)
     if [ -s /run/tinhat/recovery-code ]; then
@@ -105,6 +114,11 @@ PY
   api-limits)
     shift
     cd /opt/tinhat/manager && exec python3 -m tinhat api-limits "$@"
+    ;;
+  dashboard-access)
+    case "${2:-}" in ""|anywhere|home|only|add) ;; *) echo "usage: tinhat dashboard-access [anywhere | home | only ADDR[,ADDR...] | add ADDR[,ADDR...]]" >&2; exit 2 ;; esac
+    shift
+    cd /opt/tinhat/manager && exec python3 -m tinhat dashboard-access "$@"
     ;;
   proxy-addresses)
     case "${2:-}" in ""|--clear|--set) ;; *) echo "usage: tinhat proxy-addresses [--set ADDR[,ADDR...] | --clear]" >&2; exit 2 ;; esac

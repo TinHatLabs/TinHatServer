@@ -70,8 +70,18 @@ def text() -> str:
                 "",
                 f"  Setup code:   {state.setup_code()}",
                 "",
-                "  (No need to log in below: everything happens in the browser.)",
             ]
+            # a public address (a rented server's console): the code and the password go only on the private page
+            from . import limits, setuptls
+            public = [a for a in addrs if not limits.home(a)]
+            fp = setuptls.fingerprint() if public else None
+            if fp:
+                lines += [
+                    f"  From outside, use the private page:  https://{public[0]}/",
+                    f"  Its certificate's SHA-256 fingerprint: {setuptls.short(fp)}",
+                    "",
+                ]
+            lines += ["  (No need to log in below: everything happens in the browser.)"]
         else:
             lines += ["  Waiting for a network connection (is the network cable or adapter connected?)"]
     lines += [rule, "", ""]

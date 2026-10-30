@@ -17,7 +17,7 @@ import {
   type MatrixEvent,
   type Room,
 } from "matrix-js-sdk";
-import { onClientChanged, peekClient } from "@/core/matrix";
+import { inviterServerHere, onClientChanged, peekClient, pickVia, serverPart } from "@/core/matrix";
 import { getPref, onPrefChange, setPref } from "@/core/prefs";
 import { EMPTY_DM_STRIP, dmStrip, type DmStrip, type DmStripRoom } from "./dmstrip";
 import { adjustedUnread } from "./rollup";
@@ -345,8 +345,9 @@ function invitedMemberCount(c: MatrixClient, room: Room): number {
   const hit = countCache.get(id);
   if ((!hit || Date.now() - hit.at > 600_000) && !hit?.inflight) {
     countCache.set(id, { at: hit?.at ?? 0, n: hit?.n ?? 0, inflight: true });
-    // the room's own server, else the signed-in user's (a room id always carries one)
-    const via = id.split(":").slice(1).join(":") || (c.getUserId() ?? "").split(":").slice(1).join(":");
+    // B1 pickVia: the room id's own server (pre-v12), else whoever invited me, else my own server — a v12 id carries
+    // none (nav.rs invited_space_member_count asks the same)
+    const via = pickVia({ target: id, hints: [inviterServerHere(id), serverPart(c.getUserId())] })[0] ?? "";
     const base = c.getHomeserverUrl().replace(/\/$/, "");
     const tok = c.getAccessToken();
     const gen = clientGen;
