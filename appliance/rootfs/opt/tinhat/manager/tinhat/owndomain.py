@@ -205,6 +205,7 @@ server {{
         proxy_pass {up};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
+        # append the caller's address (never $http_x_forwarded_for: that passes the caller's own header through)
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade $http_upgrade;

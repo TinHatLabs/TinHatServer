@@ -210,7 +210,7 @@ class Gate(Real):
                                                  f'respond @tinhat_admin_away "{access.REFUSED}" 403'])
                         if "proxy" in mode:  # no X-Forwarded-For through the owner's proxy: refused too
                             self.assertEqual(b[5:14], ["@tinhat_admin_unnamed {",
-                                                       "not header_regexp X-Forwarded-For `^[0-9A-Fa-f:.,\\[\\] ]+$`",
+                                                       f"not header_regexp X-Forwarded-For {templates.XFF_ADDRESSES}",
                                                        "not {", "remote_ip 127.0.0.0/8 ::1", "protocol https", "}",
                                                        "not path /admin/name-check",
                                                        "}", f'respond @tinhat_admin_unnamed "{access.REFUSED_UNNAMED}" 403'])
@@ -441,8 +441,18 @@ class ManagerGate(Real):
         async def broken(mode, addrs, who):
             return False, "validate: nope"
         state.write_json(state.config.STATE_FILE, s, 0o644)
-        self.assertEqual(cli.dashboard_access(["anywhere"], s, broken), 1)
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.dashboard_access(["anywhere"], s, broken), 1)
         self.assertEqual(access.policy()["mode"], "anywhere", "the manager's own check opens even when Caddy refused")
+        text = out.getvalue()
+        self.assertIn("validate: nope", text)
+        self.assertIn("once the web server takes the change", text)
+        self.assertIn("about once a minute", text)
+        self.assertNotIn("within a minute", text)  # not a promise the loop can keep during a move (Astra)
+        self.assertNotIn("opens the dashboard now", text)  # from outside it doesn't yet (S1 wording, 0.3.10)
 
 
 if __name__ == "__main__":

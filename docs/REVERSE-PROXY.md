@@ -27,7 +27,14 @@ Proxy Manager, a NAS's built-in one) that owns ports 80 and 443 and the certific
   original `Host` header.
 - WebSockets (the call sign-in uses one): `Upgrade` / `Connection` headers passed through.
 - `X-Forwarded-For` and `X-Forwarded-Proto` set; Tin Hat takes the caller's address from them (sign-in limits, the
-  guest room's knock limits).
+  guest room's knock limits, who may open the dashboard). The proxy must **append** the caller's address to
+  `X-Forwarded-For` or **overwrite** the header with it, **never pass the caller's own header through unchanged**: a
+  visitor could then write any address in it, your proxy's own included, and the dashboard would take them for that
+  address (0.3.10 review). nginx: `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` (append, what the
+  snippets on the dashboard use) or `$remote_addr` (overwrite); **never** `$http_x_forwarded_for`. Caddy's
+  `reverse_proxy` and Traefik do the right thing by default (they drop a header from a caller they don't trust and
+  write their own); don't switch on Caddy's `trusted_proxies` / Traefik's `forwardedHeaders.insecure` /
+  `trustedIPs` for addresses on the internet. Nginx Proxy Manager appends (fine as it is).
 - Bodies up to the largest file people may send plus 5 MB (Features → "Biggest file people can send"), and at least
   12 MB (shared logs).
 - A read timeout of a few minutes (chat keeps requests open while it waits for messages); no response buffering.

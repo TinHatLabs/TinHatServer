@@ -4,6 +4,12 @@ have the names service check from outside (docs/REMOTE-ACCESS.md, "Wizard order"
 The outside check needs the box to answer on each port while it's being checked: 443 is Caddy (the probe fetches
 /.well-known/tinhat/probe/<nonce>, which the manager answers), and for calls the manager briefly stands in for
 LiveKit on 7881/tcp and 7882/udp (LiveKit is paused for those few seconds).
+
+Only a check someone asked for pauses LiveKit (setup, the dashboard's Check now, a relay change). The manager's own
+checks (every 30 min while not reachable, after a port opened or was lost, through the relay) never touch it: a call
+started in those seconds used to fail ("Unable to create room on SFU", BACKLOG-SERVER-037). They check HTTPS and TCP
+7881 against the running LiveKit (the names service only connects there), and keep the last real UDP 7882 result
+(UNCHECKED when there is none): UDP needs the manager's echo, which LiveKit doesn't give.
 """
 import asyncio
 import ipaddress
@@ -19,6 +25,9 @@ log = logging.getLogger("tinhat.reach")
 PORTS_ALL = [("TCP", 443), ("TCP", 7881), ("UDP", 7882)]
 CGNAT = ipaddress.ip_network("100.64.0.0/10")
 XLAT = ipaddress.ip_network("192.0.0.0/29")  # 464XLAT (T-Mobile home internet)
+
+#: an unattended check's word for UDP 7882 when no checked result can be kept: not a failure, not a pass
+UNCHECKED = {"ok": None, "why": "unchecked"}
 
 
 # Asked for too, but never needed: someone who types just the server's name into a browser that starts with http://
@@ -110,18 +119,20 @@ class Checker:
         state.save_state(ports=rep)
         return rep
 
-    async def outside(self, calls: bool) -> dict:
-        """The real check, from the names service. Pauses calls for a few seconds when they're on."""
+    async def outside(self, calls: bool, unattended: bool = False) -> dict:
+        """The real check, from the names service. Pauses calls for a few seconds when they're on, unless it is one of
+        the manager's own (unattended): then LiveKit keeps running, TCP 7881 is checked against it and UDP 7882 keeps
+        its last checked result (module docstring)."""
         from . import relay
         async with self.lock:
             relayed = relay.on()
             nonce = secrets.token_urlsafe(16)
             self.nonces.add(nonce)
-            checks = ["tls443"] + (["tcp7881", "udp7882"] if calls else [])
+            checks = ["tls443"] + (["tcp7881"] + ([] if unattended else ["udp7882"]) if calls else [])
             close = lambda: None  # noqa: E731
             paused = False
             try:
-                if calls:
+                if calls and not unattended:
                     rc, _ = await compose.run("stop", "livekit", timeout=60)
                     paused = rc == 0
                     await asyncio.sleep(0.5)
@@ -159,8 +170,69 @@ class Checker:
                 self.nonces.discard(nonce)
             if relayed and "via" not in out:
                 out["via"] = "relay"
+            if calls and unattended:
+                st = state.load_state()
+                last = st.get("reach_udp")
+                if last is None and (last := seed_udp(st.get("reach"))) is not None:
+                    state.save_state(reach_udp=last)  # kept for good: the next check reads it here (found in the lab)
+                out = keep_udp(out, last)
+            elif calls and "udp7882" in (out.get("results") or {}):  # a real UDP answer: kept for later checks
+                state.save_state(reach_udp={"at": out["at"], "route": route_of(out),
+                                            "result": out["results"]["udp7882"]})
             state.save_state(reach=out)
             return out
+
+
+def route_of(o: dict) -> list:
+    """What a UDP answer was about: direct or through the relay, the public address, and through the relay its
+    address and port. A result is only kept for the same route (a new relay place is a new question)."""
+    return [o.get("via") or "direct", o.get("public_ip"), o.get("target"), o.get("ports")]
+
+
+def seed_udp(prev: dict | None) -> dict | None:
+    """A server updated from 0.3.9 has its last real UDP answer only in the last check (`reach`): taken from there
+    once (its route and time), so the first unattended check after the update doesn't drop it (Astra round 2)."""
+    prev = prev or {}
+    udp = (prev.get("results") or {}).get("udp7882") or {}
+    if udp.get("ok") is None or udp.get("why") == "unchecked" or udp.get("kept"):
+        return None
+    return {"at": prev.get("at"), "route": route_of(prev), "result": udp}
+
+
+def _ok(res: dict) -> bool:
+    """All checked results pass (an UNCHECKED one counts neither way); at least one was checked."""
+    return all(v.get("ok") is not False for v in res.values()) and any(v.get("ok") for v in res.values())
+
+
+def keep_udp(out: dict, last: dict | None) -> dict:
+    """An unattended check's answer with UDP 7882 put in from the last check that really checked it (state
+    `reach_udp`, which a failed or offline check never erases), marked `kept` with when that was, if it was about the
+    same route (route_of); otherwise UNCHECKED. `ok` is worked out again (a kept failure keeps it false), and the
+    IPv4 family's too (UDP is only ever checked over IPv4: the stand-ins listen on IPv4)."""
+    if not out.get("results"):  # the check itself didn't run (names service offline, …): nothing to add
+        return out
+    last = last or {}
+    old = last.get("result") or {}
+    if last.get("route") == route_of(out) and old.get("ok") is not None and old.get("why") != "unchecked":
+        udp = {**{k: v for k, v in old.items() if k != "kept"}, "kept": last.get("at")}
+    else:
+        udp = dict(UNCHECKED)
+    res = {**out["results"], "udp7882": udp}
+    new = {**out, "results": res, "ok": _ok(res)}
+    fams = out.get("families")
+    if fams and (fams.get("ipv4") or {}).get("results"):
+        v4res = {**fams["ipv4"]["results"], "udp7882": udp}
+        new["families"] = {**fams, "ipv4": {**fams["ipv4"], "results": v4res, "ok": _ok(v4res)}}
+    return new
+
+
+def recheck_due(o: dict) -> bool:
+    """Whether the manager's own (unattended) checks should look again: something they can see failed or wasn't
+    checked. A UDP failure kept from an earlier full check isn't one of those (only Check now can look at it), so it
+    alone never keeps them going every 10 / 30 minutes."""
+    res = {k: v for k, v in (o.get("results") or {}).items()
+           if not (k == "udp7882" and (v.get("kept") or v.get("why") == "unchecked"))}
+    return not res or not _ok(res) or bool(o.get("error"))
 
 
 async def _per_family(nonce4: str, nonce6: str, checks: list[str]) -> dict:
@@ -191,6 +263,20 @@ async def _per_family(nonce4: str, nonce6: str, checks: list[str]) -> dict:
     return out
 
 
+def udp_lines(o: dict) -> list[str]:
+    """What an unattended check (it never pauses calls) says about UDP 7882, which only a check you start looks at."""
+    if o.get("error") or not o.get("results"):
+        return []
+    udp = (o.get("results") or {}).get("udp7882") or {}
+    if udp.get("why") == "unchecked":
+        return ["Calls over UDP (7882) haven't been checked from outside yet: the automatic checks leave them out, "
+                "because checking them pauses calls for about 10 seconds. Press Check again when nobody is in a call."]
+    if udp.get("kept") and udp.get("ok") is False:
+        return ["Calls over UDP (7882) didn't reach your server at the last full check. The automatic checks don't "
+                "look at them again (that pauses calls for about 10 seconds): press Check again once they're open."]
+    return []
+
+
 def family_lines(o: dict) -> list[str]:
     """What the per-family check adds to the words (assembly-038)."""
     f = o.get("families") or {}
@@ -218,7 +304,7 @@ def _list(keys) -> str:
 def summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = None) -> dict:
     """_summary plus what the per-family check adds (assembly-038): said plainly when only IPv6 reaches the server."""
     out = _summary(ports_rep, outside, proxy)
-    extra = [x for x in family_lines(outside or {}) if x not in out.get("lines", [])]
+    extra = [x for x in family_lines(outside or {}) + udp_lines(outside or {}) if x not in out.get("lines", [])]
     if extra:
         out = {**out, "lines": list(out.get("lines") or []) + extra}
     o = outside or {}
@@ -252,7 +338,7 @@ def _summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = 
     res = o.get("results") or {}
     lines, fix = [], []
     if kind == "direct":
-        blocked = [k for k, key in CHECK_KEY.items() if key in res and not res[key].get("ok")]
+        blocked = [k for k, key in CHECK_KEY.items() if key in res and res[key].get("ok") is False]
         lines = [o["error"]] if o.get("error") else []
         if blocked:
             lines.append(f"These ports don't reach your server from outside yet: {_list(blocked)}. This server has its own "
@@ -267,7 +353,7 @@ def _summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = 
         lines.append("Your server's certificate isn't valid yet. It renews by itself; check again in a few minutes.")
     if o.get("error"):
         lines.append(o["error"])
-    blocked = [k for k, key in CHECK_KEY.items() if key in res and not res[key].get("ok") and not (key == "tls443" and cert)]
+    blocked = [k for k, key in CHECK_KEY.items() if key in res and res[key].get("ok") is False and not (key == "tls443" and cert)]
     if proxy and ("TCP", 443) in blocked:
         blocked.remove(("TCP", 443))
         lines.append(f"Your reverse proxy doesn't pass https://{proxy['serverName']} on to this server yet. Point it at "

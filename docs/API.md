@@ -236,6 +236,15 @@ Element Call's newer method, was refused in 0.3.7 and is served from 0.3.8: step
 server. A hostile alias naming another room the joiner *is* in still lands them in that room's call, which that room's
 own moderation governs; the 12.1.0 apps refuse an alias that isn't the call's own room (calls round DESIGN §2.3).
 
+**When the call server is briefly away (0.3.10).** A check from outside that someone starts (setup, the dashboard's
+Check again, turning the Tin Hat relay on or off) pauses LiveKit for up to about 20 seconds so the manager can answer on
+the call ports itself (Check again skips that part while a call is going on, or when LiveKit can't say whether one is; a call that starts during the check can still meet the pause); an update or a change of the server's public address restarts it too. A token asked for in
+those seconds comes back as lk-jwt's `500` ("Unable to create room on SFU"), or the token works and the join to the SFU
+fails. **Apps retry once after about 5 seconds** before they show "couldn't join the call". The manager's own
+automatic checks (every 30 minutes while friends can't reach the server, after a port opened or was lost, through the
+relay) no longer pause LiveKit at all: they check HTTPS and TCP 7881 with LiveKit running and keep the last UDP 7882
+result from a check someone started (`reach.UNCHECKED` when there is none; the dashboard says "Not checked").
+
 ## Ringing: DM calls ring on phones and closed browsers (0.3.8, server half of RINGING.md draft 3)
 
 Nobody sends ring events. A call membership (`org.matrix.msc3401.call.member`) is plaintext room state, so the server

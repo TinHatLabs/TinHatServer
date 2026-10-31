@@ -42,6 +42,8 @@ import { AppMenu, NewMenu, RegistryMenuItems, RoomMenu, openBugReport } from "./
 import { setEditingRoom, useNavStore, type Participant, type RoomRow, type SpaceEntry } from "./model";
 import { useNavMode, toggleSidebar } from "./navmode";
 import { openRoomId } from "./open";
+import { rowGesture } from "./rowGesture";
+import { runAction } from "@/actions/run";
 import { usePartGlyphs } from "./callinfo";
 import { ParticipantVolumeMenu } from "@/features/callui";
 import { useServerFeature } from "@/core/server";
@@ -55,6 +57,30 @@ import { listPlan, type PhoneSections } from "./sections";
 import s from "./RoomList.module.css";
 
 const scrollMemory = new Map<string, number>();
+
+// 12.1.5 double-click → call: ONE armed row for the whole list (Astra 2026-10-30, second pass). A joined row's own first
+// click arms it; any press that is not on a row, or is on a control inside one (Accept, Decline, the now-playing pencil /
+// editor), disarms it; a click on another row re-arms or disarms. The browser pairs two clicks by time and distance, not
+// by element, so an arm kept per row could be paired with a press that began somewhere else.
+const rowArm = { room: "", t: 0 };
+const disarmRows = () => {
+  rowArm.room = "";
+  rowArm.t = 0;
+};
+function onRowControl(target: EventTarget | null, row: Element): boolean {
+  const hit = (target as Element | null)?.closest?.("button, input, textarea, select, [contenteditable], [role='button']");
+  return !!hit && hit !== row && row.contains(hit);
+}
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "pointerdown",
+    (e) => {
+      const row = (e.target as Element | null)?.closest?.("[data-row]");
+      if (!row || onRowControl(e.target, row)) disarmRows();
+    },
+    true,
+  );
+}
 
 export interface RoomPanelProps {
   currentRoomId: string | null;
@@ -104,6 +130,11 @@ function useFloatingCardHeight(ref: RefObject<HTMLDivElement | null>): number {
 }
 
 export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPicked, island, sections }: RoomPanelProps) {
+  // 12.1.5 (assembly review): another room on screen (keyboard Alt+Up/Down, Ctrl+K, a notification…) disarms the
+  // double-click; the armed room's own click opening it does not (the desktop's RoomsIsland.qml does the same)
+  useEffect(() => {
+    if (currentRoomId !== rowArm.room) disarmRows();
+  }, [currentRoomId]);
   const plan = mobile && sections ? listPlan(sections) : null;
   const touch = useIsTouch();
   const rooms = useNavStore((st) => st.rooms);
@@ -454,8 +485,26 @@ const RoomRowView = memo(function RoomRowView({ row, hidden, selected, isOpen, e
       lpFired.current = false;
       return;
     }
-    if (notJoined) openNavDialog({ kind: "joinConfirm", roomId: row.id, name: row.name });
-    else if (!isInvite) onPick(row.id);
+    const g = rowGesture({ gesture: "click", membership: row.membership });
+    if (g === "askJoin") openNavDialog({ kind: "joinConfirm", roomId: row.id, name: row.name });
+    else if (g === "open") onPick(row.id);
+  };
+  // 12.1.5 (2026-10-30): a double-click joins the room's call. The click before it has already opened the room
+  // (never delayed); the browser's dblclick follows the OS double-click interval, so two slow clicks stay two clicks.
+  // The join is the call.join action (the call button's path: its gates, the switch when in another call, and every
+  // consent sheet inside joinCall). Invites, rooms you are not in, phones and touch input: nothing (rowGesture.ts).
+  // Armed = the pair's first click landed on this row itself (not on Accept / a row button / the editor) while the row
+  // was a joined room, and nothing was pressed since (rowArm above): a double-click that starts on Accept never joins.
+  const lastPointer = useRef("mouse");
+  const dblclick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const age = e.timeStamp - rowArm.t;
+    const armed = rowArm.room === row.id && rowArm.t > 0 && age >= 0 && age < 5000;
+    disarmRows();
+    if (onRowControl(e.target, e.currentTarget)) return; // the row's own buttons and the editor
+    // a mouse only: a touch or pen double-tap never joins (assembly review: a pen on a desktop-size tablet browser)
+    if (rowGesture({ gesture: "dblclick", membership: row.membership, touch: !!mobile || lastPointer.current !== "mouse", armed }) !== "call") return;
+    if (!selected) onPick(row.id);
+    void runAction("call.join", { source: "host", target: { room: row.id } });
   };
 
   return (
@@ -470,7 +519,17 @@ const RoomRowView = memo(function RoomRowView({ row, hidden, selected, isOpen, e
       tabIndex={-1}
       hidden={hidden}
       aria-label={row.name}
-      onClick={click}
+      onClick={(e) => {
+        // a pair's first click arms the double-click (the second click, detail 2, never does)
+        if (e.detail <= 1) {
+          if (!onRowControl(e.target, e.currentTarget) && row.membership === "join" && lastPointer.current === "mouse") {
+            rowArm.room = row.id;
+            rowArm.t = e.timeStamp;
+          } else disarmRows();
+        }
+        click();
+      }}
+      onDoubleClick={dblclick}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return; // keys inside the now-playing editor / buttons are theirs
         if (e.key === "Enter") click();
@@ -487,6 +546,7 @@ const RoomRowView = memo(function RoomRowView({ row, hidden, selected, isOpen, e
         onMenu(row.id, e.clientX, e.clientY);
       }}
       onPointerDown={(e) => {
+        lastPointer.current = e.pointerType; // (a press on a control or outside the rows disarms: the document listener)
         if (e.pointerType !== "touch") return;
         const x = e.clientX,
           y = e.clientY;

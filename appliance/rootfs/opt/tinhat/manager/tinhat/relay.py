@@ -24,7 +24,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from . import compose, config, environment, names, state, templates
+from . import caddylock, compose, config, environment, names, state, templates
 
 log = logging.getLogger("tinhat.relay")
 
@@ -260,22 +260,25 @@ def health() -> dict:
 
 async def _apply_caddy() -> None:
     """Rewrite the web server's settings (with or without the relay's PROXY header) and reload it, the same way setup
-    does: Caddy checks the new file before it replaces the old one."""
-    st = state.load_state()
-    sn = st.get("server_name")
-    acme = (names.creds() or {}).get("acme")
-    if not sn or not acme:
-        return
-    new = config.CADDYFILE.with_name("Caddyfile.new")
-    state.write_text(new, templates.caddy_anywhere(sn, acme, environment.env()["acme_directory"],
-                                                   environment.has_extra_roots(), proxy_from=proxy_from()), 0o600)
-    rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
-    if rc != 0:
-        raise RelayError("The web server refused its new settings.", "caddy")
-    os.replace(new, config.CADDYFILE)
-    rc, out = await compose.caddy_reload()
-    if rc != 0:
-        raise RelayError("The web server didn't take its new settings.", "caddy")
+    does: Caddy checks the new file before it replaces the old one. Under the web server's settings lock
+    (caddylock.py), written from the state as it is under it."""
+    try:
+        async with caddylock.CaddyLock():
+            st = state.load_state()
+            sn = st.get("server_name")
+            acme = (names.creds() or {}).get("acme")
+            if not sn or not acme:
+                return
+            rc, out = await caddylock.put_checked(
+                templates.caddy_anywhere(sn, acme, environment.env()["acme_directory"], environment.has_extra_roots(),
+                                         proxy_from=proxy_from()), 0o600)
+            if rc != 0:
+                raise RelayError("The web server refused its new settings.", "caddy")
+            rc, out = await compose.caddy_reload()
+            if rc != 0:
+                raise RelayError("The web server didn't take its new settings.", "caddy")
+    except TimeoutError:
+        raise RelayError("Another change to the web server's settings is still running. Try again in a minute.", "caddy")
 
 
 async def _apply_livekit(public_ip: str | None, restart: bool) -> None:
@@ -498,7 +501,7 @@ def summary(outside: dict) -> dict:
     tls = (res.get("tls443") or {}).get("ok")
     if (res.get("tls443") or {}).get("why") == "certificate":
         lines.append("Your server's certificate isn't valid yet. It renews by itself; check again in a few minutes.")
-    blocked = [k for k in ("tcp7881", "udp7882") if k in res and not res[k].get("ok")]
+    blocked = [k for k in ("tcp7881", "udp7882") if k in res and res[k].get("ok") is False]  # not an unchecked one
     if tls and blocked:
         lines.append("Chat works through the relay, but its call port doesn't answer yet.")
     level = "warn" if tls else "bad"

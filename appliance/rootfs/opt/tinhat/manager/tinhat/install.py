@@ -18,7 +18,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp.abc import AbstractResolver
 
-from . import apiconf, compose, config, console, environment, hw, names, owndomain, relay, restoresafe, state, templates
+from . import apiconf, caddylock, compose, config, console, environment, hw, names, owndomain, relay, restoresafe, state, templates
 from .synapse import Synapse
 
 log = logging.getLogger("tinhat.install")
@@ -399,18 +399,7 @@ class Installer:
         if a["mode"] == "domain":
             return await self._secure_domain(a)
         sn = a["server_name"]
-        new = config.CADDYFILE.with_name("Caddyfile.new")
-        state.write_text(new, templates.caddy_lan(sn), 0o644)
-        rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
-        if rc != 0:
-            raise InstallError("The web server's new settings were rejected.", _tail(out))
-        os.replace(new, config.CADDYFILE)
-        rc, out = await compose.up("caddy")
-        if rc != 0:
-            raise InstallError("The web server didn't start.", _tail(out))
-        rc, out = await compose.caddy_reload()
-        if rc != 0:
-            raise InstallError("The web server didn't take its new settings.", _tail(out))
+        await _put_caddyfile(lambda: templates.caddy_lan(sn), 0o644, force=False)
         # Caddy makes its local certificate authority the first time it needs a certificate.
         for _ in range(60):
             if config.CA_ROOT.exists():
@@ -443,19 +432,8 @@ class Installer:
         if not acme:
             raise InstallError("This server has no name yet. Press Try again.")
         e = environment.env()
-        new = config.CADDYFILE.with_name("Caddyfile.new")
-        state.write_text(new, templates.caddy_anywhere(sn, acme, e["acme_directory"], environment.has_extra_roots(),
-                                                       proxy_from=relay.proxy_from()), 0o600)
-        rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
-        if rc != 0:
-            raise InstallError("The web server's new settings were rejected.", _tail(out))
-        os.replace(new, config.CADDYFILE)
-        rc, out = await compose.up("caddy")
-        if rc != 0:
-            raise InstallError("The web server didn't start.", _tail(out))
-        rc, out = await compose.caddy_reload(force=True)
-        if rc != 0:
-            raise InstallError("The web server didn't take its new settings.", _tail(out))
+        await _put_caddyfile(lambda: templates.caddy_anywhere(sn, acme, e["acme_directory"], environment.has_extra_roots(),
+                                                              proxy_from=relay.proxy_from()), 0o600, force=True)
         # Caddy now asks Let's Encrypt (Pebble in the lab) for a certificate; the names service answers the DNS check.
         return await _wait_https(sn)
 
@@ -467,19 +445,8 @@ class Installer:
         if provider == "proxy":
             return await self._secure_proxy(a)
         e = environment.env()
-        new = config.CADDYFILE.with_name("Caddyfile.new")
-        state.write_text(new, templates.caddy_domain(sn, owndomain.caddy_tls(provider, creds), e["acme_directory"],
-                                                     environment.has_extra_roots()), 0o600)
-        rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
-        if rc != 0:
-            raise InstallError("The web server's new settings were rejected.", _tail(out))
-        os.replace(new, config.CADDYFILE)
-        rc, out = await compose.up("caddy")
-        if rc != 0:
-            raise InstallError("The web server didn't start.", _tail(out))
-        rc, out = await compose.caddy_reload(force=True)
-        if rc != 0:
-            raise InstallError("The web server didn't take its new settings.", _tail(out))
+        await _put_caddyfile(lambda: templates.caddy_domain(sn, owndomain.caddy_tls(provider, creds), e["acme_directory"],
+                                                            environment.has_extra_roots()), 0o600, force=True)
         # Let's Encrypt checks a record your DNS provider's API puts up: a wrong token shows here, in Caddy's log.
         return await _wait_https(sn, provider=owndomain.PROVIDERS[provider]["label"])
 
@@ -633,7 +600,7 @@ class Installer:
         config.POSTGRES_DIR.mkdir(parents=True, exist_ok=True)
         _chown_tree(config.SYNAPSE_DIR, config.SYNAPSE_UID)
         _hosts_entry(a["server_name"], a["name"])
-        refresh_configs(force=True)
+        await refresh_configs_locked(force=True)
         c = meta.get("counts") or {}
         return (f"The backup from {(meta.get('created') or '?')[:16].replace('T', ' ')} UTC"
                 + (f": {_n(c.get('people'), 'person', 'people')}, {_n(c.get('rooms'), 'room', 'rooms')}, "
@@ -695,7 +662,7 @@ class Installer:
             raise InstallError(f"Couldn't move the name to this computer: {res.get('message')}")
         if owndomain.is_public_v4(res.get("ip4")):
             state.save_state(livekit_public_ip=res["ip4"])
-        refresh_configs(force=True)
+        await refresh_configs_locked(force=True)
         # Tell the computer the backup came from, so it stands down now instead of within ten minutes (moved.py).
         rf = state.load_state().get("restored_from") or {}
         told = await _tell_old_computer(rf.get("old_addresses") or [], a["server_name"])
@@ -852,6 +819,53 @@ def cert_hint(lines: list[str], provider: str | None) -> str:
     return f" Check that the {provider} API token can edit this domain's DNS." if provider else ""
 
 
+async def _put_caddyfile(render, mode: int, force: bool = False) -> None:
+    """Setup's (and secure_proxy's) Caddyfile under the web server's settings lock (caddylock.py, review S2): render()
+    under the lock, staged under a name of its own, validated, swapped in, then the web server up and reloaded, so a
+    dashboard or relay change can't interleave. render None: only start and reload the one in place."""
+    try:
+        async with caddylock.CaddyLock():
+            if render is not None:
+                rc, out = await caddylock.put_checked(render(), mode)
+                if rc != 0:
+                    raise InstallError("The web server's new settings were rejected.", _tail(out))
+            rc, out = await compose.up("caddy")
+            if rc != 0:
+                raise InstallError("The web server didn't start.", _tail(out))
+            rc, out = await compose.caddy_reload(force=force)
+            if rc != 0:
+                raise InstallError("The web server didn't take its new settings.", _tail(out))
+    except TimeoutError:
+        raise InstallError("Another change to the web server's settings is still running. Press Try again in a minute.")
+
+
+async def refresh_configs_checked(force: bool = True) -> tuple[int, str]:
+    """refresh_configs with the Caddyfile written under a staged name, validated by Caddy and only then swapped in,
+    all under the web server's settings lock (a move: a rejected file must never be the live one). -> (rc, output)
+    of the validation; rc != 0: every other config is written, the live Caddyfile is the previous one."""
+    async with caddylock.CaddyLock():
+        nxt = caddylock.staged_path()
+        try:
+            refresh_configs(force=force, caddyfile_to=nxt)
+            if not nxt.exists():  # no Caddyfile for this mode yet (no name): the one in place stays
+                return 0, ""
+            rc, out = await compose.caddy_validate(f"/etc/caddy/{nxt.name}")
+            if rc == 0:
+                os.replace(nxt, config.CADDYFILE)
+            return rc, out
+        finally:
+            try:
+                nxt.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+async def refresh_configs_locked(force: bool = False) -> list[str]:
+    """refresh_configs under the web server's settings lock (it writes the live Caddyfile): a restore, a move."""
+    async with caddylock.CaddyLock():
+        return refresh_configs(force=force)
+
+
 def refresh_configs(force: bool = False, caddyfile_to=None) -> list[str]:
     """Write every generated config again from what the box already knows (state, secrets, the name's credentials):
     after an update brought new templates, or after a restore. The signing key and the database are never touched.
@@ -971,19 +985,7 @@ async def secure_proxy(sn: str, write: bool = True) -> str:
     (write=False: the move's switch wrote and checked the Caddyfile already, with the former names' media)."""
     port = owndomain.PROXY_PORT
     shared = config.proxy_only()
-    if write:
-        new = config.CADDYFILE.with_name("Caddyfile.new")
-        state.write_text(new, templates.caddy_proxy(sn, port, shared, owndomain.proxies()), 0o644)
-        rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
-        if rc != 0:
-            raise InstallError("The web server's new settings were rejected.", _tail(out))
-        os.replace(new, config.CADDYFILE)
-    rc, out = await compose.up("caddy")
-    if rc != 0:
-        raise InstallError("The web server didn't start.", _tail(out))
-    rc, out = await compose.caddy_reload()
-    if rc != 0:
-        raise InstallError("The web server didn't take its new settings.", _tail(out))
+    await _put_caddyfile((lambda: templates.caddy_proxy(sn, port, shared, owndomain.proxies())) if write else None, 0o644)
     for _ in range(0 if shared else 60):
         if config.CA_ROOT.exists():
             break
@@ -1037,7 +1039,9 @@ def write_synapse_config(server_name: str, secrets: dict, features: dict, federa
         extra = environment.synapse_root_files()
     state.write_text(syn / "homeserver.yaml",
                      templates.homeserver_yaml(server_name, secrets, features, federation, extra,
-                                               push_gateway=apiconf.docker_gateway()), 0o600)
+                                               push_gateway=apiconf.docker_gateway(),
+                                               former=[f.get("name") for f in state.load_state().get("former_names") or []
+                                                       if isinstance(f, dict)]), 0o600)
     state.write_text(syn / "log.config", templates.LOG_CONFIG, 0o644)
     if not (syn / "signing.key").exists():
         state.write_text(syn / "signing.key", templates.signing_key(), 0o600)

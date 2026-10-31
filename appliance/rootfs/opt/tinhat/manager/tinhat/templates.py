@@ -96,6 +96,10 @@ modules:
   - module: tinhat_rules.GuestRules
     config:
       dir: /tinhat-api
+      # rooms whose creator is on one of these count as ours (other servers' rooms: no automatic Tin Hat power-level
+      # writes from older apps, tinhat_rules.check_event_allowed)
+      connected: {federation_whitelist}
+      former: {former_names}
   # DM ringing: the Tin Hat API hears about call membership changes (pokes only; it reads the room itself) and asks
   # whether a room is muted for someone before a phone rings (docs/API.md "Ringing").
   - module: tinhat_calls.CallHook
@@ -168,7 +172,7 @@ disable_existing_loggers: false
 
 
 def homeserver_yaml(server_name: str, s: dict, features: dict | None = None, federation: list[str] | None = None,
-                    extra_ca: list[str] | None = None, push_gateway: str = "") -> str:
+                    extra_ca: list[str] | None = None, push_gateway: str = "", former: list[str] | None = None) -> str:
     """federation=None: home-network mode (no federation listener at all); a list: from-anywhere mode, federating
     only with those servers. extra_ca: the lab's roots (Pebble + lab CA), one file each, for federation."""
     f = features or {}
@@ -190,6 +194,7 @@ def homeserver_yaml(server_name: str, s: dict, features: dict | None = None, fed
         form_secret=s["form_secret"],
         listener_names=", ".join(names),
         federation_whitelist=json.dumps(sorted(set(federation or []))),
+        former_names=json.dumps(sorted({x for x in former or [] if isinstance(x, str) and is_hostname(x)})),
         extra_ca=f"federation_custom_ca_list: {json.dumps(extra_ca)}\n" if extra_ca else "",
     )
 
@@ -350,8 +355,36 @@ def web_csp_line(csp: str | None = None) -> str:
 # otherwise any caller outside the home network and the named addresses gets a 403 before the manager sees the request.
 # client_ip is the caller as Caddy worked it out: the connecting address, the relay's PROXY-protocol address, or behind
 # the owner's reverse proxy the visitor its trusted proxies name. The manager checks the same again (web.py).
-#: an X-Forwarded-For made of addresses only (IPv4, IPv6, brackets, ports, commas, spaces)
-XFF_ADDRESSES = "`^[0-9A-Fa-f:.,\\[\\] ]+$`"
+#: an X-Forwarded-For made of addresses only, as Caddy itself reads them (review S4; Caddy 2.10 server.go
+#: trustedRealClientIP): the header's entries are split at commas, each is net.SplitHostPort'ed BEFORE any trimming,
+#: then trimmed and parsed with netip.ParseAddr; an entry that doesn't parse is skipped, and when none parses client_ip
+#: is the proxy's own (home) address, which the gate would let in. So every entry must be one Caddy parses: an IPv4
+#: address (optionally :port) or an IPv6 address, spaces around either allowed, or `[IPv6]:port` right after the comma
+#: (a leading space breaks SplitHostPort, a `[IPv6]` without a port isn't an address). Zone ids and tabs are refused
+#: (Caddy would take them; no real proxy sends them). RE2 syntax (Go regexp: no lookarounds), no backtick (the
+#: Caddyfile string's quote). test_xff_strict.py checks it against a model of Caddy's parse.
+_XFF_OCTET = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
+_XFF_V4 = rf"{_XFF_OCTET}(?:\.{_XFF_OCTET}){{3}}"
+_XFF_H = "[0-9A-Fa-f]{1,4}"
+_XFF_V6 = "(?:" + "|".join([
+    rf"(?:{_XFF_H}:){{7}}{_XFF_H}",
+    rf"(?:{_XFF_H}:){{1,7}}:",
+    rf"(?:{_XFF_H}:){{1,6}}:{_XFF_H}",
+    rf"(?:{_XFF_H}:){{1,5}}(?::{_XFF_H}){{1,2}}",
+    rf"(?:{_XFF_H}:){{1,4}}(?::{_XFF_H}){{1,3}}",
+    rf"(?:{_XFF_H}:){{1,3}}(?::{_XFF_H}){{1,4}}",
+    rf"(?:{_XFF_H}:){{1,2}}(?::{_XFF_H}){{1,5}}",
+    rf"{_XFF_H}:(?::{_XFF_H}){{1,6}}",
+    rf":(?:(?::{_XFF_H}){{1,7}}|:)",
+    # a dotted IPv4 tail (the last 32 bits): 6 groups before it, or `::` with at most 5 groups around it
+    rf"(?:{_XFF_H}:){{6}}{_XFF_V4}",
+    rf"::(?:{_XFF_H}:){{0,5}}{_XFF_V4}",
+    *[rf"(?:{_XFF_H}:){{{n}}}:(?:{_XFF_H}:){{0,{5 - n}}}{_XFF_V4}" for n in range(1, 5)],
+    rf"(?:{_XFF_H}:){{5}}:{_XFF_V4}",
+]) + ")"
+_XFF_ENTRY = rf"(?: *{_XFF_V4}(?::[0-9]{{1,5}})? *| *{_XFF_V6} *|\[{_XFF_V6}\]:[0-9]{{1,5}} *)"
+XFF_PATTERN = rf"^{_XFF_ENTRY}(?:,{_XFF_ENTRY})*$"
+XFF_ADDRESSES = f"`{XFF_PATTERN}`"
 
 
 def admin_gate(st: dict | None = None, own_nets=None, proxy: bool = False) -> str:
@@ -1011,7 +1044,7 @@ https://{name} {{
 			dir {acme_directory}
 {trusted}{tls_dns}			propagation_timeout 3m
 		}}
-	}}
+{policy}	}}
 	respond "This Tin Hat server is moving here. Try again in a minute." 503
 }}
 """
@@ -1054,12 +1087,15 @@ def is_hostname(name: str) -> bool:
     return bool(_HOSTNAME.fullmatch(name or ""))
 
 
-def caddy_preflight(name: str, tls_dns: str, acme_directory: str, extra_roots: bool) -> str:
+def caddy_preflight(name: str, tls_dns: str, acme_directory: str, extra_roots: bool, setup: bool = False) -> str:
     """A site for the move's new name that only gets its certificate (DNS-01 through the owner's provider: tls_dns from
-    owndomain.caddy_tls) and says "moving here", added to whatever Caddyfile the server runs before the move."""
+    owndomain.caddy_tls) and says "moving here", added to whatever Caddyfile the server runs before the move.
+    setup: that Caddyfile has the setup page's catch-all https site (has_setup_site): the new name then needs a TLS
+    policy of its own (NAMED_TLS_POLICY), or its handshakes get the setup certificate and the move's wait fails (S3)."""
     if not _HOSTNAME.fullmatch(name) or not re.fullmatch(r"https://[A-Za-z0-9.:/_-]+", acme_directory):
         raise ValueError("not a name or an ACME directory the Caddyfile can take")
     return CADDY_PREFLIGHT_SITE.format(name=name, acme_directory=acme_directory, tls_dns=tls_dns,
+                                       policy=NAMED_TLS_POLICY if setup else "",
                                        trusted="\t\t\ttrusted_roots /etc/tinhat-ca/extra-roots.pem\n" if extra_roots else "")
 
 
@@ -1086,11 +1122,17 @@ def with_former_names(caddyfile: str, new: str, former: list[tuple[str, str | No
         return caddyfile
     media = former_media(new, names)
     gate = admin_gate()
+    # while the setup page's catch-all https site is in the file (the 30 min after setup), every named site needs a TLS
+    # policy of its own (NAMED_TLS_POLICY; review S3), the former names' too
+    policy = NAMED_TLS_POLICY if has_setup_site(caddyfile) else ""
     out = caddyfile.replace("\timport tinhat_headers\n", "\timport tinhat_headers\n" + media)
     for old, tls in former:
         if old not in names or tls is None:
             continue
-        tls_block = "\ttls internal\n" if tls == "internal" else f"\ttls {{\n{tls}\t\tpropagation_timeout 3m\n\t}}\n"
+        if tls == "internal":
+            tls_block = f"\ttls internal {{\n{policy}\t}}\n" if policy else "\ttls internal\n"
+        else:
+            tls_block = f"\ttls {{\n{tls}\t\tpropagation_timeout 3m\n{policy}\t}}\n"
         # a publicly trusted certificate (a tinhat.me name, an own domain) gets HSTS like the server's own name; a
         # .local name (the server's own CA) never does
         out += CADDY_FORMER_SITE.format(old=old, new=new, tls=tls_block, media=media, admin_gate=gate,
@@ -1117,6 +1159,11 @@ def caddy_domain(server_name: str, tls_dns: str, acme_directory: str, extra_root
 #: with Caddy 2.10.2 on the lab VM). Any option in the named site's tls block gives it an SNI-matched policy first;
 #: this one changes nothing (Caddy's defaults).
 NAMED_TLS_POLICY = "\t\tprotocols tls1.2 tls1.3\n"
+
+
+def has_setup_site(caddyfile: str) -> bool:
+    """Whether a Caddyfile has the setup page's catch-all https site (PUBLIC_SETUP_SITE: its certificate files)."""
+    return "/data/tinhat-setup/" in (caddyfile or "")
 
 
 def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roots: bool,

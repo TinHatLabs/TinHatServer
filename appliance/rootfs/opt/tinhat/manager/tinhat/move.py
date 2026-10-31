@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from . import compose, config, environment, hw, moved, names, owndomain, relay, state, templates
+from . import caddylock, compose, config, environment, hw, moved, names, owndomain, relay, state, templates
 
 log = logging.getLogger("tinhat.move")
 
@@ -126,10 +126,13 @@ async def let_go(name: str) -> str:
         if fd.pop(name, None) is not None:
             state.save_secrets(former_domains=fd)
     _mark(name, released=f.get("released") or int(time.time()), pending=True)  # the web server's settings still to apply
-    install.refresh_configs(force=True)  # its site and its .well-known go; its media stays
-    rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile")
-    if rc == 0:
-        rc, out = await compose.caddy_reload(force=True)
+    try:
+        async with caddylock.CaddyLock():  # the web server's settings lock (caddylock.py)
+            rc, out = await install.refresh_configs_checked()  # its site and .well-known go; its media stays
+            if rc == 0:
+                rc, out = await compose.caddy_reload(force=True)
+    except TimeoutError as e:
+        rc, out = 1, str(e)
     if rc != 0:
         told = " (the names service has let go of it already)" if note.startswith(" The name went") else ""
         raise MoveError(f"The web server didn't take its settings without {name} yet{told}: press Let go again to "
@@ -137,6 +140,17 @@ async def let_go(name: str) -> str:
     _mark(name, pending=None)
     log.info("let go of the former name %s", name)
     return f"This server no longer answers {name}.{note} Pictures and files from before the move still open."
+
+
+class _caddy_lock(caddylock.CaddyLock):
+    """caddylock.CaddyLock whose wait running out is a MoveError (the step fails like any other: retried or rolled
+    back), not a TimeoutError."""
+    async def __aenter__(self):
+        try:
+            return await super().__aenter__()
+        except TimeoutError:
+            raise MoveError("Another change to the web server's settings is still running; the move waited 2 minutes "
+                            "for it.")
 
 
 def new_server_name(old: str, new: str, st: dict) -> dict:
@@ -469,26 +483,26 @@ class Mover:
             return await self._proxy_check(new)
         label = owndomain.PROVIDERS[own["provider"]]["label"]
         e = environment.env()
-        site = templates.caddy_preflight(new, owndomain.caddy_tls(own["provider"], own["creds"]), e["acme_directory"],
-                                         environment.has_extra_roots())
+        tls = owndomain.caddy_tls(own["provider"], own["creds"])
         bundle = environment.write_bundle()
         if bundle:  # the lab: the web server trusts the lab's roots when it talks to the DNS provider's API
             st, s = state.load_state(), state.load_secrets()
             state.write_text(config.COMPOSE_ENV, templates.compose_env(st["server_name"], s, lan=st.get("mode") == "lan",
                                                                        bundle=True), 0o600)
-        current = config.CADDYFILE.read_text() if config.CADDYFILE.exists() else ""
-        nxt = config.CADDYFILE.with_name("Caddyfile.new")
-        state.write_text(nxt, current + site, 0o600)
-        rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
-        if rc != 0:
-            raise MoveError("The web server's settings for the new address were rejected.", _tail(out))
-        os.replace(nxt, config.CADDYFILE)
-        rc, out = await compose.up("caddy")
-        if rc != 0:
-            raise MoveError("The web server didn't start.", _tail(out))
-        rc, out = await compose.caddy_reload(force=True)
-        if rc != 0:
-            raise MoveError("The web server didn't take its new settings.", _tail(out))
+        async with _caddy_lock():  # the file in place is read, added to and swapped under the lock (review S2)
+            current = config.CADDYFILE.read_text() if config.CADDYFILE.exists() else ""
+            # inside the setup grace the file has the setup page's catch-all site: the new name's own TLS policy (S3)
+            site = templates.caddy_preflight(new, tls, e["acme_directory"], environment.has_extra_roots(),
+                                             setup=templates.has_setup_site(current))
+            rc, out = await caddylock.put_checked(current + site, 0o600)
+            if rc != 0:
+                raise MoveError("The web server's settings for the new address were rejected.", _tail(out))
+            rc, out = await compose.up("caddy")
+            if rc != 0:
+                raise MoveError("The web server didn't start.", _tail(out))
+            rc, out = await compose.caddy_reload(force=True)
+            if rc != 0:
+                raise MoveError("The web server didn't take its new settings.", _tail(out))
         try:
             await install._wait_cert(new, provider=label)
         except install.InstallError as ex:
@@ -501,15 +515,16 @@ class Mover:
         then this server's proxy port), and goes on only when it gets this server's answer."""
         import aiohttp
         port = owndomain.PROXY_PORT
-        current = config.CADDYFILE.read_text() if config.CADDYFILE.exists() else ""
-        if f"http://:{port} {{" not in current:  # not behind a proxy yet: the proxy's port, for this check only
-            nxt = config.CADDYFILE.with_name("Caddyfile.new")
-            state.write_text(nxt, current + templates.caddy_proxy_preflight(port, hw.addresses()), 0o644)
-            await self._load_caddyfile(nxt)
-        elif "/_tinhat/move-check" not in current:  # a Caddyfile from before this check existed: today's settings
-            from . import install
-            install.refresh_configs(force=True)
-            await self._load_caddyfile(None)
+        async with _caddy_lock():  # read and changed under the web server's settings lock (review S2)
+            current = config.CADDYFILE.read_text() if config.CADDYFILE.exists() else ""
+            if f"http://:{port} {{" not in current:  # not behind a proxy yet: the proxy's port, for this check only
+                await self._load_caddyfile(current + templates.caddy_proxy_preflight(port, hw.addresses()))
+            elif "/_tinhat/move-check" not in current:  # a Caddyfile from before this check existed: today's settings
+                from . import install
+                rc, out = await install.refresh_configs_checked()
+                if rc != 0:
+                    raise MoveError("The web server's settings for your reverse proxy were rejected.", _tail(out))
+                await self._load_caddyfile(None)
         # The token is a file the web server serves itself, on the proxy port only: a proxy sent to another port of
         # this server (80, 443) doesn't pass, and the manager never hands it out.
         tdir = config.WELLKNOWN_DIR / "move-check"
@@ -547,13 +562,13 @@ class Mover:
                         f"https://{new} to http://{lan}:{port} (with a certificate for {new}), then try again. "
                         "Nothing changed.")
 
-    async def _load_caddyfile(self, nxt: Path | None) -> None:
-        """The web server on a new Caddyfile (nxt: checked first, then put in place; None: the one in place)."""
-        if nxt is not None:
-            rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile.new")
+    async def _load_caddyfile(self, text: str | None) -> None:
+        """The web server on a new Caddyfile (text: staged, checked first, then put in place; None: the one in place).
+        The caller holds the web server's settings lock."""
+        if text is not None:
+            rc, out = await caddylock.put_checked(text, 0o644)
             if rc != 0:
                 raise MoveError("The web server's settings for your reverse proxy were rejected.", _tail(out))
-            os.replace(nxt, config.CADDYFILE)
         else:
             rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile")
             if rc != 0:
@@ -629,8 +644,8 @@ class Mover:
         state.save_state(**{k: nxt[k] for k in ("former_names", "server_name", "mode", "admin", "domain")
                             if k in nxt}, former_told=None)
         install._hosts_entry(new, _short_name())  # 127.0.1.1: the new name (lk-jwt checks sign-ins through it)
-        install.refresh_configs(force=True)
-        rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile")
+        async with _caddy_lock():
+            rc, out = await install.refresh_configs_checked()
         if rc != 0:
             raise MoveError("The web server's settings for the new address were rejected.", _tail(out))
 
@@ -642,7 +657,10 @@ class Mover:
         if own["provider"] == "proxy":  # the domain leads to the owner's proxy (checked before the move)
             if ip:
                 state.save_state(livekit_public_ip=ip)
-                install.refresh_configs(force=True)  # livekit.yaml: calls announce the home's address from the start
+                async with _caddy_lock():  # livekit.yaml: calls announce the home's address from the start
+                    rc, out = await install.refresh_configs_checked()
+                if rc != 0:
+                    raise MoveError("The web server's new settings were rejected.", _tail(out))
             return f"Your reverse proxy sends {new} here (checked before the move)."
         if not ip:
             return "Couldn't find this server's public address; the dashboard keeps trying."
@@ -653,22 +671,26 @@ class Mover:
                             f"domain's DNS.")
         state.save_state(livekit_public_ip=ip, **({"domain_status": {"ip4": ip, "updated": True, "error": None}}
                                                  if pointed else {}))
-        install.refresh_configs(force=True)  # livekit.yaml: calls announce the home's address from the start
+        async with _caddy_lock():  # livekit.yaml: calls announce the home's address from the start
+            rc, out = await install.refresh_configs_checked()
+        if rc != 0:
+            raise MoveError("The web server's new settings were rejected.", _tail(out))
         return f"{new} points to this server ({ip}) through {label}." if pointed else f"{new} should point to this server ({ip})."
 
     async def _secure(self, new: str, own: dict) -> str:
         from . import install
         if own["provider"] == "proxy":
             return await self._secure_proxy(new)
-        rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile")
-        if rc != 0:
-            raise MoveError("The web server's new settings were rejected.", _tail(out))
-        rc, out = await compose.up("caddy")
-        if rc != 0:
-            raise MoveError("The web server didn't start.", _tail(out))
-        rc, out = await compose.caddy_reload(force=True)
-        if rc != 0:
-            raise MoveError("The web server didn't take its new settings.", _tail(out))
+        async with _caddy_lock():
+            rc, out = await compose.caddy_validate("/etc/caddy/Caddyfile")
+            if rc != 0:
+                raise MoveError("The web server's new settings were rejected.", _tail(out))
+            rc, out = await compose.up("caddy")
+            if rc != 0:
+                raise MoveError("The web server didn't start.", _tail(out))
+            rc, out = await compose.caddy_reload(force=True)
+            if rc != 0:
+                raise MoveError("The web server didn't take its new settings.", _tail(out))
         try:
             return await install._wait_https(new, provider=owndomain.PROVIDERS[own["provider"]]["label"])
         except install.InstallError as e:
@@ -876,11 +898,13 @@ class Mover:
             if switched and self.on_switched:
                 self.on_switched(self.doc.get("to") or "", old)
         # Every config from the (restored) state: also the certificate step's temporary site and compose.env.
-        install.refresh_configs(force=True)
+        async with _caddy_lock():  # unchecked on purpose: the way back must write the restored settings regardless
+            install.refresh_configs(force=True)
         rc, out = await compose.up(*services())
         if rc != 0:
             raise MoveError("The server's parts didn't start again.", _tail(out))
-        rc, out = await compose.caddy_reload(force=True)
+        async with _caddy_lock():  # the file in place (a change that came meanwhile wrote it from the same state)
+            rc, out = await compose.caddy_reload(force=True)
         if rc != 0:  # stays "rolling-back": tried again at the next start
             raise MoveError("The web server didn't take the restored settings.", _tail(out))
         if switched and old.endswith("." + environment.env()["zone"]) and names.creds():

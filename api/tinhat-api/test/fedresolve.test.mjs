@@ -4,14 +4,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { createFedResolver, parseServerName, FED } from "../fedresolve.mjs";
+import { attemptBudget, createFedResolver, parseServerName, FED } from "../fedresolve.mjs";
 
 /** dns: {A: {host: [ip]}, AAAA: {...}, SRV: {name: [{name, port, priority, weight}]}}; web: (opts) -> {status, body|text, headers} */
-function fx({ A = {}, AAAA = {}, SRV = {}, web = () => ({ status: 404, body: {} }) } = {}) {
+function fx({ A = {}, AAAA = {}, SRV = {}, web = () => ({ status: 404, body: {} }), realClock = false, budgets, hangDns = [] } = {}) {
     const dnsCalls = [], reqs = [];
     const resolver = () => ({
-        resolve4: async (h) => { dnsCalls.push(`A ${h}`); if (A[h]) return A[h]; throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }); },
-        resolve6: async (h) => { dnsCalls.push(`AAAA ${h}`); if (AAAA[h]) return AAAA[h]; throw Object.assign(new Error("ENODATA"), { code: "ENODATA" }); },
+        resolve4: async (h) => { dnsCalls.push(`A ${h}`); if (hangDns.includes(h)) return new Promise(() => {}); if (A[h]) return A[h]; throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }); },
+        resolve6: async (h) => { dnsCalls.push(`AAAA ${h}`); if (hangDns.includes(h)) return new Promise(() => {}); if (AAAA[h]) return AAAA[h]; throw Object.assign(new Error("ENODATA"), { code: "ENODATA" }); },
         resolveSrv: async (n) => { dnsCalls.push(`SRV ${n}`); if (SRV[n]) return SRV[n]; throw Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }); },
         cancel: () => {},
     });
@@ -25,6 +25,7 @@ function fx({ A = {}, AAAA = {}, SRV = {}, web = () => ({ status: 404, body: {} 
         req.end = () => setImmediate(() => {
             const a = web(rec);
             if (a.dead) return req.emit("error", new Error("ECONNREFUSED"));
+            if (a.hang) return; // black-holed: no answer ever (getPinnedJson's own timer ends it)
             const res = new EventEmitter();
             res.statusCode = a.status;
             const text = a.text ?? JSON.stringify(a.body ?? {});
@@ -38,7 +39,7 @@ function fx({ A = {}, AAAA = {}, SRV = {}, web = () => ({ status: 404, body: {} 
     let t = 1_000_000;
     const now = () => t;
     now.advance = (ms) => { t += ms; };
-    const fed = createFedResolver({ resolver, request, now });
+    const fed = createFedResolver({ resolver, request, ...(realClock ? {} : { now }), budgets });
     return { fed, dnsCalls, reqs, now };
 }
 
@@ -205,4 +206,104 @@ test("all_dead_forgets_the_route", async () => {
     const { fed } = fx({ A: { "other.test": ["93.184.216.34"] }, web: (r) => (r.path.startsWith(UI) ? { dead: true } : { status: 404 }) });
     await assert.rejects(fed.userinfo("other.test", "t"), (e) => e.status === 502);
     assert.equal(fed._cache.has("other.test"), false);
+});
+
+// ---- per-attempt budgets (0.3.10, NEXT-ROUND: a black-holed first target used the whole 10 s → 502) -------------------
+// a real clock, scaled down (wide enough margins for a busy test box): the whole lookup 2 s, the well-known 400 ms
+const SMALL = { TIMEOUT_MS: 2_000, WELLKNOWN_MS: 400 };
+
+test("attempt_budgets_share_what_is_left", () => {
+    assert.equal(attemptBudget(10_000, 1), 10_000);
+    assert.equal(attemptBudget(10_000, 2), 5_000);
+    assert.equal(attemptBudget(10_000, 5), 2_000);
+    assert.equal(attemptBudget(6_000, 4), 1_500, "four candidates after a slow well-known: all four get a share");
+    let left = 6_000;
+    for (let n = 4; n >= 1; n--) { const b = attemptBudget(left, n); assert.ok(b > 0, `candidate ${5 - n} starved`); left -= b; }
+    assert.equal(left, 0);
+    assert.equal(attemptBudget(0, 2), 0);
+    assert.equal(FED.TIMEOUT_MS, 10_000);
+    assert.ok(FED.WELLKNOWN_MS < FED.TIMEOUT_MS / 2);
+});
+
+test("a_black_holed_first_srv_target_falls_back_to_a_healthy_second", async () => {
+    const { fed, reqs } = fx({
+        realClock: true, budgets: SMALL,
+        A: { "other.test": ["93.184.216.34"], "dead.other.test": ["93.184.216.40"], "live.other.test": ["93.184.216.41"] },
+        SRV: { "_matrix-fed._tcp.other.test": [{ name: "dead.other.test", port: 8448, priority: 1, weight: 1 },
+            { name: "live.other.test", port: 8448, priority: 2, weight: 1 }] },
+        web: (r) => (r.path === WK ? { status: 404 }
+            : r.pinned === "93.184.216.40" ? { hang: true }
+            : { status: 200, body: { sub: "@bob:other.test" } }),
+    });
+    const t0 = Date.now();
+    assert.deepEqual(await fed.userinfo("other.test", "tok"), { sub: "@bob:other.test" });
+    const took = Date.now() - t0;
+    assert.deepEqual(reqs.filter((r) => r.path.startsWith(UI)).map((r) => r.pinned), ["93.184.216.40", "93.184.216.41"]);
+    assert.ok(took < SMALL.TIMEOUT_MS, `answered within the lookup's deadline (${took} ms)`);
+});
+
+test("a_black_holed_well_known_still_leaves_time_for_srv_and_userinfo", async () => {
+    const { fed, reqs } = fx({
+        realClock: true, budgets: SMALL,
+        A: { "other.test": ["93.184.216.34"], "fed.other.test": ["93.184.216.42"] },
+        SRV: { "_matrix-fed._tcp.other.test": [{ name: "fed.other.test", port: 8448, priority: 1, weight: 1 }] },
+        web: (r) => (r.path === WK ? { hang: true } : { status: 200, body: { sub: "@ann:other.test" } }),
+    });
+    assert.deepEqual(await fed.userinfo("other.test", "tok"), { sub: "@ann:other.test" });
+    assert.equal(reqs.filter((r) => r.path === WK).length, 1);
+    assert.equal(reqs.filter((r) => r.path.startsWith(UI))[0].pinned, "93.184.216.42");
+});
+
+test("a_stalled_dns_lookup_for_the_well_known_stays_inside_its_budget", async () => {
+    // 0.3.10 release review: the apex's A/AAAA lookup for the well-known never answers; SRV must still get its turn
+    const { fed, reqs } = fx({
+        realClock: true, budgets: SMALL, hangDns: ["other.test"],
+        A: { "fed.other.test": ["93.184.216.42"] },
+        SRV: { "_matrix-fed._tcp.other.test": [{ name: "fed.other.test", port: 8448, priority: 1, weight: 1 }] },
+        web: (r) => (r.path === WK ? { status: 404 } : { status: 200, body: { sub: "@ann:other.test" } }),
+    });
+    const t0 = Date.now();
+    assert.deepEqual(await fed.userinfo("other.test", "tok"), { sub: "@ann:other.test" });
+    const took = Date.now() - t0;
+    assert.equal(reqs.filter((r) => r.path === WK).length, 0, "no well-known fetched without an address");
+    assert.ok(took < SMALL.TIMEOUT_MS, `answered within the lookup's deadline (${took} ms)`);
+    assert.ok(took >= SMALL.WELLKNOWN_MS - 50, `the well-known step waited its own budget, not less (${took} ms)`);
+});
+
+test("a_black_holed_well_known_and_first_target_still_reach_the_second", async () => {
+    const { fed } = fx({
+        realClock: true, budgets: SMALL,
+        A: { "other.test": ["93.184.216.34"], "dead.other.test": ["93.184.216.40"], "live.other.test": ["93.184.216.41"] },
+        SRV: { "_matrix-fed._tcp.other.test": [{ name: "dead.other.test", port: 8448, priority: 1, weight: 1 },
+            { name: "live.other.test", port: 8448, priority: 2, weight: 1 }] },
+        web: (r) => (r.path === WK || r.pinned === "93.184.216.40" ? { hang: true } : { status: 200, body: { sub: "@cy:other.test" } }),
+    });
+    assert.deepEqual(await fed.userinfo("other.test", "tok"), { sub: "@cy:other.test" });
+});
+
+test("every_target_black_holed_is_502_within_the_deadline", async () => {
+    const { fed } = fx({
+        realClock: true, budgets: SMALL,
+        A: { "other.test": ["93.184.216.34"], "a.other.test": ["93.184.216.40"], "b.other.test": ["93.184.216.43"] },
+        SRV: { "_matrix-fed._tcp.other.test": [{ name: "a.other.test", port: 8448, priority: 1, weight: 1 },
+            { name: "b.other.test", port: 8448, priority: 2, weight: 1 }] },
+        web: (r) => (r.path === WK ? { status: 404 } : { hang: true }),
+    });
+    const t0 = Date.now();
+    await assert.rejects(fed.userinfo("other.test", "tok"), (e) => e.status === 502);
+    assert.ok(Date.now() - t0 < SMALL.TIMEOUT_MS + 1_000, "never far past the lookup's deadline");
+});
+
+test("three_black_holed_targets_after_a_slow_well_known_still_reach_the_fourth", async () => {
+    const tg = (n, ip, p) => ({ name: `${n}.other.test`, port: 8448, priority: p, weight: 1 });
+    const { fed, reqs } = fx({
+        realClock: true, budgets: SMALL,
+        A: { "other.test": ["93.184.216.34"], "a.other.test": ["93.184.216.50"], "b.other.test": ["93.184.216.51"],
+            "c.other.test": ["93.184.216.52"], "d.other.test": ["93.184.216.53"] },
+        SRV: { "_matrix-fed._tcp.other.test": [tg("a", 0, 1), tg("b", 0, 2), tg("c", 0, 3), tg("d", 0, 4)] },
+        web: (r) => (r.path === WK || r.pinned !== "93.184.216.53" ? { hang: true } : { status: 200, body: { sub: "@di:other.test" } }),
+    });
+    assert.deepEqual(await fed.userinfo("other.test", "tok"), { sub: "@di:other.test" });
+    assert.deepEqual(reqs.filter((r) => r.path.startsWith(UI)).map((r) => r.pinned),
+        ["93.184.216.50", "93.184.216.51", "93.184.216.52", "93.184.216.53"]);
 });

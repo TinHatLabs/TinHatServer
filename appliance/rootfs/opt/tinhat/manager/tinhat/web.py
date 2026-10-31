@@ -26,7 +26,7 @@ from urllib.parse import quote
 from aiohttp import web
 
 from . import access, apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
-from . import pyenv, restoresafe, setuptls, templates
+from . import caddylock, pyenv, restoresafe, setuptls, templates
 from .install import Installer, validate, write_synapse_config
 from .synapse import Synapse
 
@@ -180,36 +180,9 @@ async def apply_dashboard_access(mode: str, addresses: list[str], who: str) -> t
     return await _apply_with_caddy(lambda st: ({"dashboard_access": doc}, {"dashboard_access": st.get("dashboard_access")}))
 
 
-#: one Caddyfile change at a time across processes (the dashboard, the background loop and the console's `tinhat
-#: dashboard-access` / `proxy-addresses` all come through _apply_with_caddy): Astra on be9372e
-APPLY_LOCK = config.STATE_DIR / "caddy-apply.lock"
-
-
-class _CaddyLock:
-    """async with _CaddyLock(): an exclusive flock on APPLY_LOCK, waited for without blocking the event loop (2 minutes
-    at most, then TimeoutError). The descriptor is closed on every way out: a cancelled wait, an exception inside."""
-    def __init__(self, seconds: float = 120):
-        self.seconds, self.fd = seconds, None
-
-    async def __aenter__(self):
-        import fcntl
-        fd = os.open(APPLY_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
-        try:
-            for _ in range(int(self.seconds * 10)):
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    self.fd = fd
-                    return self
-                except BlockingIOError:
-                    await asyncio.sleep(0.1)
-            raise TimeoutError("another change to the web server's settings is still running")
-        except BaseException:
-            os.close(fd)
-            raise
-
-    async def __aexit__(self, *exc):
-        os.close(self.fd)  # the flock goes with the descriptor
-        return False
+#: one Caddyfile change at a time across processes (the dashboard, the background loop, the console's `tinhat
+#: dashboard-access` / `proxy-addresses`, setup, a move, the relay, a restore): caddylock.py (Astra on be9372e; S2)
+_CaddyLock = caddylock.CaddyLock
 
 
 async def _settle(coro) -> bool:
@@ -235,8 +208,8 @@ async def _apply_with_caddy(change=None) -> tuple[bool, str]:
     writer's half-done change). None: write the Caddyfile again from the state as it is.
     Save `after`, write the Caddyfile beside the live one, validate, swap in and reload; on any failure (an exception or
     a cancel too) `before` goes back and, once the new file was swapped in, the previous Caddyfile (reloaded, best
-    effort), finished before the lock is released. Serialised across processes (APPLY_LOCK: the dashboard, the
-    background loop, the console); the staged file has a name of its own."""
+    effort), finished before the lock is released. Serialised across processes (the caddy-apply lock: the dashboard, the
+    background loop, the console, setup, a move, the relay: caddylock.py); the staged file has a name of its own."""
     from . import install
     try:
         async with _CaddyLock():
@@ -1031,7 +1004,8 @@ class Manager:
                     log.warning("restarting the extras: %s", out[-400:])
             install.write_wellknowns(st, st["server_name"], st.get("calls", True))
             if turn_changed:
-                install.refresh_configs()
+                async with caddylock.CaddyLock():
+                    install.refresh_configs()
                 if st.get("calls", True):
                     await compose.restart("livekit")
         log.info("%s changed extras: %s", s_["mxid"], ", ".join(changed))
@@ -1286,14 +1260,19 @@ class Manager:
         return _json(await self._network_doc_full())
 
     async def _check_now(self, st: dict) -> bool:
-        """Open the ports again and check from outside (pauses calls for a few seconds). False if one is running."""
+        """Open the ports again and check from outside (the owner's Check again; setup's last screen). It pauses the
+        call server for about 10 seconds to check UDP 7882, except while a call is going on: then that part waits for
+        a later check and the rest runs as the manager's own checks do (reach.py), so nobody's call drops (0.3.10).
+        When LiveKit can't say whether a call is going on (its room list timed out or failed), that counts as a call:
+        the pause never runs blind. False if one is running."""
         if self.network_busy:
             return False
         self.network_busy = True
         try:
             calls = st.get("calls", True)
             await self.checker.open_ports(calls)
-            await self.checker.outside(calls)
+            busy = calls and await lkadmin.call_in_progress() is not False  # None (can't tell) = a call is going on
+            await self.checker.outside(calls, unattended=busy)
         finally:
             self.network_busy = False
         return True
@@ -2264,12 +2243,12 @@ async def _keep_reachable(m: Manager, tick: int) -> None:
         await relay.tick(calls, tick)
         last, h = state.load_state().get("reach") or {}, relay.info().get("health") or {}
         # The tunnel is up but the last check from outside failed (a relay outage, say): check again, at most every
-        # 10 min and never during a call (it pauses the call server a few seconds).
-        if tick % 6 == 4 and h.get("ok") and not last.get("ok") and time.time() - (last.get("at") or 0) > 600 \
-                and not m.network_busy and (not calls or await lkadmin.call_in_progress() is False):
+        # 10 min. Unattended: it never pauses the call server (reach.py), so a call starting now isn't refused.
+        if tick % 6 == 4 and h.get("ok") and reach.recheck_due(last) and time.time() - (last.get("at") or 0) > 600 \
+                and not m.network_busy:
             m.network_busy = True
             try:
-                out = await m.checker.outside(calls)
+                out = await m.checker.outside(calls, unattended=True)
                 log.info("automatic outside check through the relay: %s", "reachable" if out.get("ok") else "not reachable")
             finally:
                 m.network_busy = False
@@ -2290,15 +2269,13 @@ async def _keep_reachable(m: Manager, tick: int) -> None:
             opened, lost = now_ok - before, before - now_ok
             last = st.get("reach") or {}
             # Check from outside again when a port opened or got lost, and every 30 min while not reachable, so the
-            # dashboard says what's true; never while people are in a call (it pauses the call server a few seconds).
+            # dashboard says what's true. Unattended: the call server keeps running (reach.py; a call that started
+            # during the old pause failed, BACKLOG-SERVER-037), so it no longer waits for calls to end.
             why = ("ports opened" if opened else "a port was lost" if lost
-                   else "every 30 min" if not last.get("ok") and time.time() - (last.get("at") or 0) > 1800 else None)
+                   else "every 30 min" if reach.recheck_due(last) and time.time() - (last.get("at") or 0) > 1800 else None)
             if why:
-                if calls and await lkadmin.call_in_progress() is not False:
-                    log.info("outside check postponed (%s): a call is going on, or the call server didn't answer", why)
-                else:
-                    out = await m.checker.outside(calls)
-                    log.info("automatic outside check (%s): %s", why, "reachable" if out.get("ok") else "not reachable")
+                out = await m.checker.outside(calls, unattended=True)
+                log.info("automatic outside check (%s): %s", why, "reachable" if out.get("ok") else "not reachable")
         except Exception:  # noqa: BLE001 — a flaky router must not stop the loop
             log.exception("port renewal")
         finally:
@@ -2362,6 +2339,7 @@ async def _background(m: Manager) -> None:
             m._admin_recheck_at = time.monotonic() + ADMIN_RECHECK_SECONDS
             m._bg_admin_recheck = asyncio.create_task(_guard("dashboard admin re-check", _recheck_admins(m)))
         if tick % 6 == 5 and state.phase() == "ready":
+            await _guard("pending Caddyfile", _write_pending_caddyfile(m))
             await _guard("dashboard access", _keep_access_gate(m))
             await _guard("setup https site", _drop_setup_site(m))
         try:
@@ -2415,6 +2393,22 @@ async def _keep_access_gate(m: Manager) -> None:
         _gate_reloaded = rc == 0
         if rc != 0:
             log.warning("dashboard access: the web server didn't load its settings: %s", out[-300:])
+
+
+async def _write_pending_caddyfile(m: Manager) -> None:
+    """A Caddyfile write skipped because the lock was held (caddylock.mark_pending: an update's after-update step):
+    written again from the state now, under the lock, checked and reloaded the usual way."""
+    mark = state.load_state().get(caddylock.PENDING)
+    if not mark or m.mover.running:
+        return
+    ok, why = await _apply_with_caddy()
+    if ok:
+        # only the request this write answered: one marked meanwhile (another after-update) stays for the next minute
+        if (state.load_state().get(caddylock.PENDING) or {}).get("id") == (mark or {}).get("id"):
+            state.save_state(**{caddylock.PENDING: None})
+        log.info("the web server's settings skipped earlier are written now")
+    else:
+        log.warning("couldn't write the web server's settings skipped earlier: %s", why)
 
 
 async def _drop_setup_site(m: Manager) -> None:
@@ -2482,15 +2476,18 @@ def setup_caddyfile() -> bool:
     half way is left alone (its Try again writes it). -> whether the file changed (bring_up reloads Caddy)."""
     tls = not config.proxy_only() and setuptls.ensure() is not None
     want = templates.CADDY_SETUP_PROXY_ONLY if config.proxy_only() else templates.CADDY_SETUP_TLS if tls else templates.CADDY_SETUP
-    try:
-        have = config.CADDYFILE.read_text()
-    except FileNotFoundError:
-        have = None
-    except OSError:
-        return False
-    if have is not None and (have == want or not have.startswith("# Tin Hat Server — not set up yet")):
-        return False
-    state.write_text(config.CADDYFILE, want, 0o644)
+    with caddylock.held_sync(10) as got:  # read and written under the lock (a console change running now goes first)
+        if not got:  # left as it is: the next start (or setup's own write) sees to it
+            return False
+        try:
+            have = config.CADDYFILE.read_text()
+        except FileNotFoundError:
+            have = None
+        except OSError:
+            return False
+        if have is not None and (have == want or not have.startswith("# Tin Hat Server — not set up yet")):
+            return False
+        state.write_text(config.CADDYFILE, want, 0o644)
     return have is not None
 
 

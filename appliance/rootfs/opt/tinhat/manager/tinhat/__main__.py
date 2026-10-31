@@ -49,9 +49,20 @@ def ensure_pyenv() -> str:
 def after_update() -> int:
     """`python3 -m tinhat after-update`: run by the updater with the NEW release's code, after its files are in place
     and before the services restart: pending migrations, every generated config written again, the pinned aiohttp."""
-    from . import install, migrations
+    from . import caddylock, install, migrations
     done = migrations.run_pending()
-    changed = install.refresh_configs()
+    with caddylock.held_sync(300) as got:  # the web server's settings lock (a console change finishes first)
+        if got:
+            changed = install.refresh_configs()
+        else:  # every other config now; the Caddyfile is left to the manager, which writes it under the lock
+            scratch = caddylock.staged_path()
+            try:
+                changed = install.refresh_configs(caddyfile_to=scratch)
+            finally:
+                scratch.unlink(missing_ok=True)
+            caddylock.mark_pending("after-update")
+            print("note: another change to the web server's settings held its lock for 5 minutes; the manager writes "
+                  "the Caddyfile once it is free")
     print(f"migrations: {', '.join(done) or 'none'}; configs changed: {', '.join(changed) or 'none'}; {ensure_pyenv()}")
     return 0
 
@@ -138,13 +149,23 @@ def dashboard_access(args: list[str], st: dict | None = None, apply=None) -> int
                 except TimeoutError:
                     access.save("anywhere", [], "console")
             asyncio.run(save_locked())
-            print(f"Saved: the server's manager opens the dashboard now and writes the web server's settings again within "
-                  f"a minute (they didn't go in just now:\n{why})")
+            print(CONSOLE_ANYWHERE_PENDING.format(why=why))
             return 1
         print(f"The web server didn't take it; nothing changed.\n{why}")
         return 1
     print(f"The dashboard opens from: {'anywhere, with your password' if mode == 'anywhere' else 'only the home network' if mode == 'home' else 'only the home network and ' + ', '.join(addrs)}.")
     return 0
+
+
+#: `tinhat dashboard-access anywhere` when the web server didn't take the change at once: the choice is saved and the
+#: manager's own check lets everyone in, but the web server's gate still runs the previous choice until the manager has
+#: written it again (once a minute) and the web server took it. Never "opens now": from outside it doesn't yet.
+CONSOLE_ANYWHERE_PENDING = (
+    "Saved. The web server didn't take the change just now:\n{why}\n"
+    "The server's manager keeps writing it again (about once a minute while it runs; a move that is under way "
+    "finishes first), and the dashboard opens from anywhere once the web server takes the change. Until then it opens "
+    "from the addresses allowed before (and, where this server has its own https, through an SSH tunnel to it). If it "
+    "still doesn't open after a few minutes, run this command again.")
 
 
 def api_limits(args: list[str], st: dict | None = None, apply=None) -> int:

@@ -983,9 +983,11 @@ async function tabNetwork(el, quiet) {
   const r = n.reach || {};
   const checkBtn = h("button.btn.ghost", { type: "button" }, "Check again");
   const err = h("div.error.hidden");
+  // shown with the button (placed where the button is): what the check does to calls (0.3.10)
+  const checkNote = h("div.s", "Checking calls over UDP pauses calls on this server for about 10 seconds. While a call is going on, that part is left for later; a call that starts during the check may pause for those seconds.");
   checkBtn.addEventListener("click", async () => {
     checkBtn.disabled = true;
-    checkBtn.textContent = "Checking… (calls pause for a few seconds)";
+    checkBtn.textContent = "Checking…";
     err.classList.add("hidden");
     try {
       await api("/admin/api/network/check", { json: {} });
@@ -1027,8 +1029,10 @@ async function tabNetwork(el, quiet) {
   const outRows = ["tls443", "tcp7881", "udp7882"].filter((k) => res[k]).map((k) => [k, res[k]]).map(([k, v]) => h("div.item",
     h("div.grow", h("div.k", relayed ? { tls443: "HTTPS (TCP 443) at the relay", tcp7881: `Calls over TCP (relay port ${n.relay.port})`, udp7882: `Calls over UDP (relay port ${n.relay.port})` }[k] || k
       : { tls443: "HTTPS (TCP 443)", tcp7881: "Calls over TCP (7881)", udp7882: "Calls over UDP (7882)" }[k] || k),
-      v.ok ? null : h("div.s", { unreachable: "Nothing answered from outside.", certificate: "The certificate isn't valid yet.", "no-answer": "No answer from outside.", "wrong-answer": "Something else answered." }[v.why] || v.why || "")),
-    h(`span.chip.${v.ok ? "good" : "bad"}`, h("span.dot"), v.ok ? "Reachable" : "Blocked")));
+      v.ok ? (v.kept ? h("div.s", `At the last full check (${dateText(v.kept * 1000)}).`) : null)
+        : h("div.s", { unreachable: "Nothing answered from outside.", certificate: "The certificate isn't valid yet.", "no-answer": "No answer from outside.", "wrong-answer": "Something else answered.", unchecked: "Not checked yet: checking it pauses calls for about 10 seconds, so the automatic checks and a check during a call leave it out. Check again when nobody is in a call." }[v.why] || v.why || "")),
+    v.ok === null ? h("span.chip.muted", h("span.dot"), "Not checked")
+      : h(`span.chip.${v.ok ? "good" : "bad"}`, h("span.dot"), v.ok ? "Reachable" : "Blocked")));
   const notices = (n.notices || []).map((x) => h(`div.note${x.level === "error" ? ".bad" : ""}`, x.text));
   if (n.names && n.names.unreachable_since && n.names.status !== "moved") {
     notices.unshift(h("div.note", `This server hasn't reached the Tin Hat names service since ${dateText(n.names.unreachable_since * 1000)}: ` +
@@ -1050,6 +1054,7 @@ async function tabNetwork(el, quiet) {
       ...(sm.lines || []).map((l) => h("p.muted", l)),
       (sm.fix || []).length ? h("div.stack-sm", h("div.k", "In your router's settings (often its phone app):"), h("ul.fix", sm.fix.map((f) => h("li", f)))) : null,
       h("div.row.wrap", checkBtn, h("span.small.muted", r.at ? `Last checked ${ago(r.at * 1000)}` : "")),
+      checkNote,
       err),
     n.domain ? domainCard(n) : null,
     n.proxy ? proxyCard(n.proxy) : null,
