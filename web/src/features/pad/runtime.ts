@@ -25,10 +25,14 @@ import { sess } from "@/features/calls/session";
 import { MEMBER_TYPE, isRecorder, mxidOf } from "@/features/calls/util";
 import { PAD_CMD, PAD_STATE, padTargets, type PadCat, type PadTarget } from "@/features/calls/pad/rules";
 import { PadTransport, type PadClientLike } from "@/features/calls/pad/transport";
-import { PadReceiver, type PadExec, type PadPerson, type PadSnapshot, type PadSoundRef } from "@/features/calls/pad/receiver";
+import { PadReceiver, type PadExec, type PadPartySnap, type PadPerson, type PadSnapshot, type PadSoundRef } from "@/features/calls/pad/receiver";
 import { PadController, type PadLink, type PadNotice, type PadView } from "@/features/calls/pad/controller";
 import { PAD_PREF, padAllowed } from "@/features/calls/pad/prefs";
 import { startSound, stopCurrent, useSoundboard } from "@/features/media/soundboard/store";
+import { PLAYBACK_EVENT, WP_EVENT, desiredClock, enqueueItem, leaveParty, nextQueueUrl, normParty, normPlayback, pause, play, playUrl, seek, useWatchParty } from "@/features/media/watchparty/engine";
+import { openWatchParty, watchPartyOn } from "@/features/media/watchparty";
+import { addLink } from "@/features/media/watchparty/add";
+import { parseMediaLink } from "@/features/media/watchparty/links";
 import { PERSONAL_TYPE, ROOM_TYPE, readSound } from "@/features/media/soundboard/data";
 import { padGate, padSounds } from "@/widgets/soundpad";
 import { inTinHatApp, nativeCall, onNativeCall, useNativeCall } from "@/features/native";
@@ -144,7 +148,7 @@ export function padSnapshot(): PadSnapshot {
     if (!t.screenshare) {
       p.ids.add(t.participant);
       if (t.muted) p.mutedIds.add(t.participant);
-    }
+    } else p.share = true;
     if (talking.has(u)) p.talk = true;
   }
   const away = new Set(c.awayUsers ?? []);
@@ -156,7 +160,7 @@ export function padSnapshot(): PadSnapshot {
       vol[cat] = c.volumeFor(p.identity, cat);
       muted[cat] = c.mutedFor(p.identity, cat);
     }
-    people.push({ u: p.u, identity: p.identity, talk: p.talk, micOff: p.ids.size > 0 && p.mutedIds.size === p.ids.size, away: away.has(p.u), vol, muted });
+    people.push({ u: p.u, identity: p.identity, talk: p.talk, micOff: p.ids.size > 0 && p.mutedIds.size === p.ids.size, away: away.has(p.u), share: p.share === true, vol, muted });
   }
   // sounds this device plays: its favourites (the synced copy, the soundpad's reading and the panel's), the CALL
   // room's sounds, its Recent
@@ -193,8 +197,82 @@ export function padSnapshot(): PadSnapshot {
     sounds: { favourites: [...favUrls], roomSounds: inCall ? { [c.callRoomId]: roomSounds.map((r) => r.url) } : {}, recent: recent.map((r) => r.url) },
     named: [...favs, ...roomSounds, ...recent],
     recent,
+    party: inCall ? partySnap(c.callRoomId, me) : null,
   };
 }
+
+/** The call room's Media Party as this device's own window / call bar sees it (null = none there). */
+function partySnap(room: string, me: string): PadPartySnap | null {
+  const wp = useWatchParty.getState();
+  const inP = !!wp.inParty && wp.roomId === room;
+  if (!inP && !watchPartyOn(room)) return null;
+  const st = peekClient()?.getRoom(room)?.currentState;
+  const pb = inP ? (desiredClock() ?? wp.playback) : normPlayback(st?.getStateEvents(PLAYBACK_EVENT as never, "")?.getContent());
+  const party = inP ? wp.party : normParty(st?.getStateEvents(WP_EVENT as never, "")?.getContent());
+  const url = pb?.url ?? "";
+  const queue = party?.queue ?? [];
+  const i = url ? queue.findIndex((q) => q.url === url) : -1;
+  const item = i >= 0 ? queue[i] : null;
+  const upcoming = i >= 0 ? queue.slice(i + 1) : queue; // (nextQueueUrl: an unknown url plays the queue from the top)
+  return {
+    in: inP,
+    host: inP && (!party?.hostId || party.hostId === me),
+    url,
+    title: item?.title ?? "",
+    playing: !!pb?.playing,
+    pos: Math.max(0, pb?.positionSecs ?? 0),
+    at: Math.max(0, pb?.updatedAt ?? 0),
+    dur: Math.max(0, Number(item?.durationSec ?? 0) || 0),
+    next: upcoming.slice(0, 5).map((q) => q.title || q.url),
+    add: lastAdd,
+  };
+}
+
+/** The outcome of the latest Pad `party.add` (call.party.add: that session's phone says "couldn't add that link"). */
+let lastAdd: { sid: string; re: number; ok: boolean } | null = null;
+function reportAdd(sid: string, re: number, ok: boolean): void {
+  if (!sid) return;
+  lastAdd = { sid, re, ok };
+  receiver?.poke();
+}
+/** Bumps whenever the call session or this device's party (in it / which room) changes: a lookup that started before a
+ *  bump never acts after it (review #4: leave + rejoin of the same room is a new session). */
+let partyEpoch = 0;
+let epochKey = "";
+function noteEpoch(): void {
+  const wp = useWatchParty.getState();
+  const k = `${wp.inParty ? 1 : 0}|${wp.roomId}|${(sess() as object | null) ? callSessionId(sess() as object) : ""}`;
+  if (k !== epochKey) {
+    epochKey = k;
+    partyEpoch++;
+  }
+}
+const sessIds = new WeakMap<object, number>();
+let nextSessId = 1;
+function callSessionId(o: object): number {
+  let n = sessIds.get(o);
+  if (!n) sessIds.set(o, (n = nextSessId++));
+  return n;
+}
+
+/** The playing url right now (the window's own clock), for the commands' last check before they run. */
+function partyPlaying(): string {
+  const wp = useWatchParty.getState();
+  return (desiredClock() ?? wp.playback)?.url ?? "";
+}
+function partyHost(): boolean {
+  const wp = useWatchParty.getState();
+  const me = peekClient()?.getUserId() ?? "";
+  return !!wp.inParty && (!wp.party.hostId || wp.party.hostId === me);
+}
+/** A YouTube video id in a link ("" = none): `v=` or youtu.be/<id> (11 of [A-Za-z0-9_-]). */
+function ytId(u: string): string {
+  const m = /(?:[?&]v=|youtu\.be\/)([A-Za-z0-9_-]{11})/.exec(u);
+  return m ? m[1]! : "";
+}
+/** Links a Pad may add: the receiver's own classification must agree with the rules' host list (youtube / ytmusic /
+ *  spotify / apple — never a direct file or another site). */
+const PAD_LINK_KINDS = new Set(["youtube", "ytmusic", "spotify", "apple"]);
 
 /** The receiver's executor: the commands its own buttons call (call store actions, the soundboard store). */
 export const padExec: PadExec = {
@@ -208,6 +286,74 @@ export const padExec: PadExec = {
   setVolume: (id, cat, v) => call().setVolume(id, cat, v),
   pushVolume: (id, cat, v) => call().pushVolume(id, cat, v),
   setMuted: (id, cat, m) => call().setMuted(id, cat, m),
+  // Media Party: the window's / call bar's own functions; each re-checks what plays right before it runs
+  // the call bar's Join; in ANOTHER room's party it switches (leave, then join this one) — review #6
+  partyJoin: (room) => {
+    const wp = useWatchParty.getState();
+    if (wp.inParty && wp.roomId !== room) leaveParty();
+    openWatchParty(room);
+  },
+  partyPlay: (url, on) => {
+    if (partyPlaying() !== url || !partyHost()) return void log.warn("party.play: what plays changed — not run");
+    (on ? play : pause)();
+  },
+  partySeek: (url, pos) => {
+    if (partyPlaying() !== url || !partyHost()) return void log.warn("party.seek: what plays changed — not run");
+    seek(pos);
+  },
+  partyNext: (url) => {
+    if (partyPlaying() !== url || !partyHost()) return void log.warn("party.next: what plays changed — not run");
+    const next = nextQueueUrl(useWatchParty.getState().party.queue, url);
+    if (next) playUrl(next);
+  },
+  partyAdd: (room, url, now, sid, re) => {
+    const kind = parseMediaLink(url).kind;
+    if (!PAD_LINK_KINDS.has(kind)) {
+      log.warn(`party.add: a ${kind} link is not taken from a Pad`);
+      return reportAdd(sid, re, false);
+    }
+    const wp = useWatchParty.getState();
+    if (!wp.inParty || wp.roomId !== room) {
+      log.warn("party.add: not in that room's party");
+      return reportAdd(sid, re, false);
+    }
+    noteEpoch();
+    const epoch = partyEpoch;
+    // queue first; "play now" only if, after the lookups, it is still the same call session + party (no leave / rejoin
+    // / switch in between: the epoch) and I may still drive it
+    // LOOK UP only; nothing is queued until the result is checked (Astra pass 3: a check after queueing can't undo it)
+    void addLink(url, { lookupOnly: true })
+      .then((out) => {
+        noteEpoch();
+        if (partyEpoch !== epoch) {
+          log.warn("party.add: the call or the party changed during the lookup — not added");
+          return reportAdd(sid, re, false);
+        }
+        if (out.status !== "resolved") {
+          log.info(`party.add: ${out.status}`);
+          return reportAdd(sid, re, false);
+        }
+        // the lookup's result must be THIS link's (a YouTube id in the request has to be the item's)
+        const want = ytId(url);
+        if (want && !out.item.url.includes(want)) {
+          log.warn("party.add: the lookup answered for another link — not added");
+          return reportAdd(sid, re, false);
+        }
+        const wp = useWatchParty.getState();
+        if (!wp.inParty || wp.roomId !== room || call().callRoomId !== room) {
+          log.warn("party.add: no longer this call room's party — not added");
+          return reportAdd(sid, re, false);
+        }
+        enqueueItem(out.item);
+        reportAdd(sid, re, true);
+        if (now && partyHost()) playUrl(out.item.url);
+        else if (now) log.warn("party.add: no longer allowed to drive the party — queued only");
+      })
+      .catch((e) => {
+        log.warn(`party.add failed: ${(e as Error)?.message ?? e}`);
+        reportAdd(sid, re, false);
+      });
+  },
 };
 
 /** Tests only (devhooks.ts `__twPad.fakeCall`): a stand-in call — its snapshot and a recording executor. */
@@ -378,7 +524,8 @@ export function installPad(): void {
       ...timers,
       send: (dev, content) => t.send(PAD_STATE, dev, content),
       mayReceive: (dev) => t.trust.mayReceive(dev),
-      padOn: padAllowed,
+      // off while this device only WATCHES a call (its mic must never be opened remotely: Pad QOL)
+      padOn: () => padAllowed() && !call().watching,
       // (tests: __twPad.fakeCall stands in for a call on a lab without an SFU — devhooks.ts)
       snapshot: () => testCall?.snapshot() ?? padSnapshot(),
       exec: execProxy,
@@ -433,6 +580,15 @@ export function installPad(): void {
     offs.push(useCallStore.subscribe(() => r.poke()));
     offs.push(useSoundboard.subscribe(() => r.poke()));
     offs.push(onPrefChange("audio_prefs", () => r.poke()));
+    offs.push(useWatchParty.subscribe(() => (noteEpoch(), r.poke())));
+    offs.push(useCallStore.subscribe(() => noteEpoch()));
+    // the call room's Media Party state (a party this device isn't in: the playback / queue / viewers events)
+    const onState = (ev: MatrixEvent) => {
+      const ty = ev.getType();
+      if ((ty === PLAYBACK_EVENT || ty === WP_EVENT || ty.startsWith("dev.tinhat.watchparty")) && ev.getRoomId() === call().callRoomId) r.poke();
+    };
+    c.on(RoomStateEvent.Events, onState as never);
+    offs.push(() => c.off(RoomStateEvent.Events, onState as never));
   };
   attach();
   onClientChanged(attach);
@@ -534,11 +690,17 @@ function useTrustInputs(): string {
   return `${st.thisDeviceVerified ? 1 : 0}|${devRev}|${sess.userId}|${sess.deviceId}|${native}`;
 }
 
+/** The call this device is in (or joining) for Pad's "not in that call" rule; "" while it only watches one. */
+function myCallRoom(c: CallStore): string {
+  return (c.inCall || c.connecting) && !c.watching ? c.callRoomId : "";
+}
+
 /** React: the Pad targets in one room's call (empty when this device is in that call itself). */
 export function usePadTargets(roomId: string | null | undefined): PadTarget[] {
   const rev = useMembershipRev(roomId ? [roomId] : []);
   const trustKey = useTrustInputs();
-  const myCall = useCallStore((s) => ((s as unknown as CallStore).inCall || (s as unknown as CallStore).connecting ? (s as unknown as CallStore).callRoomId : ""));
+  // (a call this device only WATCHES doesn't count: the Pad stays the way to drive the computer in it — Pad QOL)
+  const myCall = useCallStore((s) => myCallRoom(s as unknown as CallStore));
   return useMemo(() => {
     if (!roomId || myCall === roomId) return [];
     return targetsIn(roomId);
@@ -555,7 +717,8 @@ export interface CallElsewhere {
 export function useMyCallsElsewhere(): CallElsewhere[] {
   const rev = useMembershipRev(null);
   const trustKey = useTrustInputs();
-  const myCall = useCallStore((s) => ((s as unknown as CallStore).inCall || (s as unknown as CallStore).connecting ? (s as unknown as CallStore).callRoomId : ""));
+  // (a call this device only WATCHES doesn't count: the Pad stays the way to drive the computer in it — Pad QOL)
+  const myCall = useCallStore((s) => myCallRoom(s as unknown as CallStore));
   const [list, setList] = useState<CallElsewhere[]>([]);
   useEffect(() => {
     const c = peekClient();

@@ -40,6 +40,10 @@ export interface EditorState {
   /** Advanced: search text, the Changed filter, open groups */
   query: string;
   changedOnly: boolean;
+  /** Simple: a lead swatch's popover moves its whole group (else just that colour) — kept for the session */
+  swatchWhole: boolean;
+  /** Advanced: only these ids (Simple's "set by hand" link), null = all */
+  onlyIds: string[] | null;
   openGroups: Record<string, boolean>;
   /** the Cancel confirmation is showing */
   confirmDiscard: boolean;
@@ -61,6 +65,8 @@ const initial: EditorState = {
   picked: null,
   query: "",
   changedOnly: false,
+  onlyIds: null,
+  swatchWhole: true,
   openGroups: {},
   confirmDiscard: false,
   saveAsOpen: false,

@@ -34,8 +34,27 @@ export interface PadPersonView {
   talk: boolean;
   micOff: boolean;
   away: boolean;
+  /** publishing a screen share (older receivers never say: false) */
+  share: boolean;
   vol: Record<PadCat, number>;
   mute: Record<PadCat, boolean>;
+}
+
+/** The receiver's Media Party in its call room. `pos` = seconds at the receiver's send time (`at` already applied). */
+export interface PadPartyView {
+  in: boolean;
+  host: boolean;
+  url: string;
+  title: string;
+  playing: boolean;
+  /** the position when the state was sent (the room clock + what passed on the receiver's clock since) */
+  pos: number;
+  dur: number;
+  next: string[];
+  /** this controller's clock when that state arrived (the UI adds what passed since, while playing) */
+  seenAt: number;
+  /** the outcome of the receiver's latest party.add (one session's) */
+  add: { sid: string; re: number; ok: boolean } | null;
 }
 
 /** The receiver's call as the Pad shows it. */
@@ -48,6 +67,8 @@ export interface PadView {
   more: number;
   recent: { name: string; url: string; emoji: string }[];
   ops: string[];
+  /** the call room's Media Party (null = none, or an older receiver) */
+  party: PadPartyView | null;
 }
 
 /** opening = waiting for the open's answer; open = live; unreachable = timed out; ended = nothing to control */
@@ -99,7 +120,7 @@ const NOLOG: PadLog = { info: () => undefined, warn: () => undefined };
 const TERMINAL = new Set(["closed", "off", "replaced", "version", "no-session"]);
 
 /** The validated state content → the typed view (acceptState already checked every field). */
-export function readView(c: Obj): PadView | null {
+export function readView(c: Obj, seenAt = 0): PadView | null {
   const call = c.call as Obj | null;
   if (!call) return null;
   const me = call.me as Obj;
@@ -111,7 +132,7 @@ export function readView(c: Obj): PadView | null {
     const vi = (p.vol ?? {}) as Obj;
     for (const k of PAD_CATS) if (typeof vi[k] === "number") vol[k] = vi[k] as number;
     for (const k of (p.mute ?? []) as string[]) if ((PAD_CATS as readonly string[]).includes(k)) mute[k as PadCat] = true;
-    return { u: p.u as string, talk: p.talk === true, micOff: p.micOff === true, away: p.away === true, vol, mute };
+    return { u: p.u as string, talk: p.talk === true, micOff: p.micOff === true, away: p.away === true, share: p.share === true, vol, mute };
   });
   return {
     room: call.room as string,
@@ -122,7 +143,37 @@ export function readView(c: Obj): PadView | null {
     more: call.more as number,
     recent: (call.recent as Obj[]).map((r) => ({ name: r.name as string, url: r.url as string, emoji: r.emoji as string })),
     ops: (c.ops as string[]).slice(),
+    party: partyView(call.party, c.rt as number, seenAt),
   };
+}
+
+/** call.party (acceptState checked its shape) → the view; the position is carried forward to the state's send time on
+ *  the receiver's clock (`rt − at`, never negative, at most a day). */
+function partyView(p: unknown, rt: number, seenAt: number): PadPartyView | null {
+  if (!p || typeof p !== "object") return null;
+  const o = p as Obj;
+  const playing = o.playing === true;
+  const at = o.at as number;
+  const ahead = playing && at > 0 && rt > at ? Math.min(86_400, (rt - at) / 1000) : 0;
+  return {
+    in: o.in === true,
+    host: o.host === true,
+    url: o.url as string,
+    title: o.title as string,
+    playing,
+    pos: Math.min(86_400, (o.pos as number) + ahead),
+    dur: o.dur as number,
+    next: (o.next as Obj[]).map((n) => n.title as string),
+    seenAt,
+    add: o.add && typeof o.add === "object" ? { ...(o.add as { sid: string; re: number; ok: boolean }) } : null,
+  };
+}
+
+/** Where the party's video is now on this controller's clock (seconds). */
+export function partyPosNow(p: PadPartyView, now: number): number {
+  const ahead = p.playing && now > p.seenAt ? (now - p.seenAt) / 1000 : 0;
+  const x = p.pos + ahead;
+  return p.dur > 0 ? Math.min(p.dur, x) : x;
 }
 
 function personOf(v: PadView, user: string, f: (p: PadPersonView) => void): void {
@@ -137,6 +188,7 @@ function cloneView(v: PadView): PadView {
     people: v.people.map((p) => ({ ...p, vol: { ...p.vol }, mute: { ...p.mute } })),
     recent: v.recent.map((r) => ({ ...r })),
     ops: [...v.ops],
+    party: v.party ? { ...v.party, next: [...v.party.next], add: v.party.add ? { ...v.party.add } : null } : null,
   };
 }
 
@@ -311,7 +363,7 @@ export class PadController {
     const re = c.re as number;
     const ok = c.ok === true;
     const why = c.why as string;
-    const view = readView(c);
+    const view = readView(c, this.d.now());
     if (view) this.lastGen = view.gen;
     // the open's answer
     if (this.link === "opening") {
@@ -358,6 +410,18 @@ export class PadController {
     // a press that went through takes an old refusal line away (the desktop's PadWindow does the same: a "muted for
     // everyone" line must not linger once the receiver does what I press again — phase 3); "left the call" stays
     else if (p && ok && this.notice && this.notice.code !== "ended") this.notice = null;
+    // a link this session asked the receiver's Media Party to add couldn't be added (its lookup failed, the link was
+    // refused, or the party changed meanwhile): its answer was the acceptance, this is the outcome (once per seq)
+    // (deduplicated by (sid, seq): an outcome that arrives out of order is still said once; review pass 2)
+    const add = view?.party?.add;
+    if (add && add.sid === this.sess?.sid) {
+      const k = `${add.sid}:${add.re}`;
+      if (!this.addSeen.has(k)) {
+        this.addSeen.add(k);
+        if (this.addSeen.size > 64) this.addSeen.delete(this.addSeen.values().next().value as string);
+        if (!add.ok) this.say("bad-link", "party.add");
+      }
+    }
     if (!view) {
       this.rollbackAll();
       if (TERMINAL.has(why)) {
@@ -578,6 +642,54 @@ export class PadController {
     if (!this.canSend("sound.stop")) return;
     this.bumpIntent("sound");
     this.gated("sound", TAP_EVERY_MS, () => void this.command("sound.stop", {}, { key: "sound", apply: (v) => void (v.me.sound = "") }));
+  }
+  /** A search result played on the receiver (`sound.play.web`): ≤ 4/s with the other sound taps. */
+  playWebSound(url: string, name: string, emoji = ""): void {
+    if (!this.canSend("sound.play.web")) return;
+    this.bumpIntent("sound");
+    const intent = this.intent("sound");
+    const nm = [...name].slice(0, 64).join("");
+    const em = [...emoji].slice(0, 16).join("");
+    this.gated("sound", TAP_EVERY_MS, () => void this.command("sound.play.web", { url, name: nm, emoji: em }, { key: "sound", apply: (v) => void (v.me.sound = url) }, { intent }));
+  }
+  /** Media Party of the receiver's call room (each bound to what the Pad last saw playing: `party-changed` else). */
+  partyJoin(): boolean {
+    return this.command("party.join", {}, { key: "party:in", apply: (v) => void (v.party && (v.party.in = true)) });
+  }
+  partyPlay(playing: boolean): boolean {
+    const url = this.view()?.party?.url ?? "";
+    const now = this.d.now();
+    return this.command("party.play", { url, playing }, {
+      key: "party:play",
+      apply: (v) => {
+        if (!v.party) return;
+        v.party.pos = partyPosNow(v.party, now);
+        v.party.seenAt = now;
+        v.party.playing = playing;
+      },
+    });
+  }
+  partySeek(pos: number): boolean {
+    const url = this.view()?.party?.url ?? "";
+    const p = Math.max(0, Math.min(86_400, Math.floor(pos)));
+    const now = this.d.now();
+    return this.command("party.seek", { url, pos: p }, {
+      key: "party:pos",
+      apply: (v) => {
+        if (!v.party) return;
+        v.party.pos = p;
+        v.party.seenAt = now;
+      },
+    });
+  }
+  partyNext(): boolean {
+    const url = this.view()?.party?.url ?? "";
+    return this.command("party.next", { url }, null);
+  }
+  /** the party.add outcomes already seen, "sid:seq" (a failure is said once; bounded) */
+  private addSeen = new Set<string>();
+  partyAdd(url: string, now: boolean): boolean {
+    return this.command("party.add", { url, now }, null);
   }
   /** A slider: `live` while dragging (≤ 4/s, unanswered), the release (live false) always sent and answered. */
   volume(user: string, cat: PadCat, level: number, live: boolean): void {

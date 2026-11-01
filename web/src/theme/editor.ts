@@ -16,10 +16,11 @@ import { codePoints, takeCodePoints } from "./limits";
 import type { Colour } from "./literal";
 import { formatColour, isOpaque, parseLiteral, sameColour } from "./literal";
 import { DENSITIES, FONT_SLOTS, SHADOW_BOUNDS, SIZE_BOUNDS, isAllowedFont } from "./look";
-import { luminance } from "./maths";
+import { luminance, toOklab } from "./maths";
 import { cr, guardAllC, guardC } from "./ops";
 import { GUARDS, GUARD_SURFACES, PALETTE_SLOTS, ROLE_SET } from "./roles";
 import { SHAPE_BOUNDS } from "./shape";
+import { PALETTE_GROUPS, paletteView, shiftColour, type Swatch } from "./palette";
 import type { JObj, Json } from "./sync";
 import { clone, isObj, uniqueThemeId } from "./sync";
 
@@ -38,7 +39,9 @@ export type EditOp =
   | { op: "density"; value: string | null }
   | { op: "font"; slot: string; value: string | null }
   | { op: "size"; value: number | null }
-  | { op: "opacity"; value: number };
+  | { op: "opacity"; value: number }
+  | { op: "swatch"; id: string; value: string }
+  | { op: "group"; id: string; value: string };
 
 export type EditResult = { ok: true; doc: JObj; resolved: ResolvedTheme } | { ok: false; error: string };
 
@@ -201,6 +204,48 @@ function unwrapAlpha(src: string): { base: string; k: number | null } | null {
 function canonExpr(src: string): string | null {
   const p = parseExpr(src);
   return p.ok ? exprCanon(p.e) : null;
+}
+
+
+/** Simple (palette.ts): write one swatch's new colour into each of its sources and the token overrides that follow it —
+ *  the RGB of `c`, each target's own alpha kept. Literals only, in fields every app reads. */
+function writeSwatch(d: JObj, sw: Swatch, c: Colour): void {
+  const put = (old: string | null): string => {
+    const o = old === null ? null : parseLiteral(old);
+    return formatColour({ r: c.r, g: c.g, b: c.b, a: o ? o.a : 1 });
+  };
+  for (const src of sw.sources) {
+    if (src === "accent") d.accent = put(typeof d.accent === "string" ? d.accent : null);
+    else if (PALETTE_SLOTS.includes(src)) {
+      const pal = ensure(d, "palette");
+      const m = /^c([0-9]|1[0-5])$/.exec(src);
+      if (m) {
+        const ansi = own(pal, "ansi") as Json[];
+        ansi[Number(m[1])] = put(typeof ansi[Number(m[1])] === "string" ? (ansi[Number(m[1])] as string) : null);
+      } else pal[src] = put(typeof pal[src] === "string" ? (pal[src] as string) : null);
+    } else {
+      const roles = ensure(d, "roles");
+      roles[src] = put(typeof roles[src] === "string" ? (roles[src] as string) : null);
+    }
+  }
+  const t = own(d, "tokens");
+  if (isObj(t)) for (const id of sw.follow) t[id] = put(typeof t[id] === "string" ? (t[id] as string) : null);
+}
+
+/** After a Simple edit of Backgrounds or Text on a roles-only theme that names its variant: the variant follows the
+ *  island against the text (as the `background` op does). */
+function followVariant(d: JObj, groupId: string): void {
+  if (hasPalette(d) || !has(d, "variant") || (groupId !== "backgrounds" && groupId !== "text")) return;
+  const r = resolveOrFail(d, NO_TOKENS);
+  const dark = luminance(parseLiteral(r.roles["surface.island"]) as Colour) < luminance(parseLiteral(r.roles["text.primary"]) as Colour);
+  d.variant = dark ? "dark" : "light";
+}
+
+function simpleColour(value: Json | undefined): Colour {
+  if (typeof value !== "string") fail("bad-op");
+  const c = opaqueLiteral(value);
+  if (!c) fail("bad-colour");
+  return c as Colour;
 }
 
 function applyOp(d: JObj, op: JObj, spec: TokensSpec): void {
@@ -379,6 +424,41 @@ function applyOp(d: JObj, op: JObj, spec: TokensSpec): void {
       }
       return;
     }
+    case "swatch": {
+      const id = own(op, "id");
+      if (typeof id !== "string") fail("bad-op");
+      const c = simpleColour(value);
+      resolveOrFail(d, NO_TOKENS);
+      const view = paletteView(d, NO_TOKENS);
+      for (const g of view.groups) {
+        const sw = g.swatches.find((x) => x.sources.includes(id as string));
+        if (!sw) continue;
+        writeSwatch(d, sw, c);
+        followVariant(d, g.id);
+        return;
+      }
+      fail("unknown-swatch");
+      return;
+    }
+    case "group": {
+      const id = own(op, "id");
+      if (typeof id !== "string") fail("bad-op");
+      if (!PALETTE_GROUPS.some((g) => g.id === id)) fail("unknown-group");
+      const c = simpleColour(value);
+      resolveOrFail(d, NO_TOKENS);
+      const g = paletteView(d, NO_TOKENS).groups.find((x) => x.id === id) as { id: string; swatches: Swatch[] };
+      if (g.swatches.length === 0) fail("empty-group");
+      const lead = parseLiteral(g.swatches[0].colour) as Colour;
+      const p = toOklab(lead);
+      const q = toOklab(c);
+      const same = lead.r === c.r && lead.g === c.g && lead.b === c.b;
+      const dL = same ? 0 : q.L - p.L;
+      const dA = same ? 0 : q.A - p.A;
+      const dB = same ? 0 : q.B - p.B;
+      g.swatches.forEach((sw, i) => writeSwatch(d, sw, i === 0 ? c : shiftColour(parseLiteral(sw.colour) as Colour, dL, dA, dB)));
+      followVariant(d, id as string);
+      return;
+    }
     default:
       fail("bad-op");
   }
@@ -463,11 +543,14 @@ export type SessionStep = { ok: true; result: "edited" | "noop"; session: EditSe
  * redo stack is cleared.
  */
 export function sessionEdit(s: EditSession, op: unknown, spec: TokensSpec, gesture: number | null = null): SessionStep {
-  const r = applyEdit(s.doc, op, spec);
-  if (!r.ok) return r;
-  const key = opKey(op as JObj);
-  if (canonJson(r.doc) === canonJson(s.doc)) return { ok: true, result: "noop", session: s };
+  const key = isObj(op) ? opKey(op as JObj) : "";
   const coalesce = gesture !== null && s.gesture === gesture && s.lastKey === key && s.past.length > 0;
+  // Simple's palette edits continue a drag from the document before the gesture: swatch membership, the lead and the
+  // old colours are read there, so a drag cannot capture a swatch it passes and never drifts (THEME-SIMPLE §7)
+  const fromStart = coalesce && isObj(op) && (own(op as JObj, "op") === "swatch" || own(op as JObj, "op") === "group");
+  const r = applyEdit(fromStart ? s.past[s.past.length - 1] : s.doc, op, spec);
+  if (!r.ok) return r;
+  if (canonJson(r.doc) === canonJson(s.doc)) return { ok: true, result: "noop", session: s };
   const past = coalesce ? s.past : [...s.past, s.doc].slice(-HISTORY_MAX);
   return { ok: true, result: "edited", session: { base: s.base, doc: r.doc, past, future: [], gesture, lastKey: key } };
 }

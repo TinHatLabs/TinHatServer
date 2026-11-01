@@ -42,6 +42,7 @@ import { onWinState, winFocused, winState } from "@/core/winstate";
 import { previewPaused, SPEAKING_LEVEL, UNFOCUSED_CAM_FPS, UNFOCUSED_SAVER_PREF, unfocusedSaverOn as saverFromPref, videoPolicy } from "@/core/lowgpu";
 import { HiddenPlayers, isRemoteVideoTile } from "./hiddenplayers";
 import { createLogger } from "@/core/log";
+import { WATCH_AVAILABLE, WATCH_OFF_NOTE } from "./watchAvailable";
 import { pageEpoch, pageHidden, whenVisible, type ResumeInfo } from "@/core/lifecycle";
 import type { CallCategory, CallState, Dev, ShareOptions, Tile } from "./contract";
 import { getCall, patch, setStatus, useCallStore } from "./store";
@@ -697,7 +698,23 @@ function sameLevels(a: Record<string, number>, b: Record<string, number>): boole
 
 // ---- mic ---------------------------------------------------------------------------------------------------
 
+/** Watching (Pad QOL 2026-10-31, docs/PAD.md "Watch"): no microphone is captured at all until this device's own
+ *  "Talk here" press clears `noCapture` — every capture path ends here or in publishMic / republishMicNow. */
+function captureBarred(): boolean {
+  return getCall().noCapture === true;
+}
+
+/** Watching (assembly-042 review): this device captures and publishes nothing (camera, screen, music, sounds) until
+ *  Talk here; the one way out of watch mode is Talk. */
+export const WATCH_HINT = "You're watching — tap Talk first";
+function watchRefuses(): boolean {
+  if (!captureBarred()) return false;
+  setStatus(WATCH_HINT);
+  return true;
+}
+
 async function createMic(): Promise<LocalAudioTrack> {
+  if (captureBarred()) throw new Error("watching — the mic stays off until Talk here");
   const st = getCall();
   const opts: AudioCaptureOptions = buildMicOptions(st);
   const track = await boundedCapture(createLocalAudioTrack(opts));
@@ -843,6 +860,7 @@ function micOp<T>(fn: () => Promise<T>, s: Sess | null = sess()): Promise<T> {
 }
 
 async function publishMic(s: Sess): Promise<void> {
+  if (captureBarred()) throw new Error("watching — the mic stays off until Talk here");
   const track = await createMic();
   await track.mute(); // always published muted; the latest intent is applied once it is ours
   if (s.closing) {
@@ -880,6 +898,7 @@ function republishMic(reason: string): Promise<boolean> {
 
 let micReplacing = 0; // the healer stays out while a replacement runs
 async function republishMicNow(reason: string): Promise<boolean> {
+  if (captureBarred()) return false;
   micReplacing++;
   try {
     return await republishMicInner(reason);
@@ -993,6 +1012,11 @@ async function micHealthTick(s: Sess) {
 
 export function toggleMic(): void {
   const st = getCall();
+  // watching: the mic button (and any shortcut calling it) never opens the mic — only "Talk here" does (review #1)
+  if (st.noCapture && (st.inCall || st.connecting)) {
+    setStatus("You're watching — use Talk here to talk from this device");
+    return;
+  }
   if (st.serverMuted && (st.inCall || st.connecting)) {
     setStatus(`${st.serverMutedBy || "A moderator"} muted your mic for everyone — ask them to unmute you`);
     return;
@@ -1299,6 +1323,7 @@ function camPublishOptions(): TrackPublishOptions {
 let camDiedAt = 0;
 let camOp = 0; // bumped by every stop: a start that was still acquiring stands down
 async function startCamera(s: Sess): Promise<boolean> {
+  if (watchRefuses()) return false;
   const op = ++camOp;
   const q = parseCamQuality(getCall().camQuality);
   const dev = getPref("call-camera", "");
@@ -1420,6 +1445,7 @@ export function toggleCamera(): void {
     void stopCamera(s).then(() => setStatus("Camera off"));
     return;
   }
+  if (watchRefuses()) return; // before cameraOn: a refused start leaves no phantom "on" state
   patch({ cameraOn: true });
   startCamera(s)
     .then((ok) => ok && setStatus("Camera on"))
@@ -1596,6 +1622,7 @@ let shareOp = 0;
 export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
   const s = sess();
   if (!s) return;
+  if (watchRefuses()) return;
   // Inside the Android app the WebView can't capture: the app shares as a companion of this page's call device
   // (features/native/screenShare.ts); its consent replaces the picker. Its share is a room participant, so "for the
   // recording only" can't be kept: refused rather than broadcast.
@@ -1811,6 +1838,11 @@ let musicChain: Promise<unknown> = Promise.resolve();
  * hang-up) while it published unpublishes and stops its own track — no second publication survives.
  */
 function publishMusicTrack(mst: MediaStreamTrack, why: string, onStop: (() => void) | undefined, owner: Sess | null, op: number): Promise<void> {
+  if (captureBarred()) {
+    mst.stop();
+    onStop?.();
+    return Promise.reject(new Error(WATCH_HINT));
+  }
   const run = async () => {
     const s = sess();
     const stale = () => !s || owner !== s || !live(s) || op !== musicOp;
@@ -1882,6 +1914,7 @@ export async function startMusic(src: File | string): Promise<void> {
     setStatus("Join a call to play music");
     return;
   }
+  if (watchRefuses()) return; // before anything is fetched or captured
   patch({ musicPlaying: true });
   setStatus("Playing music…");
   const owner = sess();
@@ -1952,6 +1985,10 @@ export async function startMusicSource(id: string): Promise<void> {
   patch({ musicSourceName: id === "tab" ? TAB_SOURCE.name : known?.name ?? id });
   if (!sess() || !getCall().inCall) {
     setStatus("Join a call to share audio");
+    return;
+  }
+  if (watchRefuses()) {
+    // before getDisplayMedia / getUserMedia: a watching device captures nothing
     return;
   }
   if (!id) {
@@ -2025,6 +2062,7 @@ async function playSoundNow(url: string, maxMs: number, op: number): Promise<voi
     setError("A moderator muted you for everyone — sounds are off until you're unmuted");
     return;
   }
+  if (watchRefuses()) return;
   const clip = clipUrl(url);
   if (!url.startsWith("mxc://") && !clip) {
     setError(FOREIGN_SOUND_NOTE);
@@ -2134,18 +2172,86 @@ function primeAudioInGesture(): void {
   else audio.audioContext();
 }
 
-export function joinCall(roomId: string): void {
-  if (joinNatively(roomId)) return; // a Tin Hat app with "calls": the app joins (features/native; false everywhere else)
+/** The room this device is WATCHING (null = none): every (re)join of it — the auto-rejoin after a drop, a reconnect —
+ *  is a watch join too, so a drop can never bring the mic back. Cleared by an explicit leave or "Talk here". */
+let watchIntent: string | null = null;
+
+/** Watch the call (Pad QOL 2026-10-31): a normal, visible join (membership, token, the usual media keys) with NO
+ *  microphone captured, deafened from before connect, camera off. "Talk here" / "Hear here" undo it locally. */
+/** 12.1.6: Watch is OFF (assembly-042 release review: rejoin paths could still capture a watching device's microphone;
+ *  share claude/tinhat-pad/WATCH-1217.md). The op is refused and the Pad hides its entry; it returns in 12.1.7. */
+export { WATCH_AVAILABLE };
+export function watchCall(roomId: string): void {
+  if (!WATCH_AVAILABLE) {
+    log.info(`watch ${roomId} refused: not available in this version`);
+    setStatus(WATCH_OFF_NOTE);
+    return;
+  }
+  joinCall(roomId, true);
+}
+
+/** Watching: talk from this device (captures + publishes the mic, unmuted; hearing comes on too — talking deaf is a
+ *  trap) or stop talking (mutes it). Only ever a press on THIS device; a Pad receiver is off while watching. */
+export function watchTalk(on: boolean): void {
+  const st = getCall();
+  if (!st.watching) return;
+  if (!on) return forceMicMuted(true);
+  // a moderator's mute holds here as on the mic button (review #2): nothing changes, the lock notice says why
+  if (st.serverMuted) {
+    setStatus(`${st.serverMutedBy || "A moderator"} muted your mic for everyone — ask them to unmute you`);
+    return;
+  }
+  watchIntent = null; // chose to talk: a rejoin after a drop is a normal one now
+  patch({ noCapture: false, micMuted: false });
+  applyDeafen(false);
+  const s = sess();
+  if (!s || !live(s)) return; // still connecting: doJoin's step 9 publishes it (noCapture is off now)
+  s.micWanted = true;
+  if (s.mic) return forceMicMuted(false);
+  void micOp(async () => {
+    // re-checked when the publish really starts (an earlier mic op may have waited): still this call, still wanted,
+    // not server-muted meanwhile
+    const now = getCall();
+    if (!live(s) || sess() !== s || now.noCapture || now.serverMuted || s.mic) return;
+    await publishMic(s);
+  }, s).catch((e) => setStatus(`Couldn't start your mic — ${errText(e)}`));
+}
+
+/** Watching: hear the call on this device or not (off also mutes the mic if talking). */
+export function watchHear(on: boolean): void {
+  const st = getCall();
+  if (!st.watching) return;
+  if (!on && !st.noCapture) forceMicMuted(true);
+  applyDeafen(!on);
+}
+
+/** A Join PRESS (the call buttons, the palette, a Pad's join): always a normal join. assembly-042: a watch intent left by
+ *  a watch call that ended without a leave (kicked, the call ended, the rejoin gave up) must never turn the next press
+ *  into a watch join. Internal rejoins (a drop, a switch, the reload path) call joinCall and stay watch joins. */
+export function joinCallPressed(roomId: string): void {
+  const st = getCall();
+  // (not while a call is up or connecting: a press then joins nothing, and a live watch keeps its intent)
+  if (!st.inCall && !st.connecting) watchIntent = null;
+  joinCall(roomId);
+}
+
+export function joinCall(roomId: string, watch = false): void {
+  // a Tin Hat app with "calls": the app joins (features/native; false everywhere else) — never for a watch join (the
+  // native call would open its microphone)
+  watch = watch || (!!roomId && watchIntent === roomId);
+  if (!watch && joinNatively(roomId)) return;
   const st = getCall();
   if (roomId && !st.inCall && !st.connecting) primeAudioInGesture();
   if (roomId && st.hangingUp && !st.inCall && !st.connecting) {
     // Join pressed while the last call is still being cleaned up (a hang-up, a drop, a join that gave up):
     // join the moment the teardown ends instead of ignoring the click (the teardown joins pendingSwitch).
     pendingSwitch = roomId;
+    watchIntent = watch ? roomId : null;
     setStatus("Joining as soon as the last call has ended…");
     return;
   }
   if (!roomId || st.inCall || st.connecting || st.hangingUp) return;
+  watchIntent = watch ? roomId : null;
   if (st.fake) useCallStore.setState({ fake: false });
   const gen = ++joinGen;
   joinTarget = roomId;
@@ -2162,8 +2268,11 @@ export function joinCall(roomId: string): void {
     removedBy: "",
     serverMuted: false,
     serverMutedBy: "",
-    micMuted: restore !== null ? restore : pttUp,
-    deafened: false,
+    micMuted: watch ? true : restore !== null ? restore : pttUp,
+    // watching: deafened + no capture BEFORE connect, so every remote track attached during connect starts cut
+    deafened: watch,
+    watching: watch,
+    noCapture: watch,
     gameChat: false,
   });
   setStatus("Joining call…");
@@ -2225,6 +2334,8 @@ function failStuckJoin(gen: number, reason: string): void {
     failReason: reason,
     sharing: false,
     deafened: false,
+    watching: false,
+    noCapture: false,
     gameChat: false,
     localAfk: false,
     callPerms: {},
@@ -2456,6 +2567,9 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     if (block.muted) {
       s.micWanted = false;
       patch({ serverMuted: true, serverMutedBy: block.by });
+    } else if (captureBarred()) {
+      s.micWanted = false; // watching: no capture, no mic-heal (watchTalk turns it on)
+      log.info("watching — joined without a microphone");
     } else {
       try {
         // joinCall seeded micMuted with the restore / PTT state and forceMicMuted keeps it current, so
@@ -2499,7 +2613,8 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     if (s.room.remoteParticipants.size > 0) announceLadder(s, "the members already in the call");
     rebuildTiles();
     for (const h of hooks.onConnected) h(s);
-    hooks.joinSound(s);
+    // watching publishes nothing: no join sound either (assembly-042 review)
+    if (!getCall().watching) hooks.joinSound(s);
     audio.reapply();
     for (let i = 1; i <= 4; i++) s.timers.push(setTimeout(() => audio.reapply(), 1500 * i));
     void refreshOutputs();
@@ -3177,6 +3292,7 @@ function clearCallView() {
 }
 
 export function leaveCall(): void {
+  watchIntent = null; // an explicit leave ends watching (the next Join is a full one)
   const st = getCall();
   if (st.hangingUp) {
     // Leave pressed while a teardown runs: cancel a join / switch queued behind it.
@@ -3215,6 +3331,8 @@ export function leaveCall(): void {
     failReason: "",
     hangingUp: true,
     deafened: false,
+    watching: false,
+    noCapture: false,
     gameChat: false,
     localAfk: false,
     callPerms: {},
@@ -3324,6 +3442,8 @@ async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false)
 
 export function switchCall(roomId: string): void {
   if (joinNatively(roomId)) return; // a Tin Hat app with "calls": the app joins or switches (features/native)
+  // a switch is a press too: the room it joins is joined normally (assembly-042); not a "switch" into the call already up
+  if (getCall().callRoomId !== roomId) watchIntent = null;
   const st = getCall();
   if (roomId && st.callRoomId !== roomId) primeAudioInGesture();
   if (!st.inCall && !st.connecting && !st.hangingUp) {
@@ -3605,13 +3725,14 @@ export function sweepStuckFlags(): void {
   }
 }
 
-/** After a reload that ended a call (resume.ts: IndexedDB lost on iOS): join it again with the old mute. */
-export function rejoinAfterReload(roomId: string, muted: boolean): void {
+/** After a reload that ended a call (resume.ts: IndexedDB lost on iOS): join it again with the old mute; a device that
+ *  was watching (and hadn't chosen Talk here) rejoins as a watcher: still no microphone, still deafened. */
+export function rejoinAfterReload(roomId: string, muted: boolean, watching = false): void {
   const st = getCall();
   if (st.inCall || st.connecting || st.hangingUp) return;
-  restoreMute = muted;
-  log.info(`rejoining ${roomId} after the reload`);
-  joinCall(roomId);
+  if (!watching) restoreMute = muted;
+  log.info(`rejoining ${roomId} after the reload${watching ? " (watching)" : ""}`);
+  joinCall(roomId, watching);
 }
 
 /** The AudioContext was replaced (resume.ts): the meter / hear taps of the mic live in the old one. */
@@ -3763,6 +3884,8 @@ export function endCallForSessionLoss(why: string): Promise<void> {
     callRoomId: "",
     sharing: false,
     deafened: false,
+    watching: false,
+    noCapture: false,
     gameChat: false,
     localAfk: false,
     callPerms: {},

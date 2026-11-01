@@ -3,14 +3,17 @@
 import type { EditOp } from "@/theme/editor";
 import type { JObj } from "@/theme/sync";
 import { paletteLabel, roleLabel, tokenLabel } from "@/theme/labels";
-import { BLACK, formatColour } from "@/theme/literal";
+import { BLACK, formatColour, parseLiteral } from "@/theme/literal";
+import { sourceValue } from "@/theme/palette";
 
 export type ColourTarget =
   | { kind: "background" }
   | { kind: "accent" }
   | { kind: "palette"; id: string }
   | { kind: "role"; id: string }
-  | { kind: "token"; id: string };
+  | { kind: "token"; id: string }
+  /** Simple (palette.ts): a swatch, by its first source; `whole` = move its group (the lead only) */
+  | { kind: "swatch"; id: string; group: string; whole: boolean; label: string };
 
 export type Resolved = { roles: Record<string, string>; tokens: Record<string, string> };
 
@@ -36,6 +39,8 @@ export function storedValue(doc: JObj, t: ColourTarget): string | null {
       }
       return has(p, t.id) && typeof p[t.id] === "string" ? (p[t.id] as string) : null;
     }
+    case "swatch":
+      return sourceValue(doc, t.id);
     case "role":
     case "token": {
       const o = doc[t.kind === "role" ? "roles" : "tokens"];
@@ -57,6 +62,10 @@ export function resolvedValue(res: Resolved, doc: JObj, t: ColourTarget): string
       return res.roles[t.id];
     case "token":
       return res.tokens[t.id];
+    case "swatch": {
+      const c = parseLiteral(sourceValue(doc, t.id) ?? "");
+      return c ? formatColour(c) : formatColour(BLACK);
+    }
   }
 }
 
@@ -73,11 +82,19 @@ export function opFor(t: ColourTarget, value: string | null): EditOp {
       return { op: "role", id: t.id, value };
     case "token":
       return { op: "token", id: t.id, value };
+    case "swatch":
+      return t.whole ? { op: "group", id: t.group, value: value ?? "" } : { op: "swatch", id: t.id, value: value ?? "" };
   }
 }
 
 /** Reset (§13.9): back to the base's value — its own, or none (then the default / the derivation). */
 export function resetOp(base: JObj, t: ColourTarget): EditOp {
+  // a swatch resets on its own (its group stays where it is)
+  if (t.kind === "swatch") {
+    // Simple edits colour only: the base's RGB (its alpha stays the source's own, editor.ts writeSwatch)
+    const c = parseLiteral(storedValue(base, t) ?? "");
+    return opFor({ ...t, whole: false }, c ? formatColour({ ...c, a: 1 }) : null);
+  }
   return opFor(t, storedValue(base, t));
 }
 
@@ -102,6 +119,8 @@ export function targetLabel(t: ColourTarget): string {
       return roleLabel(t.id);
     case "token":
       return tokenLabel(t.id);
+    case "swatch":
+      return t.label;
   }
 }
 export const targetId = (t: ColourTarget): string => (t.kind === "background" ? "palette bg" : t.kind === "accent" ? "accent" : t.id);

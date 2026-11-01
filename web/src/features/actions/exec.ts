@@ -40,7 +40,8 @@ import {
 import { toggleSound } from "@/features/media/soundboard/store";
 import { leaveParty } from "@/features/media/watchparty/engine";
 import { openFloatingChat } from "@/features/chat";
-import { toggleEditMode } from "@/features/editmode/store";
+import { toggleEditMode, useEdit } from "@/features/editmode/store";
+import { closeDrawer, toggleDrawer } from "@/features/editmode/drawerRun";
 import { toggleRightPanel, openRightPanel, setActivity, postStatus, openSpaceSettings } from "@/features/spaces";
 import { requestNotificationPermission } from "@/features/settings";
 import { closeOverlayWindow, openOverlayWindow } from "@/features/settings/overlay";
@@ -223,6 +224,13 @@ export const HANDLERS: Record<string, Handler> = {
   "conversation.jumpToLatest": (ctx) => surface("jumpToLatest", ctx),
   // 11.0 edit mode (EDITMODE-UI.md §1): open it (the phone form: the phone editor), or Done while it is open
   "layout.edit": () => toggleEditMode(),
+  // a drawer's button (feat/editmode-buttons-drawers, EDITMODE-UI §7.3): its island in a drawer under it, or closed
+  // — nothing while edit mode is open (it shows every island where it is; no drawers there)
+  "layout.drawer.toggle": (ctx) => {
+    if (useEdit.getState().session) return;
+    if (ctx.subject) toggleDrawer(ctx.subject, ctx.anchor);
+    else closeDrawer();
+  },
   "nav.quickSwitcher.open": () => openQuickSwitcher(),
   "nav.room.next": () => stepRoom(1, false),
   "nav.room.previous": () => stepRoom(-1, false),

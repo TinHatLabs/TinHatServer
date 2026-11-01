@@ -36,6 +36,8 @@ export const DEFAULTS: CallState & Omit<CallUiState, "setMaximized" | "setCollap
   pushToTalk: false,
   pttSpeaking: false,
   deafened: false,
+  watching: false,
+  noCapture: false,
   cameraOn: false,
   sharing: false,
   musicPlaying: false,

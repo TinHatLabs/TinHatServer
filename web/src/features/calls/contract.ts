@@ -100,6 +100,10 @@ export interface CallState {
   pushToTalk: boolean;
   pttSpeaking: boolean;
   deafened: boolean;
+  /** watching (Pad QOL): joined to watch — no mic captured until this device's own "Talk here" */
+  watching: boolean;
+  /** watching and the mic not chosen yet: every capture path refuses (engine captureBarred) */
+  noCapture: boolean;
   cameraOn: boolean;
   sharing: boolean;
   musicPlaying: boolean;
@@ -181,6 +185,12 @@ export interface ShareOptions {
 /** Engine actions — same names as the native invokables (call_ctl.rs). */
 export interface CallActions {
   joinCall(roomId: string): void;
+  /** Join to watch (Pad QOL): no mic captured, deafened, camera off */
+  watchCall(roomId: string): void;
+  /** watching: talk from this device (captures the mic; hearing comes on too) / stop talking */
+  watchTalk(on: boolean): void;
+  /** watching: hear the call on this device / not */
+  watchHear(on: boolean): void;
   leaveCall(): void;
   switchCall(roomId: string): void;
   toggleMic(): void;

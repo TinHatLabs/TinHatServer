@@ -34,6 +34,8 @@ export { Toolbar as EditToolbar } from "./Toolbar";
 export { islandText } from "./names";
 export { openEdit, doneEdit, cancelEdit, useEdit, isEditing, resetOnThisDevice } from "./store";
 export { useRendered, getRendered } from "./layoutDoc";
+export { useDrawerRun, closeDrawer as closeIslandDrawer, drawerCatchZ } from "./drawerRun";
+export { drawerForm } from "./session";
 export { useTabs, setTab } from "./tabs";
 export { LayoutSection } from "./LayoutSection";
 export { openPhoneEditor } from "./PhoneEditor";

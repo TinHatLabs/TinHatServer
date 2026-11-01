@@ -102,7 +102,10 @@ export function useAway(roomId: string | null | undefined): string[] {
 // ---- actions → store ------------------------------------------------------------------------------------
 
 useCallStore.setState({
-  joinCall: engine.joinCall,
+  joinCall: (roomId: string) => engine.joinCallPressed(roomId),
+  watchCall: engine.watchCall,
+  watchTalk: engine.watchTalk,
+  watchHear: engine.watchHear,
   leaveCall: engine.leaveCall,
   switchCall: engine.switchCall,
   toggleMic: engine.toggleMic,
@@ -337,6 +340,8 @@ function install() {
           status: st.status,
           micMuted: st.micMuted,
           deafened: st.deafened,
+          watching: st.watching,
+          noCapture: st.noCapture,
           cameraOn: st.cameraOn,
           sharing: st.sharing,
           hear: st.hear,
@@ -356,7 +361,8 @@ function install() {
       engine,
       audio,
       keys: { ingestKeyEvent }, // the app's OWN key-intake instance (tools/calls-security-e2e.mjs)
-      moderation: { disconnectParticipant }, // calls-round gate G3 (c): the moderator's "disconnect" (server API)
+      // calls-round gate G3 (c): the moderator's "disconnect" (server API); Pad QOL gate: mute / unmute a watching device
+      moderation: { disconnectParticipant, serverMute, serverUnmute },
       roomCall,
       mxidOf,
       answerIncoming,

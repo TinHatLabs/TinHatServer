@@ -23,7 +23,7 @@
 // Phones: a stack — #/home = NavColumn full screen, #/room/… = RoomPage full screen with a back
 // chevron (history back / edge swipe / Android back all work because routes push history).
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { SolveOut } from "@/layout";
+import { canon, type SolveOut } from "@/layout";
 import { buttonIslands } from "@/actions/layoutStore";
 import { ButtonsIsland } from "@/actions/ui/ButtonsIsland";
 import { peekClient, useClient } from "@/core/matrix";
@@ -60,7 +60,7 @@ import { BannerStrip, ResetBanner } from "./Banners";
 import { WindowHost } from "./WindowHost";
 import { goBack, navigate, roomHash, useRoute } from "./router";
 import { DockHost, type HostSize, type IslandDef, type SolveInputs } from "./dock/DockHost";
-import { EditLayer, EditToolbar, IslandPlaceholder, islandText, openEdit, doneEdit, cancelEdit, resetOnThisDevice, useEdit, useRendered, useTabs, setTab } from "@/features/editmode";
+import { EditLayer, EditToolbar, IslandPlaceholder, islandText, openEdit, doneEdit, cancelEdit, resetOnThisDevice, useEdit, useRendered, useTabs, setTab, useDrawerRun, closeIslandDrawer, drawerForm, drawerCatchZ } from "@/features/editmode";
 import { dockView, islandMeta, mainColumnH } from "./dock/shellView";
 import { contentInset } from "./dock/frame";
 import { useBackDispatch } from "./dock/dispatch";
@@ -176,9 +176,37 @@ function DesktopShell({ roomId, eventId, always }: { roomId: string | null; even
   useEdit((x) => x.v);
   const preview = useEdit((x) => x.preview);
   const editing = session?.kind === "desktop";
-  const form = editing ? (preview ?? session.form) : rendered.desktop;
+  const baseForm = editing ? (preview ?? session.form) : rendered.desktop;
   const tabs = useTabs();
   const [inputs, setInputs] = useState<SolveInputs | null>(null);
+  // an open drawer (feat/editmode-buttons-drawers, EDITMODE-UI §7.3; the desktop's Main.qml dockFormJson): the dock host
+  // renders drawerForm(the form, island, its button's rect, the host size) — the island in a float beside its button,
+  // never saved. A press outside it (the catcher under the floats), Escape, edit mode and its button again close it.
+  const drawerRef = useDrawerRun((d) => d.ref);
+  const drawerBtn = useDrawerRun((d) => d.btn);
+  const hostW = inputs?.size.w ?? 0;
+  const hostH0 = inputs?.size.h ?? 0;
+  const drawn = useMemo(() => {
+    if (!drawerRef || editing || !drawerBtn || hostW <= 0 || hostH0 <= 0) return { form: baseForm, failed: null as string | null };
+    const r = drawerForm(baseForm, drawerRef, drawerBtn, { w: hostW, h: hostH0 });
+    return r.ok ? { form: r.form, failed: null } : { form: baseForm, failed: r.error };
+  }, [baseForm, drawerRef, drawerBtn, editing, hostW, hostH0]);
+  const form = drawn.form;
+  useEffect(() => {
+    if (!drawn.failed) return;
+    console.log(`[drawer] ${drawerRef} can't open: ${drawn.failed}`);
+    closeIslandDrawer();
+  }, [drawn.failed, drawerRef]);
+  const drawerUp = !!drawerRef && !editing;
+  // the catcher's z: above the layout's own floats, under the drawer's (appended after them)
+  const storeFloats = Array.isArray((baseForm as { floats?: unknown }).floats) ? ((baseForm as { floats: unknown[] }).floats.length) : 0;
+  // an open drawer closes when what it was opened from changes (the desktop's Main.qml): the layout this device renders
+  // (a sync, an edit, a restore), the room (picked in a Rooms drawer), the host's size (its button moved)
+  const baseKey = useMemo(() => canon(baseForm), [baseForm]);
+  useEffect(() => closeIslandDrawer(), [baseKey]);
+  useEffect(() => closeIslandDrawer(), [roomId]);
+  useEffect(() => closeIslandDrawer(), [hostW, hostH0]);
+  useShortcut("Escape", () => (useDrawerRun.getState().ref ? (closeIslandDrawer(), true) : false), { enabled: drawerUp });
   const [gapMenu, setGapMenu] = useState<{ x: number; y: number } | null>(null);
   // Ctrl+E = the `layout.edit` action's default key (Settings → Shortcuts may move it; the action runs the same toggle)
   useShortcut("Ctrl+E", () => {
@@ -329,6 +357,12 @@ function DesktopShell({ roomId, eventId, always }: { roomId: string | null; even
           onTab={setTab}
           tabLabel={tabLabel}
           onBackgroundMenu={editing ? undefined : (x, y) => setGapMenu({ x, y })}
+          underlay={
+            drawerUp ? (
+              // an open drawer's outside press: above the docked islands and the layout's floats, under the drawer
+              <div className={s.drawerCatch} style={{ zIndex: drawerCatchZ(storeFloats) }} data-drawer-outside="" onPointerDown={() => closeIslandDrawer()} onContextMenu={(e) => e.preventDefault()} />
+            ) : undefined
+          }
           chrome={
             <>
               {drawer && !fill && (

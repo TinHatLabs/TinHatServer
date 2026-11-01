@@ -35,6 +35,12 @@ import { BUILTINS } from "@/theme/engine";
 import { libraryNow, loadLibrary } from "@/ui/themeLibrary";
 import { currentTheme, subscribeTheme } from "@/ui/themes";
 import { getThemeState, subscribeThemeState } from "@/ui/themeStore";
+import { buttonIslands } from "@/actions/layoutStore";
+import { getRendered, subscribeRendered } from "@/features/editmode/layoutDoc";
+import { useEdit } from "@/features/editmode/store";
+import { drawerTargets, hiddenRefs } from "@/features/editmode/session";
+import { islandText } from "@/features/editmode/names";
+import { useDrawerRun } from "@/features/editmode/drawerRun";
 
 const PREFS = [
   "music-source", "call-layout", "call-unfocused-saver", "desktop-notifications", "gif-autoplay", "logship",
@@ -60,7 +66,8 @@ function rowsById(): Map<string, RoomRow> {
  *  the Pad button shows beside Join (features/pad usePadTargets; the desktop: ActionsHost.qml with Main.qml padTargetIn). */
 function padTargetIn(id: string, membership: string): boolean {
   const c = useCallStore.getState();
-  return membership === "join" && !((c.inCall || c.connecting) && c.callRoomId === id) && targetsIn(id).length > 0;
+  // (a call this device only WATCHES still offers the Pad: Pad QOL 2026-10-31)
+  return membership === "join" && !((c.inCall || c.connecting) && !c.watching && c.callRoomId === id) && targetsIn(id).length > 0;
 }
 /** The rooms whose latest snapshot says room.padTarget = true (kept by padTargetValue, re-checked by onPadTargetsAging). */
 const padTrueInSnapshot = new Set<string>();
@@ -360,6 +367,24 @@ function onRoomState(cb: () => void): () => void {
   };
 }
 
+/** The islands (layout.drawer.toggle's subjects, feat/editmode-buttons-drawers — the desktop's ActionsHost.qml): the
+ *  ones a drawer may hold in the desktop form this device renders (edit mode: its working copy), by name; the pick list
+ *  = the hidden ones; `layout.drawerOpen` = the island whose drawer is open. */
+function layoutPart(): SnapshotPart {
+  const st = useEdit.getState();
+  const form = st.session && st.session.kind === "desktop" ? st.session.form : getRendered().desktop;
+  const island: Record<string, SubjectEntry> = {};
+  const hidden: string[] = [];
+  const placedButtons = buttonIslands(form);
+  const hid = hiddenRefs(form);
+  for (const ref of drawerTargets(form)) {
+    const k = placedButtons.indexOf(ref);
+    island[ref] = { name: islandText(ref, k >= 0 ? k + 1 : undefined).name, values: {} };
+    if (hid.includes(ref)) hidden.push(ref);
+  }
+  return { values: { "layout.drawerOpen": useDrawerRun.getState().ref }, subjects: { island }, lists: { island: hidden } };
+}
+
 /** Install every provider (once, from the feature's setup). */
 export function installProviders(): void {
   const both = (subs: ((cb: () => void) => () => void)[]) => (changed: () => void) => {
@@ -373,6 +398,7 @@ export function installProviders(): void {
   registerSnapshotProvider("presence", presencePart, both([usePresenceStore.subscribe, usePushStore.subscribe]));
   registerSnapshotProvider("calendar", calendarPart, both([useCal.subscribe, useGames.subscribe, useWatchParty.subscribe]));
   registerSnapshotProvider("themes", themePart, both([subscribeTheme, subscribeThemeState]));
+  registerSnapshotProvider("layout", layoutPart, both([subscribeRendered, useEdit.subscribe, useDrawerRun.subscribe]));
   registerSnapshotProvider("sounds", soundPart, both([useSoundboard.subscribe, useChatStore.subscribe, onRoomState]));
   // the library is fetched once; the themes provider re-reads it when it lands
   void loadLibrary().then(() => snapshotChanged()).catch(() => {});

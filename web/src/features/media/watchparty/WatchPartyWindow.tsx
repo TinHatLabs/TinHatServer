@@ -676,7 +676,8 @@ export function WatchPartyWindow({ roomId }: { roomId?: string }) {
         else setAddNote("Paste a link to a video or song — searching isn't available on this server.");
       } else if (r.status === "browse") {
         setTab("playlists");
-      } else setAddNote(r.message);
+      } else if (r.status === "error") setAddNote(r.message);
+      // ("resolved" only comes from a lookupOnly call — the Pad's — never from this window's)
     } finally {
       setAdding(false);
     }

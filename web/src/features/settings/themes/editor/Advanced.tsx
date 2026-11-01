@@ -6,7 +6,8 @@ import { advancedGroups, roleLabel, searchGroups, tokenLabel, type EditorGroup, 
 import { ROLE_IDS } from "@/theme/engine";
 import type { PickKind } from "@/theme/probe";
 import { BasicToolButton, Icon, SearchField, cx } from "@/ui";
-import { shownIssues, useEditor } from "./editorStore";
+import { APP_SPEC, shownIssues, useEditor } from "./editorStore";
+import { paletteView, usageCounts } from "@/theme/palette";
 import { ColourPopover } from "./ColourPopover";
 import { cssOf } from "./colour";
 import { issueLine } from "./issues";
@@ -25,11 +26,25 @@ type Item =
 
 const targetOf = (r: EditorRow): ColourTarget => ({ kind: r.kind, id: r.id }) as ColourTarget;
 
+type Hints = { counts: Record<string, number>; inSimple: Map<string, string>; handSet: Set<string> } | null;
+/** The id line of a row: `id · used by ‹n› · Simple: ‹group›` (roles, slots) / `id · set by hand` (tokens). */
+export function rowHint(r: EditorRow, h: Hints): string {
+  if (!h) return r.id;
+  const parts = [r.id];
+  const n = h.counts[r.id];
+  if (r.kind !== "token" && n !== undefined) parts.push(n === 1 ? "used by 1" : `used by ${n}`);
+  const g = h.inSimple.get(r.id);
+  if (g) parts.push(`Simple: ${g}`);
+  if (h.handSet.has(r.id)) parts.push("set by hand");
+  return parts.join(" · ");
+}
+
 export function AdvancedMode() {
   const session = useEditor((st) => st.session);
   const resolved = useEditor((st) => st.resolved);
   const query = useEditor((st) => st.query);
   const changedOnly = useEditor((st) => st.changedOnly);
+  const onlyIds = useEditor((st) => st.onlyIds);
   const openGroups = useEditor((st) => st.openGroups);
   const picked = useEditor((st) => st.picked);
   const st = useEditor();
@@ -53,6 +68,10 @@ export function AdvancedMode() {
   const items = useMemo(() => {
     if (!doc || !base) return { list: [] as Item[], height: 0 };
     let shown = searchGroups(groups, query, tokenDescription);
+    if (onlyIds) {
+      const only = new Set(onlyIds);
+      shown = shown.map((g) => ({ ...g, rows: g.rows.filter((r) => only.has(r.id)) })).filter((g) => g.rows.length > 0);
+    }
     if (changedOnly) shown = shown.map((g) => ({ ...g, rows: g.rows.filter((r) => isChanged(doc, base, targetOf(r))) })).filter((g) => g.rows.length > 0);
     const all: { g: EditorGroup; badges?: Map<string, string> }[] = [];
     if (picked && picked.length) {
@@ -60,7 +79,7 @@ export function AdvancedMode() {
       all.push({ g: { id: "picked", section: "Picked", label: "Picked", rows }, badges: new Map(picked.map((h) => [h.id, BADGE[h.kind]])) });
     }
     for (const g of shown) all.push({ g });
-    const forceOpen = query.trim().length > 0 || changedOnly;
+    const forceOpen = query.trim().length > 0 || changedOnly || !!onlyIds;
     const list: Item[] = [];
     let top = 0;
     let section = "";
@@ -84,7 +103,16 @@ export function AdvancedMode() {
       }
     }
     return { list, height: top };
-  }, [doc, base, groups, query, changedOnly, openGroups, picked]);
+  }, [doc, base, groups, query, changedOnly, onlyIds, openGroups, picked]);
+  // "where is this used" (THEME-SIMPLE §4): roles / slots → how many colours follow them, their Simple group;
+  // tokens Simple can't reach → "set by hand"
+  const hints = useMemo(() => {
+    if (!doc) return null;
+    const view = paletteView(doc, APP_SPEC);
+    const inSimple = new Map<string, string>();
+    for (const g of view.groups) for (const sw of g.swatches) for (const src of sw.sources) inSimple.set(src, g.label);
+    return { counts: usageCounts(doc, APP_SPEC), inSimple, handSet: new Set(view.handSet) };
+  }, [doc]);
 
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -117,6 +145,7 @@ export function AdvancedMode() {
           placeholder={`Search ${total.toLocaleString("en-US")} colours`}
           aria-label="Search colours"
         />
+        {onlyIds && <BasicToolButton display="textOnly" text="Set by hand ✕" checked tip="Show every colour again" onClick={() => useEditor.setState({ onlyIds: null })} />}
         <BasicToolButton display="textOnly" text="Changed" checked={changedOnly} tip="Only the colours you changed" onClick={() => useEditor.setState({ changedOnly: !changedOnly })} />
       </div>
       <div ref={listRef} className={s.list} onScroll={(e) => setView({ top: e.currentTarget.scrollTop, height: e.currentTarget.clientHeight })} role="tree" aria-label="Colours">
@@ -161,7 +190,7 @@ export function AdvancedMode() {
                 <span className={cx(s.swatch, s.rowSwatch)} style={{ ["--sw" as string]: cssOf(colour) }} />
                 <span className={s.rowText}>
                   <span className={s.rowName}>{it.row.label}</span>
-                  <span className={s.rowId}>{it.row.id}</span>
+                  <span className={s.rowId}>{rowHint(it.row, hints)}</span>
                 </span>
                 {it.badge && <span className={s.badge}>{it.badge}</span>}
                 {warn && (
@@ -174,7 +203,7 @@ export function AdvancedMode() {
             );
           })}
         </div>
-        {items.list.length === 0 && <div className={s.empty}>{query.trim() ? `No colours match “${query.trim()}”.` : changedOnly ? "Nothing changed yet." : "Loading the colours…"}</div>}
+        {items.list.length === 0 && <div className={s.empty}>{query.trim() ? `No colours match “${query.trim()}”.` : onlyIds ? "Nothing is set by hand." : changedOnly ? "Nothing changed yet." : "Loading the colours…"}</div>}
       </div>
       {pop && <ColourPopover open anchor={pop.anchor} target={targetOf(pop.row)} onClose={() => setPop(null)} />}
     </>

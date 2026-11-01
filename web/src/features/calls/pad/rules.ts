@@ -32,6 +32,12 @@ export const PAD = {
   maxName: 64,
   maxEmoji: 16,
   maxHint: 200,
+  /** a Media Party title (call.party.title, next[].title) */
+  maxTitle: 200,
+  /** call.party.next */
+  maxNext: 5,
+  /** a Media Party position / duration in seconds (24 h) */
+  maxPos: 86_400,
   maxBuckets: 16,
   /** a bucket idle this long is full again (16 tokens at 8/s, busy allowed): forgetting it changes nothing */
   bucketIdleMs: 2_000,
@@ -48,7 +54,23 @@ export const PAD_CAP = "pad1";
 export const PAD_CMD = "dev.tinhat.pad.cmd";
 export const PAD_STATE = "dev.tinhat.pad.state";
 /** The ops a v1 receiver runs (the state's `ops`; the controller shows only listed controls). */
-export const PAD_OPS = ["sound.play", "sound.stop", "mic", "deafen", "brb", "vol", "vol.reset", "leave"] as const;
+export const PAD_OPS = [
+  "sound.play",
+  "sound.stop",
+  "mic",
+  "deafen",
+  "brb",
+  "vol",
+  "vol.reset",
+  "leave",
+  // 2026-10-31 (QOL, additive): a search result played on the receiver, and its Media Party
+  "sound.play.web",
+  "party.join",
+  "party.play",
+  "party.seek",
+  "party.next",
+  "party.add",
+] as const;
 export const PAD_CATS = ["mic", "screenshare", "music"] as const;
 export type PadCat = (typeof PAD_CATS)[number];
 export const PAD_MIC = ["on", "muted", "server", "ptt"] as const;
@@ -155,6 +177,30 @@ export function validWhy(s: unknown): s is string {
 /** A user id: "@local:server", printable ASCII, no ":" in the localpart, at most 255 characters. */
 export function validUser(s: unknown): s is string {
   return typeof s === "string" && s.length <= 255 && /^@[\x21-\x39\x3B-\x7E]+:[\x21-\x7E]+$/.test(s);
+}
+
+const WEB_SOUND = /^https:\/\/(?:www\.)?myinstants\.com\/media\/sounds\/([A-Za-z0-9_.-]{1,200})$/;
+/** A search result the receiver may play (`sound.play.web`): exactly a myinstants sound file,
+ *  `https://[www.]myinstants.com/media/sounds/<file>` with `<file>` = 1–200 of [A-Za-z0-9_.-] ending in .mp3 / .ogg /
+ *  .wav / .m4a / .opus, never a `..`; nothing after it (no query, no fragment). That is what both apps' search returns
+ *  (`MYINSTANTS_BASE` + `mp3Path`); the receiver still plays it through its own server's clip cache. */
+export function webSoundOk(url: unknown): url is string {
+  if (typeof url !== "string") return false;
+  const m = WEB_SOUND.exec(url);
+  return !!m && !m[1]!.includes("..") && /\.(?:mp3|ogg|wav|m4a|opus)$/.test(m[1]!);
+}
+
+const PARTY_HOSTS = ["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "open.spotify.com", "music.apple.com"];
+/** A link a Pad may add to the receiver's Media Party (`party.add`): `https://` + exactly one of PARTY_HOSTS (ASCII,
+ *  case-insensitive), then nothing or a path / query starting with `/` or `?`; no user info, no port, no backslash,
+ *  white space or control character; 1–2048 code points. Direct media files and other sites are not accepted from a
+ *  Pad (the receiver's player would fetch them); the receiver's own link rules (`parseMediaLink`) still decide after. */
+export function partyLinkOk(url: unknown): url is string {
+  if (typeof url !== "string" || url === "" || cpLen(url) > PAD.maxUrl) return false;
+  if (/[\s\\\u0000-\u001f\u007f-\u009f]/.test(url) || !/^[\x21-\x7E]+$/.test(url)) return false;
+  const m = /^https:\/\/([^/?#]+)(?:[/?].*)?$/i.exec(url);
+  if (!m) return false;
+  return PARTY_HOSTS.includes(m[1]!.toLowerCase());
 }
 
 // ---- trust (security rules 1–4) ----------------------------------------------------------------------------
@@ -386,7 +432,20 @@ export type PadCmd =
   | { op: "brb"; on: boolean }
   | { op: "vol"; user: string; cat: PadCat; level?: number; muted?: boolean; live: boolean }
   | { op: "vol.reset"; user: string }
-  | { op: "leave" };
+  | { op: "leave" }
+  | { op: "sound.play.web"; url: string; name: string; emoji: string }
+  | { op: "party.join" }
+  | { op: "party.play"; url: string; playing: boolean }
+  | { op: "party.seek"; url: string; pos: number }
+  | { op: "party.next"; url: string }
+  | { op: "party.add"; url: string; now: boolean };
+
+/** `url` of a party op: the playing url the controller saw ("" = nothing playing): 0–2048 printable ASCII
+ *  characters, the same shape as `call.party.url`. */
+function partyUrlOf(c: Obj): string | null {
+  const u = own(c, "url");
+  return typeof u === "string" && /^[\x21-\x7E]{0,2048}$/.test(u) ? u : null;
+}
 
 /** Rule 6 for one command (after its sid/seq/v): `ts`, `room`, `gen` (not on open), a known op and its fields with
  *  their exact types. Unknown fields are ignored. null = `bad`. */
@@ -448,6 +507,35 @@ function parseCmd(c: Obj): PadCmd | null {
       const user = own(c, "user");
       return validUser(user) ? { op, user } : null;
     }
+    case "sound.play.web": {
+      const url = own(c, "url");
+      const name = has(c, "name") ? own(c, "name") : "";
+      const emoji = has(c, "emoji") ? own(c, "emoji") : "";
+      if (!webSoundOk(url) || typeof name !== "string" || typeof emoji !== "string") return null;
+      if (cpLen(name) > PAD.maxName || cpLen(emoji) > PAD.maxEmoji) return null;
+      return { op, url, name, emoji };
+    }
+    case "party.join":
+      return { op };
+    case "party.play": {
+      const url = partyUrlOf(c);
+      const playing = own(c, "playing");
+      return url !== null && typeof playing === "boolean" ? { op, url, playing } : null;
+    }
+    case "party.seek": {
+      const url = partyUrlOf(c);
+      const pos = own(c, "pos");
+      return url !== null && isUint(pos) && pos <= PAD.maxPos ? { op, url, pos } : null;
+    }
+    case "party.next": {
+      const url = partyUrlOf(c);
+      return url !== null ? { op, url } : null;
+    }
+    case "party.add": {
+      const url = own(c, "url");
+      const now = own(c, "now");
+      return partyLinkOk(url) && typeof now === "boolean" ? { op, url, now } : null;
+    }
     default:
       return null;
   }
@@ -472,9 +560,21 @@ export interface PadSounds {
   /** this device's Recent list */
   recent: string[];
 }
+/** The receiver's Media Party in its CALL room (its own engine's flags; null = no party in that room). */
+export interface PadParty {
+  /** this device joined the party */
+  in: boolean;
+  /** its own `canControl` (in the party and no host, or the host is me) */
+  host: boolean;
+  /** the playing url ("" = nothing playing) */
+  url: string;
+  playing: boolean;
+}
 export interface PadCtx {
   /** Settings → Calls → Pad on this receiver */
   padOn: boolean;
+  /** the call room's Media Party (absent / null = none; 12.1.x glue never sets it) */
+  party?: PadParty | null;
   /** the call this device is in (gen = its call generation), null = not in a call */
   call: { room: string; gen: string } | null;
   /** bare user ids of the people in the call with me (not me) */
@@ -606,6 +706,31 @@ export function checkPadMessage(t: PadSessions, type: string, content: unknown, 
       return ok(true);
     case "leave":
       return ok(true);
+    case "sound.play.web":
+      if (!me.soundRole) return refuse("off-role");
+      if (me.serverMuted) return refuse("server-muted");
+      return ok(true);
+    case "party.join": {
+      const pt = ctx.party ?? null;
+      if (!pt) return refuse("no-party");
+      return ok(!pt.in);
+    }
+    case "party.add": {
+      const pt = ctx.party ?? null;
+      if (!pt || !pt.in) return refuse("no-party");
+      if (cmd.now && !pt.host) return refuse("not-host");
+      return ok(true);
+    }
+    case "party.play":
+    case "party.seek":
+    case "party.next": {
+      const pt = ctx.party ?? null;
+      if (!pt || !pt.in) return refuse("no-party");
+      if (!pt.host) return refuse("not-host");
+      if (cmd.url !== pt.url) return refuse("party-changed");
+      if (cmd.op === "party.play") return ok(cmd.playing !== pt.playing);
+      return ok(true);
+    }
   }
 }
 
@@ -632,8 +757,10 @@ export interface PadStateIn {
     gen: string;
     since: number;
     me: { mic: string; deaf: boolean; brb: boolean; talk: boolean; sound: string; gate: { allowed: boolean; hint: string } };
-    people: Array<{ u: string; talk: boolean; micOff: boolean; away: boolean; vol?: Partial<Record<PadCat, number>>; muted?: Partial<Record<PadCat, boolean>> }>;
+    people: Array<{ u: string; talk: boolean; micOff: boolean; away: boolean; share?: boolean; vol?: Partial<Record<PadCat, number>>; muted?: Partial<Record<PadCat, boolean>> }>;
     recent: Array<{ name: string; url: string; emoji: string }>;
+    /** the call room's Media Party (absent / null = none) */
+    party?: null | { in: boolean; host: boolean; url: string; title: string; playing: boolean; pos: number; at: number; dur: number; next: Array<{ title: string }>; add?: { sid: string; re: number; ok: boolean } | null };
   };
 }
 
@@ -678,6 +805,7 @@ export function buildState(input: PadStateIn): { state: Obj; bytes: number } {
       valid++;
       if (people.length >= PAD.maxPeople) continue;
       const e: Obj = { u, talk: own(p, "talk") === true, micOff: own(p, "micOff") === true, away: own(p, "away") === true };
+      if (own(p, "share") === true) e.share = true; // additive (2026-10-31): only when sharing, so older states are unchanged
       const vi = isObj(own(p, "vol")) ? (own(p, "vol") as Obj) : {};
       const mu = isObj(own(p, "muted")) ? (own(p, "muted") as Obj) : {};
       const vol: Obj = {};
@@ -721,10 +849,17 @@ export function buildState(input: PadStateIn): { state: Obj; bytes: number } {
       more: valid - people.length,
       recent,
     };
+    const party = partyOut(own(ci, "party"));
+    if (party) call.party = party;
     out.call = call;
     let bytes = utf8Len(JSON.stringify(out));
     while (bytes > PAD.maxStateBytes && recent.length) {
       recent.pop();
+      bytes = utf8Len(JSON.stringify(out));
+    }
+    const next = party ? (party.next as Obj[]) : [];
+    while (bytes > PAD.maxStateBytes && next.length) {
+      next.pop();
       bytes = utf8Len(JSON.stringify(out));
     }
     while (bytes > PAD.maxStateBytes && people.length) {
@@ -732,9 +867,84 @@ export function buildState(input: PadStateIn): { state: Obj; bytes: number } {
       call.more = (call.more as number) + 1;
       bytes = utf8Len(JSON.stringify(out));
     }
+    // still over (only a pathological sound url / hint can get here): the party block always stays — the playing sound's
+    // url goes first, then the hint (with both gone the rest is bounded well under 16 KiB)
+    const me = call.me as Obj;
+    if (bytes > PAD.maxStateBytes && me.sound !== null) {
+      me.sound = null;
+      bytes = utf8Len(JSON.stringify(out));
+    }
+    if (bytes > PAD.maxStateBytes) {
+      (me.gate as Obj).hint = "";
+      bytes = utf8Len(JSON.stringify(out));
+    }
     return { state: out, bytes };
   }
   return { state: out, bytes: utf8Len(JSON.stringify(out)) };
+}
+
+/** A wire-clean string cut to `max` code points ("" when it isn't a string or holds a lone surrogate). */
+function cleanCut(x: unknown, max: number): string {
+  const v = strOf(x);
+  return wellFormed(v) ? cpTrunc(v, max) : "";
+}
+function boundedInt(x: unknown, max: number): number {
+  return isUint(x) ? Math.min(x, max) : 0;
+}
+/** call.party of a state (null = no party): fixed key order in, host, url, title, playing, pos, at, dur, next. A url
+ *  over 2048 code points (or with a lone surrogate) is sent as "" (nothing the controller could bind a command to). */
+function partyOut(pi: unknown): Obj | null {
+  if (!isObj(pi)) return null;
+  const url0 = strOf(own(pi, "url"));
+  const next: Obj[] = [];
+  const nin = own(pi, "next");
+  for (const n of Array.isArray(nin) ? nin : []) {
+    if (next.length >= PAD.maxNext) break;
+    if (!isObj(n)) continue;
+    next.push({ title: cleanCut(own(n, "title"), PAD.maxTitle) });
+  }
+  return {
+    in: own(pi, "in") === true,
+    host: own(pi, "host") === true,
+    url: /^[\x21-\x7E]{0,2048}$/.test(url0) ? url0 : "",
+    title: cleanCut(own(pi, "title"), PAD.maxTitle),
+    playing: own(pi, "playing") === true,
+    pos: boundedInt(own(pi, "pos"), PAD.maxPos),
+    at: isUint(own(pi, "at")) ? (own(pi, "at") as number) : 0,
+    dur: boundedInt(own(pi, "dur"), PAD.maxPos),
+    next,
+    ...addOut(own(pi, "add")),
+  };
+}
+/** call.party.add: the outcome of the latest `party.add` of one session (`ok:false` = the link couldn't be added),
+ *  left out unless well-formed. */
+function addOut(a: unknown): Obj {
+  if (!isObj(a) || !validSid(own(a, "sid")) || !isUint(own(a, "re")) || typeof own(a, "ok") !== "boolean") return {};
+  return { add: { sid: own(a, "sid"), re: own(a, "re"), ok: own(a, "ok") } };
+}
+function validParty(pt: unknown): boolean {
+  if (pt === null) return true;
+  if (!isObj(pt)) return false;
+  for (const k of ["in", "host", "playing"]) if (typeof own(pt, k) !== "boolean") return false;
+  const url = own(pt, "url");
+  const title = own(pt, "title");
+  if (typeof url !== "string" || !/^[\x21-\x7E]{0,2048}$/.test(url)) return false;
+  if (typeof title !== "string" || cpLen(title) > PAD.maxTitle) return false;
+  const pos = own(pt, "pos");
+  const dur = own(pt, "dur");
+  if (!isUint(pos) || pos > PAD.maxPos || !isUint(dur) || dur > PAD.maxPos || !isUint(own(pt, "at"))) return false;
+  const next = own(pt, "next");
+  if (!Array.isArray(next) || next.length > PAD.maxNext) return false;
+  for (const n of next) {
+    if (!isObj(n)) return false;
+    const t = own(n, "title");
+    if (typeof t !== "string" || cpLen(t) > PAD.maxTitle) return false;
+  }
+  if (has(pt, "add")) {
+    const a = own(pt, "add");
+    if (a !== null && (!isObj(a) || !validSid(own(a, "sid")) || !isUint(own(a, "re")) || typeof own(a, "ok") !== "boolean")) return false;
+  }
+  return true;
 }
 
 /** The controller's side of one session: the receiver device it opened, and the newest state it accepted. */
@@ -775,6 +985,7 @@ function validStateBody(c: Obj): boolean {
   for (const p of people) {
     if (!isObj(p) || !validUser(own(p, "u"))) return false;
     for (const k of ["talk", "micOff", "away"]) if (typeof own(p, k) !== "boolean") return false;
+    if (has(p, "share") && typeof own(p, "share") !== "boolean") return false;
     if (has(p, "vol")) {
       const vol = own(p, "vol");
       if (!isObj(vol)) return false;
@@ -796,6 +1007,7 @@ function validStateBody(c: Obj): boolean {
     if (typeof url !== "string" || url === "" || cpLen(url) > PAD.maxUrl) return false;
     if (typeof emoji !== "string" || cpLen(emoji) > PAD.maxEmoji) return false;
   }
+  if (has(call, "party") && !validParty(own(call, "party"))) return false;
   return true;
 }
 
@@ -919,6 +1131,11 @@ const WHY_TEXT: Record<string, string> = {
   unverified: "Verify this device to use Pad.",
   untrusted: "Verify {device} to use Pad.",
   unreachable: "Not reaching {device}",
+  "no-party": "There's no Media Party in this call's room on {device}.",
+  "not-host": "Only the Media Party host can do that.",
+  "party-changed": "What's playing on {device} changed — try again.",
+  "bad-link": "{device} couldn't add that link.",
+  "old-op": "Update Tin Hat on {device} to use that.",
 };
 /** For `mic`, `server-muted` is the call's existing lock notice. */
 const MIC_SERVER_MUTED = "A moderator muted your mic for everyone — ask them to unmute you";

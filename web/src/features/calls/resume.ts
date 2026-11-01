@@ -165,7 +165,7 @@ async function beforeReload() {
   // (were other people in it? if they all leave during the reload, the rejoin must not restart the call)
   const withOthers = othersInCall(st.callRoomId).length > 0;
   try {
-    sessionStorage.setItem(REJOIN_MARK, JSON.stringify({ roomId: st.callRoomId, muted: st.micMuted, at: Date.now(), user: getSession().userId ?? "", withOthers }));
+    sessionStorage.setItem(REJOIN_MARK, JSON.stringify({ roomId: st.callRoomId, muted: st.micMuted, at: Date.now(), user: getSession().userId ?? "", withOthers, watching: engine.WATCH_AVAILABLE && !!(st.watching && st.noCapture) }));
   } catch {
     /* no sessionStorage: no rejoin */
   }
@@ -182,7 +182,7 @@ function maybeRejoinAfterReload() {
   }
   if (!raw) return;
   try {
-    const m = JSON.parse(raw) as { roomId?: string; muted?: boolean; at?: number; user?: string; withOthers?: boolean };
+    const m = JSON.parse(raw) as { roomId?: string; muted?: boolean; at?: number; user?: string; withOthers?: boolean; watching?: boolean };
     if (!m.roomId || !m.at || Date.now() - m.at > 180_000 || m.user !== getSession().userId) return;
     // Everyone we were with left while the page reloaded: joining now would START a new call in that room
     // (and ring everyone in it) that nobody asked for. (Alone in it before — waiting for people — we go back.)
@@ -194,7 +194,7 @@ function maybeRejoinAfterReload() {
       return;
     }
     setStatus("Rejoining your call after reconnecting…");
-    engine.rejoinAfterReload(m.roomId, !!m.muted);
+    engine.rejoinAfterReload(m.roomId, !!m.muted, m.watching === true);
   } catch {
     /* ignore */
   }

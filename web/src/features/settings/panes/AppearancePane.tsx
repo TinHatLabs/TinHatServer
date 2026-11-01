@@ -16,7 +16,7 @@ import { SoundsIcons } from "../themes/SoundsIcons";
 import { ThemeGallery } from "../themes/ThemeGallery";
 import { ThemeSection, type MyThemeActions } from "../themes/ThemeSection";
 import { refusalText } from "../themes/text";
-import { ComboRow, Section, SwitchRow } from "../rows";
+import { ComboRow, Row, Section, SwitchRow } from "../rows";
 // ADDITIVE (editmode, 11.0): Settings → Appearance → Layout
 import { LayoutSection } from "@/features/editmode/LayoutSection";
 
@@ -115,6 +115,7 @@ export function AppearancePane() {
       <Section title="Theme" bare id="theme">
         <ThemeSection onBrowse={() => useSettingsUi.setState({ subPage: "themes" })} onImport={() => openImport()} actions={actions} />
       </Section>
+      <AppSizeSection />
       <SoundsIcons />
       <OtherSections />
       {dialogs}
@@ -146,6 +147,20 @@ const FONTSET = [
   { id: "rig", label: "Rig" },
 ];
 const at = (list: ReadonlyArray<{ id: string }>, v: string) => Math.max(0, list.findIndex((x) => x.id === v));
+
+/** Size (2026-10-31, SETTINGS-WINDOW.md §5 card Size): the desktop app's App size slider (Ctrl+= / Ctrl+- / Ctrl+0) is
+ *  the browser's own zoom here — the page never takes those keys (docs/WEB-EXCEPTIONS.md "App size"). */
+export function AppSizeSection() {
+  return (
+    <Section title="Size">
+      <Row
+        id="appearance.app-size"
+        label="App size"
+        description="Use your browser's zoom: Ctrl and + or − make Tin Hat bigger or smaller, Ctrl and 0 sets it back (⌘ on a Mac). On a phone, pinch or use the browser's text size."
+      />
+    </Section>
+  );
+}
 
 /** Layout (10.8) + Buttons (11.0) · Navigation · Motion · Performance (10.8.1) · Clock · This browser (web only). Every
  *  choice of two or three is a combo (SETTINGS-WINDOW.md §3: no radio groups). */

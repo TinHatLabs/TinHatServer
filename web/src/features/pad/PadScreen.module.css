@@ -448,3 +448,20 @@
   display: flex;
   gap: 8px;
 }
+
+/* QOL (2026-10-31): the row says whose controls these are; the empty favourites hint links to the search */
+.myHead {
+  margin: 0 4px 6px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--th-soundboard-section-hint-fg);
+}
+.linkBtn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--th-soundboard-section-fg);
+  text-decoration: underline;
+  cursor: pointer;
+}

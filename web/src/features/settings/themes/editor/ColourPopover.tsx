@@ -3,8 +3,9 @@
 // Reset / Use default. A drag is one gesture (one undo step). Everything goes through the editor store's edit().
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { fixContrast } from "@/theme/editor";
-import { Button, Icon, Popover, TextField } from "@/ui";
+import { BasicRadioButton, Button, Icon, Popover, TextField } from "@/ui";
 import { roleLabel } from "@/theme/labels";
+import { PALETTE_GROUPS, paletteView, swatchInfo } from "@/theme/palette";
 import { APP_SPEC, edit, newGesture, shownIssues, useEditor } from "./editorStore";
 import { colourText, cssOf, hsvToRgb, literalOf, rgbToHsv, type Hsv } from "./colour";
 import { alphaAllowed, canUseDefault, isChanged, opFor, resetOp, resolvedValue, storedValue, targetId, targetLabel, type ColourTarget } from "./targets";
@@ -20,7 +21,21 @@ export const THEME_CHIPS = [
   "state.danger", "state.warning", "state.success",
 ];
 
-export function ColourPopover({ open, anchor, target, onClose }: { open: boolean; anchor: HTMLElement | null; target: ColourTarget; onClose: () => void }) {
+/** Simple swatches: is it its group's lead, how many swatches the group has, what it reaches. */
+export type SwatchInfo = { lead: boolean; members: number; usedBy: number; alsoIn: string[]; colour: string };
+
+export function ColourPopover({ open, anchor, target: target0, onClose }: { open: boolean; anchor: HTMLElement | null; target: ColourTarget; onClose: () => void }) {
+  // a lead swatch moves its whole group unless "Just this colour" is picked (THEME-SIMPLE §7; kept for the session)
+  const whole = useEditor((st) => st.swatchWhole);
+  const setWhole = (v: boolean) => useEditor.setState({ swatchWhole: v });
+  const docNow = useEditor((st) => st.session?.doc);
+  const view = useMemo(() => (docNow && target0.kind === "swatch" ? paletteView(docNow, APP_SPEC) : null), [docNow, target0.kind]);
+  // live: membership, counts and the groups it reaches follow every edit
+  const swatch: SwatchInfo | null = view && target0.kind === "swatch" ? (() => {
+    const i = swatchInfo(view, target0.group, target0.id, whole);
+    return i ? { ...i, alsoIn: i.alsoIn.map((g) => PALETTE_GROUPS.find((x) => x.id === g)?.label ?? g) } : null;
+  })() : null;
+  const target: ColourTarget = target0.kind === "swatch" ? { ...target0, whole: !!swatch?.lead && whole } : target0;
   const session = useEditor((st) => st.session);
   const resolved = useEditor((st) => st.resolved);
   const st = useEditor();
@@ -160,6 +175,18 @@ export function ColourPopover({ open, anchor, target, onClose }: { open: boolean
       <div className={s.pop}>
         <div className={s.popTitle}>{targetLabel(target)}</div>
         <div className={s.popId}>{targetId(target)}</div>
+        {swatch?.lead && (
+          <div className={s.popChoice} role="radiogroup" aria-label="What to change">
+            <BasicRadioButton name="swatch-scope" text={`Whole group (moves ${swatch.members} colours)`} checked={whole} onToggled={(on) => on && setWhole(true)} />
+            <BasicRadioButton name="swatch-scope" text="Just this colour" checked={!whole} onToggled={(on) => on && setWhole(false)} />
+          </div>
+        )}
+        {swatch && (
+          <div className={s.popHint}>
+            {swatch.usedBy === 1 ? "Used by 1 colour" : `Used by ${swatch.usedBy} colours`}
+            {swatch.alsoIn.length > 0 && ` · also changes ${swatch.alsoIn.join(", ")}`}
+          </div>
+        )}
         <div
           className={s.svField}
           style={{

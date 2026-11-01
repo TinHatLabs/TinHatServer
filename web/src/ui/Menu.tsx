@@ -162,7 +162,9 @@ function DesktopMenu({ open, onClose, anchor, placement, offset, modal, width = 
     } else if (e.key === "ArrowLeft") {
       if (_parent) onClose();
       else return;
-    } else if (e.key.length === 1 && /\S/.test(e.key)) {
+    } else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // type-ahead takes plain letters only: Ctrl/⌘ chords stay the browser's (Ctrl + / − / 0 = its zoom, which is
+      // Tin Hat Web's App size: docs/WEB-EXCEPTIONS.md) and the app's shortcuts
       const k = e.key.toLowerCase();
       const start = idx + 1;
       for (let n = 0; n < items.length; n++) {

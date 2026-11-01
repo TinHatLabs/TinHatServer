@@ -10,6 +10,9 @@
 //               playing one glows, tapping it stops it; the role line under it when the call's roles turned it off
 //   people      avatar + talking ring, mic-off, 💤; a tap → "Volume — <name> (on <device>)": the per-person menu's
 //               three sliders (VolumeSliderRow), a mute each, "Reset all to 100%"
+// QOL (2026-10-31; order = what people tap most first, the row headed "On <device>" so it's never mistaken for this
+// phone's): header · my row · Watch (only while someone shares) · soundboard (Favourites, the web search, This room,
+// Recent) · Media Party (only when the call room has one) · people. PadExtras.tsx has the new parts.
 // Presses are optimistic (the button moves at once, a thin ring until the PC answers, rolled back with its reason).
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAccountData, useMember, useRoomName } from "@/core/matrix";
@@ -23,6 +26,7 @@ import { DEFAULT_EMOJI, padSounds, type PadSound } from "@/widgets/soundpad";
 import { whyText, type PadCat } from "@/features/calls/pad/rules";
 import type { PadPersonView, PadView } from "@/features/calls/pad/controller";
 import { closePad, openPad, padController, useDeviceName, usePadCtrl, usePadDevices, usePadTargets } from "./runtime";
+import { PartyCard, Watch, WebSearch } from "./PadExtras";
 import s from "./PadScreen.module.css";
 
 const PENDING_RING = "var(--th-pad-pending-ring)";
@@ -80,7 +84,9 @@ function PadScreen() {
   ) : (
     <div ref={inner} className={s.content}>
       <MyRow view={view} device={device} dim={!live} onLeave={() => setLeaveAsk(true)} />
+      <Watch view={view} device={device} mobile={mobile} />
       <Sounds view={view} device={device} mobile={mobile} dim={!live} />
+      <PartyCard view={view} device={device} dim={!live} />
       <People view={view} onPick={(u, el) => setVol({ u, anchor: el })} />
     </div>
   );
@@ -264,6 +270,7 @@ function MyRow({ view, device, dim, onLeave }: { view: PadView; device: string; 
     );
   return (
     <div className={s.myWrap}>
+      <div className={s.myHead}>On {device}</div>
       <div className={s.myRow} data-testid="pad-my-row">
         {mic}
         <Cell label={me.deaf ? "Undeafen" : "Deafen"}>
@@ -307,6 +314,8 @@ function Sounds({ view, device, mobile, dim }: { view: PadView; device: string; 
   const can = !dim && gate.allowed && !!c?.canSend("sound.play");
   const pending = !!c?.isPending("sound");
   const cols = mobile ? 3 : 4;
+  const favUrls = useMemo(() => new Set(favs.map((f) => f.url)), [favs]);
+  const [focusSearch, setFocusSearch] = useState(0);
   const grid = (list: PadSound[], key: string) => (
     <SoundPadGrid mobile={mobile} columns={cols}>
       {list.map((d) => {
@@ -319,7 +328,18 @@ function Sounds({ view, device, mobile, dim }: { view: PadView; device: string; 
     <section className={s.section} data-testid="pad-sounds">
       <SectionHead title="Soundboard" hint={`plays on ${device}, into the call`} />
       <SectionHead title="Favourites" />
-      {favs.length ? grid(favs, "fav") : <div className={s.empty}>Star sounds in the soundboard to pin them here.</div>}
+      {favs.length ? (
+        grid(favs, "fav")
+      ) : (
+        <div className={s.empty}>
+          Star sounds in the soundboard to pin them here, or{" "}
+          <button type="button" className={s.linkBtn} onClick={() => setFocusSearch((n) => n + 1)}>
+            search sounds
+          </button>
+          .
+        </div>
+      )}
+      <WebSearch view={view} device={device} mobile={mobile} dim={dim} favs={favUrls} focusSignal={focusSearch} />
       {here.length > 0 && (
         <>
           <SectionHead title="This room" />

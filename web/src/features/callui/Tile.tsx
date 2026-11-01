@@ -3,6 +3,7 @@
 // (mic / server-mute / game-chat / aside / hear marks, name, 9-bar waveform), away overlay,
 // tuned-in / not-listening pills, the hover button row, zoom pill, r.tileOverlays, context menu,
 // adaptive receive (size steering + visibility pauses).
+import { enterShareFullscreen, type FsHandle } from "./fullscreen";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useRegistry } from "@/core/registry";
 import { peekClient, useUserProfile } from "@/core/matrix";
@@ -31,6 +32,10 @@ export interface TileProps {
   mobile?: boolean;
   /** mobile grid: tiles flow in CSS (no absolute slot) */
   flow?: boolean;
+  /** Pad QOL: a host that runs full screen itself (the Pad's Watch box keeps its own buttons over the share) */
+  onFullscreen?: () => void;
+  /** that host's full-screen state (the ⛶ shows "Leave full screen") */
+  fullscreen?: boolean;
 }
 
 function levelKey(identity: string) {
@@ -325,12 +330,45 @@ export const Tile = memo(function Tile(p: TileProps) {
   const avatarSize = Math.max(56, Math.min(320, Math.round(Math.min(ch * 0.55, cw * 0.42))));
   const lp = useRef<number>(0);
   const lpFired = useRef(false);
+  // Pad QOL (2026-10-31): full screen for a share on a phone (fullscreen.ts: element → iPhone's video player → fill)
+  const [fsh, setFsh] = useState<FsHandle | null>(null);
+  const fshRef = useRef<FsHandle | null>(null);
+  const alive = useRef(true);
+  const isFs = p.onFullscreen ? !!p.fullscreen : !!fsh;
+  const toggleFs = () => {
+    if (p.onFullscreen) return p.onFullscreen();
+    if (fshRef.current) {
+      fshRef.current.exit();
+      fshRef.current = null;
+      setFsh(null);
+      return;
+    }
+    const el = rootRef.current;
+    if (!el) return;
+    void enterShareFullscreen(el, videoRef.current, () => {
+      fshRef.current = null;
+      if (alive.current) setFsh(null);
+    }).then((h) => {
+      if (!alive.current) return h.exit(); // the tile went away while it was entering: undo it
+      fshRef.current = h;
+      setFsh(h);
+    });
+  };
+  // the share ending (the tile going away) leaves full screen and puts the layout back
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      fshRef.current?.exit();
+      fshRef.current = null;
+    };
+  }, []);
   useEffect(() => () => window.clearTimeout(lp.current), []);
 
   return (
     <div
       ref={rootRef}
-      className={`${s.tile} ${p.flow ? s.flow : ""} ${p.hidden ? s.hiddenTile : ""}`}
+      className={`${s.tile} ${p.flow ? s.flow : ""} ${p.hidden ? s.hiddenTile : ""} ${fsh?.mode === "fill" ? s.fill : fsh?.mode === "element" ? s.fsEl : ""}`}
       style={rootStyle}
       data-tile={tile.id}
       onPointerEnter={() => setHov(true)}
@@ -435,7 +473,7 @@ export const Tile = memo(function Tile(p: TileProps) {
         </div>
       )}
       {share && !p.watched && cw > 220 && !p.hidden && (
-        <button className={s.notListening} style={{ top: recOnly && tunedIn ? 36 : 6 }} onClick={() => ui().set({ listen: [...ui().listen, tile.id] })}>
+        <button className={s.notListening} style={{ top: `calc(${recOnly && tunedIn ? 36 : 6}px + var(--fs-safe-top, 0px))` }} onClick={() => ui().set({ listen: [...ui().listen, tile.id] })}>
           <Icon name="audio-volume-muted-symbolic" size={14} color="var(--th-tile-not-listening-fg)" />
           {cw > 430 && <span>not listening · click to listen</span>}
         </button>
@@ -451,7 +489,15 @@ export const Tile = memo(function Tile(p: TileProps) {
           onClick={() => setSelfViewMode(p.selfPipMode === "pip" ? "grid" : "pip")}
         />
       )}
-      {!self && !p.fake && btnShown(80) && (
+      {/* phones: a share's first slot is Full screen (there are no pop-out windows on a phone) */}
+      {!self && !p.fake && share && p.mobile && btnShown(80) && (
+        <TileBtn tileW={cw} right={6} icon={isFs ? "view-restore-symbolic" : "view-fullscreen-symbolic"} tip={isFs ? "Leave full screen" : "Full screen"} on={isFs} opacity={1} chrome onClick={toggleFs} />
+      )}
+      {/* desktop layouts: Full screen on a share (the desktop app's CallIsland ⛶ at the same slot) */}
+      {!self && !p.fake && share && !p.mobile && btnShown(370) && (
+        <TileBtn tileW={cw} right={210} icon={isFs ? "view-restore-symbolic" : "view-fullscreen-symbolic"} tip={isFs ? "Leave full screen" : "Full screen"} on={isFs} opacity={btnOpacity(isFs)} chrome={!!chromeOn} onClick={toggleFs} />
+      )}
+      {!self && !p.fake && !(share && p.mobile) && btnShown(80) && (
         <TileBtn tileW={cw} right={6} icon="window-new" tip="Pop out into its own window" opacity={btnOpacity(false)} chrome={!!chromeOn} onClick={() => openPip(tile)} />
       )}
       {!self && btnShown(80) && (
@@ -595,7 +641,7 @@ function TileBtn(p: { right: number; tileW: number; icon: string; tip?: string; 
       type="button"
       aria-label={p.tip}
       className={`${s.tbtn} ${p.on ? s.tbtnOn : ""}`}
-      style={{ right, opacity: p.opacity, pointerEvents: p.chrome ? "auto" : "none" }}
+      style={{ right: `calc(${right}px + var(--fs-safe-right, 0px))`, opacity: p.opacity, pointerEvents: p.chrome ? "auto" : "none" }}
       tabIndex={p.chrome ? 0 : -1}
       onClick={(e) => {
         e.stopPropagation();

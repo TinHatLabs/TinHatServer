@@ -25,7 +25,9 @@ export type AddOutcome =
   | { status: "browse"; link: MediaLink }
   /** a song nobody could match on YouTube (or an album/playlist): show the card, nothing queued */
   | { status: "card"; link: MediaLink; meta: LinkMeta | null; message: string }
-  | { status: "error"; message: string };
+  | { status: "error"; message: string }
+  /** `lookupOnly`: the item the link resolved to, NOT queued (the Pad checks it first, then queues — Pad QOL) */
+  | { status: "resolved"; item: QueueItem };
 
 async function getJson(path: string, signal?: AbortSignal): Promise<{ ok: true; body: unknown } | { ok: false; status: number; body: unknown }> {
   const r = await apiFetch(path, { signal });
@@ -82,12 +84,13 @@ export async function resolveSong(q: { url?: string; artist?: string; title?: st
 }
 
 /** Text from the one box / a chat card → queued (or playing), a search, a browse target, a card, or an error. */
-export async function addLink(text: string, opts: { playNow?: boolean; signal?: AbortSignal } = {}): Promise<AddOutcome> {
+export async function addLink(text: string, opts: { playNow?: boolean; signal?: AbortSignal; lookupOnly?: boolean } = {}): Promise<AddOutcome> {
   const link = parseMediaLink(text);
   if (link.kind === "text") return { status: "search", query: link.input };
   if (link.kind === "playlist" || link.kind === "channel") return { status: "browse", link };
   if (!useWatchParty.getState().inParty) return { status: "error", message: "Join the Media Party first." };
   const commit = (item: QueueItem): AddOutcome => {
+    if (opts.lookupOnly) return { status: "resolved", item };
     if (opts.playNow) {
       enqueueItem(item);
       playUrl(item.url);

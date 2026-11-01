@@ -288,6 +288,8 @@ function onLink(s: Sess, from: string, payload: Record<string, unknown>) {
 
 async function startRaw(s: Sess) {
   if (sr.rawBusy || sr.tapClose) return;
+  // a watching device captures nothing until Talk here (assembly-042): no raw microphone for the room election either
+  if (getCall().noCapture) return;
   sr.rawBusy = true;
   try {
     const dev = getPref("call-input", "");

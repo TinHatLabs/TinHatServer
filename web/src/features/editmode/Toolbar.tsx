@@ -1,17 +1,24 @@
 // Toolbar.tsx — edit mode's toolbar (EDITMODE-UI §3, §7, §8, §9, §11): a 52 px strip above the dock host (the host is
 // that much shorter while editing, so the bar never covers an island's handle), the bar centred in it.
-// Editing: ‹name› · Undo · Redo · Presets ▾ · Add island ▾ · Add widget · Reset · Cancel · Done. The keyboard shortcuts of
+// Editing: ‹name› · Undo · Redo · Presets ▾ · Add island ▾ · Add widget · Add button ▾ · Add drawer ▾ · Reset · Cancel · Done.
+// feat/editmode-buttons-drawers (EDITMODE-UI §7.2, §7.3; the desktop's EditToolbar.qml): Add button ▾ (one action of the
+// catalogue in a new button island, with its look) and Add drawer ▾ (an island goes into a drawer a new button opens). The keyboard shortcuts of
 // a session live here too (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y; Ctrl+E and Ctrl+Enter = Done — Ctrl+E is the shell's).
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { presetDesktop, solve, type JObj } from "@/layout";
 import { registries } from "@/core/registry";
 import { useShortcut } from "@/core/shortcuts";
-import { Icon, Popover, cx, useTip } from "@/ui";
+import { Icon, Popover, TextField, cx, useTip } from "@/ui";
 import { canon } from "@/layout";
 import { cancelDrag, useDrag, type SolveCtx } from "./drag";
 import { islandText } from "./names";
 import { hiddenRefs } from "./session";
-import { cancelEdit, doneEdit, editApply, editNewButtons, editPreset, editRedo, editReset, editUndo, useEdit } from "./store";
+import { cancelEdit, doneEdit, editApply, editDrawerTargets, editNewActionButton, editNewButtons, editNewDrawer, editPreset, editRedo, editReset, editUndo, useEdit } from "./store";
+import { buttonIslands } from "@/actions/layoutStore";
+import { drawer as actionsDrawer } from "@/actions/evaluate";
+import { fold } from "@/actions/palette";
+import { useActionsSnapshot } from "@/actions/snapshot";
+import { BUTTON_LOOKS, DRAWER_ICON_FACES, actionRows } from "./addPanels";
 import { openRowEditor } from "@/actions/ui/editorStore";
 import { trackPointer } from "./EditLayer";
 import s from "./Toolbar.module.css";
@@ -65,8 +72,16 @@ export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }
   const [presetsAt, setPresetsAt] = useState<HTMLElement | null>(null);
   const [addAt, setAddAt] = useState<HTMLElement | null>(null);
   const [confirmAt, setConfirmAt] = useState<HTMLElement | null>(null);
+  const [buttonAt, setButtonAt] = useState<HTMLElement | null>(null);
+  const [drawerAt, setDrawerAt] = useState<HTMLElement | null>(null);
+  // Add button: the new button's look; Add drawer: its button's icon — kept while the session is open (the desktop's
+  // tb.btnLook / tb.drawerIcon)
+  const [btnLook, setBtnLook] = useState("iconLabel");
+  const [drawerIcon, setDrawerIcon] = useState("drawer");
   const presetBtn = useRef<HTMLButtonElement | null>(null);
   const addBtn = useRef<HTMLButtonElement | null>(null);
+  const buttonBtn = useRef<HTMLButtonElement | null>(null);
+  const drawerBtn = useRef<HTMLButtonElement | null>(null);
   const cancelBtn = useRef<HTMLButtonElement | null>(null);
 
   useShortcut("Ctrl+Z", () => (useDrag.getState().drag ? false : (editUndo(), true)), { whenTyping: true, priority: 50 });
@@ -116,6 +131,22 @@ export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }
             data="add-island"
           />
           <TBtn icon="list-add-symbolic" label="Add widget" showLabel={labels} onClick={addWidget} data="add-widget" />
+          <TBtn
+            icon="media-playback-start-symbolic"
+            label="Add button"
+            showLabel={labels}
+            btnRef={(el) => (buttonBtn.current = el)}
+            onClick={() => setButtonAt(buttonAt ? null : buttonBtn.current)}
+            data="add-button"
+          />
+          <TBtn
+            icon="sidebar-expand-left-symbolic"
+            label="Add drawer"
+            showLabel={labels}
+            btnRef={(el) => (drawerBtn.current = el)}
+            onClick={() => setDrawerAt(drawerAt ? null : drawerBtn.current)}
+            data="add-drawer"
+          />
           <span className={s.sep} />
           <TBtn icon="view-refresh-symbolic" label="Reset" showLabel={labels} tip="Reset to Classic" onClick={editReset} data="reset" />
           <span className={s.sep} />
@@ -126,6 +157,10 @@ export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }
 
       {presetsAt && <PresetsMenu anchor={presetsAt} form={session.form} start={session.start} ctx={ctx ?? undefined} onClose={() => setPresetsAt(null)} />}
       {addAt && <AddIslandPopover anchor={addAt} hidden={hidden} onClose={() => setAddAt(null)} />}
+      {buttonAt && <AddButtonPopover anchor={buttonAt} look={btnLook} onLook={setBtnLook} onClose={() => setButtonAt(null)} />}
+      {drawerAt && (
+        <AddDrawerPopover anchor={drawerAt} form={session.form} hidden={hidden} icon={drawerIcon} onIcon={setDrawerIcon} onClose={() => setDrawerAt(null)} />
+      )}
       {confirmAt && (
         <Popover open anchor={confirmAt} placement="below" align="end" onClose={() => setConfirmAt(null)} aria-label="Discard changes">
           <div className={s.confirm}>
@@ -308,6 +343,124 @@ function AddIslandPopover({ anchor, hidden, onClose }: { anchor: HTMLElement; hi
             <span>A row of buttons of your own, Stream Deck style</span>
           </span>
         </div>
+      </div>
+    </Popover>
+  );
+}
+
+/** Add button ▾ (EDITMODE-UI §7.2): the look of the new button, a search, and every action that may go into your own
+ *  button islands (ACTIONS.md §9.6, the row kind buttons.main) by group; a row = a new button island holding it. */
+function AddButtonPopover({ anchor, look, onLook, onClose }: { anchor: HTMLElement; look: string; onLook: (l: string) => void; onClose: () => void }) {
+  const snap = useActionsSnapshot();
+  const groups = useMemo(() => actionsDrawer("web", snap, "buttons.main", fold), [snap]);
+  const [query, setQuery] = useState("");
+  const rows = actionRows(groups, query).map((r) => {
+    if (r.head)
+      return (
+        <div key={`g:${r.group}`} className={s.btnGroup} data-edit-button-group={r.label}>
+          {r.label}
+        </div>
+      );
+    const it = r.item;
+    return (
+      <button
+        key={it.a}
+        type="button"
+        className={s.btnAction}
+        data-edit-button-action={it.a}
+        onClick={() => {
+          onClose();
+          editNewActionButton({ a: it.a }, look);
+        }}
+      >
+        <span className={s.btnActionIcon}>{it.icon && <Icon name={it.icon} size={16} color="var(--th-text-primary)" />}</span>
+        <span className={s.btnActionLabel}>{it.label}</span>
+      </button>
+    );
+  });
+  return (
+    <Popover open anchor={anchor} placement="below" align="start" gap={6} onClose={onClose} aria-label="Add button" padding={0}>
+      <div className={s.btnPanel} data-edit-panel="button">
+        <div className={s.btnHead}>
+          <div className={s.looks} role="radiogroup" aria-label="Look">
+            <span className={s.lookLabel}>Look</span>
+            {BUTTON_LOOKS.map((l) => (
+              <button
+                key={l.id}
+                type="button"
+                role="radio"
+                aria-checked={look === l.id}
+                className={cx(s.look, look === l.id && s.lookOn)}
+                data-edit-look={l.id}
+                onClick={() => onLook(l.id)}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <TextField className={s.btnSearch} placeholder="Search actions…" value={query} onChange={(e) => setQuery(e.target.value)} data-edit-button-search="" />
+        </div>
+        <div className={s.btnList}>{rows.length ? rows : <div className={s.btnNone}>No action matches.</div>}</div>
+      </div>
+    </Popover>
+  );
+}
+
+/** Add drawer ▾ (EDITMODE-UI §7.3): the drawer button's icon, then the island to put in it (placed ones are hidden by
+ *  it; the room, the call and room info can't go into a drawer). */
+function AddDrawerPopover({ anchor, form, hidden, icon, onIcon, onClose }: {
+  anchor: HTMLElement;
+  form: JObj;
+  hidden: string[];
+  icon: string;
+  onIcon: (i: string) => void;
+  onClose: () => void;
+}) {
+  const targets = editDrawerTargets();
+  const placedButtons = buttonIslands(form);
+  return (
+    <Popover open anchor={anchor} placement="below" align="start" gap={6} onClose={onClose} aria-label="Add drawer" padding={0}>
+      <div className={s.drawerPanel} data-edit-panel="drawer">
+        <div className={s.drawerIntro}>A button opens the island in a drawer under it. Pick its icon, then the island.</div>
+        <div className={s.drawerIcons} role="radiogroup" aria-label="Icon">
+          {DRAWER_ICON_FACES.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              role="radio"
+              aria-checked={icon === d.id}
+              aria-label={d.id}
+              className={cx(s.drawerIcon, icon === d.id && s.lookOn)}
+              data-edit-drawer-icon={d.id}
+              onClick={() => onIcon(d.id)}
+            >
+              <Icon name={d.icon} size={16} color={icon === d.id ? "var(--th-text-on-accent)" : "var(--th-text-primary)"} />
+            </button>
+          ))}
+        </div>
+        {targets.map((ref) => {
+          const k = placedButtons.indexOf(ref);
+          const t = islandText(ref, k >= 0 ? k + 1 : undefined);
+          const isHidden = hidden.includes(ref);
+          return (
+            <button
+              key={ref}
+              type="button"
+              className={s.drawerTarget}
+              data-edit-drawer-target={ref}
+              onClick={() => {
+                onClose();
+                editNewDrawer(ref, icon);
+              }}
+            >
+              <Icon name={t.icon} size={20} color="var(--th-text-primary)" />
+              <span className={s.rowText}>
+                <b>{t.name}</b>
+                <span>{isHidden ? "Hidden now — a drawer brings it back" : "Moves into the drawer"}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
     </Popover>
   );

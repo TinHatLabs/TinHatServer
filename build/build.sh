@@ -102,7 +102,26 @@ cmd_create() {
 
 cmd_web() {
   need WEB_DIR
-  web_run bash -c 'mkdir -p tmp && pnpm build --outDir tmp/selfhost-dist --emptyOutDir >tmp/selfhost-build.log 2>&1 && echo "web built: $(git log --oneline -1)" || { tail -20 tmp/selfhost-build.log; exit 1; }'
+  # 0.3.11: ALWAYS install first. pnpm applies patchedDependencies (patches/*.patch) only at install, so a checkout
+  # that changes a patch but not the lockfile kept the old patched dependency: 0.3.8–0.3.10 shipped an E2EE worker
+  # without the 12.1.3 web integrity patch (share claude/tinhat-server/BUG-stale-web-worker-0.3.8-0.3.11.md).
+  web_run bash -c 'mkdir -p tmp && pnpm install --frozen-lockfile >tmp/selfhost-install.log 2>&1 || { tail -20 tmp/selfhost-install.log; exit 1; }'
+  web_run bash -c 'pnpm build --outDir tmp/selfhost-dist --emptyOutDir >tmp/selfhost-build.log 2>&1 && echo "web built: $(git log --oneline -1)" || { tail -20 tmp/selfhost-build.log; exit 1; }'
+}
+# The built E2EE worker must carry Tin Hat's livekit-client patch (a stale install drops it silently): the sender drop
+# (never sends a frame unencrypted), never-trust-NONE (plays only media that decrypts), the receiver's drop of
+# server-injected frames, the AV1 wrapper. Used by stage() here and by release.sh's preflight.
+E2EE_WORKER_MARKERS=("sender cryptor not ready / not encrypting" "dropped: Tin Hat plays only end-to-end encrypted media"
+  "dropping server-injected frame" "tinhat-av1-e2ee-v2")
+check_e2ee_worker() {  # check_e2ee_worker WEBDIR
+  local w m n
+  n=$(find "$1/assets" -maxdepth 1 -name 'livekit-client.e2ee.worker-*.js' | wc -l)
+  [ "$n" = 1 ] || { echo "web: expected one livekit-client.e2ee.worker-*.js in $1/assets, found $n" >&2; return 1; }
+  w=$(find "$1/assets" -maxdepth 1 -name 'livekit-client.e2ee.worker-*.js')
+  for m in "${E2EE_WORKER_MARKERS[@]}"; do
+    grep -qF "$m" "$w" || { echo "web: $(basename "$w") lacks Tin Hat's E2EE patch (\"$m\"): a stale pnpm install? refusing" >&2; return 1; }
+  done
+  echo "web: $(basename "$w") carries the E2EE patch (${#E2EE_WORKER_MARKERS[@]} markers)"
 }
 
 stage() {
@@ -118,6 +137,7 @@ stage() {
   need WEB_DIR
   [ -f "$WT/tmp/selfhost-dist/index.html" ] || { echo "no web build — run: build.sh web" >&2; exit 1; }
   rsync -a --exclude='*.map' "$WT/tmp/selfhost-dist/" "$P/web/"
+  check_e2ee_worker "$P/web" || exit 1
   # This server needs Tin Hat Web 12.0.3 or later, built CSP-ready (review of 116d103, #4): older bundles send no bearer
   # to the extras (every web and phone user would land in the token-less allowance) and can't take the app's
   # Content-Security-Policy (csp-ready.json is what turns it on; the manager's own check of it decides here too).

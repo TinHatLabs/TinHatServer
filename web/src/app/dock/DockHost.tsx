@@ -55,7 +55,7 @@ export interface HostSize {
 
 const LOG = typeof location !== "undefined" && /[?&]debug=layout\b/.test(location.search);
 
-export function DockHost({ form, view, shape, radius = 12, border = 1, unitPm = 1000, islands, chrome, onLayout, drawerOpen = false, onDrawerHover, onTab, tabLabel, onBackgroundMenu, style }: {
+export function DockHost({ form, view, shape, radius = 12, border = 1, unitPm = 1000, islands, chrome, underlay, onLayout, drawerOpen = false, onDrawerHover, onTab, tabLabel, onBackgroundMenu, style }: {
   form: Json;
   view?: Json;
   /** the solver's shape (gap, margin; tab / handle / drawerW / drawerPad default to the schema's shapeDefaults) */
@@ -68,6 +68,9 @@ export function DockHost({ form, view, shape, radius = 12, border = 1, unitPm = 
   islands: IslandDef[];
   /** the host's own chrome (the drawer's handle + panel frame), after the frames */
   chrome?: ReactNode;
+  /** host layers drawn BEFORE the frames (an equal z-index then paints under the frame): an open island drawer's
+   *  outside-press catcher at the drawer's own z (features/editmode/drawerRun.ts drawerCatchZ) */
+  underlay?: ReactNode;
   /** every applied layout and the host size it was solved for (the shell reads collapse state and insets from it), and
    *  the whole solve input (edit mode) */
   onLayout?: (out: SolveOut, size: HostSize, inputs: SolveInputs) => void;
@@ -239,6 +242,7 @@ export function DockHost({ form, view, shape, radius = 12, border = 1, unitPm = 
         press.current = null;
       }}
     >
+      {underlay}
       {ordered.map((ref) => {
         const d = byRef.get(ref)!;
         return (

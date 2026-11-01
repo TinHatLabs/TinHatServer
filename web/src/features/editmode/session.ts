@@ -392,6 +392,11 @@ const btnRefsIn = (form: JObj): Set<string> => {
 
 /** A new empty button island `buttons:b<n>` (the smallest free n), placed by its registry home (the bottom edge). */
 export function newButtonIsland(form: JObj): { ok: true; form: JObj; ref: string } | { ok: false; error: string } {
+  return newButtonIslandWith(form, op({ items: [] }));
+}
+
+/** A new button island whose `main` row is `row` (newButtonIsland, Add button, Add drawer). */
+function newButtonIslandWith(form: JObj, row: JObj): { ok: true; form: JObj; ref: string } | { ok: false; error: string } {
   if (placedRefs(form).filter((r) => r.startsWith("buttons:")).length >= 8) return { ok: false, error: "too-many" };
   const used = btnRefsIn(form);
   let n = 1;
@@ -403,9 +408,111 @@ export function newButtonIsland(form: JObj): { ok: true; form: JObj; ref: string
   f["hidden"] = hid;
   const r = applyOp(f, op({ op: "restore", ref }));
   if (!r.ok) return r;
-  const s2 = applyOp(r.form, op({ op: "setOpt", ref, key: "rows", value: op({ main: op({ items: [] }) }) }));
+  const s2 = applyOp(r.form, op({ op: "setOpt", ref, key: "rows", value: op({ main: row }) }));
   if (!s2.ok) return s2;
   return { ok: true, form: s2.form, ref };
+}
+
+// ---- buttons and drawers (EDITMODE-UI §7.2, §7.3; feat/editmode-buttons-drawers) ------------------------------------
+// Add button = a new button island holding ONE action from the catalogue. Add drawer = the island goes into `hidden` and
+// a new one-button island runs `layout.drawer.toggle` on it; opening the drawer renders drawerForm (the island in a
+// float under its button) — a transient form, never saved. The layout format is unchanged: a Tin Hat that does not know
+// the action draws the button as "Needs a newer Tin Hat" and lists the island among the hidden ones (CORE-CHANGES.md).
+
+/** The action a drawer's button runs (ACTIONS.md: target {island, icon?}). */
+export const DRAWER_ACTION = "layout.drawer.toggle";
+/** The drawer button's icons (the action's `icon` param values, code-point order). */
+export const DRAWER_ICONS = ["calendar", "chat", "drawer", "games", "grid", "info", "music", "people", "pin", "star"];
+/** Kinds an island in a drawer may have: hideable, floatable, and the same anywhere (not the room group, the call or
+ *  room info). */
+export const DRAWER_KINDS = ["nav", "dms", "spaces", "rooms", "widgets", "account", "buttons"];
+/** The gap between a drawer's button and its panel (layout units). */
+export const DRAWER_GAP = 4;
+/** drawerForm's numbers are truncated to integers and clamped to ±DRAWER_SPAN first (the same domain in Rust). */
+export const DRAWER_SPAN = 65536;
+const LOOKS = ["icon", "iconLabel", "label"];
+
+/** A new button island holding one action: `item` = a row item ({a, target?}), `look` icon | iconLabel | label. */
+export function newActionButton(form: JObj, item: Json, look: string): { ok: true; form: JObj; ref: string } | { ok: false; error: string } {
+  if (!isObj(item) || !isStr(get(item, "a")) || !/^[a-z][a-zA-Z0-9.]{0,63}$/.test(get(item, "a") as string)) return { ok: false, error: "bad-item" };
+  if (!LOOKS.includes(look)) return { ok: false, error: "bad-look" };
+  return newButtonIslandWith(form, op({ look, items: [clone(item)] }));
+}
+
+/** Whether a button island holds a drawer's button (any row): it can't go into a drawer (it would lock itself away). */
+function holdsDrawerButton(form: JObj, ref: string): boolean {
+  const opts = get(form, "opts");
+  const o = isObj(opts) ? get(opts, ref) : undefined;
+  const rows = isObj(o) ? get(o, "rows") : undefined;
+  if (!isObj(rows)) return false;
+  return Object.keys(rows).some((k) => {
+    const items = isObj(rows[k]) ? get(rows[k] as JObj, "items") : undefined;
+    return isArr(items) && items.some((it) => isObj(it) && get(it, "a") === DRAWER_ACTION);
+  });
+}
+
+/** The islands that may go into a drawer: placed or hidden, of a DRAWER_KINDS kind, not a drawer's own button island;
+ *  kind order, then code-point order. */
+export function drawerTargets(form: JObj): string[] {
+  const seen = new Set<string>();
+  for (const r of placedRefs(form)) seen.add(r);
+  for (const r of hiddenRefs(form)) seen.add(r);
+  const rank = (r: string) => DRAWER_KINDS.indexOf(kindOf(r));
+  return [...seen].filter((r) => rank(r) >= 0 && (r.startsWith("buttons:") || r === kindOf(r)) && !holdsDrawerButton(form, r)).sort((a, b) => rank(a) - rank(b) || cmpCp(a, b));
+}
+
+/** Add drawer: `ref` is hidden (when placed) and a new one-button island opens it; answers that island's ref. */
+export function newDrawer(form: JObj, ref: string, icon: string): { ok: true; form: JObj; ref: string; island: string } | { ok: false; error: string } {
+  if (!drawerTargets(form).includes(ref)) return { ok: false, error: "not-drawer-island" };
+  if (icon !== "" && !DRAWER_ICONS.includes(icon)) return { ok: false, error: "bad-icon" };
+  // it must be able to open: a free float slot, and a button island in it must not make a ninth placed one
+  // a button island in it: after hiding it, its launcher + itself opened must still fit in 8 placed
+  if (ref.startsWith("buttons:")) {
+    const placed = placedRefs(form);
+    const afterHide = placed.filter((r) => r.startsWith("buttons:")).length - (placed.includes(ref) ? 1 : 0);
+    if (afterHide >= 7) return { ok: false, error: "too-many" };
+  }
+  let f = form;
+  if (placedRefs(form).includes(ref)) {
+    const h = applyOp(form, op({ op: "hide", ref }));
+    if (!h.ok) return h;
+    f = h.form;
+  }
+  // a free float slot once it is hidden (hiding an island that floats alone frees its slot)
+  if (floatsOf(f).length >= 8) return { ok: false, error: "too-many-floats" };
+  const target = icon === "" ? op({ island: ref }) : op({ icon, island: ref });
+  const r = newButtonIslandWith(f, op({ look: "icon", items: [op({ a: DRAWER_ACTION, target })] }));
+  if (!r.ok) return r;
+  return { ok: true, form: r.form, ref: r.ref, island: ref };
+}
+
+/** The form a host renders while `ref`'s drawer is open: the hidden island in a float beside its button `btn` (layout
+ *  units, host coordinates, integers): under it (over it in the lower half), left-aligned with it (right-aligned in the
+ *  right half), DRAWER_GAP away; the float's size is the island's registry float size. Never saved. */
+export function drawerForm(form: JObj, ref: string, btn: { x: number; y: number; w: number; h: number }, host: { w: number; h: number }): { ok: true; form: JObj; id: string } | { ok: false; error: string } {
+  if (!hiddenRefs(form).includes(ref)) return { ok: false, error: "not-hidden" };
+  if (!drawerTargets(form).includes(ref)) return { ok: false, error: "not-drawer-island" };   // whatever a layout says
+  const floats = floatsOf(form);
+  if (floats.length >= 8) return { ok: false, error: "too-many-floats" };
+  if (ref.startsWith("buttons:") && placedRefs(form).filter((r) => r.startsWith("buttons:")).length >= 8) return { ok: false, error: "too-many" };
+  const taken = new Set<string>([...placedRefs(form), ...hiddenRefs(form)]);
+  for (const fl of floats) if (isObj(fl) && isStr(get(fl, "id"))) taken.add(get(fl, "id") as string);
+  for (const l of allLocs(form)) { const k = keyOf(l.node); if (k) taken.add(k); }
+  let id = "drawer";
+  for (let n = 2; taken.has(id); n++) id = `drawer-${n}`;
+  // the input domain: integers in [-DRAWER_SPAN, DRAWER_SPAN] (truncated, then clamped) — exact in both languages
+  const n = (v: number) => Math.max(-DRAWER_SPAN, Math.min(DRAWER_SPAN, Number.isFinite(v) ? Math.trunc(v) : 0));
+  btn = { x: n(btn.x), y: n(btn.y), w: n(btn.w), h: n(btn.h) };
+  host = { w: n(host.w), h: n(host.h) };
+  const right = 2 * btn.x + btn.w > host.w; // doubled centre: integer maths (floatAnchor's rule)
+  const bottom = 2 * btn.y + btn.h > host.h;
+  const clamp = (v: number) => Math.max(-4096, Math.min(4096, v));
+  const dx = clamp(right ? host.w - (btn.x + btn.w) : btn.x);
+  const dy = clamp(bottom ? host.h - btn.y + DRAWER_GAP : btn.y + btn.h + DRAWER_GAP);
+  const f = clone(form) as JObj;
+  f["hidden"] = hiddenOf(f).filter((x) => !(isObj(x) && get(x, "i") === ref));
+  f["floats"] = [...floatsOf(f), op({ id, anchor: (bottom ? "b" : "t") + (right ? "r" : "l"), dx, dy, node: op({ t: "island", i: ref }) })];
+  return { ok: true, form: f, id };
 }
 
 /** Remove a button island: hidden, then its leaf and its options dropped. */

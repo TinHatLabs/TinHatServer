@@ -41,6 +41,13 @@
 .drawerLayer > * {
   pointer-events: auto;
 }
+/* an open island drawer (feat/editmode-buttons-drawers): a press anywhere on the host but the floats closes it — over the
+   docked islands and the layout's floats, under the drawer: z = drawerCatchZ (features/editmode/drawerRun.ts), drawn before
+   the frames */
+.drawerCatch {
+  position: absolute;
+  inset: 0;
+}
 
 /* ---- phones: the stack ------------------------------------------------------------------------ */
 .mobile {

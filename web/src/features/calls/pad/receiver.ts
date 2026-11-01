@@ -12,6 +12,12 @@
 //   vol           live → pushVolume, else setVolume / setMuted (identity|user)    the per-person menu's slider / mute
 //   vol.reset     setVolume(…, 1) + setMuted(…, false) for the three categories   "Reset all to 100%"
 //   leave         leaveCall()                                                     the hang-up button
+//   sound.play.web soundboard startSound(url, name, emoji)                        a search result card
+//   party.join    Media Party joinParty(callRoom)                                 the call bar's Media Party "Join"
+//   party.play    play() / pause()                                                the window's ▶ / ⏸
+//   party.seek    seek(pos)                                                       the window's seek bar
+//   party.next    playUrl(nextQueueUrl(queue, playing))                           the window's ⏭ (watchParty.next)
+//   party.add     addLinkToParty(callRoom, url, now)                              the window's "Add a link"
 //
 // So every gate a local press meets applies again behind the rules' own refusals (padGate / use_soundboard, the
 // server-mute lock, sounds only in a call): a Pad can do nothing the person at this device couldn't do with one click.
@@ -36,8 +42,28 @@ export interface PadPerson {
   talk: boolean;
   micOff: boolean;
   away: boolean;
+  /** publishing a screen share (the Pad's Watch strip) */
+  share?: boolean;
   vol: Record<PadCat, number>;
   muted: Record<PadCat, boolean>;
+}
+
+/** The receiver's Media Party in its call room (null = none): what its own window shows. */
+export interface PadPartySnap {
+  in: boolean;
+  /** its own canControl */
+  host: boolean;
+  /** the playing url ("" = nothing) */
+  url: string;
+  title: string;
+  playing: boolean;
+  /** the room's playback clock: seconds at `at` (the writer's ms clock) */
+  pos: number;
+  at: number;
+  dur: number;
+  next: string[];
+  /** the outcome of the latest party.add (one session's), for that Pad's "couldn't add that link" */
+  add?: { sid: string; re: number; ok: boolean } | null;
 }
 
 /** Everything the receiver's own UI shows that a Pad reads (taken from the stores at one instant). */
@@ -64,6 +90,8 @@ export interface PadSnapshot {
   named: PadSoundRef[];
   /** this device's Recent list (newest first) */
   recent: PadSoundRef[];
+  /** the call room's Media Party (absent = none; the 12.1 snapshot had no such field) */
+  party?: PadPartySnap | null;
 }
 
 /** The commands the receiver's own buttons call (features/pad hands in the real ones). */
@@ -78,6 +106,13 @@ export interface PadExec {
   setVolume(identity: string, cat: PadCat, v: number): void;
   pushVolume(identity: string, cat: PadCat, v: number): void;
   setMuted(identity: string, cat: PadCat, muted: boolean): void;
+  /** Media Party of the call room (the window's own functions); each re-checks `url` against what plays right now */
+  partyJoin?(room: string): void;
+  partyPlay?(url: string, playing: boolean): void;
+  partySeek?(url: string, pos: number): void;
+  partyNext?(url: string): void;
+  /** `sid` / `re` = the command's session and seq: its outcome comes back in call.party.add */
+  partyAdd?(room: string, url: string, now: boolean, sid: string, re: number): void;
 }
 
 /** me.mic of the state: a moderator's lock first, then push to talk, then the mute. */
@@ -95,6 +130,7 @@ export function ctxOf(snap: PadSnapshot, padOn: boolean): PadCtx {
     participants: snap.people.map((p) => p.u),
     me: { micMuted: snap.me.micMuted, ptt: snap.me.ptt, serverMuted: snap.me.serverMuted, deaf: snap.me.deaf, brb: snap.me.brb, soundRole: snap.me.gate.allowed },
     sounds: snap.sounds,
+    party: snap.party ? { in: snap.party.in, host: snap.party.host, url: snap.party.url, playing: snap.party.playing } : null,
   };
 }
 
@@ -106,8 +142,22 @@ export function stateCall(snap: PadSnapshot): PadStateIn["call"] {
     gen: snap.call.gen,
     since: snap.call.since,
     me: { mic: micWord(snap.me), deaf: snap.me.deaf, brb: snap.me.brb, talk: snap.me.talk, sound: snap.me.sound, gate: snap.me.gate },
-    people: snap.people.map((p) => ({ u: p.u, talk: p.talk, micOff: p.micOff, away: p.away, vol: { ...p.vol }, muted: { ...p.muted } })),
+    people: snap.people.map((p) => ({ u: p.u, talk: p.talk, micOff: p.micOff, away: p.away, share: p.share === true, vol: { ...p.vol }, muted: { ...p.muted } })),
     recent: snap.recent.map((r) => ({ name: r.name, url: r.url, emoji: r.emoji })),
+    party: snap.party
+      ? {
+          in: snap.party.in,
+          host: snap.party.host,
+          url: snap.party.url,
+          title: snap.party.title,
+          playing: snap.party.playing,
+          pos: Math.max(0, Math.floor(snap.party.pos)),
+          at: Math.max(0, Math.floor(snap.party.at)),
+          dur: Math.max(0, Math.floor(snap.party.dur)),
+          next: snap.party.next.map((title) => ({ title })),
+          ...(snap.party.add ? { add: { ...snap.party.add } } : {}),
+        }
+      : null,
   };
 }
 
@@ -115,7 +165,7 @@ export function stateCall(snap: PadSnapshot): PadStateIn["call"] {
  * Run one ACCEPTED command (`verdict.ok && verdict.run`) through the receiver's own command for it. Returns what it
  * called (for the log). `open` / `ping` / `close` call nothing.
  */
-export function execPadCmd(cmd: PadCmd, snap: PadSnapshot, x: PadExec): string {
+export function execPadCmd(cmd: PadCmd, snap: PadSnapshot, x: PadExec, meta: { sid: string; re: number } = { sid: "", re: 0 }): string {
   switch (cmd.op) {
     case "sound.play": {
       const ref = snap.named.find((s) => s.url === cmd.url);
@@ -166,6 +216,29 @@ export function execPadCmd(cmd: PadCmd, snap: PadSnapshot, x: PadExec): string {
     case "leave":
       x.leaveCall();
       return "leaveCall";
+    case "sound.play.web":
+      x.startSound(cmd.url, cmd.name || "Sound", cmd.emoji);
+      return "startSound";
+    case "party.join":
+      if (!snap.call || !x.partyJoin) return "";
+      x.partyJoin(snap.call.room);
+      return "joinParty";
+    case "party.play":
+      if (!x.partyPlay) return "";
+      x.partyPlay(cmd.url, cmd.playing);
+      return cmd.playing ? "play" : "pause";
+    case "party.seek":
+      if (!x.partySeek) return "";
+      x.partySeek(cmd.url, cmd.pos);
+      return "seek";
+    case "party.next":
+      if (!x.partyNext) return "";
+      x.partyNext(cmd.url);
+      return "next";
+    case "party.add":
+      if (!snap.call || !x.partyAdd) return "";
+      x.partyAdd(snap.call.room, cmd.url, cmd.now, meta.sid, meta.re);
+      return cmd.now ? "addLink(playNow)" : "addLink";
     default:
       return "";
   }
@@ -270,7 +343,7 @@ export class PadReceiver {
       else this.log.debug?.(line);
     } else if (!v.ok) this.log.info(`REFUSED ${op} seq ${v.re} from ${who}: ${v.why}`);
     if (v.ok && v.run && v.cmd) {
-      const did = execPadCmd(v.cmd, snap, this.d.exec);
+      const did = execPadCmd(v.cmd, snap, this.d.exec, { sid: v.sid, re: v.re });
       this.log.info(`${v.cmd.op} seq ${v.re} from ${who} → ${did}`);
     }
     for (const sid of v.evicted) {

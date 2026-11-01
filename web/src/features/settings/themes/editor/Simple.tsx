@@ -1,6 +1,8 @@
-// Simple.tsx — THEMES-UI.md §13.7: Name + Author, Colours (background, accent chips, the adjusted note, readability),
+// Simple.tsx — THEMES-UI.md §13.7: Name + Author, Colours (the palette groups of palette.ts — THEME-SIMPLE design
+// 2026-10-31 — the accent quick picks, "set by hand", the adjusted note, readability),
 // Text (three fonts, the size), Density, Islands (radius, gap, margin, border, shadow, transparency).
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { PALETTE_GROUPS, paletteView, type Swatch } from "@/theme/palette";
 import { ACCENT_PRESETS, fixesFor, islandOpacity } from "@/theme/editor";
 import { FONTS_MONO, FONTS_SANS, FONTS_SERIF, readLook, type Density } from "@/theme/look";
 import { paletteLabel } from "@/theme/labels";
@@ -34,6 +36,21 @@ export function accentChips(doc: JObj): { value: string; colour: string; label: 
   if (typeof p.cursor === "string" && p.cursor.toLowerCase() !== String(p.fg).toLowerCase()) add("cursor", p.cursor, "Cursor");
   for (const n of [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14]) add(`c${n}`, ansi[n], paletteLabel(`c${n}`));
   return out;
+}
+
+const groupLabel = (id: string): string => PALETTE_GROUPS.find((g) => g.id === id)?.label ?? id;
+
+/** How many OTHER colours follow a swatch (its own roles left out: the same count as Advanced's "used by"). */
+export const usedCount = (sw: Swatch): number => sw.usedBy.length - sw.sources.filter((x) => x.includes(".")).length;
+
+/** A Simple swatch's tooltip: its label (+ the other sources merged into it), the colour, what it reaches. */
+export function swatchTip(sw: Swatch, lead: boolean, members: number): string {
+  const more = sw.sources.length > 1 ? ` +${sw.sources.length - 1} more` : "";
+  const n = usedCount(sw);
+  const used = n === 1 ? "used by 1 colour" : `used by ${n} colours`;
+  const also = sw.alsoIn.length ? ` · also changes ${sw.alsoIn.map(groupLabel).join(", ")}` : "";
+  const group = lead ? ` · moves the ${members} colours of its group` : "";
+  return `${sw.label}${more} · ${sw.colour.slice(0, 7)} · ${used}${also}${group}`;
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
@@ -102,13 +119,15 @@ export function SimpleMode() {
   const colours = useEditor((st) => st.colours);
   const st = useEditor();
   const [pop, setPop] = useState<{ target: ColourTarget; anchor: HTMLElement } | null>(null);
+  const [more, setMore] = useState(false);
+  const doc0 = session?.doc;
+  const view = useMemo(() => (doc0 ? paletteView(doc0, APP_SPEC) : { groups: [], handSet: [] }), [doc0]);
   if (!session || !colours || !st.resolved) return null;
   const doc = session.doc;
   const shape = readShape(doc);
   const look = readLook(doc);
   const opacity = islandOpacity(doc, APP_SPEC);
   const issues = shownIssues(st);
-  const bg = st.resolved.roles["surface.island"];
   const accentNow = hasPalette(doc) ? (typeof doc.accent === "string" ? doc.accent : null) : storedValue(doc, { kind: "role", id: "accent.base" });
   const accentColour = st.resolved.roles["accent.base"];
   const chips = accentChips(doc);
@@ -129,18 +148,41 @@ export function SimpleMode() {
 
       <div className={s.section}>
         <SectionLabel>Colours</SectionLabel>
-        <Row label="Background">
-          <button
-            type="button"
-            className={`${s.swatch} ${s.swatchBtn}`}
-            style={{ ["--sw" as string]: cssOf(bg) }}
-            aria-label="Background colour"
-            onClick={(e) => setPop({ target: { kind: "background" }, anchor: e.currentTarget })}
-          />
-          <span className={s.hex}>{bg}</span>
-        </Row>
-        <Row label="Accent">
-          <div className={s.chips} role="radiogroup" aria-label="Accent">
+        <HintLabel>Change a colour and everything made from it follows. The large swatch moves its whole group.</HintLabel>
+        {view.groups.map((g) => {
+          if (g.swatches.length === 0 || (g.id === "people" && !more)) return null;
+          return (
+            <div key={g.id} className={s.palGroup} role="group" aria-label={g.label}>
+              <span className={s.rowLabel}>{g.label}</span>
+              <div className={s.palSwatches}>
+                {g.swatches.map((sw, i) => {
+                  const lead = i === 0 && g.swatches.length > 1;
+                  const tip = swatchTip(sw, lead, g.swatches.length);
+                  return (
+                    <button
+                      key={sw.id}
+                      type="button"
+                      className={`${s.swatch} ${lead ? s.palLead : s.palSwatch}`}
+                      style={{ ["--sw" as string]: cssOf(sw.colour) }}
+                      title={tip}
+                      aria-label={tip}
+                      data-selected={pop?.target.kind === "swatch" && pop.target.id === sw.id ? "" : undefined}
+                      onClick={(e) => setPop({ target: { kind: "swatch", id: sw.id, group: g.id, whole: lead, label: sw.label }, anchor: e.currentTarget })}
+                    >
+                      {lead && (
+                        <span className={s.palLink}>
+                          <Icon name="link-symbolic" size={12} color="var(--th-settings-fg)" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        <Row label="Quick picks">
+          <div className={s.chips} role="radiogroup" aria-label="Accent quick picks">
             {chips.map((c) => (
               <button
                 key={c.value}
@@ -160,11 +202,20 @@ export function SimpleMode() {
                 )}
               </button>
             ))}
-            <button type="button" className={s.chipCustom} aria-label="Custom accent colour" title="Custom…" onClick={(e) => setPop({ target: { kind: "accent" }, anchor: e.currentTarget })}>
-              <Icon name="color-picker" size={14} color="var(--th-settings-fg)" />
-            </button>
           </div>
         </Row>
+        {view.groups.some((g) => g.id === "people" && g.swatches.length > 0) && (
+          <div>
+            <Button flat text={more ? "Fewer colours" : "More colours (people)"} onClick={() => setMore(!more)} />
+          </div>
+        )}
+        {view.handSet.length > 0 && (
+          <div className={s.note}>
+            <Icon name="help-about-symbolic" size={16} color="var(--th-settings-theme-note-icon)" />
+            <span>{view.handSet.length === 1 ? "1 colour is set by hand and doesn't follow these." : `${view.handSet.length} colours are set by hand and don't follow these.`}</span>
+            <Button flat text="Show in Advanced" onClick={() => useEditor.setState({ mode: "advanced", onlyIds: view.handSet, query: "", changedOnly: false })} />
+          </div>
+        )}
         {colours.adjusted.length > 0 && (
           <div className={s.note}>
             <Icon name="help-about-symbolic" size={16} color="var(--th-settings-theme-note-icon)" />

@@ -6,7 +6,8 @@ import { create } from "zustand";
 import { showToast } from "@/ui";
 import { getFormFactor } from "@/core/device";
 import type { JObj, Json } from "@/layout";
-import { EditSession, dockFloat, floatIsland, newButtonIsland, removeButtonIslandFrom, resetIsland, type FormKind, type Step } from "./session";
+import { EditSession, dockFloat, drawerTargets, floatIsland, newActionButton, newButtonIsland, newDrawer, removeButtonIslandFrom, resetIsland, type FormKind, type Step } from "./session";
+import { closeDrawer } from "./drawerRun";
 import { beginSession, clearOverride, endSession, getRendered, readOverride, saveLayout, setOverride } from "./layoutDoc";
 
 /** Reset layout on this device (EDITMODE-UI §9): the device-local override, at once. */
@@ -45,6 +46,7 @@ export function isEditing(kind?: FormKind): boolean {
 /** Open a session on the layout this device renders (the reset override included). */
 export function openEdit(kind: FormKind = "desktop"): void {
   if (useEdit.getState().session) return;
+  closeDrawer(); // an open drawer closes when edit mode opens (EDITMODE-UI §7.3)
   const r = getRendered();
   const s = new EditSession({ id: r.id, name: r.name, desktop: r.desktop, phone: r.phone }, kind);
   // LAYOUT §9.7 begin: the save builds on this start (a reset override edits from Classic, still on the same entry)
@@ -201,6 +203,40 @@ export function editNewButtons(): string | null {
   if (s.commit(r.form)) bump();
   return r.ref;
 }
+/** Add button (EDITMODE-UI §7.2): a new button island holding one action of the catalogue (`item` = {a, target?}), with
+ *  its look (icon | iconLabel | label) — one step. Answers the new island's ref. */
+export function editNewActionButton(item: Json, look: string): string | null {
+  const s = useEdit.getState().session;
+  if (!s || useEdit.getState().readOnly || s.kind !== "desktop") return null;
+  const r = newActionButton(s.form, item, look);
+  if (!r.ok) {
+    if (r.error === "too-many") showToast("You can have 8 button islands.", 3000);
+    else report(r);
+    return null;
+  }
+  if (s.commit(r.form)) bump();
+  return r.ref;
+}
+/** Add drawer (§7.3): `ref` goes into a drawer (hidden when placed) that a new one-button island opens
+ *  (`layout.drawer.toggle`, target {island, icon}) — one step. Answers the button island's ref. */
+export function editNewDrawer(ref: string, icon: string): string | null {
+  const s = useEdit.getState().session;
+  if (!s || useEdit.getState().readOnly || s.kind !== "desktop") return null;
+  const r = newDrawer(s.form, ref, icon);
+  if (!r.ok) {
+    if (r.error === "too-many") showToast("You can have 8 button islands.", 3000);
+    else report(r);
+    return null;
+  }
+  if (s.commit(r.form)) bump();
+  return r.ref;
+}
+/** The islands that may go into a drawer (placed or hidden) in the open desktop session — the Add drawer panel. */
+export function editDrawerTargets(): string[] {
+  const s = useEdit.getState().session;
+  return s && s.kind === "desktop" ? drawerTargets(s.form) : [];
+}
+
 /** Remove a button island for good (its place and its buttons), one step. */
 export function editRemoveButtons(ref: string): void {
   const s = useEdit.getState().session;

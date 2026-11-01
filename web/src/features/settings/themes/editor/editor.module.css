@@ -556,3 +556,57 @@
 :root[data-touch] .modeRow > button {
   height: 44px;
 }
+
+/* THEME-SIMPLE (2026-10-31): Simple's palette groups — label column, then the lead swatch 36 and the others 24 */
+.palGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+}
+.palSwatches {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.palLead {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  margin-right: 4px;
+}
+.palSwatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+.palLead[data-selected]::after,
+.palSwatch[data-selected]::after {
+  box-shadow: inset 0 0 0 2px var(--th-settings-fg);
+}
+.palLink {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--th-settings-theme-editor-bg);
+  box-shadow: 0 0 0 1px var(--th-settings-theme-editor-swatch-border);
+}
+.popChoice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.popHint {
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  color: var(--th-settings-hint-fg);
+}

@@ -17,6 +17,7 @@ import { createLogger } from "@/core/log";
 import { getFormFactor } from "@/core/device";
 import { PAD_CAP } from "./pad/rules";
 import { padAllowed } from "./pad/prefs";
+import { useCallStore } from "./store";
 
 const log = createLogger("av1");
 
@@ -139,7 +140,8 @@ export function av1Advertised(): boolean {
  *  "av1e2ee" (this browser decrypts natives' AV1) and "pad1" (Settings → Calls → Pad is on: my other verified devices
  *  may control this call, docs/PAD.md); left out when empty. */
 export function clientMarker(version: string, recordOptout: boolean): Record<string, unknown> {
-  const pad = padAllowed() ? [PAD_CAP] : [];
+  // a device that only WATCHES the call is never a Pad receiver (Pad QOL: its mic must not be openable remotely)
+  const pad = padAllowed() && !useCallStore.getState().watching ? [PAD_CAP] : [];
   if (av1Advertised()) return { kind: "native", web: true, caps: ["av1e2ee", ...pad], version, record_optout: recordOptout };
   return pad.length ? { kind: "web", caps: pad, version, record_optout: recordOptout } : { kind: "web", version, record_optout: recordOptout };
 }
