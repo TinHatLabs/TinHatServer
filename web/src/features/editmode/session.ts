@@ -8,11 +8,12 @@
 // (the engine's `save` would answer noop).
 //
 // Host logic that CHOOSES operations (both apps must choose the same ones, EDITMODE-UI §4.3 / §8):
-//   pickPreset   applyPreset, then carry every placed island's button rows (opts.<ref>.rows)
+//   pickPreset   applyPreset, then carry every placed island's button rows (opts.<ref>.rows), then the user's own
+//                button islands and drawers (carryOwn, 12.1.8)
 //   floatAnchor  the host corner nearest to an island's centre
 //   dockFloat    the island's registry home list as dock placements, first success wins
 //   resetIsland  hide → strip size / from, from = the preset's parent + index → restore
-import { applyOp, canon, clone, presetDesktop, presetPhone, repairPhone, REGISTRY } from "../../layout/index";
+import { applyOp, canon, clone, presetDesktop, presetPhone, repairPhone, REGISTRY, validateDesktop } from "../../layout/index";
 import type { JObj, Json } from "../../layout/index";
 import { get, has, isArr, isObj, isStr, obj } from "../../layout/json";
 import { allLocs, findKey, floatsOf, hiddenOf, isIsland, keyOf } from "../../layout/form";
@@ -210,7 +211,98 @@ export function pickPreset(form: JObj, name: string): { ok: true; form: JObj } |
       if (s.ok) next = s.form;
     }
   }
-  return { ok: true, form: next };
+  return { ok: true, form: carryOwn(form, next) };
+}
+
+/** The pick's second half (12.1.8, EDITMODE-UI §8 "your own button islands come along"): the user's own button islands
+ *  (`buttons:*`) and drawers of the form before the pick, carried into the preset. A preset has no button islands, so
+ *  without this a pick dropped every Add button / Add drawer result. Three passes; a step the engine refuses, or one
+ *  whose form would not validate, is skipped (the form stays as it was before that step):
+ *    1. a HIDDEN own button island the new form lacks: hidden again, with its rows (a drawer's island, or one hidden by
+ *       hand — still restorable from Add island);
+ *    2. every drawer reachable from a PLACED own button island — its drawers, and the drawers of an island (with rows) in
+ *       one of them, and so on (breadth first from the placed ones in document order; row keys in code-point order; items in
+ *       order; each island once): the island it opens is hidden in the new form (the preset placed it) or put back into
+ *       `hidden` (it was hidden and the preset lacks it), and keeps its rows;
+ *    3. a PLACED own button island the new form doesn't place: back at its registry home (hidden + restore, like New
+ *       button island), with its rows.
+ *  The layout format is unchanged: everything here is an ordinary hidden list entry, placement or `rows` option.
+ *  session.rs `carry_own`, line for line. */
+function carryOwn(before: JObj, next: JObj): JObj {
+  const valid = (f: JObj) => validateDesktop(f).length === 0;
+  const rowsOf = (r: string): Json | undefined => {
+    const opts = get(before, "opts");
+    const o = isObj(opts) ? get(opts, r) : undefined;
+    return isObj(o) && has(o, "rows") ? (get(o, "rows") as Json) : undefined;
+  };
+  const inForm = (f: JObj, r: string) => placedRefs(f).includes(r) || hiddenRefs(f).includes(r);
+  const pushHidden = (f: JObj, r: string): JObj | null => {
+    const g = clone(f) as JObj;
+    const hid = hiddenOf(g).slice();
+    hid.push(op({ t: "island", i: r }));
+    g["hidden"] = hid;
+    return valid(g) ? g : null;
+  };
+  const setRows = (f: JObj, r: string): JObj => {
+    const rows = rowsOf(r);
+    if (rows === undefined) return f;
+    const s = applyOp(f, op({ op: "setOpt", ref: r, key: "rows", value: clone(rows) }));
+    return s.ok && valid(s.form) ? s.form : f;
+  };
+  // 1. hidden own button islands
+  for (const r of hiddenRefs(before)) {
+    if (r.startsWith("buttons:") && !inForm(next, r)) {
+      const g = pushHidden(next, r);
+      if (g) next = setRows(g, r);
+    }
+  }
+  // 2. the islands the drawers open, breadth first from the placed own button islands
+  const placedOwn = placedRefs(before).filter((r) => r.startsWith("buttons:"));
+  const queue: string[] = placedOwn.slice();
+  const seen: string[] = [];
+  const targets: string[] = [];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const b = queue[qi];
+    if (seen.includes(b)) continue;
+    seen.push(b);
+    const rows = rowsOf(b);
+    if (!isObj(rows)) continue;
+    for (const k of Object.keys(rows).sort(cmpCp)) {
+      const row = rows[k];
+      const items = isObj(row) ? get(row, "items") : undefined;
+      if (!isArr(items)) continue;
+      for (const it of items) {
+        if (!(isObj(it) && get(it, "a") === DRAWER_ACTION)) continue;
+        const tg = get(it, "target");
+        const t = isObj(tg) ? get(tg, "island") : undefined;
+        if (isStr(t) && t.length > 0 && !targets.includes(t)) {
+          queue.push(t); // any island with rows may hold a drawer of its own
+          targets.push(t);
+        }
+      }
+    }
+  }
+  for (const t of targets) {
+    if (placedRefs(next).includes(t)) {
+      const h = applyOp(next, op({ op: "hide", ref: t }));
+      if (h.ok && valid(h.form)) next = h.form;
+    } else if (!hiddenRefs(next).includes(t) && hiddenRefs(before).includes(t)) {
+      const g = pushHidden(next, t);
+      if (g) next = g;
+    }
+    if (hiddenRefs(next).includes(t)) next = setRows(next, t);
+  }
+  // 3. placed own button islands, back at their registry home
+  for (const r of placedOwn) {
+    if (inForm(next, r)) continue;
+    const g = clone(next) as JObj;
+    const hid = hiddenOf(g).slice();
+    hid.push(op({ t: "island", i: r }));
+    g["hidden"] = hid;
+    const s = applyOp(g, op({ op: "restore", ref: r }));
+    if (s.ok && valid(s.form)) next = setRows(s.form, r);
+  }
+  return next;
 }
 
 function cmpCp(a: string, b: string): number {

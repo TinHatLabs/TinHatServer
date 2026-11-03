@@ -1,72 +1,25 @@
 diff --git a/dist/livekit-client.e2ee.worker.mjs b/dist/livekit-client.e2ee.worker.mjs
-index ad55a83..51b796e 100644
+index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f5683a43914 100644
 --- a/dist/livekit-client.e2ee.worker.mjs
 +++ b/dist/livekit-client.e2ee.worker.mjs
-@@ -1,33 +1,33 @@
--/******************************************************************************
--Copyright (c) Microsoft Corporation.
--
--Permission to use, copy, modify, and/or distribute this software for any
--purpose with or without fee is hereby granted.
--
--THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
--REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
--AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
--INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
--LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
--OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
--PERFORMANCE OF THIS SOFTWARE.
--***************************************************************************** */
--/* global Reflect, Promise, SuppressedError, Symbol, Iterator */
--
--
--function __awaiter(thisArg, _arguments, P, generator) {
--    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
--    return new (P || (P = Promise))(function (resolve, reject) {
--        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
--        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
--        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
--        step((generator = generator.apply(thisArg, _arguments || [])).next());
--    });
--}
--
--typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
--    var e = new Error(message);
--    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
-+/******************************************************************************
-+Copyright (c) Microsoft Corporation.
-+
-+Permission to use, copy, modify, and/or distribute this software for any
-+purpose with or without fee is hereby granted.
-+
-+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
-+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
-+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
-+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
-+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
-+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
-+PERFORMANCE OF THIS SOFTWARE.
-+***************************************************************************** */
-+/* global Reflect, Promise, SuppressedError, Symbol, Iterator */
-+
-+
-+function __awaiter(thisArg, _arguments, P, generator) {
-+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-+    return new (P || (P = Promise))(function (resolve, reject) {
-+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-+        step((generator = generator.apply(thisArg, _arguments || [])).next());
-+    });
-+}
-+
-+typeof SuppressedError === "function" ? SuppressedError : function (error, suppressed, message) {
-+    var e = new Error(message);
-+    return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
- };
+@@ -6081,13 +6081,9 @@ function writeRbsp(data_in) {
  
- var loglevel$1 = {exports: {}};
-@@ -6744,6 +6744,88 @@ class BaseFrameCryptor extends eventsExports.EventEmitter {
+ class DataCryptor {
+   static makeIV(timestamp) {
+-    const iv = new ArrayBuffer(12);
+-    const ivView = new DataView(iv);
+-    const randomBytes = crypto.getRandomValues(new Uint32Array(1));
+-    ivView.setUint32(0, randomBytes[0]);
+-    ivView.setUint32(4, timestamp);
+-    ivView.setUint32(8, timestamp - DataCryptor.sendCount % 0xffff);
+-    DataCryptor.sendCount++;
++    // PATCH (Tin Hat Web) tinhat-iv-v1: the worker's one allocator (upstream: random | ts | ts - sendCount % 0xffff)
++    const iv = tinhatIvAlloc.take();
++    if (!iv) throw new Error('Tin Hat IV allocator exhausted');
+     return iv;
+   }
+   static encrypt(data, keys) {
+@@ -6744,6 +6740,365 @@ class BaseFrameCryptor extends eventsExports.EventEmitter {
   * Cryptor is responsible for en-/decrypting media frames.
   * Each Cryptor instance is responsible for en-/decrypting a single mediaStreamTrack.
   */
@@ -151,11 +104,288 @@ index ad55a83..51b796e 100644
 +    return false;
 +  }
 +}
++// ---- PATCH (Tin Hat Web) sender IV allocator (tinhat-iv-v1) + VP9 E2EE keyframe IV (tinhat-vp9-kf-iv-v1) --------
++// IV = domain (32 bits) || counter (64 bits as two words, < 2^53), big-endian, 12 bytes, from ONE allocator per
++// worker. engine.ts creates one E2EE worker per call join, next to that join's freshly minted key, and every key of
++// the session (rotations, ratchets) is sealed only in this worker; so no (key, IV) pair can repeat: each counter value
++// is handed out once and the counter never wraps (exhausted -> the frame is dropped). Upstream's rule (ssrc | ts |
++// ts - count % 0xffff, per-cryptor counter) could repeat after a same-key reconnect. Receivers read the IV from the
++// trailer: wire-compatible. Argument in full: the Tin Hat desktop repo, vendor/webrtc-sys/libwebrtc-patches/README.md.
++// VP9: encrypted from byte 0, but the LiveKit SFU decides "keyframe" from byte 0 of the VP9 payload
++// (mediatransportutil codec.IsVP9KeyFrame), a 1-in-16 coin on ciphertext. AES-GCM is counter mode (ciphertext byte 0 =
++// plaintext byte 0 XOR keystream byte 0), so the sender takes IVs from the allocator until byte 0 tells the SFU the
++// truth; a cap miss drops the frame (the stream recovers with a later keyframe, normally the next PLI's). Shared vectors testvectors/vp9-kf-iv/vectors.json.
++const TINHAT_IV_STAMP = 'tinhat-iv-v2';
++const TINHAT_VP9_KF_IV_STAMP = 'tinhat-vp9-kf-iv-v1';
++const TINHAT_VP9_KF_IV_MAX_TRIES = 512;
++const TINHAT_IV_COUNTER_LIMIT = Number.MAX_SAFE_INTEGER; // 2^53 - 1: never reached (one IV per frame)
++// tinhat-iv-v2, the H.264-safe layout (12.1.8): EVERY IV byte is nonzero and byte 0 >= 4. For H.264/H.265 the sender
++// RBSP-escapes ciphertext || IV || trailer (writeRbsp: a 0x03 before any byte <= 3 after two 0x00), while native
++// receivers read the IV from the RAW tail before unescaping. v1's counter (top bytes 00 00 00) put an escape inside the
++// IV of every H.264 frame. v2: the domain's random bytes map into 1..255 (byte 0 into 4..255) and the counter is written
++// as 8 base-255 digits, each + 1 (a bijection: uniqueness unchanged), so no escape can land inside the 14-byte tail;
++// the junction case (tag ...00 00 | IV[0] <= 3) can't happen, and would sit BEFORE the IV anyway. Same layout as the
++// desktop's tinhat_iv.h; shared vectors testvectors/iv-layout/vectors.json.
++class TinhatIvAllocator {
++  constructor(domain, start) {
++    const d = domain >>> 0;
++    this.domainBytes = [4 + (d >>> 24 & 0xff) % 252, 1 + (d >>> 16 & 0xff) % 255, 1 + (d >>> 8 & 0xff) % 255, 1 + (d & 0xff) % 255];
++    this.next = start;
++  }
++  /** The counter as 8 base-255 digits, most significant first, each + 1 (every byte 1..255). c < 2^53: exact. */
++  static encodeCounter(c, out, at) {
++    for (let i = 7; i >= 0; i--) {
++      out[at + i] = c % 255 + 1;
++      c = Math.floor(c / 255);
++    }
++  }
++  /** The next unused IV (ArrayBuffer(12)), or null once the counter is exhausted: never reused, never wrapped. */
++  take() {
++    if (!(this.next < TINHAT_IV_COUNTER_LIMIT)) return null;
++    const c = this.next++;
++    const iv = new ArrayBuffer(12);
++    const u = new Uint8Array(iv);
++    u.set(this.domainBytes, 0);
++    TinhatIvAllocator.encodeCounter(c, u, 4);
++    return iv;
++  }
++}
++function tinhatNewIvAllocator() {
++  const r = crypto.getRandomValues(new Uint32Array(3)); // random domain + start: defence in depth only
++  return new TinhatIvAllocator(r[0], (r[1] & 0xff) * 4294967296 + r[2]);
++}
++/** The worker's one allocator: every call cryptor of this worker seals with IVs from it. Never replaced or reset
++ *  (the self-test below gives ITS cryptors a private allocator instead: a test can never touch this one). */
++const tinhatIvAlloc = tinhatNewIvAllocator();
++/** Byte-for-byte the SFU's test (codec.IsVP9KeyFrame after the B bit). */
++function tinhatVp9ByteLooksKey(b) {
++  if ((b & 0xc0) !== 0x80) return false;
++  const profile = b >> 4 & 0x3;
++  if (profile !== 3) return (b & 0x0c) === 0;
++  return (b & 0x06) === 0;
++}
++/** The IV for one VP9 frame: candidates from `alloc` (each consumed, never handed out again); each try seals ONE byte
++ *  (the frame's first) under the candidate privately (with a 96-bit IV that byte is byte 0 of the real ciphertext,
++ *  whatever the length and AAD; the probe's ciphertext and tag are discarded). step: matched | cap | exhausted; only
++ *  matched may be sent. A rejected WebCrypto call throws (the caller's catch drops the frame). */
++async function tinhatVp9KeyframeIv(key, first, wantKey, alloc, maxTries) {
++  const one = new Uint8Array([first]);
++  for (let tries = 1; tries <= maxTries; tries++) {
++    const iv = alloc.take();
++    if (!iv) return { step: 'exhausted', tries, iv: null };
++    const c = new Uint8Array(await crypto.subtle.encrypt({ name: ENCRYPTION_ALGORITHM, iv, additionalData: new Uint8Array(0) }, key, one));
++    if (tinhatVp9ByteLooksKey(c[0]) === wantKey) return { step: 'matched', tries, iv };
++  }
++  return { step: 'cap', tries: maxTries, iv: null };
++}
++/** Worker self-test of the VP9 rule: predicate = the shared vectors; 400 random key/delta frames give the right SFU
++ *  verdict and decrypt back. */
++async function tinhatVp9SelfTest(vectorKeys) {
++  try {
++    const key = await crypto.subtle.importKey('raw', crypto.getRandomValues(new Uint8Array(16)), ENCRYPTION_ALGORITHM, false, ['encrypt', 'decrypt']);
++    const want = new Set(vectorKeys || []);
++    let predicateOk = Array.isArray(vectorKeys);
++    for (let b = 0; b < 256 && predicateOk; b++) if (tinhatVp9ByteLooksKey(b) !== want.has(b)) predicateOk = false;
++    const alloc = tinhatNewIvAllocator();
++    let frames = 0, matched = 0, roundTrip = 0, maxTries = 0, keyTries = 0, keys = 0;
++    for (let i = 0; i < 400; i++) {
++      const isKey = i % 4 === 0;
++      const plain = crypto.getRandomValues(new Uint8Array(64 + i % 37));
++      plain[0] = isKey ? 0x82 : 0x86;
++      const r = await tinhatVp9KeyframeIv(key, plain[0], isKey, alloc, TINHAT_VP9_KF_IV_MAX_TRIES);
++      if (r.step !== 'matched') continue;
++      const ct = new Uint8Array(await crypto.subtle.encrypt({ name: ENCRYPTION_ALGORITHM, iv: r.iv, additionalData: new Uint8Array(0) }, key, plain));
++      frames++;
++      if (tinhatVp9ByteLooksKey(ct[0]) === isKey) matched++;
++      const back = new Uint8Array(await crypto.subtle.decrypt({ name: ENCRYPTION_ALGORITHM, iv: r.iv, additionalData: new Uint8Array(0) }, key, ct));
++      if (back.length === plain.length && back.every((x, j) => x === plain[j])) roundTrip++;
++      maxTries = Math.max(maxTries, r.tries);
++      if (isKey) { keys++; keyTries += r.tries; }
++    }
++    return { predicateOk, frames, matched, roundTrip, maxTries, meanKeyTries: keyTries / keys, ok: predicateOk && frames === 400 && matched === frames && roundTrip === frames };
++  } catch (e) {
++    return { ok: false, error: String(e) };
++  }
++}
++/** Worker self-test of the IV allocator THROUGH THE REAL encode path (FrameCryptor.encodeFunction on synthetic frames;
++ *  its cryptors carry a PRIVATE allocator (cryptor.tinhatIvAlloc) and cap (cryptor.tinhatVp9MaxTries), so the worker's
++ *  own allocator is never read, replaced or reset, and overlapping self-tests can't share an allocator either):
++ *  a long session with every sent IV recorded — mic (Opus), camera (VP8), a share (VP9, 3 SVC layer frames per picture
++ *  with the SAME timestamp), equal timestamps for 500 pictures, a key rotation every 4000 pictures and a ratchet-like
++ *  new key every 1500, a reconnect (new cryptors) halfway, the allocator's start FORCED below the 32-bit carry — then
++ *  the drop paths (exhausted allocator, cap miss with the cap forced to 1). */
++async function tinhatIvSelfTest(opts) {
++  const id = 'tinhat-iv-selftest-' + Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
++  const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
++  try {
++    const start = opts && Number.isFinite(opts.start) ? opts.start : 4228250625 - 30000; // below the 255^4 digit carry
++    const pictures = opts && opts.pictures || 20000;
++    let alloc = new TinhatIvAllocator(0x5a5a5a5a, start);
++    const kpo = Object.assign({}, KEY_PROVIDER_DEFAULTS, { keyringSize: 256, ratchetWindowSize: 0, failureTolerance: -1 });
++    const keys = new ParticipantKeyHandler(id, kpo);
++    encryptionEnabledMap.set(id, true);
++    let keyGen = 0, keyIdx = 0;
++    const raw = new Map();
++    const newKey = async () => {
++      const k = await crypto.subtle.importKey('raw', crypto.getRandomValues(new Uint8Array(16)), ENCRYPTION_ALGORITHM, false, ['encrypt', 'decrypt']);
++      keys.setKeySet({ material: undefined, encryptionKey: k }, keyIdx);
++      await keys.setCurrentKeyIndex(keyIdx);
++      raw.set(keyGen, k);
++    };
++    await newKey();
++    const mk = (a, maxTries) => {
++      const c = new FrameCryptor({ keys, participantIdentity: id, keyProviderOptions: kpo });
++      c.tinhatIvAlloc = a;
++      if (maxTries) c.tinhatVp9MaxTries = maxTries;
++      return c;
++    };
++    let mic = mk(alloc), cam = mk(alloc), share = mk(alloc), ssrcBase = 0x1000;
++    const sent = new Set();
++    let ivs = 0, dups = 0, vp9 = 0, vp9Right = 0, sampled = 0, sampleOk = 0, maxCounter = 0, lost = 0, zeroBytes = 0, lowByte0 = 0;
++    const encode = async (cryptor, frame) => {
++      const out = [];
++      await cryptor.encodeFunction(frame, { enqueue: (f) => out.push(f) });
++      return out[0] || null;
++    };
++    const audio = (ssrc, ts) => ({ data: crypto.getRandomValues(new Uint8Array(40)).buffer, timestamp: ts, getMetadata: () => ({ synchronizationSource: ssrc, payloadType: 111, mimeType: 'audio/opus' }) });
++    const video = (ssrc, ts, type, mime, b0) => {
++      const d = crypto.getRandomValues(new Uint8Array(80));
++      d[0] = b0;
++      return { data: d.buffer, type, timestamp: ts, getMetadata: () => ({ synchronizationSource: ssrc, payloadType: mime === 'video/VP9' ? 98 : 96, mimeType: mime }) };
++    };
++    const record = (f) => {
++      if (!f) { lost++; return null; }
++      const u8 = new Uint8Array(f.data);
++      const ivLen = u8[u8.length - 2];
++      const iv = u8.subarray(u8.length - 2 - ivLen, u8.length - 2);
++      ivs++;
++      const k = keyGen + ':' + hex(iv);
++      if (sent.has(k)) dups++; else sent.add(k);
++      let c = 0;
++      for (let i = 4; i < 12; i++) c = c * 255 + (iv[i] - 1);
++      maxCounter = Math.max(maxCounter, c);
++      for (const b of iv) if (b === 0) zeroBytes++;
++      if (iv[0] < 4) lowByte0++;
++      return { u8, iv };
++    };
++    for (let pic = 0; pic < pictures; pic++) {
++      if (pic > 0 && pic % 4000 === 0) { keyGen++; keyIdx = (keyIdx + 1) % 256; await newKey(); }
++      else if (pic > 0 && pic % 1500 === 0) { keyGen++; keyIdx = (keyIdx + 1) % 256; await newKey(); }
++      if (pic === Math.floor(pictures / 2)) { mic = mk(alloc); cam = mk(alloc); share = mk(alloc); ssrcBase += 0x10; } // reconnect: new cryptors, same domain
++      const ts = Math.floor(pic / 500) * 3000; // equal timestamps for 500 pictures
++      record(await encode(mic, audio(ssrcBase + 1, ts)));
++      record(await encode(cam, video(ssrcBase + 2, ts, pic % 60 === 0 ? 'key' : 'delta', 'video/VP8', pic % 60 === 0 ? 0x10 : 0x11)));
++      for (let layer = 0; layer < 3; layer++) {
++        const isKey = pic % 30 === 0 && layer === 0;
++        const fr = video(ssrcBase + 3, ts, isKey ? 'key' : 'delta', 'video/VP9', isKey ? 0x82 : 0x86);
++        const plain = new Uint8Array(fr.data.slice(0));
++        const r = record(await encode(share, fr));
++        vp9++;
++        if (!r) continue;
++        if (tinhatVp9ByteLooksKey(r.u8[0]) === isKey) vp9Right++;
++        if (vp9 % 101 === 0) {
++          sampled++;
++          const ct = r.u8.subarray(0, r.u8.length - 2 - 12);
++          const back = new Uint8Array(await crypto.subtle.decrypt({ name: ENCRYPTION_ALGORITHM, iv: r.iv, additionalData: new Uint8Array(0) }, raw.get(keyGen), ct));
++          if (back.length === plain.length && back.every((x, j) => x === plain[j])) sampleOk++;
++        }
++      }
++    }
++    // drop path 1: an exhausted allocator never reuses or wraps; the frame is dropped
++    const exMic = mk(new TinhatIvAllocator(1, TINHAT_IV_COUNTER_LIMIT - 2));
++    const ex = [];
++    for (let i = 0; i < 3; i++) ex.push(await encode(exMic, audio(0x9001, i)));
++    const exhaustedOk = !!ex[0] && !!ex[1] && ex[2] === null;
++    // drop path 2: the cap (forced to 1): a keyframe without a matching IV is dropped, never sent misclassified
++    const capShare = mk(tinhatNewIvAllocator(), 1);
++    let capSent = 0, capDropped = 0, capWrong = 0;
++    for (let i = 0; i < 800; i++) {
++      const f = await encode(capShare, video(0x9100, i * 3000, 'key', 'video/VP9', 0x82));
++      if (!f) { capDropped++; continue; }
++      capSent++;
++      if (!tinhatVp9ByteLooksKey(new Uint8Array(f.data)[0])) capWrong++;
++    }
++    // control: upstream's rule (ssrc | ts | ts - count % 0xffff, per-cryptor counter) after a same-key reconnect that
++    // reuses the SSRC and the RTP timestamp base repeats every IV (the detector above would catch that)
++    const up = new Set();
++    let upDups = 0;
++    for (let session = 0; session < 2; session++) {
++      let c = 0;
++      for (let pic = 0; pic < 3000; pic++) {
++        const tsu = (90000 + pic * 3000) >>> 0;
++        const k = '1111:' + tsu + ':' + ((tsu - c % 0xffff) >>> 0);
++        c++;
++        if (up.has(k)) upDups++; else up.add(k);
++      }
++    }
++    const wrapped = start < 4228250625 && maxCounter >= 4228250625;
++    // the H.264 round trip through the REAL encodeFunction, read the way native receivers read it (the raw-tail IV,
++    // then unescape, then GCM): v2 IVs come back; a v1-layout allocator (big-endian, top bytes 00 00 00) fails
++    const h264Frame = (ts) => {
++      const d = new Uint8Array(46 + ts % 300);
++      d.set([0, 0, 0, 1, 0x65]);
++      const r = crypto.getRandomValues(new Uint8Array(d.length - 5));
++      for (let i = 0; i < r.length; i++) d[5 + i] = r[i] % 7 === 0 ? 0 : r[i];
++      return d;
++    };
++    const nativeRead = async (key, f, plain) => {
++      const u8 = new Uint8Array(f.data);
++      const ivLen = u8[u8.length - 2];
++      if (ivLen !== 12) return false;
++      const iv = u8.slice(u8.length - 2 - ivLen, u8.length - 2);
++      const header = u8.subarray(0, 6); // Annex B start code + NAL header + 1 (the clear bytes of an IDR NAL)
++      let enc = u8.slice(6);
++      if (needsRbspUnescaping(enc)) enc = parseRbsp(enc);
++      const ct = enc.subarray(0, enc.length - ivLen - 2);
++      try {
++        const back = new Uint8Array(await crypto.subtle.decrypt({ name: ENCRYPTION_ALGORITHM, iv, additionalData: header }, key, ct));
++        return back.length === plain.length - 6 && back.every((x, j) => x === plain[6 + j]);
++      } catch (e) { return false; }
++    };
++    const v1Alloc = { next: 0x1234567890, take() { const iv = new ArrayBuffer(12); const v = new DataView(iv); v.setUint32(0, 0x5a5a5a5a); const c = this.next++; v.setUint32(4, Math.floor(c / 4294967296)); v.setUint32(8, c % 4294967296); return iv; } };
++    // the v1 control must FAIL for the right reason: every v1 frame is emitted, decrypts when the IV is read AFTER
++    // unescaping (the frame itself is fine), and fails the native raw-tail read (the receiver's bug meets v1's zeros)
++    const afterUnescapeRead = async (key, f, plain) => {
++      const u8 = new Uint8Array(f.data);
++      const header = u8.subarray(0, 6);
++      let enc = u8.slice(6);
++      if (needsRbspUnescaping(enc)) enc = parseRbsp(enc);
++      const iv = enc.slice(enc.length - 14, enc.length - 2);
++      const ct = enc.subarray(0, enc.length - 14);
++      try {
++        const back = new Uint8Array(await crypto.subtle.decrypt({ name: ENCRYPTION_ALGORITHM, iv, additionalData: header }, key, ct));
++        return back.length === plain.length - 6 && back.every((x, j) => x === plain[6 + j]);
++      } catch (e) { return false; }
++    };
++    let h264Ok = 0, h264N = 0, v1Ok = 0, v1Emitted = 0, v1GoodFrames = 0;
++    for (const [a, which] of [[new TinhatIvAllocator(0, 4228250625 - 200), 'v2'], [v1Alloc, 'v1']]) {
++      const c = mk(a);
++      for (let i = 0; i < 400; i++) {
++        const plain = h264Frame(i);
++        const f = await encode(c, { data: plain.slice().buffer, type: i % 30 === 0 ? 'key' : 'delta', timestamp: i * 3000, getMetadata: () => ({ synchronizationSource: 0x9300, payloadType: 102, mimeType: 'video/H264' }) });
++        const okRead = f ? await nativeRead(raw.get(keyGen), f, plain) : false;
++        if (which === 'v2') { h264N++; if (okRead) h264Ok++; }
++        else {
++          if (f) { v1Emitted++; if (await afterUnescapeRead(raw.get(keyGen), f, plain)) v1GoodFrames++; }
++          if (okRead) v1Ok++;
++        }
++      }
++    }
++    const dataUsesAllocator = /tinhatIvAlloc\.take\(\)/.test(DataCryptor.makeIV.toString());
++    const ok = dataUsesAllocator && dups === 0 && lost === 0 && wrapped && zeroBytes === 0 && lowByte0 === 0 && h264Ok === h264N && h264N === 400 && v1Ok === 0 && v1Emitted === 400 && v1GoodFrames === 400 && vp9Right === vp9 && sampled > 50 && sampleOk === sampled && exhaustedOk &&
++      capDropped > 650 && capWrong === 0 && upDups === 3000;
++    return { ok, stamp: TINHAT_IV_STAMP, dataUsesAllocator, zeroBytes, lowByte0, h264Ok, h264N, v1Ok, v1Emitted, v1GoodFrames, ivs, keys: keyGen + 1, dups, lost, start, maxCounter, wrapped, vp9, vp9Right, sampled, sampleOk, exhaustedOk, capSent, capDropped, capWrong, upstreamControlDups: upDups };
++  } catch (e) {
++    return { ok: false, error: String(e && e.stack || e) };
++  } finally {
++    encryptionEnabledMap.delete(id);
++  }
++}
 +// ---- end PATCH ---------------------------------------------------------------------------------------------
  class FrameCryptor extends BaseFrameCryptor {
    constructor(opts) {
      var _a;
-@@ -6756,6 +6838,8 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -6756,6 +7111,8 @@ class FrameCryptor extends BaseFrameCryptor {
      this.hasFrameMetadata = false;
      this.frameMetadataFrameId = 0;
      this.errorLimiter = new ErrorRateLimiter();
@@ -164,7 +394,7 @@ index ad55a83..51b796e 100644
      /** grace period for a teardown or a resubscribe to land before we report a stalled track */
      this.UNDECRYPTED_TRACK_GRACE_MS = 2000;
      /**
-@@ -7045,9 +7129,12 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7045,9 +7402,12 @@ class FrameCryptor extends BaseFrameCryptor {
        if (encodedFrame.data.byteLength === 0) {
          return controller.enqueue(encodedFrame);
        }
@@ -180,7 +410,35 @@ index ad55a83..51b796e 100644
        }
        const keySet = this.keys.getKeySet();
        if (!keySet) {
-@@ -7160,18 +7247,17 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7057,7 +7417,7 @@ class FrameCryptor extends BaseFrameCryptor {
+       const encryptionKey = keySet.encryptionKey;
+       const keyIndex = this.keys.getCurrentKeyIndex();
+       if (encryptionKey) {
+-        const iv = this.makeIV((_a = encodedFrame.getMetadata().synchronizationSource) !== null && _a !== void 0 ? _a : -1, encodedFrame.timestamp);
++        let iv = this.makeIV((_a = encodedFrame.getMetadata().synchronizationSource) !== null && _a !== void 0 ? _a : -1, encodedFrame.timestamp);
+         let frameInfo = this.getUnencryptedBytes(encodedFrame);
+         // Thіs is not encrypted and contains the VP8 payload descriptor or the Opus TOC byte.
+         const frameHeader = new Uint8Array(encodedFrame.data, 0, frameInfo.unencryptedBytes);
+@@ -7073,6 +7433,18 @@ class FrameCryptor extends BaseFrameCryptor {
+         // payload  |IV...(length = IV_LENGTH)|R|IV_LENGTH|KID |
+         // ---------+-------------------------+-+---------+----
+         try {
++          // PATCH (Tin Hat Web) tinhat-iv-v1: an exhausted allocator never reuses an IV -> this frame is dropped
++          if (iv === null) throw new Error('Tin Hat IV allocator exhausted');
++          // PATCH (Tin Hat Web) VP9 E2EE keyframe IV (tinhat-vp9-kf-iv-v1): byte 0 of the ciphertext tells the SFU the
++          // truth. Inside this try: a rejected probe takes the "error while encrypting" path (frame dropped, logged).
++          if (frameInfo.unencryptedBytes === 0 && this.detectedCodec === 'vp9' && isVideoFrame(encodedFrame) && encodedFrame.data.byteLength > 0) {
++            const r = yield tinhatVp9KeyframeIv(encryptionKey, new Uint8Array(encodedFrame.data, 0, 1)[0], encodedFrame.type === 'key', this.tinhatIvAlloc || tinhatIvAlloc, this.tinhatVp9MaxTries || TINHAT_VP9_KF_IV_MAX_TRIES);
++            if (r.step !== 'matched') {
++              workerLogger.warn("VP9 E2EE keyframe IV: frame dropped (".concat(r.step, ", key=").concat(encodedFrame.type === 'key', ", tries=").concat(r.tries, ")"), this.logContext);
++              return;
++            }
++            iv = r.iv;
++          }
+           const cipherText = yield crypto.subtle.encrypt({
+             name: ENCRYPTION_ALGORITHM,
+             iv,
+@@ -7160,18 +7532,17 @@ class FrameCryptor extends BaseFrameCryptor {
          return;
        }
        if (!encryptionEnabled) {
@@ -208,7 +466,7 @@ index ad55a83..51b796e 100644
        }
        const data = new Uint8Array(encodedFrame.data);
        const keyIndex = data[encodedFrame.data.byteLength - 1];
-@@ -7224,6 +7310,10 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7224,6 +7595,10 @@ class FrameCryptor extends BaseFrameCryptor {
          if (!ratchetOpts.encryptionKey && !keySet) {
            throw new TypeError("no encryption key found for decryption of ".concat(_this.participantIdentity));
          }
@@ -219,7 +477,33 @@ index ad55a83..51b796e 100644
          let frameInfo = _this.getUnencryptedBytes(encodedFrame);
          // Construct frame trailer. Similar to the frame header described in
          // https://tools.ietf.org/html/draft-omara-sframe-00#section-4.2
-@@ -7410,6 +7500,37 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7320,20 +7695,11 @@ class FrameCryptor extends BaseFrameCryptor {
+    * See also https://developer.mozilla.org/en-US/docs/Web/API/AesGcmParams
+    */
+   makeIV(synchronizationSource, timestamp) {
+-    var _a;
+-    const iv = new ArrayBuffer(IV_LENGTH);
+-    const ivView = new DataView(iv);
+-    // having to keep our own send count (similar to a picture id) is not ideal.
+-    if (!this.sendCounts.has(synchronizationSource)) {
+-      // Initialize with a random offset, similar to the RTP sequence number.
+-      this.sendCounts.set(synchronizationSource, Math.floor(Math.random() * 0xffff));
+-    }
+-    const sendCount = (_a = this.sendCounts.get(synchronizationSource)) !== null && _a !== void 0 ? _a : 0;
+-    ivView.setUint32(0, synchronizationSource);
+-    ivView.setUint32(4, timestamp);
+-    ivView.setUint32(8, timestamp - sendCount % 0xffff);
+-    this.sendCounts.set(synchronizationSource, sendCount + 1);
+-    return iv;
++    // PATCH (Tin Hat Web) tinhat-iv-v1: upstream built ssrc | timestamp | timestamp - (sendCount % 0xffff) from a
++    // per-cryptor counter, which can repeat after a same-key reconnect. The IV now comes from the worker's one
++    // allocator (domain || counter, each value once); null = exhausted, the caller drops the frame.
++    // (cryptor.tinhatIvAlloc is set only on the self-test's own cryptors)
++    return (this.tinhatIvAlloc || tinhatIvAlloc).take();
+   }
+   getUnencryptedBytes(frame) {
+     var _a;
+@@ -7410,6 +7776,37 @@ class FrameCryptor extends BaseFrameCryptor {
    /**
     * inspects frame mimetype if available. falls back to payloadtype and maps it to the codec specified in rtpMap
     */
@@ -257,10 +541,22 @@ index ad55a83..51b796e 100644
    getVideoCodec(frame) {
      const metadata = frame.getMetadata();
      if (metadata.mimeType) {
-@@ -7671,6 +7792,10 @@ onmessage = ev => {
+@@ -7671,6 +8068,22 @@ onmessage = ev => {
        case 'setLogLevel':
          workerLogger.setLevel(data.level);
          break;
++      case 'tinhat-vp9-kf-probe':
++        postMessage({ kind: 'tinhat-vp9-kf-probe', data: { stamp: TINHAT_VP9_KF_IV_STAMP, selfTest: yield tinhatVp9SelfTest(data && data.vectorKeys) } });
++        break;
++      case 'tinhat-iv-vectors':
++        // the H.264-safe layout's encoding for the shared vectors (testvectors/iv-layout): counters below 2^53, domains
++        postMessage({ kind: 'tinhat-iv-vectors', data: {
++          counters: (data && data.counters || []).filter((c) => Number(c) < TINHAT_IV_COUNTER_LIMIT).map((c) => { const u = new Uint8Array(8); TinhatIvAllocator.encodeCounter(Number(c), u, 0); return { counter: c, bytes: Array.from(u) }; }),
++          domains: (data && data.domains || []).map((d) => ({ domain: d, bytes: new TinhatIvAllocator(d, 0).domainBytes })) } });
++        break;
++      case 'tinhat-iv-probe':
++        postMessage({ kind: 'tinhat-iv-probe', data: { stamp: TINHAT_IV_STAMP, selfTest: yield tinhatIvSelfTest(data || {}) } });
++        break;
 +      case 'tinhat-av1-probe':
 +        // PATCH (Tin Hat Web): capability probe for the page's dev.tinhat.client marker
 +        postMessage({ kind: 'tinhat-av1-probe', data: { stamp: TINHAT_AV1_STAMP, selfTest: yield tinhatAv1SelfTest() } });

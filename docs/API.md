@@ -139,7 +139,7 @@ an edit of `/var/lib/tinhat/api/env` doesn't last.
 | variable | default | what |
 |---|---|---|
 | `API_LEGACY_ANON` | `on` | `off` = no token-less lane at all (once every member runs 12.0.3 or later) |
-| `CALL_TOKEN_ROOM_CHECK` | `on` | `off` = call tokens without the room check, as before 0.3.7 ("Call sign-ins" below) |
+| `CALL_TOKEN_ROOM_CHECK` | `on` | `off` = call tokens without the room check, as before 0.3.7; the device-id rule stays on (what off allows: "Call sign-ins" below) |
 | (every count below, from `API_ANON_…` to `SOUNDBOARD_USER_UPLOADS_MAX`) | | 0 to 999 999 999; 0 = none |
 | `API_ANON_GIF_PER_HOUR` / `API_ANON_GIF_ALL_PER_HOUR` | 60 / 300 | Giphy calls for token-less callers: per address / all together |
 | `API_ANON_SOUNDSEARCH_PER_HOUR` / `API_ANON_SOUNDSEARCH_ALL_PER_HOUR` | 60 / 600 | myinstants searches, the same |
@@ -170,8 +170,14 @@ included. Behind your own reverse proxy nothing changes for you: keep forwarding
 
 **The check** (lk-jwt's `/sfu/get` request `{room, openid_token, device_id}`, the one every Tin Hat app sends):
 1. The body is read the way lk-jwt reads it (exact field names, no unknown ones; ≤ 16 KB) and lk-jwt receives our own
-   re-encoding of exactly what was checked, never the caller's bytes. Malformed, or a `device_id` containing `:` (the
-   LiveKit identity `<mxid>:<device_id>` would be ambiguous): `400 {"errcode":"M_BAD_JSON",…}`.
+   re-encoding of exactly what was checked, never the caller's bytes. Malformed, or a device id (`device_id`, MSC4195's
+   `claimed_device_id`) that isn't 1–64 letters, digits, `_`, `-`, `+` or `/` (0.3.12; until then only `:` was refused):
+   `400 {"errcode":"M_BAD_JSON",…}`. The rule is `DEVICE_RE` in `api/tinhat-api/identity.mjs`, the same module call
+   moderation reads identities with, so every identity this server mints (`<mxid>:<device>`) can be muted and removed
+   by the call's moderators: a `:` would make the identity ambiguous, and before 0.3.12 a device such as `X.1` got a
+   token that `/moderation/call` refused to act on. Synapse's own device ids (`[A-Z]{10}`) and those of the Tin Hat
+   apps and Element X all fit, a device signed in by QR code included (rust-sdk: its key in unpadded base64, hence `+`
+   and `/`); hidden devices (cross-signing keys) never ask for a call sign-in.
 2. MSC4195 requests (`{room_id, slot_id, openid_token, member: {id, claimed_user_id, claimed_device_id}}` plus
    Element Call's optional `delay_id` / `delay_timeout` / `delay_cs_api_url`, on lk-jwt's `/get_token` or its
    `/sfu/get`; **Element Call's newer method**: what it uses to subscribe to another server's call server, and what
@@ -224,9 +230,30 @@ that lookup's URL, which includes the caller's OpenID token in its query. That t
 only answers "which account is this" (OpenID userinfo); lk-jwt's log is readable by the box's root only. The Tin Hat
 API's own log never carries a token.
 
-**The owner's switch:** `tinhat api-limits CALL_TOKEN_ROOM_CHECK=off` hands every request to lk-jwt unchanged, as
-before 0.3.7 (the route still goes through the API); `tinhat api-limits --reset CALL_TOKEN_ROOM_CHECK` turns the check
-back on (the default).
+**The owner's switch:** `tinhat api-limits CALL_TOKEN_ROOM_CHECK=off` hands every request to lk-jwt without the room
+check, as before 0.3.7 (the route still goes through the API); `tinhat api-limits --reset CALL_TOKEN_ROOM_CHECK` turns the check
+back on (the default). It is meant for a test server or a short emergency (the check itself misbehaving), not to leave
+on. **What turning it off allows:**
+- **Any account lk-jwt accepts gets a call sign-in for any room name.** Anyone with an account on this server, and
+  anyone with an account on a server lk-jwt can reach (it looks other servers' sign-ins up itself, without the API's
+  address checks), gets a token for any LiveKit room they name: a Matrix room they are not in (and its live call, if
+  it has one: they can listen, and publish if the room's call server lets them), a room they have left or were removed
+  from, or a made-up name. Nobody's membership is checked.
+- **MSC4195 requests go to lk-jwt's own `/get_token`**: a token for the room `sha256(room_id|slot_id)` with `member.id`
+  as the identity, a string the client chooses (it can read as someone else's `<mxid>:<device>`). Call moderation can't
+  act in that room: it only knows LiveKit rooms named by a Matrix room id.
+- **This route's own limits** (120 requests and lookups a minute per address) are off; lk-jwt alone decides.
+- A minted token is handed out without the check that its identity is the caller's.
+
+**What stays on regardless (0.3.12):** every device id lk-jwt would read (`device_id`, `member.claimed_device_id`, in
+any letter case or Unicode look-alike, since lk-jwt's JSON decoder matches field names that way) must still be 1–64
+letters, digits, `_`, `-`, `+` or `/`, and the legacy request must carry one (else `400`). The body must be one JSON object
+(`400` otherwise: lk-jwt's decoder would ignore anything after the first value), and lk-jwt receives it re-encoded from
+what was checked, so a duplicate key can't hand it a value the check didn't see. So with the switch off nobody gets an `/sfu/get` identity
+`<their mxid>:<device>` that is ambiguous (a `:` in the device, which could make it read as another user's on a server
+name with a port) or that call moderation can't mute or remove, and `/moderation/call` still acts on exactly that
+identity string. lk-jwt itself still verifies who the caller is (their OpenID sign-in) and that the identity is theirs
+on `/sfu/get`; the Tin Hat apps still refuse a call whose LiveKit room isn't the call's own room (12.1.0).
 
 **Compatibility.** Apps need no change: a normal call (alias = the room's id, the caller joined) and a guest in the
 Guests room get their token exactly as before, and so does a second device of the same person (a share companion, the

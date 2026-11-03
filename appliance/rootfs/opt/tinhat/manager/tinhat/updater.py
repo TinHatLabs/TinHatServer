@@ -31,9 +31,14 @@ LOG = DIR / "update.log"
 COMPOSE = ["docker", "compose", "--ansi", "never", "-p", "tinhat", "-f", str(OPT / "compose.yaml"),
            "--env-file", str(STATE / "compose.env")]
 # What a snapshot keeps of the box's own state: small files only (people's uploads and the database files stay put;
-# the database is dumped instead).
+# the database is dumped instead). The call server's key pair is in five places, all of them here, so a rollback brings
+# LiveKit, lk-jwt and the API back on ONE pair even when the failed release changed it (0.3.13 rotates it once):
+# secrets.json (the source), compose.env (lk-jwt's LIVEKIT_KEY/SECRET), livekit/livekit.yaml (LiveKit's keys),
+# api/env (the API's LK_API_KEY) and api/livekit.secret (the API's secret). The services start on the restored files
+# before the old manager rewrites anything, so every copy has to come back, not only secrets.json.
 STATE_ITEMS = ["state.json", "secrets.json", "compose.env", "environment.json", "names.json", "caddy/etc",
-               "synapse/homeserver.yaml", "synapse/log.config", "livekit", "wellknown", "ca"]
+               "synapse/homeserver.yaml", "synapse/log.config", "livekit", "wellknown", "ca",
+               "api/env", "api/livekit.secret"]
 HEALTH_WAIT = 600
 
 
@@ -277,6 +282,7 @@ def restore_files(snap: Path) -> None:
         src = snap / "state" / item
         if src.exists():
             dst = STATE / item
+            dst.parent.mkdir(parents=True, exist_ok=True)  # a failed release that dropped a folder (api/) can't stop it
             if src.is_dir():
                 shutil.rmtree(dst, ignore_errors=True)
                 shutil.copytree(src, dst)

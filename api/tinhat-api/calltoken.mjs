@@ -31,17 +31,22 @@
 // moderation can't govern, with a participant id the client chooses: it is never asked. (0.3.7 refused them.)
 // The body is parsed the way lk-jwt parses it (exact field names, no unknown fields) and lk-jwt receives our own
 // re-encoding of exactly what was checked, never the caller's bytes: Go's JSON decoder matches field names
-// case-insensitively, so forwarding the original could make lk-jwt read a different room. A device id may not contain
-// ":" (the LiveKit identity `<mxid>:<device_id>` would be ambiguous).
+// case-insensitively, so forwarding the original could make lk-jwt read a different room. A device id must match
+// identity.mjs's DEVICE_RE (`[A-Za-z0-9_+/-]{1,64}`, 0.3.12): no ':' (the LiveKit identity `<mxid>:<device_id>` would be
+// ambiguous) and nothing call moderation (moderation.mjs, the same rule) couldn't mute or remove.
 // One exception: the apps' connection test (Settings → Calls) uses a scratch room `tinhat-conntest-<own localpart>-<n>`
 // that is not a Matrix room; a caller from this server may have that one for their own name (as the apps write it).
 // Fails closed: when Synapse can't be asked the answer is 502, never a pass-through.
 // Owner switch: CALL_TOKEN_ROOM_CHECK=off (`tinhat api-limits CALL_TOKEN_ROOM_CHECK=off`) hands every request to lk-jwt
-// unchanged, as before 0.3.7. Default on.
+// unchecked, as before 0.3.7, with ONE check left (0.3.12, offModeBody): every device id in the body must still match
+// DEVICE_RE, so even then nobody gets a call identity that is ambiguous or that call moderation can't act on (lk-jwt
+// gets the parsed body re-encoded, so it reads the values that were checked).
+// Default on. What "off" opens up: docs/API.md "Call sign-ins".
 // Nothing here logs a token.
 import { createHash } from "node:crypto";
 import { RateLimit, clientKey, mono, ROOM_ID_RE, safe } from "./reachcommon.mjs";
 import { createFedResolver } from "./fedresolve.mjs";
+import { DEVICE_RE, MXID_RE } from "./identity.mjs";
 
 export const CALLTOKEN = Object.freeze({
     MAX_BODY: 16 * 1024,
@@ -61,7 +66,6 @@ const TOKEN_KEYS = new Set(["room_id", "slot_id", "openid_token", "member", "del
 export const ROOM_SLOT = "m.call#ROOM";
 const OPENID_KEYS = new Set(["access_token", "token_type", "matrix_server_name", "expires_in"]);
 const MEMBER_KEYS = new Set(["id", "claimed_user_id", "claimed_device_id"]);
-const MXID_RE = /^@[^:\s]{1,255}:([A-Za-z0-9.-]{1,255}(?::\d{1,5})?|\[[0-9A-Fa-f:.]{2,45}\](?::\d{1,5})?)$/;
 const CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST",
@@ -90,6 +94,49 @@ function openid(o) {
     return { access_token: str(t, "access_token"), token_type: str(t, "token_type"), matrix_server_name: str(t, "matrix_server_name"), expires_in: e ?? 0 };
 }
 
+const DEVICE_ERR = (k) => `${k} must be 1-64 letters, digits, '_', '-', '+' or '/'`;
+
+/**
+ * Every value of `o` whose key Go's encoding/json could match to the field `name`, in document order. Go matches field
+ * names case-insensitively and folds a non-ASCII letter with unicode.ToUpper(unicode.ToLower(r)), so `ı` (dotless i),
+ * `İ`, `ſ` (long s) and `K` (Kelvin) all match ASCII letters. Read as a superset: an ASCII character must equal the
+ * name's ignoring case, and ANY non-ASCII character counts as a match for its position (a key no Go fold could match
+ * is checked too: that only refuses more).
+ */
+const foldedValues = (o, name) => Object.keys(o).filter((k) => {
+    const cs = [...k];
+    return cs.length === name.length && cs.every((c, i) => c.codePointAt(0) >= 0x80 || c.toLowerCase() === name[i]);
+}).map((k) => o[k]);
+
+/**
+ * With the owner's switch off: the one check that stays, 0.3.12. -> {error} | {body: what lk-jwt receives}.
+ * - The body must be one JSON object (Go's json.Decoder reads the first value and ignores what follows, so
+ *   `{…"device_id":"X.1"} junk` would otherwise reach lk-jwt unchecked).
+ * - Every device id lk-jwt could read must match DEVICE_RE: every `device_id` variant (any case, Go's Unicode folds),
+ *   and in every `member` object every `claimed_device_id` variant; a `room` needs a device id, a `member` object too.
+ *   A device field that isn't a string, or a `member` that isn't an object (null included), is refused.
+ * - lk-jwt receives JSON.stringify of the parsed object, not the caller's bytes: duplicate keys collapse to the one
+ *   value checked here (Go would keep an earlier value under a later `null`, e.g. `"member":{…X.1…},"member":null`),
+ *   while the key variants that stay separate were each checked above (Go merges them in order: every non-null one
+ *   passed, and a `null` one changes nothing).
+ * Nothing else is checked: lk-jwt alone decides, as before 0.3.7.
+ */
+export function offModeBody(text) {
+    let v;
+    try { v = JSON.parse(text); } catch { return { error: "body is not valid JSON" }; }
+    if (!isObj(v)) return { error: "body must be a JSON object" };
+    const devOk = (d) => typeof d === "string" && DEVICE_RE.test(d);
+    const devs = foldedValues(v, "device_id");
+    if (foldedValues(v, "room").length && !devs.length) return { error: DEVICE_ERR("device_id") };
+    if (!devs.every(devOk)) return { error: DEVICE_ERR("device_id") };
+    for (const m of foldedValues(v, "member")) {
+        if (!isObj(m)) return { error: "member is malformed" };  // null too: Go would keep an earlier member under it
+        const c = foldedValues(m, "claimed_device_id");
+        if (!c.length || !c.every(devOk)) return { error: DEVICE_ERR("claimed_device_id") };
+    }
+    return { body: JSON.stringify(v) };
+}
+
 /**
  * The request as lk-jwt 0.4.0 would read it: {kind: "legacy", room, device_id, openid} | {kind: "token", room_id,
  * slot_id, member, delayed_event_id, openid} | {error} (400). `legacyOk`: /sfu/get takes either shape, /get_token only
@@ -104,7 +151,7 @@ export function parseRequest(text, legacyOk) {
         if (legacyOk && keysIn(v, LEGACY_KEYS)) {
             const r = { kind: "legacy", room: str(v, "room"), openid: openid(v), device_id: str(v, "device_id") };
             if (!r.room) return { error: "Missing room parameter" };
-            if (r.device_id.includes(":")) return { error: "device_id may not contain ':'" };
+            if (!DEVICE_RE.test(r.device_id)) return { error: DEVICE_ERR("device_id") };
             if (!r.openid.access_token || !r.openid.matrix_server_name) return { error: "Missing OpenID token parameters" };
             return r;
         }
@@ -141,7 +188,7 @@ export function parseRequest(text, legacyOk) {
  */
 export function translateToken(r) {
     if (r.slot_id !== ROOM_SLOT) return { status: 403, error: "only the room's call slot (m.call#ROOM) is served here", reason: "unsupported" };
-    if (r.member.claimed_device_id.includes(":")) return { status: 400, error: "claimed_device_id may not contain ':'" };
+    if (!DEVICE_RE.test(r.member.claimed_device_id)) return { status: 400, error: DEVICE_ERR("claimed_device_id") };
     return { kind: "legacy", room: r.room_id, openid: r.openid, device_id: r.member.claimed_device_id, claimed_user_id: r.member.claimed_user_id, msc4195: true };
 }
 
@@ -306,8 +353,10 @@ export function createCallToken(deps) {
             };
             const relay = (up) => { res.set("Content-Type", "application/json"); return res.status(up.status).send(up.text); };
 
-            if (!on) {  // the owner's switch: lk-jwt alone decides, as before 0.3.7
-                const up = await pass(raw);
+            if (!on) {  // the owner's switch: lk-jwt alone decides, as before 0.3.7, but for the device id (0.3.12)
+                const off = offModeBody(raw.toString("utf8"));
+                if (off.error) { log("[calltoken] refused: not one JSON object, or a device id call moderation couldn't act on (room check off)"); return send(res, 400, { errcode: "M_BAD_JSON", error: off.error }); }
+                const up = await pass(off.body);
                 return up ? relay(up) : undefined;
             }
 

@@ -2,6 +2,7 @@
 import { MATRIX_ORIGIN } from "@/core/bearer";
 import { peekClient } from "@/core/matrix";
 import { isRecorder as isRecorderAccount } from "@/core/server";
+import { mxidOf } from "./identity";
 
 export const MEMBER_TYPE = "org.matrix.msc3401.call.member";
 export const LEGACY_MEMBER_TYPES = ["m.call.member", "m.rtc.member"] as const;
@@ -15,15 +16,8 @@ export function defaultFocusUrl(): string {
   return `${MATRIX_ORIGIN}/livekit/jwt`;
 }
 
-/** `@u:server:DEVICE` → `@u:server` (everything before the LAST ":", keeps a host:port). */
-export function mxidOf(identity: string): string {
-  const i = identity.lastIndexOf(":");
-  if (i <= 0) return identity;
-  const head = identity.slice(0, i);
-  // A bare mxid has exactly one ":" after the localpart (or two with a port) — only strip when
-  // what remains still looks like an mxid.
-  return head.includes(":") ? head : identity;
-}
+/** `@u:server:DEVICE` → `@u:server` (everything before the LAST ":", keeps a host:port): identity.ts, the one copy. */
+export { mxidOf };
 
 /** Device part of a LiveKit identity (after the last ":"). */
 export function deviceOf(identity: string): string {

@@ -10,16 +10,19 @@ import { usePref } from "@/core/prefs";
 import { useCall } from "@/features/calls";
 import type { CallStore as ContractStore } from "@/features/calls/contract";
 import { scheduleRefresh, setLiveRoster, type Participant } from "./model";
+import { identityIsUser, userOfIdentity } from "@/features/calls/identity";
+import { liveSessions } from "@/features/calls/rtc";
 
 const AUDIO_PREFS_DEF: Record<string, never> = {};
 
 type Partial2 = Partial<ContractStore>;
 
-/** identity "@u:server:DEVICE" → "@u:server" */
-export const mxidOf = (identity: string) => {
+/** identity "@u:server:DEVICE" → "@u:server", by the room's live call memberships (calls/identity.ts, identity fix 12.1.8:
+ *  the old first-two-parts split turned `@u:host:8448:DEV` into `@u:host`, the wrong person). Without a room: the
+ *  last ':' (a server's port kept). */
+export const mxidOf = (identity: string, roomId = "") => {
   if (!identity.startsWith("@")) return identity;
-  const parts = identity.split(":");
-  return parts.length > 2 ? `${parts[0]}:${parts[1]}` : identity;
+  return userOfIdentity(identity, roomId ? liveSessions(roomId) : []);
 };
 
 /** Pushes the live roster of the call we are in to the nav model (always mounted via r.overlays). */
@@ -45,6 +48,7 @@ export function CallRosterBridge() {
     }
     const me = peekClient()?.getUserId() ?? "";
     const room = peekClient()?.getRoom(roomId);
+    const sessions = liveSessions(roomId);
     const seen = new Set<string>();
     const users: Participant[] = [];
     const push = (mxid: string, name: string, avatar: string) => {
@@ -59,7 +63,7 @@ export function CallRosterBridge() {
       // recorder STAYS when it has a tile, like native AppCore.liveCallParts ("its visible membership +
       // call tile are the consent story", room.rs VOD_BOT_MXID)
       if (t.participant === "You" || t.id === "vid_selfview" || t.id === "vid_selfshare") continue;
-      const id = mxidOf(t.participant);
+      const id = t.participant.startsWith("@") ? userOfIdentity(t.participant, sessions) : t.participant;
       if (id === me) continue;
       push(id, t.kind === "screenshare" ? "" : t.name, "");
     }
@@ -88,7 +92,7 @@ export function usePartGlyphs(roomId: string, mxid: string): PartGlyphs {
     if (!inThisCall || typeof f !== "function") return false;
     // the contract keys per-person audio by LiveKit identity ("@u:server:DEVICE"); native AudioPrefs
     // by mxid — ask for both
-    const ids = [mxid, ...((c as Partial2).tiles ?? []).filter((x) => mxidOf(x.participant) === mxid).map((x) => x.participant)];
+    const ids = [mxid, ...((c as Partial2).tiles ?? []).filter((x) => identityIsUser(x.participant, mxid, [])).map((x) => x.participant)];
     try {
       return ids.some((id) => f(id, "mic") || f(id, "screenshare") || f(id, "music"));
     } catch {
@@ -97,19 +101,19 @@ export function usePartGlyphs(roomId: string, mxid: string): PartGlyphs {
   });
   const serverMutedBy = useCall((c) => {
     if (!inThisCall) return "";
-    const t = (c as Partial2).tiles?.find((x) => mxidOf(x.participant) === mxid && x.serverMuted);
+    const t = (c as Partial2).tiles?.find((x) => identityIsUser(x.participant, mxid, []) && x.serverMuted);
     return t ? t.serverMutedBy || "a moderator" : "";
   });
-  const gameChat = useCall((c) => !!inThisCall && !!(c as Partial2).gameChatPeers?.peers?.some((p) => mxidOf(p) === mxid));
+  const gameChat = useCall((c) => !!inThisCall && !!(c as Partial2).gameChatPeers?.peers?.some((p) => identityIsUser(p, mxid, [])));
   const gameChatMe = useCall((c) => !!(c as Partial2).gameChatPeers?.me || !!(c as Partial2).gameChat);
   const aside = useCall((c) => {
     const k = (c as Partial2).corner;
     if (!inThisCall || !k || !k.active) return "" as const;
     const me = peekClient()?.getUserId() ?? "";
     if (mxid === me) return "" as const;
-    const inMine = (k.members ?? []).some((m) => mxidOf(m) === mxid);
+    const inMine = (k.members ?? []).some((m) => identityIsUser(m, mxid, []));
     if (inMine && k.mine) return "with-you" as const;
-    const elsewhere = Object.entries(k.corners ?? {}).some(([cid, mem]) => cid !== k.mine && (mem ?? []).some((m) => mxidOf(m) === mxid));
+    const elsewhere = Object.entries(k.corners ?? {}).some(([cid, mem]) => cid !== k.mine && (mem ?? []).some((m) => identityIsUser(m, mxid, [])));
     return elsewhere ? ("pulled" as const) : ("" as const);
   });
   return { mutedByMe, serverMutedBy: serverMutedBy ? displayName(roomId, serverMutedBy) : "", gameChat, gameChatMe, aside };
@@ -118,7 +122,9 @@ export function usePartGlyphs(roomId: string, mxid: string): PartGlyphs {
 function displayName(roomId: string, who: string): string {
   if (!who.startsWith("@")) return who;
   try {
-    return getClient().getRoom(roomId)?.getMember(mxidOf(who))?.name ?? who;
+    // a bare mxid (serverMutedBy names the moderator) as it is; a participant identity through the memberships
+    const room = getClient().getRoom(roomId);
+    return (room?.getMember(who) ?? room?.getMember(mxidOf(who, roomId)))?.name ?? who;
   } catch {
     return who;
   }

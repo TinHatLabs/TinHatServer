@@ -110,9 +110,10 @@ cmd_web() {
 }
 # The built E2EE worker must carry Tin Hat's livekit-client patch (a stale install drops it silently): the sender drop
 # (never sends a frame unencrypted), never-trust-NONE (plays only media that decrypts), the receiver's drop of
-# server-injected frames, the AV1 wrapper. Used by stage() here and by release.sh's preflight.
+# server-injected frames, the AV1 wrapper, and (0.3.12, web 12.1.8) the zero-free sender IV allocator (tinhat-iv-v2: an H.264 frame's RBSP escaping can't shift its IV) + the VP9 keyframe IV.
+# Used by stage() here and by release.sh's preflight.
 E2EE_WORKER_MARKERS=("sender cryptor not ready / not encrypting" "dropped: Tin Hat plays only end-to-end encrypted media"
-  "dropping server-injected frame" "tinhat-av1-e2ee-v2")
+  "dropping server-injected frame" "tinhat-av1-e2ee-v2" "tinhat-iv-v2" "tinhat-vp9-kf-iv-v1")
 check_e2ee_worker() {  # check_e2ee_worker WEBDIR
   local w m n
   n=$(find "$1/assets" -maxdepth 1 -name 'livekit-client.e2ee.worker-*.js' | wc -l)

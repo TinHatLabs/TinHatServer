@@ -21,6 +21,7 @@ import { normaliseClipUrl, ClipStore, Admitted, createClipSigner, sameHex, oneDo
 import { parseForeignClipUrl, foreignDownload } from "./foreign.mjs";
 import { giphyMediaUrl, sniffImage, readCapped, MEDIA_HEADERS, sniffAudio, sniffClipAudio, SANDBOX_HEADERS } from "./media.mjs";
 import { clearGuestCalls } from "./guestcalls.mjs";
+import { parseIdentity } from "./identity.mjs";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -464,8 +465,12 @@ app.get("/vods/sessions", async (req, res) => {
             try { for (const f of readdirSync(sd)) { try { bytes += statSync(`${sd}/${f}`).size; } catch { /* vanished */ } } } catch { /* unreadable */ }
             const people = [];
             for (const t of tracks) {
-                const m = /^(@[^:]+:[^:]+)/.exec(String(t.identity || ""));
-                if (m && !people.includes(m[1])) people.push(m[1]);
+                // the shared identity rule (identity.mjs: split at the LAST ':'), so a user on `host:port` keeps the
+                // port (the old first-two-parts regex turned `@u:h:8448:DEV` into `@u:h`); an identity this server
+                // wouldn't mint (another call server's) falls back to the last ':'
+                const id = String(t.identity || "");
+                const mx = parseIdentity(id)?.mxid ?? (id.lastIndexOf(":") > id.indexOf(":") ? id.slice(0, id.lastIndexOf(":")) : "");
+                if (mx.startsWith("@") && !people.includes(mx)) people.push(mx);
             }
             out.push({ id: s, ...session, tracks, mixed_url: mixed, live, ready, bytes, people, empty: tracks.length === 0 });
         }

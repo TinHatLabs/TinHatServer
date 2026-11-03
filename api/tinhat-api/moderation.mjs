@@ -33,6 +33,7 @@
 //
 // LiveKit facts this relies on (verified 2026-09-17 against lk-jwt-service logs): the LiveKit
 // room name is the Matrix room id, and a participant identity is `<mxid>:<DEVICE_ID>`.
+import { isConnectionOf, parseIdentity } from "./identity.mjs";
 
 const CALL_MOD_TYPE = "dev.tinhat.call.moderation";
 const ROLE_TYPE = "dev.tinhat.role";
@@ -41,7 +42,8 @@ const EVERYONE = "everyone";
 
 // `!opaque:server`, or a room v12 id (`!` + the create event's hash, no server part): reachcommon's.
 const ROOM_ID_RE = /^![A-Za-z0-9._~=+/-]{1,255}(?::[A-Za-z0-9.-]{1,255}(?::\d{1,5})?)?$/;
-const IDENTITY_RE = /^(@[^:\s]+:[A-Za-z0-9.-]+(?::\d+)?):([A-Za-z0-9_-]{1,64})$/;
+// A participant identity: identity.mjs's parseIdentity, the same rule calltoken.mjs mints by (0.3.12), so every identity
+// this server hands out a call sign-in for can be muted and removed here (before, `X.1`-style devices escaped).
 
 const ACTIONS = new Set(["mute", "unmute", "disconnect"]);
 const MAX_PARENT_LINKS = 32;
@@ -276,11 +278,11 @@ export function installModeration(app, deps) {
     app.post("/moderation/call", requireMatrixUser, async (req, res) => {
         const me = req.matrixUser;
         const { room_id: roomId, action, target } = req.body || {};
-        const m = typeof target === "string" ? IDENTITY_RE.exec(target) : null;
+        const m = parseIdentity(target);
         if (typeof roomId !== "string" || !ROOM_ID_RE.test(roomId) || !ACTIONS.has(action) || !m) {
             return res.status(400).json({ error: "room_id, action (mute|unmute|disconnect) and target (<mxid>:<device>) are required" });
         }
-        const targetMxid = m[1];
+        const targetMxid = m.mxid;
         const line = (status, extra = "") => log(`[moderation] ${me} ${action} ${target} in ${roomId} -> ${status}${extra ? " " + extra : ""}`);
         if (targetMxid === me) { line(400, "self"); return res.status(400).json({ error: "You can't moderate yourself" }); }
         if (rateLimited(me)) { line(429); return res.status(429).json({ error: "Slow down — too many moderation requests" }); }
@@ -346,7 +348,9 @@ export function installModeration(app, deps) {
         let n = 0;
         for (const p of list) {
             const id = String(p.identity || "");
-            if (!mxids.some((m) => id === m || id.startsWith(`${m}:`))) continue;
+            // exactly these accounts' connections (identity.mjs isConnectionOf: a prefix match would also drop
+            // `@g:host:8448`'s devices when `@g:host` is named; a pre-0.3.12 `X.1`-style device still counts)
+            if (!mxids.some((m) => isConnectionOf(id, m))) continue;
             try { await twirp("RemoveParticipant", room, { room, identity: id }); n += 1; } catch (e) { log(`[moderation] drop ${id}: ${e.message}`); }
         }
         return n;
