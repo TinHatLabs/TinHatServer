@@ -49,8 +49,9 @@ def ensure_pyenv() -> str:
 def after_update() -> int:
     """`python3 -m tinhat after-update`: run by the updater with the NEW release's code, after its files are in place
     and before the services restart: pending migrations, every generated config written again, the pinned aiohttp."""
-    from . import caddylock, install, migrations
+    from . import caddylock, install, lkrotate, migrations
     done = migrations.run_pending()
+    print(lkrotate.maybe_rotate())  # 0.3.13 (PAD-PHONE Step A): once, and only when a rollback can't mix the key pairs
     with caddylock.held_sync(300) as got:  # the web server's settings lock (a console change finishes first)
         if got:
             changed = install.refresh_configs()

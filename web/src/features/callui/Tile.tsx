@@ -62,6 +62,10 @@ export const Tile = memo(function Tile(p: TileProps) {
   const share = isShareTile(tile);
   const mxid = self ? "" : tileMxid(tile.participant);
   const name = tileName(tile);
+  // PAD-PHONE Step A: a person tile speaks when any member does; MY tile also when one of my other devices does
+  const levelId = self
+    ? tile.members && tile.members.length > 0 ? ["__self", ...tile.members].join("\n") : "__self"
+    : tile.members && tile.members.length > 1 ? tile.members.join("\n") : tile.participant;
   const w = p.flow ? 0 : slot.w;
   const h = p.flow ? 0 : slot.h;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -455,10 +459,14 @@ export const Tile = memo(function Tile(p: TileProps) {
           <span className={s.name} style={{ maxWidth: Math.max(40, cw - 8 - glyphCount * 22 - (smOn && cw > 330 ? 130 : 0) - (waveVisible ? 49 : 0) - zoomRoom) }}>
             {share ? `${name} — screen` : name}
           </span>
-          {waveVisible && <Waveform identity={self ? "__self" : tile.participant} muted={isMuted} />}
+          {tile.pad === "watch" && <MarkIcon name="smartphone-symbolic" color="var(--th-tile-name-fg)" tip={self ? "Your phone is watching (Pad)" : `${name} is also on their phone (Pad), watching`} />}
+          {tile.othersLive && <MarkIcon name="audio-input-microphone-symbolic" color="var(--th-tile-name-fg)" tip="Your mic is live on another of your devices" />}
+          {!self && tile.partlyMuted && <MarkIcon name="microphone-sensitivity-muted-symbolic" color="var(--th-tile-name-fg)" tip={`A moderator muted ${name} on one of their devices`} />}
+          {tile.alts && tile.alts.length > 0 && <MarkIcon name="camera-web-symbolic" color="var(--th-tile-name-fg)" tip={`${name} has another camera — show it`} onClick={() => act("pickCamera")(tile.alts![0])} />}
+          {waveVisible && <Waveform identity={levelId} muted={self ? false : isMuted} />}
         </div>
       </div>
-      <Frame identity={self ? "__self" : tile.participant} self={self} muted={isMuted} />
+      <Frame identity={levelId} self={self} muted={self ? false : isMuted} />
       {away && (
         <div className={s.away}>
           <span style={{ fontSize: `${Math.max(20, Math.round((p.flow ? size.h : ch) * 0.18))}pt` }}>💤</span>
@@ -674,6 +682,9 @@ function ZoomPill(p: { percent: number; atFloor: boolean; atMax: boolean; hovere
 function levelFor(identity: string): number {
   const st = getC();
   if (identity === "__self") return st.micMuted ? 0 : st.micLevel || 0;
+  // Pad on the phone, Step A: a person's tile (members joined by "\n", which no call identity contains) is speaking
+  // when any of their devices is
+  if (identity.includes("\n")) return Math.max(0, ...identity.split("\n").map((m) => (m === "__self" ? (st.micMuted ? 0 : st.micLevel || 0) : (st.audioLevels[levelKey(m)] ?? 0))));
   return st.audioLevels[levelKey(identity)] ?? 0;
 }
 

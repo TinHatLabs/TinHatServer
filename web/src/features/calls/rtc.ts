@@ -11,7 +11,7 @@ import { callerMembership } from "./memberprobe";
 import { MATRIX_ORIGIN, bearerAllowed } from "@/core/bearer";
 import { getPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
-import { applyHostPolicy, normalizeFocusUrl, postSfuGet, callHostsOf, contentLive, focusDecision, ownFoci, rosterCounts, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
+import { applyHostPolicy, normalizeFocusUrl, postSfuGet, watchTokenProblemRaw, jwtPayloadText, callHostsOf, contentLive, focusDecision, ownFoci, rosterCounts, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
 import { clientMarker } from "./av1";
 import { deviceStateKey, nativeDeviceId, pageOwnsMembership } from "@/features/native";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, MEMBERSHIP_EXPIRES_MS, defaultFocusUrl, displayName, avatarMxc, sleep, withTimeout, errText } from "./util";
@@ -100,8 +100,9 @@ let wellKnown: Promise<Content | null> | null = null;
  *  failure. */
 function wellKnownDoc(): Promise<Content | null> {
   if (!wellKnown) {
+    // 12.1.9: an error answer (5xx, 404 mid-update) is a failure too, never remembered as "no well-known"
     wellKnown = fetch(`${MATRIX_ORIGIN}/.well-known/matrix/client`, { signal: AbortSignal.timeout(8000) })
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`well-known ${r.status}`))))
       .then((j: unknown) => (j && typeof j === "object" ? (j as Content) : null))
       .catch(() => {
         wellKnown = null;
@@ -111,9 +112,22 @@ function wellKnownDoc(): Promise<Content | null> {
   return wellKnown;
 }
 
+/** 12.1.9 (assembly-044 observation): the well-known, asked up to 3 times (now, +1 s, +3 s) before a caller falls back.
+ *  A served web on its own host (Tin Hat Server's web.<domain>) whose one lookup failed started a NEW call on the page
+ *  origin's /livekit/jwt instead of the well-known's call host; everyone joining later followed it and older desktops
+ *  asked "This call runs on web.<domain>". Only a failure waits; a good answer is memoised as before. */
+async function wellKnownDocRetried(): Promise<Content | null> {
+  for (const wait of [0, 1000, 3000]) {
+    if (wait) await sleep(wait);
+    const d = await wellKnownDoc();
+    if (d) return d;
+  }
+  return null;
+}
+
 /** Own foci (DESIGN §2.1): the well-known's livekit focus and `<homeserver>/livekit/jwt` (= defaultFocusUrl()). */
 async function own(): Promise<{ start: string; set: Set<string> }> {
-  return ownFoci(await wellKnownDoc(), MATRIX_ORIGIN);
+  return ownFoci(await wellKnownDocRetried(), MATRIX_ORIGIN);
 }
 
 /** The call JWT service new calls use (.well-known, else the default) — widgets W2's "Is it just me?" probes it. */
@@ -188,6 +202,34 @@ export async function mintSfuToken(focus: ApprovedFocus, deviceId: string): Prom
     throw e;
   });
 }
+
+/** Pad Watch (WATCH-LEASE/DESIGN.md §1.5): a subscribe-only token from the own server's Watch route (`{service}/watch`,
+ *  the same body as /sfu/get, the same once-only / no-redirect rules). Only the own server's focus; the answer must be
+ *  the exact Watch profile (callrules.watchTokenProblem) or the watch join fails — never a normal token instead. */
+export async function mintWatchToken(focus: ApprovedFocus, userId: string, deviceId: string): Promise<SfuToken> {
+  if (focus?.approvedAs !== "own" || !focus.serviceUrl) throw new Error(WATCH_NOT_HERE_TEXT);
+  const n = normalizeFocusUrl(focus.serviceUrl);
+  if (!("url" in n) || n.url !== focus.serviceUrl) throw new Error("the call service's address isn't a valid https address");
+  const c = peekClient();
+  if (!c) throw new Error("not signed in");
+  const openid = await withTimeout(c.getOpenIdToken(), 15000, "the call sign-in (OpenID) request timed out");
+  const tok = await postSfuGet(
+    (url, init) => fetch(url, init),
+    focus.serviceUrl,
+    JSON.stringify({ room: focus.alias, openid_token: openid, device_id: deviceId }),
+    AbortSignal.timeout(20000),
+    "/watch",
+  ).catch((e: unknown) => {
+    if ((e as { name?: string })?.name === "TimeoutError") throw new Error("the Watch sign-in timed out (20s)");
+    if (/HTTP 40[45]/.test(errText(e))) throw new Error(WATCH_NOT_HERE_TEXT);
+    throw e;
+  });
+  // the RAW payload: a repeated key is refused before any parse could merge it (Astra r3 #2)
+  const why = watchTokenProblemRaw(jwtPayloadText(tok.jwt), { identity: `${userId}:${deviceId}`, room: focus.alias });
+  if (why) throw new Error(`the server's Watch pass isn't watch-only (${why}) — not joining`);
+  return tok;
+}
+export const WATCH_NOT_HERE_TEXT = "This server can't do Watch yet";
 
 // ---- membership content / publish / refresh / tombstone -------------------------------------------
 

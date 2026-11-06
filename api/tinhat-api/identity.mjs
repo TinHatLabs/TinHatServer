@@ -24,13 +24,20 @@ export const MXID_RE = /^@[^:\s]{1,255}:([A-Za-z0-9.-]{1,255}(?::\d{1,5})?|\[[0-
 
 export const deviceOk = (d) => typeof d === "string" && DEVICE_RE.test(d);
 
-/** `<mxid>:<device>` -> {mxid, device} | null (not an identity this server mints). */
+/** A Pad Watch connection's suffix (calltoken.mjs watchGrant): `<mxid>:<device>~watch-<16 lowercase hex>`. */
+export const WATCH_SUFFIX_RE = /~watch-[0-9a-f]{16}$/;
+
+/** `<mxid>:<device>` or (Pad Watch) `<mxid>:<device>~watch-<16hex>` -> {mxid, device} (+ watch: true for a Watch connection) | null (not an identity this
+ *  server mints). The ONE parser of call identities: moderation targets by it, and the apps' person tiles follow it. */
 export function parseIdentity(identity) {
     if (typeof identity !== "string") return null;
-    const i = identity.lastIndexOf(":");
+    const w = WATCH_SUFFIX_RE.exec(identity);
+    const base = w ? identity.slice(0, w.index) : identity;
+    const i = base.lastIndexOf(":");
     if (i < 0) return null;
-    const mxid = identity.slice(0, i), device = identity.slice(i + 1);
-    return deviceOk(device) && MXID_RE.test(mxid) ? { mxid, device } : null;
+    const mxid = base.slice(0, i), device = base.slice(i + 1);
+    if (!deviceOk(device) || !MXID_RE.test(mxid)) return null;
+    return w ? { mxid, device, watch: true } : { mxid, device };
 }
 
 /** The identity this server mints for (mxid, device), or null when the device id is not one it mints for. */

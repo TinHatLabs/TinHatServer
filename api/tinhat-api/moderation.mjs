@@ -44,6 +44,14 @@ const EVERYONE = "everyone";
 const ROOM_ID_RE = /^![A-Za-z0-9._~=+/-]{1,255}(?::[A-Za-z0-9.-]{1,255}(?::\d{1,5})?)?$/;
 // A participant identity: identity.mjs's parseIdentity, the same rule calltoken.mjs mints by (0.3.12), so every identity
 // this server hands out a call sign-in for can be muted and removed here (before, `X.1`-style devices escaped).
+/** A boolean of the participant's current permission as LiveKit reports it. protojson leaves false fields out, so a
+ *  field missing from a permission object that is there at all is false (never "true by default": that once would have
+ *  given a subscribe-only Pad Watch connection publish rights, WATCH-LEASE/DESIGN.md §1.4). */
+export function permBool(cur, snake, camel) {
+    // no permission reported at all: refuse to rebuild one (Astra design round 2 #4); an empty one = all false
+    if (!cur || typeof cur !== "object" || Array.isArray(cur)) throw new Error("the call server reported no permissions for them");
+    return (cur[snake] ?? cur[camel]) === true;
+}
 
 const ACTIONS = new Set(["mute", "unmute", "disconnect"]);
 const MAX_PARENT_LINKS = 32;
@@ -245,15 +253,15 @@ export function installModeration(app, deps) {
             await twirp("MutePublishedTrack", room, { room, identity: p.identity, track_sid: t.sid, muted: true });
             tracksMuted += 1;
         }
-        const cur = p.permission || {};
+        const cur = p.permission;
         await twirp("UpdateParticipant", room, {
             room, identity: p.identity,
             permission: {
-                can_subscribe: cur.can_subscribe ?? cur.canSubscribe ?? true,
-                can_publish: true,
-                can_publish_data: cur.can_publish_data ?? cur.canPublishData ?? true,
-                can_update_metadata: cur.can_update_metadata ?? cur.canUpdateMetadata ?? false,
-                hidden: cur.hidden ?? false,
+                can_subscribe: permBool(cur, "can_subscribe", "canSubscribe"),
+                can_publish: permBool(cur, "can_publish", "canPublish"),
+                can_publish_data: permBool(cur, "can_publish_data", "canPublishData"),
+                can_update_metadata: permBool(cur, "can_update_metadata", "canUpdateMetadata"),
+                hidden: permBool(cur, "hidden", "hidden"),
                 can_publish_sources: MUTED_PUBLISH_SOURCES,
             },
         });
@@ -261,15 +269,15 @@ export function installModeration(app, deps) {
     }
 
     async function doUnmute(room, p) {
-        const cur = p.permission || {};
+        const cur = p.permission;
         await twirp("UpdateParticipant", room, {
             room, identity: p.identity,
             permission: {
-                can_subscribe: cur.can_subscribe ?? cur.canSubscribe ?? true,
-                can_publish: true,
-                can_publish_data: cur.can_publish_data ?? cur.canPublishData ?? true,
-                can_update_metadata: cur.can_update_metadata ?? cur.canUpdateMetadata ?? false,
-                hidden: cur.hidden ?? false,
+                can_subscribe: permBool(cur, "can_subscribe", "canSubscribe"),
+                can_publish: permBool(cur, "can_publish", "canPublish"),
+                can_publish_data: permBool(cur, "can_publish_data", "canPublishData"),
+                can_update_metadata: permBool(cur, "can_update_metadata", "canUpdateMetadata"),
+                hidden: permBool(cur, "hidden", "hidden"),
                 can_publish_sources: [],   // empty = every source again
             },
         });
@@ -283,6 +291,9 @@ export function installModeration(app, deps) {
             return res.status(400).json({ error: "room_id, action (mute|unmute|disconnect) and target (<mxid>:<device>) are required" });
         }
         const targetMxid = m.mxid;
+        // a Pad Watch connection publishes nothing and may never be given publish rights: mute/unmute don't apply to it
+        // (Disconnect does)
+        if (m.watch && action !== "disconnect") return res.status(409).json({ error: "They're only watching (nothing to mute)", reason: "watching" });
         const line = (status, extra = "") => log(`[moderation] ${me} ${action} ${target} in ${roomId} -> ${status}${extra ? " " + extra : ""}`);
         if (targetMxid === me) { line(400, "self"); return res.status(400).json({ error: "You can't moderate yourself" }); }
         if (rateLimited(me)) { line(429); return res.status(429).json({ error: "Slow down — too many moderation requests" }); }

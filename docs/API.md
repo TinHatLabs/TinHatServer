@@ -39,6 +39,11 @@ The manager writes everything the services need, from state and secrets, at setu
 
 Backups carry the API's data (not the caches). Memories recordings are read from `/var/lib/tinhat/vods` (mounted
 read-only as `/vods`): a folder the owner's recorder writes to — Tin Hat Server doesn't run a recorder.
+`/vods/sessions` (vodslist.mjs) lists a capture smaller than 1 KiB (the recorder never got a frame) under
+`frameless` instead of `tracks`: it is not handed to players and never holds a memory at "Processing"; a session
+whose every capture is frameless is `empty`.
+A session whose `session.json` says `"repair_of": "<id>"` (a repaired copy written beside an original by an
+add-only repair; the original is never changed) replaces that original in the list.
 
 ## What the apps are told: the well-known
 `/.well-known/matrix/client` → `dev.tinhat.server` (its presence also marks a Tin Hat server):

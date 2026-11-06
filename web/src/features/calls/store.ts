@@ -121,6 +121,7 @@ const noopActions: CallActions = {
   setTileVideoSize: noop,
   setTileWatched: noop,
   setTileTunedIn: noop,
+  pickCamera: noop,
   applyShareRecordingOnly: noop,
   applyGameChat: noop,
   pullAside: () => "",

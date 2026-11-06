@@ -28,6 +28,16 @@ export interface Tile {
   /** a screen-share companion's share folded into its person (companions.ts): the main participant ("You" for our
    *  own device). The tile's `participant` stays the companion (its track lives there). Additive (screen share P3). */
   companionOf?: string;
+  /** Pad on the phone, Step A (persontiles.ts): every device of this person folded into this tile (sorted; absent or []
+   *  for one device) and the Pad chip ("watch" = one of them is their phone, watching). From the SERVER's attributes only. */
+  members?: string[];
+  pad?: "" | "watch";
+  /** the self tile: one of my other devices' mic is live */
+  othersLive?: boolean;
+  /** the person's other cameras (tile ids; the UI offers a switch) */
+  alts?: string[];
+  /** a moderator muted SOME of this person's devices (serverMuted = all of them) */
+  partlyMuted?: boolean;
 }
 
 export interface PublishStat {
@@ -226,6 +236,8 @@ export interface CallActions {
   setTileVideoSize(tileId: string, w: number, h: number): void;
   setTileWatched(tileId: string, watched: boolean): void;
   setTileTunedIn(tileId: string, tunedIn: boolean): void;
+  /** PAD-PHONE Step A: show this camera of its person (one of a person tile's alts) */
+  pickCamera(tileId: string): void;
   applyShareRecordingOnly(on: boolean): void;
   applyGameChat(on: boolean): void;
   pullAside(identity: string): string; // "" or reason

@@ -12,7 +12,8 @@ import { toast } from "@/core/bus";
 import { createLogger } from "@/core/log";
 import { getCall, patch, useCallStore } from "../store";
 import { sess, type Sess } from "../session";
-import { hooks, micShouldMute, sendData } from "../engine";
+import { captureBarred, hooks, leases, micShouldMute, sendData } from "../engine";
+import { Revoked, startUnder } from "../captureflow";
 import * as audio from "../audio";
 import { displayName, errText, isRecorder, mxidOf } from "../util";
 import { ELECT_IDLE, electTick, FloorTracker, groupIdOf, SR, windowDb, type ElectState, type Level } from "./elect";
@@ -289,13 +290,20 @@ function onLink(s: Sess, from: string, payload: Record<string, unknown>) {
 async function startRaw(s: Sess) {
   if (sr.rawBusy || sr.tapClose) return;
   // a watching device captures nothing until Talk here (assembly-042): no raw microphone for the room election either
-  if (getCall().noCapture) return;
+  if (captureBarred()) return; // 12.1.7: the ledger bar too (it outlives a leave until the next normal join)
+  // Pad Watch Layer 2: the raw capture is its lease's from the moment it exists (a Watch press stops it), committed last
+  const lease = leases.take("sameroom", s);
+  if (!lease) return;
   sr.rawBusy = true;
   try {
     const dev = getPref("call-input", "");
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { deviceId: dev ? { ideal: dev } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
-    });
+    const stream = await startUnder(
+      lease,
+      () => navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: dev ? { ideal: dev } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+      }),
+      (st) => st.getTracks().forEach((t) => t.stop()),
+    );
     const track = stream.getAudioTracks()[0];
     if (!track || !sr.group.size || sess() !== s) {
       track?.stop();
@@ -305,8 +313,16 @@ async function startRaw(s: Sess) {
     sr.rawOk = st.echoCancellation === false;
     sr.rawTrack = track;
     sr.floor.reset();
-    const tap = await audio.tapTrack(track, (frames) => onWindow(frames, true));
-    if (!sr.group.size || sess() !== s) {
+    let tap: Awaited<ReturnType<typeof audio.tapTrack>>;
+    try {
+      tap = await audio.tapTrack(track, (frames) => onWindow(frames, true));
+    } catch (e) {
+      track.stop(); // r2: a failed tap never leaves the raw microphone open
+      if (sr.rawTrack === track) sr.rawTrack = null;
+      throw e;
+    }
+    // r2: stopped meanwhile (the call ended / a watch began) or barred now: close it
+    if (!sr.group.size || sess() !== s || sr.rawTrack !== track || captureBarred() || !lease.commit()) {
       tap.close();
       track.stop();
       sr.rawTrack = null;
@@ -319,8 +335,10 @@ async function startRaw(s: Sess) {
     log.info(`[sr] raw mic tap ${sr.rawOk ? "on (echo cancellation off)" : "on, but the browser kept its processing — using it anyway"}`);
   } catch (e) {
     sr.rawOk = false;
-    log.warn(`[sr] no raw capture (${errText(e)}) — the election uses the processed mic`);
+    if (sr.rawTrack && !sr.tapClose) sr.rawTrack = null; // (a revoked capture: stopped by its lease)
+    if (!(e instanceof Revoked)) log.warn(`[sr] no raw capture (${errText(e)}) — the election uses the processed mic`);
   } finally {
+    lease.done();
     sr.rawBusy = false;
     publish(s);
   }
@@ -329,6 +347,7 @@ async function startRaw(s: Sess) {
 function stopRaw() {
   sr.tapClose?.();
   sr.tapClose = null;
+  sr.rawTrack?.stop(); // r2: also a raw track whose tap is still being set up
   sr.rawTrack = null;
   sr.rawOk = false;
   sr.floor.reset();

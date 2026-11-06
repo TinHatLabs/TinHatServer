@@ -10,6 +10,7 @@
 import { create } from "zustand";
 import type { StoreApi, UseBoundStore } from "zustand";
 import { isRecorder } from "@/core/server";
+import { mxidOf } from "@/features/calls/identity";
 import { useCallStore as engineStore } from "@/features/calls";
 import type { CallActions, CallState, CallStore, CallUiState, Tile } from "@/features/calls/contract";
 
@@ -160,10 +161,11 @@ export function setUiState(p: Partial<Pick<CallUiState, "maximized" | "collapsed
 export const SELF_ID = "vid_selfview";
 export const SELF_SHARE_ID = "vid_selfshare";
 
-/** Bare mxid from a LiveKit identity "@u:server:DEVICE" (tileMxid). */
+/** Bare mxid from a LiveKit identity "@u:server:DEVICE" (tileMxid). 12.1.9 (assembly-044 area 3 P2): everything
+ *  before the LAST ':' (calls/identity.ts mxidOf), so `@u:host:8448:DEV` stays `@u:host:8448` (the old first-two-parts
+ *  split made it `@u:host`, and a menu for @u:host could moderate the port user's device). A bare mxid is kept. */
 export function tileMxid(identity: string): string {
-  const m = /^(@[^:]+:[^:]+)/.exec(identity || "");
-  return m ? m[1] : identity || "";
+  return mxidOf(identity || "");
 }
 
 /** The Memories recorder (the account the server announces — core/server) is never a tile (call_ctl.rs:787-893) —

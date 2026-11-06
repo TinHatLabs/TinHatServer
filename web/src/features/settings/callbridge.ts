@@ -11,6 +11,8 @@ import { getPref, setPref, usePref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
 import { onWinState, winFocused } from "@/core/winstate";
 import { WAVE_TICK_MS } from "@/core/lowgpu";
+import { leases } from "@/features/calls/engine";
+import { startUnder } from "@/features/calls/captureflow";
 
 const log = createLogger("settings-audio");
 
@@ -278,10 +280,30 @@ function stopLocalTracks() {
 /** Standalone mic monitor (native startMicMonitor): pre = raw, level = with the chosen DSP. */
 let monGen = 0;
 
+/** 12.1.7 (Astra r1): watching (this device joined to watch, Talk not chosen) — no meter capture either. */
+const watchingNow = () => {
+  const c = useCallStore.getState();
+  return c.watching && c.noCapture;
+};
+// a watch beginning stops this meter's capture (and voids one still starting); it stays wanted
+useCallStore.subscribe((c, p) => {
+  if (c.watching && c.noCapture && !(p.watching && p.noCapture) && (localMon.stream || localMon.wanted)) {
+    monGen++;
+    stopLocalTracks();
+    localMon.running = false;
+    monSnap = { running: false, level: 0, pre: 0 };
+    emitMon();
+  }
+});
+
 async function startLocalMonitor(): Promise<void> {
   localMon.wanted = true;
   stopLocalTracks();
   const gen = ++monGen; // a newer start (device/DSP change, StrictMode re-run) supersedes this one
+  if (watchingNow()) return;
+  // Pad Watch Layer 2: the meter's capture is its lease's from the moment it exists (a Watch press stops it)
+  const lease = leases.take("settings-meter", null);
+  if (!lease) return;
   try {
     const id = getPref("call-input", "");
     const dsp = {
@@ -289,8 +311,10 @@ async function startLocalMonitor(): Promise<void> {
       autoGainControl: getPref("mic-agc", "1") !== "0",
       noiseSuppression: getPref("mic-ns-mode", "off") !== "off",
     };
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { ...(id ? { deviceId: { exact: id } } : {}), ...dsp } });
-    if (!localMon.wanted || gen !== monGen) {
+    const stream = await startUnder(lease, () => navigator.mediaDevices.getUserMedia({ audio: { ...(id ? { deviceId: { exact: id } } : {}), ...dsp } }), (st) =>
+      st.getTracks().forEach((t) => t.stop()),
+    );
+    if (!localMon.wanted || gen !== monGen || watchingNow() || !lease.commit()) {
       stream.getTracks().forEach((t) => t.stop());
       return;
     }
@@ -334,6 +358,8 @@ async function startLocalMonitor(): Promise<void> {
     localMon.running = false;
     monSnap = { running: false, level: 0, pre: 0 };
     emitMon();
+  } finally {
+    lease.done();
   }
 }
 

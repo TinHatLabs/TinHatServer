@@ -10,6 +10,7 @@ import type { MemberMenuCtx, MenuContribution, Registries } from "@/core/registr
 import { toast } from "@/core/bus";
 import { peekClient } from "@/core/matrix";
 import { useCallStore } from "@/features/calls";
+import { isParticipantOf } from "@/features/calls/identity";
 import { effectivePerms } from "./roles";
 import { openOrCreateDm, spaceOf } from "./roomActions";
 import { openSpaceSettingsIntent } from "./intents";
@@ -39,7 +40,9 @@ function inMyCall(ctx: MemberMenuCtx): boolean {
   return !ctx.roomId || !c.callRoomId || ctx.roomId === c.callRoomId;
 }
 /** A tile of `mxid`: identity "@u:server:DEVICE" (the fake call's tiles carry the bare mxid). */
-const isTileOf = (participant: string, mxid: string) => participant === mxid || participant.startsWith(`${mxid}:`);
+// 12.1.9 (assembly-044 area 3 P2): calls/identity.ts isParticipantOf — `startsWith(mxid + ":")` also matched
+// `@a:h:8448:DEV` for `@a:h` (a port server's user on the same host)
+const isTileOf = (participant: string, mxid: string) => isParticipantOf(participant, mxid);
 // The menu's own device (ctx.identity, set by the call participant menu) wins: with the same user on
 // two devices, "first tile of that mxid" moderated the wrong device (callui fix round, CORE-CHANGES).
 function identityFor(mxid: string, ctx?: MemberMenuCtx): string {

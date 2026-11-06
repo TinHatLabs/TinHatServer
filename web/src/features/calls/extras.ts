@@ -6,7 +6,8 @@ import { apiFetch } from "@/core/api";
 import { createLogger } from "@/core/log";
 import { getCall, patch } from "./store";
 import { sess } from "./session";
-import { hooks, playSound, stopSound } from "./engine";
+import { captureBarred, hooks, leases, playSound, stopSound, watchLedger, WATCH_HINT } from "./engine";
+import { check, probeFlow, Revoked } from "./captureflow";
 import { mintSfuToken, ownServiceFocus } from "./rtc";
 import { errText, localpart, sleep } from "./util";
 
@@ -102,49 +103,80 @@ export async function runConnectionTest(): Promise<void> {
     say("End the call first — the test needs the line to itself.");
     return;
   }
+  // 12.1.8 (Astra r2): watching (or a watch call still settling) publishes nothing, not even the test's pattern
+  if (captureBarred() || watchLedger.watching() || getCall().hangingUp) {
+    say(WATCH_HINT);
+    return;
+  }
+  // Pad Watch Layer 2: the test holds a lease from here to its end; a Watch press stops its probe room and its pattern at
+  // once, and no step after the press publishes anything (probeFlow; the loop below checks every second)
+  const lease = leases.take("conntest", null);
+  if (!lease) {
+    say(WATCH_HINT);
+    return;
+  }
   testing = true;
   let room: Room | null = null;
   let snow: ReturnType<typeof snowTrack> | null = null;
+  let lt!: LocalVideoTrack;
   try {
     say("Connection test: measuring your uplink…");
-    let link: number | null = null;
-    try {
-      const body = new Uint8Array(8 * 1024 * 1024).fill(0x5a);
-      const t0 = performance.now();
-      const r = await apiFetch("/speedtest/up", { method: "POST", body, timeoutMs: 25000 });
-      const dt = (performance.now() - t0) / 1000;
-      if (r.ok) link = (body.length * 8) / dt / 1e6;
-      else if (r.status === 429) log.info("uplink probe skipped: two other tests running");
-    } catch (e) {
-      log.warn(`uplink probe: ${errText(e)}`);
-    }
-    if (link !== null) say(`Uplink ${link.toFixed(1)} Mbps · now measuring the media path (20-45s, until it plateaus)…`);
+    let link = null as number | null; // (set inside probeFlow's uplink step)
     const s = getSession();
     if (!s.userId) throw new Error("not logged in");
     const lp = localpart(s.userId).replace(/[^A-Za-z0-9_-]/g, "") || "user";
     const probeRoom = `tinhat-conntest-${lp}-${Math.floor(Date.now() / 1000) % 100000}`;
-    let tok;
-    try {
-      // (a probe room is no Matrix call: always the own service — never a foreign one)
-      tok = await mintSfuToken(await ownServiceFocus(probeRoom), s.deviceId ?? "");
-    } catch (e) {
-      throw new Error(`token broker refused the probe room (${errText(e)})`);
-    }
-    say("Connection test: probing until the estimate plateaus (20-45s, cap 100 Mbps)…");
-    room = new Room({ adaptiveStream: false, dynacast: false });
-    await room.connect(tok.url, tok.jwt, { autoSubscribe: false });
-    snow = snowTrack();
-    const lt = new LocalVideoTrack(snow.track, undefined, true);
-    await room.localParticipant.publishTrack(lt, {
-      source: Track.Source.ScreenShare,
-      name: "screen",
-      videoCodec: "h264",
-      backupCodec: false,
-      simulcast: false,
-      videoEncoding: { maxBitrate: PROBE_CAP_BPS, maxFramerate: 30 },
-      screenShareEncoding: { maxBitrate: PROBE_CAP_BPS, maxFramerate: 30 },
-      degradationPreference: "maintain-resolution",
+    await probeFlow(lease, {
+      uplink: async () => {
+        try {
+          const body = new Uint8Array(8 * 1024 * 1024).fill(0x5a);
+          const t0 = performance.now();
+          const r = await apiFetch("/speedtest/up", { method: "POST", body, timeoutMs: 25000 });
+          const dt = (performance.now() - t0) / 1000;
+          if (r.ok) link = (body.length * 8) / dt / 1e6;
+          else if (r.status === 429) log.info("uplink probe skipped: two other tests running");
+        } catch (e) {
+          log.warn(`uplink probe: ${errText(e)}`);
+        }
+        if (link !== null) say(`Uplink ${link.toFixed(1)} Mbps · now measuring the media path (20-45s, until it plateaus)…`);
+      },
+      token: async () => {
+        try {
+          // (a probe room is no Matrix call: always the own service — never a foreign one)
+          return await mintSfuToken(await ownServiceFocus(probeRoom), s.deviceId ?? "");
+        } catch (e) {
+          throw new Error(`token broker refused the probe room (${errText(e)})`);
+        }
+      },
+      connect: async (tok) => {
+        const t = tok as { url: string; jwt: string };
+        say("Connection test: probing until the estimate plateaus (20-45s, cap 100 Mbps)…");
+        const r = new Room({ adaptiveStream: false, dynacast: false });
+        room = r;
+        await r.connect(t.url, t.jwt, { autoSubscribe: false });
+        return r;
+      },
+      disconnect: (r) => {
+        snow?.stop();
+        void r.disconnect().catch(() => undefined);
+      },
+      publish: async (r) => {
+        snow = snowTrack();
+        lt = new LocalVideoTrack(snow.track, undefined, true);
+        await r.localParticipant.publishTrack(lt, {
+          source: Track.Source.ScreenShare,
+          name: "screen",
+          videoCodec: "h264",
+          backupCodec: false,
+          simulcast: false,
+          videoEncoding: { maxBitrate: PROBE_CAP_BPS, maxFramerate: 30 },
+          screenShareEncoding: { maxBitrate: PROBE_CAP_BPS, maxFramerate: 30 },
+          degradationPreference: "maintain-resolution",
+        });
+      },
     });
+    if (!room) throw new Error("the probe room didn't connect");
+    const probe: Room = room;
     const grants: number[] = [];
     let peak = 0;
     let bwe = 0;
@@ -155,7 +187,8 @@ export async function runConnectionTest(): Promise<void> {
     let rising = false;
     for (let i = 1; ; i++) {
       await sleep(1000);
-      if (room.state !== ConnectionState.Connected) throw new Error("the probe room disconnected");
+      check(lease); // a Watch press stopped the probe: nothing more is measured or sent
+      if (probe.state !== ConnectionState.Connected) throw new Error("the probe room disconnected");
       const sender = lt.sender;
       if (!sender) continue;
       const rep = await sender.getStats();
@@ -216,10 +249,11 @@ export async function runConnectionTest(): Promise<void> {
     log.info(`[conntest] RESULT: ${msg}`);
     say(msg);
   } catch (e) {
-    say(`Connection test failed: ${errText(e)}`);
+    say(e instanceof Revoked ? WATCH_HINT : `Connection test failed: ${errText(e)}`);
   } finally {
-    snow?.stop();
-    await room?.disconnect(true).catch(() => undefined);
+    lease.done();
+    (snow as ReturnType<typeof snowTrack> | null)?.stop();
+    await (room as Room | null)?.disconnect(true).catch(() => undefined);
     testing = false;
   }
 }

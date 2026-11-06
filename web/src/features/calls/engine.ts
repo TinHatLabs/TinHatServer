@@ -3,6 +3,9 @@
 // tiles, mic / camera / screen / music / sound publishing, the receive policy and the
 // one-call-per-device lock. Data topics live in topics.ts, BRB in afk.ts, moderation in
 // moderation.ts, the incoming-call watcher in callwatch.ts, "can they hear me" in hear.ts.
+import { foldPersons, personOf } from "./persontiles";
+import { forgetReceiver, noteReceiver } from "./leveltap";
+import { makeOutputTap } from "./outputtap";
 import {
   ConnectionState,
   DisconnectReason,
@@ -42,14 +45,20 @@ import { onWinState, winFocused, winState } from "@/core/winstate";
 import { previewPaused, SPEAKING_LEVEL, UNFOCUSED_CAM_FPS, UNFOCUSED_SAVER_PREF, unfocusedSaverOn as saverFromPref, videoPolicy } from "@/core/lowgpu";
 import { HiddenPlayers, isRemoteVideoTile } from "./hiddenplayers";
 import { createLogger } from "@/core/log";
-import { WATCH_AVAILABLE, WATCH_OFF_NOTE } from "./watchAvailable";
+import { WATCH_AVAILABLE, WATCH_MIC_NOTE, WATCH_OFF_NOTE } from "./watchAvailable";
+import { WatchLedger, type Decision, type Phase } from "./watchsession";
+import { CaptureLeases, type Lease } from "./capturelease";
+import { micFlow, Revoked, screenFlow, startUnder, step } from "./captureflow";
 import { pageEpoch, pageHidden, whenVisible, type ResumeInfo } from "@/core/lifecycle";
 import type { CallCategory, CallState, Dev, ShareOptions, Tile } from "./contract";
 import { getCall, patch, setStatus, useCallStore } from "./store";
 import { sess, sessFor, setSess, type Sess } from "./session";
-import { advanceKeyIndex, announceKeys, currentRecipients, mintKey, type AnnounceResult, type OwnKey, replayKeys, setKeySink, TinHatKeyProvider, clearKeysFor, onPeerKey, recheckPending } from "./keys";
+import { advanceKeyIndex, announceKeys, currentRecipients, mintKey, type AnnounceResult, type OwnKey, replayKeys, setKeySink, TinHatKeyProvider, clearKeysFor, onPeerKey, recheckPending, keysReceiveOnly, setKeysReceiveOnly } from "./keys";
+import { padWatchOffered } from "@/core/server";
 import {
   mintSfuToken,
+  mintWatchToken,
+  WATCH_NOT_HERE_TEXT,
   membershipContent,
   ownLiveCreatedTs,
   putMembership,
@@ -111,6 +120,7 @@ export const hooks = {
   recOnly: (_identity: string, _sid: string): [boolean, boolean] => [false, false],
   onShareChanged: [] as Array<(s: Sess) => void>,
   onUserMicToggle: [] as Array<() => void>, // the user changed the mic themselves (BRB drops its restore claim)
+  onWatchBegins: [] as Array<() => void>, // 12.1.7: a watch episode begins (meters stop their capture)
   joinSound: (_s: Sess) => undefined as void,
 };
 
@@ -257,6 +267,20 @@ function micMutedOf(p: Participant): boolean {
   return !!pub && pub.isMuted;
 }
 
+let lastFolded: Tile[] = [];
+const camPick = new Map<string, string>(); // person → the camera tile this viewer picked (PAD-PHONE Step A)
+/** PAD-PHONE Step A: show `tileId` as its person's camera (a person tile's alts). */
+export function pickCamera(tileId: string): void {
+  const s = sess();
+  const t = lastFolded.find((x) => x.id === tileId);
+  if (!s || !t) return;
+  // my self-view is one of MY cameras (review r2); everyone else's: the person the server vouches for
+  const p = t.participant === "You" ? s.me : personOf(t.participant, s.room.remoteParticipants.get(t.participant)?.attributes);
+  if (!p) return;
+  camPick.set(p, tileId);
+  rebuildTiles();
+}
+
 export function rebuildTiles(): void {
   const s = sess();
   if (!s) return;
@@ -319,7 +343,12 @@ export function rebuildTiles(): void {
   // Screen-share companions (the Android app's native device sharing for a person): their share joins that person's
   // tiles instead of a second avatar + name (companions.ts, SCREEN-SHARE.md §4). Orphans stay ordinary participants.
   const folded = foldCompanions(tiles, companions(rawMemberEvents(s.roomId), liveSessions(s.roomId)), s.myIdentity);
-  patch({ tiles: folded, recOnlyFlags });
+  // Pad on the phone, Step A: one tile per person — only where the SERVER vouches (tinhat.person, persontiles.ts); a
+  // person's other cameras leave the grid (the shown tile lists them in alts: pickCamera switches)
+  lastFolded = folded;
+  const attrs = (id: string) => s.room.remoteParticipants.get(id)?.attributes;
+  const persons = foldPersons(folded, s.myIdentity, attrs, camPick).filter((t) => !t.altOf);
+  patch({ tiles: persons, recOnlyFlags });
   reconcileVideo();
 }
 
@@ -618,6 +647,7 @@ export function setRemoteFrameSink(f: FrameSink): void {
 function subscribeAudio(track: RemoteAudioTrack, pub: RemoteTrackPublication, p: RemoteParticipant) {
   if (isRecorder(p.identity)) return;
   const sid = pub.trackSid;
+  noteReceiver(track.receiver); // round 13: its level tap accepts only a current receiver's track (leveltap.ts)
   audio.addRemote(sid, p.identity, categoryOf(pub.source), track.mediaStreamTrack, remoteFrameSink);
 }
 
@@ -639,6 +669,26 @@ async function tapMic(source: MediaStreamTrack) {
   // talking-while-muted detector must keep hearing the capture.
   const track = source.clone();
   track.enabled = true;
+  // Pad on the phone, Step A (the round-13 finding): the clone is a capture of its own — it stops at the next revoke (a
+  // Watch press, sign-out) and through micTapClose from NOW, before the first await, not only once the tap is built
+  // (code review P2: ONE idempotent cleanup — the clone stopped and its gate released whatever throws, the tap closed
+  // when there is one)
+  let tap: { close(): void } | null = null;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    try {
+      tap?.close();
+    } catch {
+      /* the clone is stopped below either way */
+    } finally {
+      leases.removeGate(cleanup);
+      track.stop();
+    }
+  };
+  leases.addGate(cleanup);
+  micTapClose = cleanup;
   const t = await audio.tapTrack(track, (frames, stamp) => {
     let m = 0;
     for (const f of frames) m = Math.max(m, f);
@@ -646,16 +696,22 @@ async function tapMic(source: MediaStreamTrack) {
     wakeLevels(m);
     micFramesSink?.(frames, stamp);
   }).catch(() => null);
-  if (!t || tok !== micTapTok) {
-    // superseded (a newer capture, or the call/monitor ended while the tap was being built)
-    t?.close();
-    track.stop();
+  tap = t;
+  if (!t || tok !== micTapTok || cleaned) {
+    // superseded (a newer capture, or the call/monitor ended while the tap was being built), the tap failed (rejected),
+    // or a revoke already ran the cleanup while it was being built
+    if (cleaned) {
+      // a revoke already ran the cleanup (the clone is stopped, its gate gone): only the late tap is left to close
+      // (review r2: never a second track.stop / gate removal)
+      try {
+        t?.close();
+      } catch {
+        /* nothing else to release */
+      }
+    } else cleanup();
+    if (micTapClose === cleanup && tok !== micTapTok) micTapClose = null;
     return;
   }
-  micTapClose = () => {
-    t.close();
-    track.stop();
-  };
   micCaptureStartHook(source);
 }
 
@@ -676,7 +732,8 @@ function levelsTick() {
   const micLevel = s?.mic && !st.micMuted ? Math.round(Math.min(1, micLevelRaw * 3) * 1000) / 1000 : 0;
   const pre = Math.round(Math.min(1, micLevelRaw * 3) * 1000) / 1000;
   micLevelRaw *= 0.6;
-  const out = monitors.output ? Math.round(Math.min(1, audio.outputLevel() * 3) * 1000) / 1000 : st.outputLevel;
+  // round 10: the speaker meter reads the playback mix only through its output-tap lease gate (outputtap.ts)
+  const out = monitors.output ? (outputTap.ok() ? Math.round(Math.min(1, audio.outputLevel() * 3) * 1000) / 1000 : 0) : st.outputLevel;
   // ~15 Hz: only touch the store when a value moved (a silent call used to re-render every level reader,
   // and every whole-store subscriber, 15× a second with identical numbers), and keep the same
   // audioLevels object when no participant's level changed.
@@ -700,8 +757,10 @@ function sameLevels(a: Record<string, number>, b: Record<string, number>): boole
 
 /** Watching (Pad QOL 2026-10-31, docs/PAD.md "Watch"): no microphone is captured at all until this device's own
  *  "Talk here" press clears `noCapture` — every capture path ends here or in publishMic / republishMicNow. */
-function captureBarred(): boolean {
-  return getCall().noCapture === true;
+export function captureBarred(): boolean {
+  // 12.1.7: the ledger's bar (set by a watch join's start, cleared only by a normal join's start / Talk here — never by a
+  // leave) OR the store's flag: either one bars
+  return watchLedger.bar || getCall().noCapture === true;
 }
 
 /** Watching (assembly-042 review): this device captures and publishes nothing (camera, screen, music, sounds) until
@@ -713,22 +772,52 @@ function watchRefuses(): boolean {
   return true;
 }
 
-async function createMic(): Promise<LocalAudioTrack> {
-  if (captureBarred()) throw new Error("watching — the mic stays off until Talk here");
+/** 12.1.7 (Astra r1): the mic METER (no call capture, nothing published) is barred while a watch episode is current —
+ *  pressed, joining, live or recovering — until Talk here. Not after a leave: the meter of a device that stopped
+ *  watching works again (the call capture bar above outlives the leave; the meter's doesn't). */
+export function monitorBarred(): boolean {
+  // r2: also while the call bar is still closed (a watch call ended but its teardown hasn't settled yet)
+  return captureBarred() || watchLedger.watching();
+}
+
+/** Pad Watch Layer 2 (share claude/tinhat-pad/WATCH-LEASE/DESIGN.md §2): every capture / publish operation of the app
+ *  takes a lease (capturelease.ts), runs its awaits through captureflow.ts and commits right before it stores its
+ *  result. A Watch press (a queued one too) and sign-out revoke them all: what they hold stops at once. */
+export const leases = new CaptureLeases({
+  barred: (k) => (k === "meter" || k === "settings-meter" ? monitorBarred() : captureBarred()),
+  session: () => {
+    const cur = sess();
+    return cur && !cur.closing ? cur : null;
+  },
+});
+
+/** Round 10: the speaker meter's output tap (outputtap.ts) — gated by its own lease like every capture. */
+const outputTap = makeOutputTap(leases, () => audio.openOutputTap());
+
+async function createMic(lease: Lease, forMonitor = false): Promise<LocalAudioTrack> {
+  if (forMonitor ? monitorBarred() : captureBarred()) throw new Error("watching — the mic stays off until Talk here");
   const st = getCall();
   const opts: AudioCaptureOptions = buildMicOptions(st);
-  const track = await boundedCapture(createLocalAudioTrack(opts));
-  if (st.micNsMode === "strong") {
-    try {
-      track.setAudioContext(audio.audioContext());
-      const proc = await micProcessorFor("strong");
-      if (proc) await track.setProcessor(proc);
-      patch({ ncAvailable: true });
-    } catch (e) {
-      log.warn(`RNNoise unavailable: ${errText(e)}`);
-      patch({ ncAvailable: false });
-    }
-  }
+  // Layer 2: the capture is the lease's from the moment it exists (a Watch press stops it, also mid-setup), and every
+  // await below is checked (micFlow); the caller commits it
+  const track = await micFlow(lease, {
+    capture: () => boundedCapture(createLocalAudioTrack(opts)),
+    stop: (t) => t.stop(),
+    setup:
+      st.micNsMode === "strong"
+        ? async (t) => {
+            try {
+              t.setAudioContext(audio.audioContext());
+              const proc = await micProcessorFor("strong");
+              if (proc) await t.setProcessor(proc);
+              patch({ ncAvailable: true });
+            } catch (e) {
+              log.warn(`RNNoise unavailable: ${errText(e)}`);
+              patch({ ncAvailable: false });
+            }
+          }
+        : undefined,
+  });
   const label = track.mediaStreamTrack.label || "System default";
   patch({ inputName: getPref("call-input", "") ? label : "System default" });
   // (livekit's Ended follows the CURRENT capture: its own mobile re-acquire swaps the MediaStreamTrack, and
@@ -861,22 +950,30 @@ function micOp<T>(fn: () => Promise<T>, s: Sess | null = sess()): Promise<T> {
 
 async function publishMic(s: Sess): Promise<void> {
   if (captureBarred()) throw new Error("watching — the mic stays off until Talk here");
-  const track = await createMic();
-  await track.mute(); // always published muted; the latest intent is applied once it is ours
-  if (s.closing) {
-    track.stop();
-    throw new Error("the call ended while the mic was starting");
-  }
+  const lease = leases.take("mic", s);
+  if (!lease) throw new Error("watching — the mic stays off until Talk here");
+  let track: LocalAudioTrack;
   try {
-    await s.room.localParticipant.publishTrack(track, { source: Track.Source.Microphone, name: "mic", dtx: true, red: true });
-  } catch (e) {
-    track.stop();
-    throw e;
-  }
-  if (s.closing) {
-    await s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
-    track.stop();
-    throw new Error("the call ended while the mic was starting");
+    track = await createMic(lease);
+    await step(lease, track.mute()); // always published muted; the latest intent is applied once it is ours
+    if (s.closing) {
+      track.stop();
+      throw new Error("the call ended while the mic was starting");
+    }
+    try {
+      await s.room.localParticipant.publishTrack(track, { source: Track.Source.Microphone, name: "mic", dtx: true, red: true });
+    } catch (e) {
+      track.stop();
+      throw e;
+    }
+    // the commit point (Layer 2): a Watch press during the publish stopped the capture; it doesn't stay published
+    if (s.closing || !lease.commit()) {
+      await s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
+      track.stop();
+      throw new Error("the call ended while the mic was starting");
+    }
+  } finally {
+    lease.done();
   }
   s.mic = track;
   await reconcileMic(s);
@@ -912,8 +1009,10 @@ async function republishMicInner(reason: string): Promise<boolean> {
   if (!s || !s.mic || s.closing) return false;
   const old = s.mic;
   let track: LocalAudioTrack | null = null;
+  const lease = leases.take("mic", s);
+  if (!lease) return false;
   try {
-    track = await createMic();
+    track = await createMic(lease);
     if (!live(s) || s.mic !== old) {
       track.stop();
       return false;
@@ -923,7 +1022,7 @@ async function republishMicInner(reason: string): Promise<boolean> {
     await s.room.localParticipant.unpublishTrack(old, true);
     s.mic = null; // the old capture is stopped: if the publish below fails, the mic healer starts a fresh one
     await s.room.localParticipant.publishTrack(track, { source: Track.Source.Microphone, name: "mic", dtx: true, red: true });
-    if (!live(s)) {
+    if (!live(s) || !lease.commit()) {
       await s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
       track.stop();
       return false;
@@ -938,6 +1037,8 @@ async function republishMicInner(reason: string): Promise<boolean> {
     lastMicError = e;
     log.warn(`mic re-publish (${reason}) failed: ${errText(e)}`);
     return false;
+  } finally {
+    lease.done();
   }
 }
 
@@ -1199,7 +1300,20 @@ function nsLabel(m: string) {
 
 // ---- monitors (meters outside a call) ------------------------------------------------------------------------------
 
-const monitors = { mic: false, output: false, micTrack: null as LocalAudioTrack | null };
+const monitors = { mic: false, output: false, micTrack: null as LocalAudioTrack | null, pendingTrack: null as LocalAudioTrack | null };
+/** bumped when a watch episode begins: a meter capture still being set up then is dropped when it arrives */
+let monitorGen = 0;
+
+/** 12.1.7 (Astra r1): a watch episode begins — the mic meter's capture stops (and one still starting is voided). The
+ *  meter stays wanted; it shows nothing until the watch ends or Talk here. */
+function retireMicMonitorForWatch(): void {
+  monitorGen++;
+  if (monitors.micTrack) log.info("watching — the mic meter's capture is stopped");
+  monitors.micTrack?.stop();
+  monitors.micTrack = null;
+  // (a meter capture still starting is its lease's: the Watch press revoked it — Layer 2)
+  for (const h of hooks.onWatchBegins) h();
+}
 
 export async function startMicMonitor(restart = false): Promise<void> {
   monitors.mic = true;
@@ -1208,16 +1322,30 @@ export async function startMicMonitor(restart = false): Promise<void> {
   if (monitors.micTrack && !restart) return;
   monitors.micTrack?.stop();
   monitors.micTrack = null;
+  if (monitorBarred()) {
+    log.info("mic monitor: not started — watching (Talk here first)");
+    return;
+  }
+  const gen = monitorGen;
+  // Layer 2: each start owns its capture through its own lease (two overlapping starts can't lose one: Astra r3 #2)
+  const lease = leases.take("meter", null);
+  if (!lease) {
+    log.info("mic monitor: not started — watching (Talk here first)");
+    return;
+  }
   try {
-    const t = await createMic();
-    if (!monitors.mic) {
+    const t = await createMic(lease, true);
+    if (!monitors.mic || gen !== monitorGen || monitorBarred() || !lease.commit()) {
       t.stop();
       return;
     }
+    (monitors.micTrack as LocalAudioTrack | null)?.stop(); // (an overlapping start that committed first)
     monitors.micTrack = t;
     void tapMic(t.mediaStreamTrack);
   } catch (e) {
-    log.warn(`mic monitor: ${errText(e)}`);
+    if (!(e instanceof Revoked)) log.warn(`mic monitor: ${errText(e)}`);
+  } finally {
+    lease.done();
   }
 }
 
@@ -1238,10 +1366,12 @@ export function startOutputMonitor(): void {
   monitors.output = true;
   ensureLevelLoop();
   audio.audioContext();
+  outputTap.ok(); // round 11: the analyser is fed only through the output-tap lease (refused while watching)
 }
 
 export function stopOutputMonitor(): void {
   monitors.output = false;
+  outputTap.close(); // round 11: the analyser stops taking in the playback mix
   patch({ outputLevel: 0 });
   if (!sess() && !monitors.mic) audio.idleContext();
   ensureLevelLoop();
@@ -1324,29 +1454,46 @@ let camDiedAt = 0;
 let camOp = 0; // bumped by every stop: a start that was still acquiring stands down
 async function startCamera(s: Sess): Promise<boolean> {
   if (watchRefuses()) return false;
+  const lease = leases.take("camera", s);
+  if (!lease) return false;
   const op = ++camOp;
   const q = parseCamQuality(getCall().camQuality);
   const dev = getPref("call-camera", "");
   const facing = getPref("call-facing", "");
-  const track = await createLocalVideoTrack({
-    deviceId: dev ? { ideal: dev } : undefined,
-    facingMode: !dev && (facing === "environment" || facing === "user") ? facing : undefined,
-    resolution: { width: q.w, height: q.h, frameRate: q.fps },
-  });
-  if (op !== camOp || sess() !== s) {
-    track.stop();
-    return false;
-  }
+  let track: LocalVideoTrack;
   try {
-    await s.room.localParticipant.publishTrack(track, camPublishOptions());
-  } catch (e) {
-    track.stop();
-    throw e;
-  }
-  if (op !== camOp || sess() !== s) {
-    await s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
-    track.stop();
-    return false;
+    // Layer 2: the camera is the lease's the moment it exists; a Watch press stops it, the commit is the last check
+    try {
+      track = await startUnder(
+        lease,
+        () => createLocalVideoTrack({
+          deviceId: dev ? { ideal: dev } : undefined,
+          facingMode: !dev && (facing === "environment" || facing === "user") ? facing : undefined,
+          resolution: { width: q.w, height: q.h, frameRate: q.fps },
+        }),
+        (t) => t.stop(),
+      );
+    } catch (e) {
+      if (e instanceof Revoked) return false;
+      throw e;
+    }
+    if (op !== camOp || sess() !== s) {
+      track.stop();
+      return false;
+    }
+    try {
+      await s.room.localParticipant.publishTrack(track, camPublishOptions());
+    } catch (e) {
+      track.stop();
+      throw e;
+    }
+    if (op !== camOp || sess() !== s || !lease.commit()) {
+      await s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
+      track.stop();
+      return false;
+    }
+  } finally {
+    lease.done();
   }
   s.cam = track;
   track.on(TrackEvent.Ended, () => onCameraEnded(track));
@@ -1646,51 +1793,64 @@ export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
   if (opts.quality) applyShareQualityPref(opts.quality.w, opts.quality.h, opts.quality.fps, opts.quality.kbps, false);
   const q = parseShareQuality(getCall().shareQuality);
   const box = shareBox(q);
-  let stream: MediaStream;
+  // Layer 2: the picker's tracks are the lease's the moment they exist (a Watch press stops them, also while the track is
+  // being fitted or published); every await is checked; the commit is the last check (screenFlow)
+  const lease = leases.take("screen", s);
+  if (!lease) {
+    watchRefuses();
+    return;
+  }
+  const SUPERSEDED = "superseded";
+  let stream!: MediaStream;
+  let vt!: MediaStreamTrack;
+  let fit!: { w: number; h: number };
+  let track!: LocalVideoTrack;
+  const dropStream = () => stream?.getTracks().forEach((t) => t.stop());
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({
-      // Only the encoder's limit here: fitTrack needs the source's own size (a box here would bind an ultrawide's
-      // width first — 1080p on 21:9 came out 1920x800) and then fits it to the preset.
-      video: { width: { max: SHARE_MAX_DIM }, height: { max: SHARE_MAX_DIM }, frameRate: { max: q.fps } },
-      audio: opts.audio === "browser",
-      // Chromium extras (ignored elsewhere)
-      ...({ selfBrowserSurface: "exclude", surfaceSwitching: "include", systemAudio: "include" } as object),
-    } as DisplayMediaStreamOptions);
-  } catch (e) {
-    if (!superseded()) setStatus(`Share failed: ${errText(e)}`);
-    return;
-  }
-  // Every exit below that doesn't keep the share stops EVERY track the picker gave us.
-  const dropStream = () => stream.getTracks().forEach((t) => t.stop());
-  if (superseded()) {
-    dropStream();
-    return;
-  }
-  const vt = stream.getVideoTracks()[0];
-  if (!vt) {
-    dropStream();
-    setStatus("Share failed: no video track");
-    return;
-  }
-  vt.contentHint = q.enc === "vp9" ? "detail" : "motion";
-  const fit = await fitTrack(vt, q);
-  if (superseded()) {
-    dropStream();
-    return;
-  }
-  const track = new LocalVideoTrack(vt, undefined, true);
-  try {
-    await s.room.localParticipant.publishTrack(track, sharePublishOptions(q, box));
-  } catch (e) {
-    dropStream();
-    if (!superseded()) setStatus(`Share failed: ${errText(e)}`);
-    return;
-  }
-  if (superseded() || s.screen) {
-    // A stop / newer share / hang-up happened while this one published: it must not stay live.
-    await s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
-    dropStream();
-    return;
+    try {
+      await screenFlow(lease, {
+        display: async () => {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            // Only the encoder's limit here: fitTrack needs the source's own size (a box here would bind an ultrawide's
+            // width first — 1080p on 21:9 came out 1920x800) and then fits it to the preset.
+            video: { width: { max: SHARE_MAX_DIM }, height: { max: SHARE_MAX_DIM }, frameRate: { max: q.fps } },
+            audio: opts.audio === "browser",
+            // Chromium extras (ignored elsewhere)
+            ...({ selfBrowserSurface: "exclude", surfaceSwitching: "include", systemAudio: "include" } as object),
+          } as DisplayMediaStreamOptions);
+          return stream;
+        },
+        // Every exit that doesn't keep the share stops EVERY track the picker gave us.
+        stopAll: (st) => st.getTracks().forEach((t) => t.stop()),
+        fit: async (st) => {
+          if (superseded()) throw new Error(SUPERSEDED);
+          const v = st.getVideoTracks()[0];
+          if (!v) throw new Error("no video track");
+          vt = v;
+          vt.contentHint = q.enc === "vp9" ? "detail" : "motion";
+          fit = await fitTrack(vt, q);
+          if (superseded()) throw new Error(SUPERSEDED);
+        },
+        publish: async () => {
+          track = new LocalVideoTrack(vt, undefined, true);
+          await s.room.localParticipant.publishTrack(track, sharePublishOptions(q, box));
+          return track;
+        },
+        unpublish: (t) => s.room.localParticipant.unpublishTrack(t, true).then(() => undefined),
+      });
+    } catch (e) {
+      dropStream();
+      if (!(e instanceof Revoked) && errText(e) !== SUPERSEDED && !superseded()) setStatus(`Share failed: ${errText(e)}`);
+      return;
+    }
+    if (superseded() || s.screen || !lease.commit()) {
+      // A stop / newer share / hang-up / Watch press happened while this one published: it must not stay live.
+      await s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
+      dropStream();
+      return;
+    }
+  } finally {
+    lease.done();
   }
   s.screen = track;
   enforceShareBox(s, fit);
@@ -1999,31 +2159,49 @@ export async function startMusicSource(id: string): Promise<void> {
   setStatus("Sharing audio…");
   const owner = sess();
   const op = ++musicOp;
+  // Layer 2: the captured source is the lease's from the moment it exists, through its publish (a Watch press stops it)
+  const lease = leases.take("share-audio", owner);
+  if (!lease) {
+    patch({ musicPlaying: false });
+    watchRefuses();
+    return;
+  }
+  const stopStream = (st: MediaStream) => st.getTracks().forEach((t) => t.stop());
   try {
     let at: MediaStreamTrack | undefined;
     if (id === "tab") {
       if (!displayAudioSupported()) throw new Error("Your browser can't share audio");
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, ...({ systemAudio: "include" } as object) } as DisplayMediaStreamOptions);
+      const stream = await startUnder(lease, () => navigator.mediaDevices.getDisplayMedia({ video: true, audio: true, ...({ systemAudio: "include" } as object) } as DisplayMediaStreamOptions), stopStream);
       stream.getVideoTracks().forEach((t) => t.stop());
       at = stream.getAudioTracks()[0];
       if (!at) throw new Error("no audio was shared — tick “Share audio” in the browser's picker");
     } else {
       // An audio input (loopback / virtual cable / monitor device): raw, stereo, no voice processing.
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: id }, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 },
-      });
+      const stream = await startUnder(
+        lease,
+        () => navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: { exact: id }, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 },
+        }),
+        stopStream,
+      );
       at = stream.getAudioTracks()[0];
       if (!at) throw new Error("that audio source gave no sound track");
     }
     await publishMusicTrack(at, "share audio", () => at!.stop(), owner, op);
+    if (!lease.commit()) {
+      await stopMusic(true); // a Watch press while it published: it stopped, and it doesn't stay in the slot
+      throw new Revoked();
+    }
     at.addEventListener("ended", () => {
       if (sess()?.music?.mediaStreamTrack === at) void stopMusic();
     });
   } catch (e) {
     if (op === musicOp) {
       patch({ musicPlaying: false });
-      setStatus(`Audio share failed: ${errText(e)}`);
+      if (!(e instanceof Revoked)) setStatus(`Audio share failed: ${errText(e)}`);
     }
+  } finally {
+    lease.done();
   }
 }
 
@@ -2172,14 +2350,46 @@ function primeAudioInGesture(): void {
   else audio.audioContext();
 }
 
-/** The room this device is WATCHING (null = none): every (re)join of it — the auto-rejoin after a drop, a reconnect —
- *  is a watch join too, so a drop can never bring the mic back. Cleared by an explicit leave or "Talk here". */
-let watchIntent: string | null = null;
+/** 12.1.7 (share claude/tinhat-pad/WATCH-1217/STATE-TABLE.md): the call EPISODE this device asked for and its mode —
+ *  the one place that decides whether a (re)join watches. Presses start episodes (only the Watch press a watching one),
+ *  Leave / session loss end them; a recovery joins only with the ticket of the episode that dropped, in its mode; a join
+ *  queued behind a teardown is the episode that queued it. Byte-compatible with the desktop's watch_session.rs. */
+export const watchLedger = new WatchLedger();
+
+/** The phase the ledger decides in (from the store): tearing = a teardown runs and nothing is up or connecting. */
+function callPhase(): Phase {
+  const st = getCall();
+  if (st.inCall) return "live";
+  if (st.connecting) return "connecting";
+  if (st.hangingUp) return "tearing";
+  return "idle";
+}
+
+/** Carry out a ledger decision: join now, queue behind the teardown, or leave the call up first (a switch). */
+function runDecision(d: Decision, why: string): void {
+  if (d.kind === "none" || d.kind === "abort") {
+    log.info(`[watch-ledger] ${why}: ${d.kind} (${d.why})`);
+    return;
+  }
+  if (d.kind === "leave") return;
+  log.info(`[watch-ledger] ${why}: ${d.kind} ${d.room} (episode ${d.id}${d.watch ? ", watching" : ""})`);
+  if (d.kind === "queue") {
+    // Join pressed while the last call is still being cleaned up (a hang-up, a drop, a join that gave up):
+    // join the moment the teardown ends instead of ignoring the click (the teardown asks the ledger).
+    pendingSwitch = d.room;
+    setStatus("Joining as soon as the last call has ended…");
+    return;
+  }
+  if (d.kind === "leave-then-join") {
+    pendingSwitch = d.room;
+    hangUp();
+    return;
+  }
+  beginJoin(d.id, d.room);
+}
 
 /** Watch the call (Pad QOL 2026-10-31): a normal, visible join (membership, token, the usual media keys) with NO
  *  microphone captured, deafened from before connect, camera off. "Talk here" / "Hear here" undo it locally. */
-/** 12.1.6: Watch is OFF (assembly-042 release review: rejoin paths could still capture a watching device's microphone;
- *  share claude/tinhat-pad/WATCH-1217.md). The op is refused and the Pad hides its entry; it returns in 12.1.7. */
 export { WATCH_AVAILABLE };
 export function watchCall(roomId: string): void {
   if (!WATCH_AVAILABLE) {
@@ -2187,7 +2397,23 @@ export function watchCall(roomId: string): void {
     setStatus(WATCH_OFF_NOTE);
     return;
   }
-  joinCall(roomId, true);
+  // Watch needs the server's subscribe-only token (WATCH-LEASE/DESIGN.md §1.5): an older server offers no Watch at all
+  if (!padWatchOffered()) {
+    log.info(`watch ${roomId} refused: this server doesn't mint Watch tokens`);
+    setStatus(WATCH_NOT_HERE_TEXT);
+    return;
+  }
+  // Layer 2: the press revokes every capture lease BEFORE anything else runs (a queued watch too): what they hold
+  // stops now, work still inside a platform call stops what it gets back; the watch join waits for them (beginJoin)
+  const d = watchLedger.pressWatch(roomId, callPhase());
+  if (watchLedger.watching()) {
+    const n = leases.revoke("watch");
+    if (n) log.info(`[lease] the Watch press stopped ${n} capture(s) still starting`);
+    setStatus(WATCH_MIC_NOTE); // Step A: the plain note (the server refuses anything sent while watching)
+    retireMicMonitorForWatch(); // (a queued watch too: no meter capture from the press on)
+    setKeysReceiveOnly(true); // no media key leaves this device from the press on (§1.7)
+  }
+  runDecision(d, "watch");
 }
 
 /** Watching: talk from this device (captures + publishes the mic, unmuted; hearing comes on too — talking deaf is a
@@ -2201,20 +2427,14 @@ export function watchTalk(on: boolean): void {
     setStatus(`${st.serverMutedBy || "A moderator"} muted your mic for everyone — ask them to unmute you`);
     return;
   }
-  watchIntent = null; // chose to talk: a rejoin after a drop is a normal one now
-  patch({ noCapture: false, micMuted: false });
-  applyDeafen(false);
-  const s = sess();
-  if (!s || !live(s)) return; // still connecting: doJoin's step 9 publishes it (noCapture is off now)
-  s.micWanted = true;
-  if (s.mic) return forceMicMuted(false);
-  void micOp(async () => {
-    // re-checked when the publish really starts (an earlier mic op may have waited): still this call, still wanted,
-    // not server-muted meanwhile
-    const now = getCall();
-    if (!live(s) || sess() !== s || now.noCapture || now.serverMuted || s.mic) return;
-    await publishMic(s);
-  }, s).catch((e) => setStatus(`Couldn't start your mic — ${errText(e)}`));
+  // Talk here (WATCH-LEASE/DESIGN.md §1.6): the watch connection's token is subscribe-only, so it can never be given
+  // the mic. Talking = Stop watching + a Join PRESS of the same call, queued behind the teardown: a new normal episode
+  // with a normal token and identity. The bar stays closed until that normal join starts (the ledger).
+  const room = st.callRoomId;
+  if (!room) return;
+  log.info(`[watch] Talk here: leaving the watch connection of ${room}, then a normal join`);
+  leaveCall();
+  joinCallPressed(room);
 }
 
 /** Watching: hear the call on this device or not (off also mutes the mic if talking). */
@@ -2225,33 +2445,53 @@ export function watchHear(on: boolean): void {
   applyDeafen(!on);
 }
 
-/** A Join PRESS (the call buttons, the palette, a Pad's join): always a normal join. assembly-042: a watch intent left by
- *  a watch call that ended without a leave (kicked, the call ended, the rejoin gave up) must never turn the next press
- *  into a watch join. Internal rejoins (a drop, a switch, the reload path) call joinCall and stay watch joins. */
+/** A Join PRESS (the call buttons, the palette, a Pad's join, Answer, the guest hand-off): always a NORMAL join — a new
+ *  episode (assembly-042 / 12.1.7). Only the Watch press starts a watching one; internal rejoins go through the ledger. */
 export function joinCallPressed(roomId: string): void {
-  const st = getCall();
-  // (not while a call is up or connecting: a press then joins nothing, and a live watch keeps its intent)
-  if (!st.inCall && !st.connecting) watchIntent = null;
-  joinCall(roomId);
-}
-
-export function joinCall(roomId: string, watch = false): void {
-  // a Tin Hat app with "calls": the app joins (features/native; false everywhere else) — never for a watch join (the
-  // native call would open its microphone)
-  watch = watch || (!!roomId && watchIntent === roomId);
-  if (!watch && joinNatively(roomId)) return;
+  if (joinNatively(roomId)) return; // a Tin Hat app with "calls": the app joins (features/native; false everywhere else)
   const st = getCall();
   if (roomId && !st.inCall && !st.connecting) primeAudioInGesture();
-  if (roomId && st.hangingUp && !st.inCall && !st.connecting) {
-    // Join pressed while the last call is still being cleaned up (a hang-up, a drop, a join that gave up):
-    // join the moment the teardown ends instead of ignoring the click (the teardown joins pendingSwitch).
-    pendingSwitch = roomId;
-    watchIntent = watch ? roomId : null;
-    setStatus("Joining as soon as the last call has ended…");
+  runDecision(watchLedger.pressJoin(roomId, callPhase()), "join press");
+}
+
+/** = joinCallPressed (a join from outside the engine is a press). There is no way to ask for a watch join here. */
+export function joinCall(roomId: string): void {
+  joinCallPressed(roomId);
+}
+
+let watchPendingSince = 0;
+/** The join of ledger episode `id` really starts: its mode comes from the ledger (startJoin), never from the caller. */
+function beginJoin(id: number, roomId: string): void {
+  const st = getCall();
+  if (!roomId || st.inCall || st.connecting || st.hangingUp) {
+    log.info(`[watch-ledger] episode ${id}: not joining ${roomId} (in=${st.inCall} connecting=${st.connecting} hangingUp=${st.hangingUp})`);
     return;
   }
-  if (!roomId || st.inCall || st.connecting || st.hangingUp) return;
-  watchIntent = watch ? roomId : null;
+  // Layer 2 "Watch pending": a watch join starts only once every revoked capture has come back from its platform call
+  // and been stopped (leases.pending() = 0) — never on a timeout: after 15 s it gives up instead
+  if (watchLedger.watching() && leases.pending() > 0) {
+    if (!watchPendingSince) watchPendingSince = Date.now();
+    if (Date.now() - watchPendingSince > 15_000) {
+      watchPendingSince = 0;
+      log.warn(`[lease] episode ${id}: a capture didn't stop within 15 s — not starting the watch`);
+      watchLedger.gaveUp();
+      setStatus("Couldn't start watching — a microphone or screen capture didn't stop. Try again.");
+      return;
+    }
+    setTimeout(() => beginJoin(id, roomId), 50);
+    return;
+  }
+  watchPendingSince = 0;
+  const m = watchLedger.startJoin(id);
+  if (!m) {
+    log.info(`[watch-ledger] episode ${id} is no longer current — not joining ${roomId}`);
+    return;
+  }
+  const watch = m.watch;
+  // a watch join never goes to the native app (the native call would open its microphone)
+  if (!watch && joinNatively(roomId)) return;
+  if (watch) retireMicMonitorForWatch();
+  setKeysReceiveOnly(watch); // a watch join sends no media key; a normal join (a press) announces again
   if (st.fake) useCallStore.setState({ fake: false });
   const gen = ++joinGen;
   joinTarget = roomId;
@@ -2279,7 +2519,7 @@ export function joinCall(roomId: string, watch = false): void {
   // Backstop: every step of a join is bounded, but a join must never sit at "Connecting…" (Join button
   // disabled) for good — e.g. the page was suspended mid-join by an iOS app switch.
   armJoinDeadline(gen, JOIN_DEADLINE_MS);
-  void doJoin(roomId, gen, restore);
+  void doJoin(roomId, gen, restore, watch);
 }
 
 const JOIN_DEADLINE_MS = 60_000;
@@ -2317,6 +2557,7 @@ function failStuckJoin(gen: number, reason: string): void {
   const roomId = joinTarget ?? (st.callRoomId || null);
   log.warn(`join ${roomId ?? "?"} (gen ${gen}) is still connecting — giving up: ${reason}`);
   ++joinGen; // the stuck doJoin stands down at its next step and closes what it opened
+  watchLedger.gaveUp();
   userHungUp = true; // (no auto-rejoin for this one)
   joinTarget = null;
   restoreMute = null;
@@ -2358,7 +2599,7 @@ function live(s: Sess): boolean {
   return sess() === s && !s.closing;
 }
 
-async function doJoin(roomId: string, gen: number, restore: boolean | null): Promise<void> {
+async function doJoin(roomId: string, gen: number, restore: boolean | null, watch = false): Promise<void> {
   const ses = getSession();
   const me = ses.userId ?? "";
   const dev = ses.deviceId ?? "";
@@ -2392,7 +2633,9 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
       return;
     }
     log.warn(`join ${roomId} failed: ${errText(e)}`);
+    watchLedger.gaveUp(); // 12.1.7 (Astra r1, R37): the episode ends with its join; the next join is a press
     await dispose();
+    if (teardowns === 0 && !stale(gen) && watchLedger.settled()) log.info("[watch-ledger] settled after the failed join");
     if (stale(gen)) return; // a leave / newer join happened while we were closing: it owns the state now
     dropMembership(roomId, gen);
     if (membershipLanded || activeCallRoom === roomId) {
@@ -2405,6 +2648,12 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
     const reason = friendly(e);
     lastDropRoom = roomId;
     patch({ connecting: false, reconnecting: false, callFailed: true, failReason: reason });
+    // round 5 (Pad gates): a watch join that failed leaves watch mode — not "watching", not deafened (the capture bar is
+    // the ledger's, settled above). Mirrors the desktop's join Err branch.
+    if (getCall().watching) {
+      patch({ watching: false, noCapture: captureBarred() });
+      applyDeafen(false);
+    }
     setStatus(e instanceof CallRefused ? reason : `Couldn't join the call — ${reason}`);
   };
   try {
@@ -2434,8 +2683,9 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
       setStatus("You didn't join the call");
       return;
     }
-    // 3. token (OpenID only now, and only to the approved service)
-    const tok = await mintSfuToken(focus, dev);
+    // 3. token (OpenID only now, and only to the approved service). A watch join: the server's subscribe-only Watch
+    // token (the SFU refuses any publish from it, WATCH-LEASE/DESIGN.md §1), never a normal one instead.
+    const tok = watch ? await mintWatchToken(focus, me, dev) : await mintSfuToken(focus, dev);
     if (stale(gen)) return fail("superseded");
     // 4. leftover session
     const left = sess();
@@ -2487,18 +2737,19 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
       void withdrawMembership(roomId);
       return fail("superseded");
     }
-    const keyIndex = advanceKeyIndex();
-    const key = mintKey();
+    // a watch join mints no key of its own (receive-only, §1.7): nothing to encrypt, nothing to announce
+    const keyIndex = watch ? 0 : advanceKeyIndex();
+    const key = watch ? null : mintKey();
     void clearStaleAway(roomId, me);
     const provider = new TinHatKeyProvider();
     provider.ownIndex = keyIndex;
-    await provider.setRawKey(myIdentity, keyIndex, key);
+    if (key) await provider.setRawKey(myIdentity, keyIndex, key);
     // M2: the planner starts with the join's key; its holders = recipient rule v2 now (DESIGN §3.3)
     const sfuGone = new Map<string, number>();
     const rotation = !(await keyRotationOff());
     const { planner } = createPlanner(keyIndex, Date.now(), await currentRecipients(roomId, sfuGone), rotation ? undefined : NO_ROTATION);
     if (stale(gen)) return fail("superseded");
-    void announceKeys(roomId, [{ index: keyIndex, key }], "join", () => !stale(gen) && planner.announceKeys().includes(keyIndex), {
+    if (key) void announceKeys(roomId, [{ index: keyIndex, key }], "join", () => !stale(gen) && planner.announceKeys().includes(keyIndex), {
       sfuGone: () => sfuGone,
       onSend: (ids, idx) => planner.noteHolders(ids, idx),
     }).catch((e) => log.warn(`[send-key-td] ${errText(e)}`));
@@ -2522,7 +2773,7 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null): Pro
       roomId,
       room,
       provider,
-      keyRing: new Map([[keyIndex, key]]),
+      keyRing: key ? new Map([[keyIndex, key]]) : new Map<number, Uint8Array>(),
       sendingIndex: keyIndex,
       resend: new Map<string, number>(),
       switching: null,
@@ -2944,6 +3195,7 @@ function persistMintIndex(index: number): void {
 }
 
 async function planAct(s: Sess, a: PlanAction): Promise<void> {
+  if (keysReceiveOnly()) return; // watching: no key minted, announced or switched to (WATCH-LEASE/DESIGN.md §1.7)
   if ("announce" in a) {
     const keys = a.announce.keys.flatMap((index) => (s.keyRing.has(index) ? [{ index, key: s.keyRing.get(index)! }] : []));
     const why = `newcomer${a.announce.to.length > 1 ? "s" : ""}`;
@@ -3115,7 +3367,10 @@ function wireRoom(s: Sess) {
       log.info(`${track.kind} TrackSubscribed ${p.identity} ${pub.source} ${pub.trackSid}`);
     })
     .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, pub: RemoteTrackPublication) => {
-      if (track.kind === Track.Kind.Audio) audio.removeRemote(pub.trackSid);
+      if (track.kind === Track.Kind.Audio) {
+        audio.removeRemote(pub.trackSid);
+        forgetReceiver(track.receiver);
+      }
       else {
         const el = attached.get(`vid_${pub.trackSid}`);
         if (el) track.detach(el);
@@ -3125,6 +3380,8 @@ function wireRoom(s: Sess) {
       if (sess() === s) rebuildTiles();
     })
     .on(RoomEvent.TrackMuted, () => sess() === s && rebuildTiles())
+    // Pad on the phone, Step A: the server's attributes (tinhat.person / tinhat.pad) group and chip the tiles
+    .on(RoomEvent.ParticipantAttributesChanged, () => sess() === s && rebuildTiles())
     .on(RoomEvent.TrackUnmuted, () => sess() === s && rebuildTiles())
     .on(RoomEvent.TrackPublished, () => sess() === s && rebuildTiles())
     .on(RoomEvent.TrackUnpublished, () => sess() === s && rebuildTiles())
@@ -3292,16 +3549,26 @@ function clearCallView() {
 }
 
 export function leaveCall(): void {
-  watchIntent = null; // an explicit leave ends watching (the next Join is a full one)
+  // an explicit leave ends the episode: a recovery or a queued join of it never runs (12.1.7: also during a teardown)
+  watchLedger.pressLeave();
   const st = getCall();
   if (st.hangingUp) {
-    // Leave pressed while a teardown runs: cancel a join / switch queued behind it.
-    if (pendingSwitch) {
+    // Leave pressed while a teardown runs: cancel a join / switch queued behind it, and the recovery after a drop
+    userHungUp = true;
+    if (pendingSwitch || st.reconnecting) {
       pendingSwitch = null;
+      patch({ reconnecting: false });
       setStatus("Left call");
     }
     return;
   }
+  hangUp();
+}
+
+/** The hang-up itself (Leave, or a switch leaving the call up first — the switch's target waits in the ledger). */
+function hangUp(): void {
+  const st = getCall();
+  if (st.hangingUp) return;
   if (!st.inCall && !st.connecting && !st.callFailed) {
     // Hang up during an auto-rejoin's 1.5 s wait (amber "Reconnecting…" banner): cancel it.
     if (st.reconnecting) {
@@ -3367,12 +3634,17 @@ async function teardown(s: Sess | null, roomId: string | null, why: string, keep
     teardowns = Math.max(0, teardowns - 1);
     if (teardowns === 0) {
       releaseCallLock();
-      const target = pendingSwitch;
       pendingSwitch = null;
+      const d = watchLedger.teardownDone(); // the episode queued behind it (if still current)
+      const target = d.kind === "join" ? d.room : null;
       const st = getCall();
       patch({ hangingUp: false, ...(st.callFailed || st.reconnecting ? {} : { callRoomId: target ?? "" }) });
-      if (target) joinCall(target);
-      else if (why === "hang up") setStatus("Left call");
+      if (target) runDecision(d, "teardown done");
+      else {
+        // r2: no teardown left and no episode current: nothing of a watch call runs any more — the bar may open
+        if (watchLedger.settled()) log.info("[watch-ledger] settled: no call, no episode — the capture bar is open again");
+        if (why === "hang up") setStatus("Left call");
+      }
     }
   }
 }
@@ -3395,6 +3667,8 @@ async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false)
   const followUp = rejoinAttempts > 0;
   // force: back from the background with a dead SFU session — the user was in this call, take them back
   const auto = (force || recoverable) && !userHungUp && (force || healthy || followUp) && rejoinAttempts < 2;
+  // the ticket a recovery must present: the episode that dropped (null: no recovery — none, or it is being left)
+  const ticket = watchLedger.dropped(roomId, auto);
   let removedBy = "";
   if (reason === DisconnectReason.PARTICIPANT_REMOVED) {
     for (const h of hooks.onRemoved) removedBy = h(s) || removedBy;
@@ -3429,11 +3703,13 @@ async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false)
     const myGen = joinGen;
     await sleep(force ? 300 : 1500);
     const st = getCall();
-    if (!userHungUp && joinGen === myGen && !st.inCall && !st.connecting && !st.hangingUp) {
+    const d = !userHungUp && joinGen === myGen && !st.inCall && !st.connecting && !st.hangingUp ? watchLedger.recover(ticket) : null;
+    if (d && d.kind === "join" && d.room === roomId) {
       restoreMute = preMute;
       patch({ reconnecting: false });
-      joinCall(roomId);
+      beginJoin(d.id, d.room);
     } else {
+      log.info(`[watch-ledger] recovery of ${roomId}: ${d ? `${d.kind}${"why" in d ? ` (${d.why})` : ""}` : "not attempted (left, or another join runs)"}`);
       patch({ reconnecting: false });
       if (!claimsRoom(roomId)) clearKeysFor(roomId); // no rejoin after all: don't keep its keys
     }
@@ -3442,18 +3718,13 @@ async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false)
 
 export function switchCall(roomId: string): void {
   if (joinNatively(roomId)) return; // a Tin Hat app with "calls": the app joins or switches (features/native)
-  // a switch is a press too: the room it joins is joined normally (assembly-042); not a "switch" into the call already up
-  if (getCall().callRoomId !== roomId) watchIntent = null;
+  // a switch is a press too: the room it joins is joined normally (assembly-042); only the call actually up or joining
+  // in that room stays as it is (12.1.7: a kicked / ended watch of the same room is a normal join, R18)
   const st = getCall();
   if (roomId && st.callRoomId !== roomId) primeAudioInGesture();
-  if (!st.inCall && !st.connecting && !st.hangingUp) {
-    if (st.callFailed) patch({ callFailed: false });
-    joinCall(roomId);
-    return;
-  }
-  if (st.callRoomId === roomId && (st.inCall || st.connecting)) return;
-  pendingSwitch = roomId;
-  if (!st.hangingUp) leaveCall();
+  const d = watchLedger.pressSwitch(roomId, callPhase(), st.callRoomId);
+  if (d.kind === "join" && st.callFailed) patch({ callFailed: false });
+  runDecision(d, "switch");
 }
 
 /** Rejoin / Try again from the failure banner: the DROPPED call's room (native bug fix, D6). */
@@ -3462,7 +3733,7 @@ export function rejoin(): void {
   const st = getCall();
   if (st.hangingUp || !room) return;
   patch({ callFailed: false });
-  joinCall(room);
+  runDecision(watchLedger.pressJoin(room, callPhase()), "try again"); // a press: a normal join
 }
 
 /** Dismiss the failure banner without rejoining. */
@@ -3708,10 +3979,9 @@ export function sweepStuckFlags(): void {
     if (teardowns === 0 && age > 15000) {
       log.warn(`[stuck] "hanging up" for ${Math.round(age / 1000)} s with no teardown running — clearing it`);
       patch({ hangingUp: false });
-      const target = pendingSwitch;
       pendingSwitch = null;
       if (idle) releaseCallLock();
-      if (target) joinCall(target);
+      runDecision(watchLedger.teardownDone(), "stuck teardown cleared");
       return;
     }
     if (teardowns > 0 && age > 45000 && !stuckTeardownLogged) {
@@ -3732,7 +4002,7 @@ export function rejoinAfterReload(roomId: string, muted: boolean, watching = fal
   if (st.inCall || st.connecting || st.hangingUp) return;
   if (!watching) restoreMute = muted;
   log.info(`rejoining ${roomId} after the reload${watching ? " (watching)" : ""}`);
-  joinCall(roomId, watching);
+  runDecision(watchLedger.reloadRejoin(roomId, watching, callPhase()), "reload rejoin");
 }
 
 /** The AudioContext was replaced (resume.ts): the meter / hear taps of the mic live in the old one. */
@@ -3851,6 +4121,8 @@ export function endCallForSessionLoss(why: string): Promise<void> {
   if (!s && !roomId && !st.connecting && !st.reconnecting && !joinTarget && !pendingSwitch) return Promise.resolve();
   log.warn(`session ${why}: ending the call`);
   const myGen = ++joinGen; // pending joins, publishes and the auto-rejoin all stand down
+  watchLedger.sessionLost();
+  leases.revoke("session lost"); // Layer 2: every capture still starting stops now
   userHungUp = true;
   joinTarget = null;
   pendingSwitch = null;

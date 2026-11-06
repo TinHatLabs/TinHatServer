@@ -59,9 +59,13 @@ export interface ServerOffer {
   /** `account.owner`: the server owner's account (a valid user id, else ""); "Delete my account" refuses it
    *  (core/safety.ts; the account-safety round's SERVER-SPEC.md) */
   owner: string;
+  /** `features.pad_watch === true`: the server mints subscribe-only Pad Watch tokens (server feat/watch-token; share
+   *  claude/tinhat-pad/WATCH-LEASE/DESIGN.md §1.5). Unlike the features above, absent = NOT offered (an older server
+   *  can't do Watch, and Watch never falls back to a normal token). */
+  padWatch: boolean;
 }
 
-export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", web: "", features: Object.freeze({}), recorder: "", passwordReset: "", owner: "" }) as ServerOffer;
+export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", web: "", features: Object.freeze({}), recorder: "", passwordReset: "", owner: "", padWatch: false }) as ServerOffer;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const own = (o: Record<string, unknown>, k: string): unknown => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
@@ -90,13 +94,14 @@ export function parseOffer(wellKnown: unknown): ServerOffer {
   const passwordReset = isObj(acct) && own(acct, "password_reset") === "owner" ? "owner" : "";
   const ow = isObj(acct) ? own(acct, "owner") : undefined;
   const owner = typeof ow === "string" && MXID.test(ow) ? ow : "";
-  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", web: typeof w === "string" ? w.trim() : "", features, recorder, passwordReset, owner };
+  const padWatch = isObj(f) && own(f, "pad_watch") === true;
+  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", web: typeof w === "string" ? w.trim() : "", features, recorder, passwordReset, owner, padWatch };
 }
 
 /** The offer back in the server's own shape (the `dev.tinhat.server` value): what the cache keeps, so parseOffer reads
  *  it back the same. */
 export function offerDoc(o: ServerOffer): Record<string, unknown> {
-  const doc: Record<string, unknown> = { server: o.server, api: o.api, features: { ...o.features } };
+  const doc: Record<string, unknown> = { server: o.server, api: o.api, features: o.padWatch ? { ...o.features, pad_watch: true } : { ...o.features } };
   if (o.web) doc.web = o.web;
   if (o.recorder) doc.recorder = o.recorder;
   if (o.passwordReset || o.owner) {
@@ -128,7 +133,7 @@ export function featureFor(offer: ServerOffer, f: ServerFeature, guest: boolean)
 
 /** The same offer? (the store notifies only on a real change) */
 export function sameOffer(a: ServerOffer, b: ServerOffer): boolean {
-  if (a.server !== b.server || a.api !== b.api || a.web !== b.web || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset || a.owner !== b.owner) return false;
+  if (a.server !== b.server || a.api !== b.api || a.web !== b.web || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset || a.owner !== b.owner || a.padWatch !== b.padWatch) return false;
   return SERVER_FEATURES.every((k) => a.features[k] === b.features[k]);
 }
 

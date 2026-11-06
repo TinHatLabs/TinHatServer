@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { DEVICE_RE, parseIdentity, identityOf, isConnectionOf } from "../identity.mjs";
 import { createCallToken, offModeBody } from "../calltoken.mjs";
+const TEST_LK_SECRET = "identity-test-call-server-key-0123456789"; // (0.3.13: tokens are verified + re-minted)
 import { installModeration } from "../moderation.mjs";
 import { fakeReq, fakeRes, clock } from "./helpers.mjs";
 
@@ -31,7 +32,9 @@ function tokenRoute({ enabled }) {
         const b = JSON.parse(init.body);
         const dev = b.device_id ?? b.member?.claimed_device_id;
         const identity = url.endsWith("/get_token") ? String(b.member?.id ?? "") : `${ALICE}:${dev}`;
-        return new Response(JSON.stringify({ url: "wss://x", jwt: `${b64u({ alg: "HS256" })}.${b64u({ sub: identity, video: { room: b.room ?? "hashed" } })}.s` }), { status: 200 });
+        // (0.3.13: the route verifies + re-mints every token, so the fixture is signed with the call server's test key)
+        const h = b64u({ alg: "HS256" }), p = b64u({ sub: identity, video: { room: b.room ?? "hashed" } });
+        return new Response(JSON.stringify({ url: "wss://x", jwt: `${h}.${p}.${createHmac("sha256", TEST_LK_SECRET).update(`${h}.${p}`).digest("base64url")}` }), { status: 200 });
     }
     const hs = {
         async get(path) {
@@ -39,7 +42,7 @@ function tokenRoute({ enabled }) {
             return { ok: true, status: 200, body: { members: [ALICE, BOB] } };
         },
     };
-    const ct = createCallToken({ hs, adminToken: "t", serverName: SN, lkJwtUrl: "http://lk", fetchImpl, now: clock(1), log: () => {}, enabled: () => enabled, federation: { userinfo: async () => null } });
+    const ct = createCallToken({ hs, adminToken: "t", serverName: SN, lkJwtUrl: "http://lk", fetchImpl, now: clock(1), log: () => {}, enabled: () => enabled, federation: { userinfo: async () => null }, lkSecret: TEST_LK_SECRET });
     let ip = 0;
     async function post(path, body) {
         const res = { statusCode: 200, headers: {} };

@@ -142,6 +142,7 @@ useCallStore.setState({
   setTileVideoSize: engine.setTileVideoSize,
   setTileWatched: engine.setTileWatched,
   setTileTunedIn,
+  pickCamera: engine.pickCamera,
   applyShareRecordingOnly,
   applyGameChat,
   pullAside,

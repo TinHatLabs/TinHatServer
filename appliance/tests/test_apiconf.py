@@ -205,6 +205,25 @@ class Templates(unittest.TestCase):
             self.assertIn('credential: "p\\"q"', y)
         self.assertNotIn("turn_servers", templates.livekit_yaml(SECRETS))
 
+    def test_pad_watch_feature_only_with_calls_and_the_livekit_secret(self):
+        with mock.patch.object(apiconf, "gameservers_configured", return_value=False):
+            self.assertIs(apiconf.features({"calls": True}, SECRETS)["pad_watch"], True)
+            self.assertIs(apiconf.features({"calls": False}, SECRETS)["pad_watch"], False)
+            self.assertIs(apiconf.features({"calls": True}, {**SECRETS, "livekit_secret": ""})["pad_watch"], False)
+            R = {**SECRETS, "livekit_rotated": "0.3.13"}
+            for f in ("person_tiles", "pad_chip"):  # Pad on the phone, Step A: re-minting + the key pair already replaced
+                self.assertIs(apiconf.features({"calls": True}, R)[f], True)
+                self.assertIs(apiconf.features({"calls": True}, SECRETS)[f], False, "not before the key pair is replaced")
+                self.assertIs(apiconf.features({"calls": False}, R)[f], False)
+                self.assertIs(apiconf.features({"calls": True}, {**R, "livekit_secret": ""})[f], False)
+
+    def test_livekit_never_turns_on_participant_data_blobs(self):
+        # Pad Watch (WATCH-LEASE/DESIGN.md, Astra design round 1 #2): LiveKit 1.13.7 stores participant data blobs without
+        # checking canPublishData, so a subscribe-only Watch connection could still hand bytes to others. The feature is
+        # off by default (Go zero value); the config must never enable it.
+        for kw in ({}, {"use_external_ip": True, "public_ip": "203.0.113.5"}):
+            self.assertNotIn("data_blob", templates.livekit_yaml(SECRETS, **kw))
+
 
 if __name__ == "__main__":
     unittest.main()

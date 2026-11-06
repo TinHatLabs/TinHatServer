@@ -21,6 +21,14 @@ export function mxidOf(identity: string): string {
   return head.includes(":") ? head : identity;
 }
 
+/** 12.1.9 (assembly-044 area 3 P2): is this call participant (a LiveKit identity, or the bare mxid a fake call's tile
+ *  carries) the user `mxid`'s, by the string alone (the call menus have no memberships at hand)? `@a:h:8448:DEV` is
+ *  `@a:h:8448`'s, never `@a:h`'s (the old `startsWith(mxid + ":")` and the first-two-parts split both said `@a:h`).
+ *  Desktop: identity.rs is_participant_of + AppCore.qml tileMxid. */
+export function isParticipantOf(participant: string, mxid: string): boolean {
+  return !!mxid && (participant === mxid || mxidOf(participant) === mxid);
+}
+
 /** What these rules read from a live call membership (callrules LiveSession has both). */
 export interface IdentitySession {
   sender: string;

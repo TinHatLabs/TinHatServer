@@ -165,7 +165,7 @@ async function beforeReload() {
   // (were other people in it? if they all leave during the reload, the rejoin must not restart the call)
   const withOthers = othersInCall(st.callRoomId).length > 0;
   try {
-    sessionStorage.setItem(REJOIN_MARK, JSON.stringify({ roomId: st.callRoomId, muted: st.micMuted, at: Date.now(), user: getSession().userId ?? "", withOthers, watching: engine.WATCH_AVAILABLE && !!(st.watching && st.noCapture) }));
+    sessionStorage.setItem(REJOIN_MARK, JSON.stringify({ roomId: st.callRoomId, muted: st.micMuted, at: Date.now(), user: getSession().userId ?? "", withOthers, watching: engine.watchLedger.watching() || !!(st.watching && st.noCapture) }));
   } catch {
     /* no sessionStorage: no rejoin */
   }
@@ -190,6 +190,13 @@ function maybeRejoinAfterReload() {
     log.info(`after the reload: ${m.roomId} had others in its call: ${!!m.withOthers}; now: ${others.map((x) => `${x.sender}/${x.deviceId}`).join(", ") || "nobody"}`);
     if (m.withOthers && others.length === 0) {
       log.info(`not rejoining ${m.roomId} after the reload: everyone left its call meanwhile`);
+      setStatus("Your call ended while Tin Hat was reconnecting");
+      return;
+    }
+    // 12.1.7 (Astra r1): a watching device's mark is kept as watching whatever this build offers; a build without Watch
+    // never turns it into a normal (capturing) join — it doesn't rejoin at all
+    if (m.watching === true && !engine.WATCH_AVAILABLE) {
+      log.info(`not rejoining ${m.roomId} after the reload: it was watching, and Watch isn't available in this version`);
       setStatus("Your call ended while Tin Hat was reconnecting");
       return;
     }

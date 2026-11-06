@@ -84,6 +84,44 @@ export function contentLive(c: Content | undefined, originTs: number, now = Date
   return entryLive(c, originTs, now);
 }
 
+/** Is `key` a client marker ("<reverse-domain>.client", e.g. today's `dev.tinhat.client`)? "Never record me" is honoured
+ *  in ANY client marker (recorder fix 2026-11-04): clients from before the dev.tinhat.* rename still publish theirs under
+ *  the old name. Counting every marker can only exclude more people. Desktop rtc.rs is_client_marker_key. */
+export function isClientMarkerKey(key: string): boolean {
+  return key.length > ".client".length && key.endsWith(".client");
+}
+
+const markerSaysNo = (o: Content): boolean =>
+  Object.keys(o).some((k) => {
+    if (!isClientMarkerKey(k)) return false;
+    const m = o[k];
+    return !!m && typeof m === "object" && !Array.isArray(m) && (m as Content).record_optout === true;
+  });
+
+/** "Never record me" in ONE membership event's content (shared rule: testvectors/record-optout.json, byte-identical to
+ *  the desktop's; desktop rtc.rs content_record_optout): ANY client marker, at the top level or in any entry of a legacy
+ *  `memberships` array, with `record_optout` = JSON true. Anything else is not an opt-out. */
+export function contentRecordOptout(c: Content | undefined | null): boolean {
+  if (!c || typeof c !== "object") return false;
+  if (markerSaysNo(c)) return true;
+  return Array.isArray(c.memberships)
+    && (c.memberships as unknown[]).some((e) => !!e && typeof e === "object" && !Array.isArray(e) && markerSaysNo(e as Content));
+}
+
+/** The "Never record me" set from raw membership events: every sender with an opt-out in any non-tombstone membership,
+ *  first-seen order, NO liveness filter (an expired membership that says no still counts). Desktop rtc.rs
+ *  record_optout_senders; same vectors. */
+export function recordOptoutSenders(events: readonly RawMemberEvent[]): string[] {
+  const out: string[] = [];
+  for (const ev of events) {
+    const sender = typeof ev.sender === "string" ? ev.sender : "";
+    const c = ev.content;
+    if (!sender || !c || typeof c !== "object" || Object.keys(c).length === 0) continue;
+    if (contentRecordOptout(c as Content) && !out.includes(sender)) out.push(sender);
+  }
+  return out;
+}
+
 /** The first livekit focus with a non-empty URL in foci_preferred (when an array), else in foci_active. An empty or
  *  missing alias means the room itself. */
 export function focusOf(c: Content, roomId: string): Focus | null {
@@ -129,7 +167,8 @@ export function sessionsFrom(events: readonly RawMemberEvent[], roomId: string, 
         createdTs: num(e.created_ts) ?? origin,
         focus: focusOf(e, roomId),
         kind: marker && typeof marker.kind === "string" ? marker.kind : "",
-        recordOptout: !!marker && marker.record_optout === true,
+        // any client marker, this entry or the whole content (shared rule, contentRecordOptout)
+        recordOptout: contentRecordOptout(e) || contentRecordOptout(c),
         membershipId: typeof e.membershipID === "string" ? e.membershipID : "",
         wellFormed: e.application === "m.call" && e.scope === "m.room" && e.call_id === "" && (num(e.expires) ?? 0) > 0,
       });
@@ -262,8 +301,9 @@ export async function postSfuGet(
   serviceUrl: string,
   body: string,
   signal?: AbortSignal,
+  path: "/sfu/get" | "/watch" = "/sfu/get",
 ): Promise<{ url: string; jwt: string }> {
-  const res = await fetchFn(`${serviceUrl.replace(/\/+$/, "")}/sfu/get`, sfuGetInit(body, signal));
+  const res = await fetchFn(`${serviceUrl.replace(/\/+$/, "")}${path}`, sfuGetInit(body, signal));
   if (isRedirectAnswer(res)) throw new Error(REDIRECT_REFUSED_TEXT);
   const text = await res.text();
   if (!res.ok) throw new Error(`lk-jwt-service HTTP ${res.status}: ${text.slice(0, 300)}`);
@@ -682,4 +722,161 @@ export async function dispatchChecked<M extends ToDeviceMsg>(msgs: readonly M[],
     }
   }
   return { sent, dropped, failed };
+}
+
+// ---- Pad Watch: the subscribe-only Watch token (share claude/tinhat-pad/WATCH-LEASE/DESIGN.md §1.5) -----------------
+
+/** The LiveKit identity suffix of a Watch connection: `<mxid>:<device>~watch` (only the server's Watch route mints it;
+ *  never `#`: LiveKit's own `publish=X` join parameter appends `#X` to any identity, publish rights and all). */
+export const WATCH_SUFFIX = "~watch";
+/** A watch identity (`~watch` at the end, no `#` anywhere). A peer shows "watching" only for one of these that LiveKit
+ *  reports without publish rights (DESIGN §1.7). */
+export function isWatchIdentity(identity: string): boolean {
+  return WATCH_ID_RE.test(identity);
+}
+/** Round 5: `<mxid>:<device>~watch-<16 hex>` — a fresh nonce per Watch token (it can never equal an identity that existed
+ *  before), no `#` anywhere. Mirrors the server's calltoken.mjs WATCH_ID_RE. */
+export const WATCH_ID_RE = /^[^#]*~watch-[0-9a-f]{16}$/;
+const WATCH_TOP_KEYS = new Set(["iss", "sub", "name", "nbf", "exp", "iat", "jti", "video", "attributes"]);
+const WATCH_VIDEO_KEYS = new Set(["room", "roomJoin", "canSubscribe", "canPublish", "canPublishData", "canPublishSources", "canUpdateOwnMetadata", "hidden", "recorder", "agent"]);
+const WATCH_MUST_BE_FALSE = ["canPublish", "canPublishData", "canUpdateOwnMetadata", "hidden", "recorder", "agent"];
+
+/**
+ * Why a Watch token's payload is not the exact Watch profile (null = it is): `sub` = our identity + `~watch`, one room,
+ * join + subscribe, every publish / metadata / special right explicitly false, no publish source, the watch mark as
+ * its only attribute, and NOTHING else (an unknown grant such as roomAdmin, sip, roomConfig, kind, metadata = refused).
+ * Defence against an issuer mistake; the SFU enforcing the grant is what makes it safe. Mirrors the desktop's
+ * callrules::watch_token_problem (shared cases: watchtoken.cases.json).
+ */
+export function watchTokenProblem(payload: unknown, want: { identity: string; room: string }): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "not a token payload";
+  const p = payload as Record<string, unknown>;
+  for (const k of Object.keys(p)) if (!WATCH_TOP_KEYS.has(k)) return `unexpected claim ${k}`;
+  const pre = `${want.identity}${WATCH_SUFFIX}-`;
+  if (typeof p.sub !== "string" || /[#~]/.test(want.identity) || !p.sub.startsWith(pre) || !/^[0-9a-f]{16}$/.test(p.sub.slice(pre.length)))
+    return "not this device's watch identity";
+  const v = p.video;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "no video grant";
+  const g = v as Record<string, unknown>;
+  for (const k of Object.keys(g)) if (!WATCH_VIDEO_KEYS.has(k)) return `unexpected grant ${k}`;
+  if (g.room !== want.room) return "another room";
+  if (g.roomJoin !== true || g.canSubscribe !== true) return "can't join to watch";
+  for (const k of WATCH_MUST_BE_FALSE) if (g[k] !== false) return `${k} isn't false`;
+  if (!Array.isArray(g.canPublishSources) || g.canPublishSources.length !== 0) return "publish sources allowed";
+  const a = p.attributes;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return "no watch mark";
+  // the watch mark alone (before 0.3.13), or (PAD-PHONE Step A, 0.3.13) the watch mark + the server's person / Pad
+  // attributes, exactly, the person being THIS account (the identity's own mxid)
+  const A = a as Record<string, unknown>;
+  const ak = Object.keys(A).sort().join(",");
+  const mine = want.identity.slice(0, want.identity.lastIndexOf(":"));
+  const old = ak === "tinhat.watch" && A["tinhat.watch"] === "1";
+  const v13 = ak === "tinhat.mode,tinhat.pad,tinhat.person,tinhat.watch" && A["tinhat.watch"] === "1" && A["tinhat.pad"] === "phone" && A["tinhat.mode"] === "watch" && A["tinhat.person"] === mine;
+  if (!old && !v13) return "not the watch mark";
+  return null;
+}
+
+/**
+ * Why `text` is not ONE plain JSON value whose objects all have distinct keys (null = it is). JSON.parse keeps the
+ * last of two equal keys while LiveKit's Go decoder merges both (a `"video":{"roomAdmin":true}` before the real grant
+ * would survive there, Astra r3 #2), so a Watch token is read only when no object repeats a key — compared after
+ * unescaping (`"\u0076ideo"` = `"video"`). Mirrors callrules.rs json_duplicate_key.
+ */
+export function jsonDuplicateKey(text: string): string | null {
+  let i = 0;
+  const ws = () => {
+    while (i < text.length && (text[i] === " " || text[i] === "\t" || text[i] === "\n" || text[i] === "\r")) i++;
+  };
+  const str = (): string => {
+    const start = i;
+    if (text[i] !== '"') throw new Error("a string expected");
+    i++;
+    while (i < text.length && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
+    if (i >= text.length) throw new Error("an unterminated string");
+    i++;
+    return JSON.parse(text.slice(start, i)) as string; // the escapes decoded (and checked) by the platform's parser
+  };
+  const value = (depth: number): void => {
+    if (depth > 32) throw new Error("too deep");
+    ws();
+    const c = text[i];
+    if (c === "{") {
+      i++;
+      const keys = new Set<string>();
+      ws();
+      if (text[i] === "}") { i++; return; }
+      for (;;) {
+        ws();
+        const k = str();
+        if (keys.has(k)) throw new Error(`the key ${JSON.stringify(k)} twice`);
+        keys.add(k);
+        ws();
+        if (text[i] !== ":") throw new Error("a colon expected");
+        i++;
+        value(depth + 1);
+        ws();
+        if (text[i] === ",") { i++; continue; }
+        if (text[i] === "}") { i++; return; }
+        throw new Error("a comma or } expected");
+      }
+    }
+    if (c === "[") {
+      i++;
+      ws();
+      if (text[i] === "]") { i++; return; }
+      for (;;) {
+        value(depth + 1);
+        ws();
+        if (text[i] === ",") { i++; continue; }
+        if (text[i] === "]") { i++; return; }
+        throw new Error("a comma or ] expected");
+      }
+    }
+    if (c === '"') { str(); return; }
+    const m = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/.exec(text.slice(i, i + 400));
+    if (!m) throw new Error("a value expected");
+    i += m[0].length;
+  };
+  try {
+    value(0);
+    ws();
+    if (i !== text.length) return "text after the value";
+    return null;
+  } catch (e) {
+    return (e as Error).message || "not JSON";
+  }
+}
+
+/** watchTokenProblem on the token's RAW payload text: refused when any object repeats a key (jsonDuplicateKey). */
+export function watchTokenProblemRaw(text: string | null, want: { identity: string; room: string }): string | null {
+  if (text === null) return "not a token payload";
+  const dup = jsonDuplicateKey(text);
+  if (dup) return `the payload isn't plain JSON (${dup})`;
+  return watchTokenProblem(JSON.parse(text), want);
+}
+
+/** The payload TEXT of a JWT (base64url-decoded, strict UTF-8), or null when it can't be read. */
+export function jwtPayloadText(jwt: string): string | null {
+  const parts = String(jwt).split(".");
+  if (parts.length !== 3 || !/^[A-Za-z0-9_-]*$/.test(parts[1])) return null;
+  try {
+    const b = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(b + "=".repeat((4 - (b.length % 4)) % 4));
+    return new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  } catch {
+    return null;
+  }
+}
+
+/** The payload of a JWT (not verified: the SFU does that), or null when it can't be read. */
+export function jwtPayloadOf(jwt: string): unknown {
+  const parts = String(jwt).split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const b = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const bin = atob(b + "=".repeat((4 - (b.length % 4)) % 4));
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+  } catch {
+    return null;
+  }
 }

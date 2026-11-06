@@ -3,7 +3,8 @@
 // (identity `<mxid>:<device_id>`, room = the request's) and a hand-driven clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createCallToken, parseRequest, canonicalBody, isOwnConnTestRoom, CALLTOKEN } from "../calltoken.mjs";
+import { createCallToken, parseRequest, canonicalBody, isOwnConnTestRoom, CALLTOKEN, remint, verifyLk, signLk } from "../calltoken.mjs";
+import { createHmac } from "node:crypto";
 import { fakeReq, clock } from "./helpers.mjs";
 
 const SN = "home.test";
@@ -13,8 +14,16 @@ const ROOM = `!call:${SN}`, OTHER = `!other:${SN}`, V12 = "!AbCdEf0123456789-_Ab
 
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
 const jwtFor = (identity, room) => `${b64u({ alg: "HS256" })}.${b64u({ sub: identity, video: { room, roomJoin: true } })}.sig`;
+// Step A: lk-jwt 0.4.0's own token, as its getJoinToken writes it (auth.NewAccessToken + VideoGrant{RoomJoin, Room,
+// CanPublish, CanSubscribe} + SetIdentity + SetValidFor(1h); protocol ToJWT: exp, iss, nbf, sub, video) — signed
+const LK_SECRET = "test-secret-of-the-call-server-0123456789";
+const lkJwtToken = (identity, room, secret = LK_SECRET) => {
+    const head = b64u({ alg: "HS256", typ: "JWT" });
+    const body = b64u({ exp: 1793600000, iss: "tinhattest", nbf: 1793596400, sub: identity, video: { canPublish: true, canSubscribe: true, room, roomJoin: true } });
+    return `${head}.${body}.${createHmac("sha256", secret).update(`${head}.${body}`).digest("base64url")}`;
+};
 
-function setup({ enabled = true } = {}) {
+function setup({ enabled = true, lkSecret = LK_SECRET } = {}) {
     const now = clock(1000);
     const s = {
         local: { at: ALICE, ab: BOB, ag: GUEST },            // access token -> user (this server)
@@ -53,7 +62,7 @@ function setup({ enabled = true } = {}) {
         if (!user) return new Response(JSON.stringify({ errcode: "M_LOOKUP_FAILED" }), { status: 500 });
         const identity = s.forceIdentity || (url.endsWith("/sfu/get") && "room" in b ? `${user}:${b.device_id}` : b.member.id);
         const room = "room" in b ? b.room : "hashed";
-        return new Response(JSON.stringify({ url: "wss://home.test/livekit/sfu", jwt: jwtFor(identity, room) }), { status: 200 });
+        return new Response(JSON.stringify({ url: "wss://home.test/livekit/sfu", jwt: lkSecret ? lkJwtToken(identity, room, s.signWith || lkSecret) : jwtFor(identity, room) }), { status: 200 });
     }
     // another server's sign-ins, as fedresolve answers them (its own tests: fedresolve.test.mjs)
     const fedCalls = [];
@@ -66,7 +75,7 @@ function setup({ enabled = true } = {}) {
             return u && u.endsWith(`:${server}`) ? { sub: u } : null;
         },
     };
-    const ct = createCallToken({ hs, adminToken: "admintoken", serverName: SN, lkJwtUrl: "http://127.0.0.1:8070", fetchImpl, now, log: (l) => logs.push(l), enabled: () => enabled, federation });
+    const ct = createCallToken({ hs, adminToken: "admintoken", serverName: SN, lkJwtUrl: "http://127.0.0.1:8070", fetchImpl, now, log: (l) => logs.push(l), enabled: () => enabled, federation, lkSecret });
     async function post(path, body, { method = "POST", ip = "192.0.2.10", raw } = {}) {
         const res = { statusCode: 200, headers: {}, body: undefined, text: undefined };
         res.status = (c) => { res.statusCode = c; return res; };
@@ -287,15 +296,18 @@ test("the_newer_method_is_refused_where_it_would_be_unsafe", async () => {
     assert.equal((await post("/get_token", legacy(ROOM, "at"))).statusCode, 400, "/get_token takes only the MSC4195 shape");
 });
 
-test("kill_switch_off_hands_everything_to_lk_jwt_unchanged", async () => {
+test("kill_switch_off_skips_only_the_room_check_the_identity_is_still_exact (Step A)", async () => {
     const { post, upCalls, hsCalls } = setup({ enabled: false });
-    const raw = JSON.stringify(legacy("anything-else", "at"));
+    const raw = JSON.stringify({ ...legacy("anything-else", "at"), extra_field_lk_jwt_never_sees: 1 });
     const r = await post("/sfu/get", undefined, { raw });
-    assert.equal(r.statusCode, 200);
-    assert.equal(upCalls[0].body.toString(), raw, "the caller's own bytes");
+    assert.equal(r.statusCode, 400, "an unknown field is refused like every request (it was the caller's own bytes before 0.3.13)");
+    const ok = await post("/sfu/get", legacy("anything-else", "at"));
+    assert.equal(ok.statusCode, 200, "no room check: lk-jwt decides the room");
+    assert.equal(upCalls.at(-1).body.toString(), canonicalBody({ kind: "legacy", room: "anything-else", openid: legacy("x", "at").openid_token, device_id: "DEV1" }), "the checked request, re-encoded");
+    assert.ok(hsCalls.some((p) => p.includes("/openid/userinfo")), "the caller is verified");
+    assert.ok(!hsCalls.some((p) => p.includes("/members")), "the room's member list is not read");
     const bad = await post("/sfu/get", undefined, { raw: "{" });
-    assert.equal(bad.statusCode, 400, "lk-jwt's own answer is relayed");
-    assert.equal(hsCalls.length, 0, "nothing checked");
+    assert.equal(bad.statusCode, 400);
 });
 
 test("kill_switch_off_also_drops_this_routes_own_rate_limit", async () => {
@@ -420,3 +432,148 @@ test("a joiner whose request shares a member read that started before the join i
     assert.deepEqual((await stranger).body, NOT_MEMBER);
     assert.equal(memberLists(), 4, "one read of its own, then the no stands");
 });
+
+// ---- Pad Watch (WATCH-LEASE/DESIGN.md §1.3, Astra design round 1 #1): no normal token ever carries a Watch identity
+test("a_device_id_with_hash_is_refused_and_lk_jwt_never_asked", async () => {
+    const { post, upCalls } = setup();
+    assert.equal((await post("/sfu/get", legacy(ROOM, "at", SN, "PHONE#watch"))).statusCode, 400);
+    const m = modern(ROOM, "at", ALICE); m.member.claimed_device_id = "PHONE#watch";
+    assert.equal((await post("/get_token", m)).statusCode, 400);
+    assert.equal(upCalls.length, 0);
+});
+
+test("owner_switch_off_still_never_hands_out_a_watch_identity", async () => {
+    const { s, post, upCalls } = setup({ enabled: false });
+    // Step A (0.3.13): the switch no longer hands raw requests to lk-jwt — a reserved device is refused before it is asked
+    const r = await post("/sfu/get", legacy(ROOM, "at", SN, "PHONE#watch"));
+    assert.equal(r.statusCode, 400);
+    assert.equal(upCalls.length, 0, "lk-jwt never asked");
+    // and a minted reserved identity is still dropped (lk-jwt answering for something it wasn't asked)
+    s.forceIdentity = `${ALICE}:DEV1#watch`;
+    const r1 = await post("/sfu/get", legacy(ROOM, "at"));
+    assert.deepEqual([r1.statusCode, r1.body.reason], [403, "reserved-identity"]);
+    assert.equal(r1.body.jwt, undefined);
+    // MSC4195's member.id (client-chosen) is never the identity: the verified user + the claimed device
+    s.forceIdentity = undefined;
+    const r2 = await post("/get_token", { ...modern(ROOM, "at", ALICE), member: { id: "x#watch", claimed_user_id: ALICE, claimed_device_id: "DEV1" } });
+    assert.equal(r2.statusCode, 200);
+    assert.equal(JSON.parse(Buffer.from(r2.body.jwt.split(".")[1], "base64url")).sub, `${ALICE}:DEV1`);
+});
+
+test("switch_on_a_minted_reserved_identity_is_dropped_too", async () => {
+    const { s, post } = setup();
+    for (const id of [`${ALICE}:DEV1#watch`, `${ALICE}:DEV1~watch`, `${ALICE}:DEV~1`]) {
+        s.forceIdentity = id;
+        const r = await post("/sfu/get", legacy(ROOM, "at"));
+        assert.deepEqual([r.statusCode, r.body.reason], [403, "reserved-identity"], id);
+    }
+});
+
+test("a_device_id_with_tilde_is_refused_too", async () => {
+    const { post, upCalls } = setup();
+    assert.equal((await post("/sfu/get", legacy(ROOM, "at", SN, "PHONE~watch"))).statusCode, 400);
+    assert.equal(upCalls.length, 0);
+});
+
+// ---- Pad on the phone, Step A (share claude/tinhat-pad/PAD-PHONE/DESIGN.md) ----
+for (const enabled of [true, false]) {
+    test(`step_a_a_colon_in_the_device_id_is_refused_and_lk_jwt_never_asked (room check ${enabled ? "on" : "off"})`, async () => {
+        const { post, upCalls } = setup({ enabled, lkSecret: LK_SECRET });
+        for (const dev of ["8448:EVIL", "DEV.1", "", "D".repeat(65), "dev\n", "DÉV"]) {
+            const r = await post("/sfu/get", legacy(ROOM, "at", SN, dev));
+            assert.equal(r.statusCode, 400, JSON.stringify(dev));
+        }
+        const m = { ...modern(ROOM, "at", ALICE) };
+        m.member = { ...m.member, claimed_device_id: "8448:EVIL" };
+        assert.equal((await post("/get_token", m)).statusCode, 400, "MSC4195's claimed device too");
+        assert.equal(upCalls.length, 0, "lk-jwt never asked");
+    });
+    test(`step_a_lk_jwts_get_token_is_never_asked (room check ${enabled ? "on" : "off"})`, async () => {
+        const { post, upCalls } = setup({ enabled, lkSecret: LK_SECRET });
+        const r = await post("/get_token", modern(ROOM, "at", ALICE));
+        assert.equal(r.statusCode, 200);
+        assert.ok(upCalls.every((c) => c.url.endsWith("/sfu/get")), JSON.stringify(upCalls.map((c) => c.url)));
+        const p = JSON.parse(Buffer.from(r.body.jwt.split(".")[1], "base64url"));
+        assert.equal(p.sub, `${ALICE}:DEV1`, "the verified user + the claimed device — never member.id");
+    });
+    test(`step_a_a_signed_identity_that_isnt_exactly_the_callers_account_and_device_is_never_handed_out (room check ${enabled ? "on" : "off"})`, async () => {
+        const { s, post } = setup({ enabled, lkSecret: LK_SECRET });
+        for (const id of [`${ALICE}:8448:EVIL`, `${ALICE}:DEV1#x`, `${ALICE}:DEV2`, `@alice:${SN}:8448:DEV1`, `${BOB}:DEV1`]) {
+            s.forceIdentity = id;
+            const r = await post("/sfu/get", legacy(ROOM, "at"));
+            assert.equal(r.statusCode, 403, id);
+        }
+    });
+}
+
+test("step_a_every_token_is_re_minted_with_the_servers_person_attribute_and_nothing_else_changes", async () => {
+    const { post } = setup({ lkSecret: LK_SECRET });
+    const r = await post("/sfu/get", legacy(ROOM, "at"));
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual(Object.keys(r.body), ["url", "jwt"], "lk-jwt's response shape");
+    assert.equal(r.body.url, "wss://home.test/livekit/sfu");
+    const orig = lkJwtToken(`${ALICE}:DEV1`, ROOM);
+    const [h0, b0] = orig.split("."), [h1, b1] = r.body.jwt.split(".");
+    assert.equal(h1, h0, "the same header");
+    const p0 = JSON.parse(Buffer.from(b0, "base64url")), p1 = JSON.parse(Buffer.from(b1, "base64url"));
+    const { attributes, ...rest } = p1;
+    assert.deepEqual(rest, p0, "identity, room, exp, nbf, iss and every grant exactly as lk-jwt wrote them (omitted grants stay omitted)");
+    assert.deepEqual(attributes, { "tinhat.person": ALICE });
+    assert.ok(verifyLk(r.body.jwt, LK_SECRET), "signed with the call server's key");
+    // the connection test's own room is re-minted too (every token)
+    const c = await post("/sfu/get", legacy("tinhat-conntest-alice-1", "at"));
+    assert.equal(c.statusCode, 200);
+    assert.equal(JSON.parse(Buffer.from(c.body.jwt.split(".")[1], "base64url")).attributes["tinhat.person"], ALICE);
+});
+
+test("step_a_a_token_lk_jwt_didnt_sign_with_the_servers_key_is_refused_never_relayed (planted: the check can fail)", async () => {
+    const { s, post } = setup({ lkSecret: LK_SECRET });
+    s.signWith = "some-other-key-0123456789abcdef";
+    const r = await post("/sfu/get", legacy(ROOM, "at"));
+    assert.equal(r.statusCode, 502);
+    assert.equal(r.body.reason, "remint-failed");
+    assert.ok(!JSON.stringify(r.body).includes("eyJ"), "no token in the answer");
+});
+
+test("step_a_remint_unit: tinhat_attributes_dropped_metadata_right_denied_bad_input_null", () => {
+    const head = b64u({ alg: "HS256", typ: "JWT" });
+    const mk = (p) => { const b = b64u(p); return `${head}.${b}.${createHmac("sha256", LK_SECRET).update(`${head}.${b}`).digest("base64url")}`; };
+    const tok = mk({ sub: `${ALICE}:DEV1`, video: { room: ROOM, roomJoin: true, canUpdateOwnMetadata: true }, attributes: { "tinhat.pad": "phone", "tinhat.person": BOB, other: "kept" } });
+    const out = JSON.parse(remint(JSON.stringify({ url: "u", jwt: tok, extra: 1 }), LK_SECRET, ALICE));
+    const p = JSON.parse(Buffer.from(out.jwt.split(".")[1], "base64url"));
+    assert.deepEqual(p.attributes, { other: "kept", "tinhat.person": ALICE });
+    assert.equal(p.video.canUpdateOwnMetadata, false);
+    assert.equal(out.extra, 1);
+    assert.equal(remint("not json", LK_SECRET, ALICE), null);
+    assert.equal(remint(JSON.stringify({ url: "u" }), LK_SECRET, ALICE), null);
+    assert.equal(remint(JSON.stringify({ jwt: tok }), "wrong", ALICE), null);
+    const none = `${b64u({ alg: "none" })}.${b64u({ sub: "x", video: {} })}.`;
+    assert.equal(remint(JSON.stringify({ jwt: none }), LK_SECRET, ALICE), null, "alg none is never accepted");
+    void signLk;
+});
+
+test("step_a_review_p1_no_call_server_key_fails_closed_never_relays_lk_jwts_token", async () => {
+    for (const enabled of [true, false]) {
+        const { post, upCalls } = setup({ enabled, lkSecret: "" });
+        const r = await post("/sfu/get", legacy(ROOM, "at"));
+        assert.equal(r.statusCode, 502, `room check ${enabled}`);
+        assert.equal(r.body.reason, "no-key");
+        assert.ok(!JSON.stringify(r.body).includes("eyJ") && r.body.jwt === undefined, "no token in the answer");
+        assert.ok(upCalls.length >= 1, "(lk-jwt was asked: the answer is what is withheld)");
+    }
+});
+
+test("step_a_review_p1_a___proto___attribute_is_kept_by_the_re_mint", () => {
+    const head = b64u({ alg: "HS256", typ: "JWT" });
+    const body = Buffer.from('{"sub":"@alice:home.test:DEV1","video":{"room":"!call:home.test","roomJoin":true},"attributes":{"__proto__":"keep-me","x":"y","tinhat.pad":"phone"}}').toString("base64url");
+    const tok = `${head}.${body}.${createHmac("sha256", LK_SECRET).update(`${head}.${body}`).digest("base64url")}`;
+    const out = JSON.parse(remint(JSON.stringify({ url: "u", jwt: tok }), LK_SECRET, ALICE));
+    const raw = Buffer.from(out.jwt.split(".")[1], "base64url").toString("utf8");
+    assert.ok(raw.includes('"__proto__":"keep-me"'), raw);
+    const p = JSON.parse(raw);
+    assert.equal(Object.getOwnPropertyDescriptor(p.attributes, "__proto__")?.value, "keep-me");
+    assert.equal(p.attributes.x, "y");
+    assert.equal(p.attributes["tinhat.person"], ALICE);
+    assert.equal(p.attributes["tinhat.pad"], undefined, "a tinhat.* the issuer set is dropped");
+});
+

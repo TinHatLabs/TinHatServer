@@ -562,6 +562,9 @@ export async function currentRecipients(roomId: string, sfuGone: ReadonlyMap<str
  * included) goes back to dispatchChecked, whose retry re-checks first.
  */
 async function putToDevice(c: MatrixClient, eventType: string, chunk: Array<{ userId: string; deviceId: string; payload: unknown }>, txnId: string): Promise<void> {
+  // the send boundary of the receive-only rule (Astra r3 #3): an announce that started before the Watch press and
+  // resumes after it sends nothing — checked right before the request, not only when the announce began
+  if (receiveOnly) throw new Error("not sent: watching (receive-only)");
   const token = c.getAccessToken();
   const hs = c.getHomeserverUrl().replace(/\/+$/, "");
   if (!token || !bearerAllowed(hs)) throw new Error("no usable access token");
@@ -599,7 +602,23 @@ export interface AnnounceResult {
   failed: string[];
 }
 
+/** Pad Watch (WATCH-LEASE/DESIGN.md §1.7): while this device is watching (from the Watch press, a queued one too, until a
+ *  normal join starts) it sends no media key to anyone — whoever asks (a join, a newcomer, a rotation, a resend timer
+ *  of an earlier call). It still receives everyone's keys (intake is unchanged). */
+let receiveOnly = false;
+export function setKeysReceiveOnly(on: boolean): void {
+  if (receiveOnly !== on) log.info(`[e2ee] receive-only ${on ? "on (watching)" : "off"}`);
+  receiveOnly = on;
+}
+export function keysReceiveOnly(): boolean {
+  return receiveOnly;
+}
+
 export async function announceKeys(roomId: string, keys: readonly OwnKey[], why: string, valid: () => boolean = () => true, opts: AnnounceOpts = {}): Promise<AnnounceResult> {
+  if (receiveOnly) {
+    log.info(`[e2ee] not announcing (${why}): watching, receive-only`);
+    return { sent: [], failed: [] };
+  }
   const c = peekClient();
   const s = getSession();
   const cryptoApi = c?.getCrypto();

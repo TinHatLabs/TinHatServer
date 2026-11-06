@@ -37,13 +37,14 @@
 // One exception: the apps' connection test (Settings → Calls) uses a scratch room `tinhat-conntest-<own localpart>-<n>`
 // that is not a Matrix room; a caller from this server may have that one for their own name (as the apps write it).
 // Fails closed: when Synapse can't be asked the answer is 502, never a pass-through.
-// Owner switch: CALL_TOKEN_ROOM_CHECK=off (`tinhat api-limits CALL_TOKEN_ROOM_CHECK=off`) hands every request to lk-jwt
-// unchecked, as before 0.3.7, with ONE check left (0.3.12, offModeBody): every device id in the body must still match
-// DEVICE_RE, so even then nobody gets a call identity that is ambiguous or that call moderation can't act on (lk-jwt
-// gets the parsed body re-encoded, so it reads the values that were checked).
+// Owner switch: CALL_TOKEN_ROOM_CHECK=off (`tinhat api-limits CALL_TOKEN_ROOM_CHECK=off`) turns off ONLY the room
+// membership check and this route's own rate limit (0.3.13, PAD-PHONE Step A): the request is still parsed, the caller
+// verified, the device held to DEVICE_RE and the signed identity checked to be exactly `<verified mxid>:<device>`, and
+// every token is re-minted with `tinhat.person` (0.3.12's offModeBody, the off-mode body check, is kept for reference:
+// the off path no longer forwards a body of its own).
 // Default on. What "off" opens up: docs/API.md "Call sign-ins".
 // Nothing here logs a token.
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { RateLimit, clientKey, mono, ROOM_ID_RE, safe } from "./reachcommon.mjs";
 import { createFedResolver } from "./fedresolve.mjs";
 import { DEVICE_RE, MXID_RE } from "./identity.mjs";
@@ -56,7 +57,110 @@ export const CALLTOKEN = Object.freeze({
     USER_TTL_MS: 60_000,        // a resolved sign-in, at most
     BAD_TTL_MS: 10_000,         // a refused sign-in
     UPSTREAM_MS: 15_000,
+    WATCH_TTL_S: 300,           // a Watch token: 5 minutes to join (LiveKit refreshes a live connection's token itself)
+    LK_API_MS: 5_000,           // the call server's room service (the pairing check)
+    SWEEP_MS: 60_000,           // the reserved-identity sweep
 });
+
+/** The LiveKit identity of a Watch connection (Pad Watch, WATCH-LEASE/DESIGN.md §1.3): `<mxid>:<device>~watch`. Not `#`:
+ *  LiveKit's own `/rtc?publish=X` turns any identity into `<identity>#X` WITH the token's publish rights (Astra design
+ *  round 2 #1), so an identity with `#` is never a watcher. `~` can't come from LiveKit, and no normal-token route
+ *  hands out an identity with `~` or `#` (reservedIdentity). */
+export const WATCH_SUFFIX = "~watch";
+/** Round 5 (migration): every Watch token's identity ends in a FRESH nonce, `<mxid>:<device>~watch-<16 hex>`, so it can
+ *  never equal an identity that existed before (a pre-upgrade `…~watch` session, a LiveKit `#X` form) — a Watch token
+ *  can only ever resume a session that this same token created. */
+export const WATCH_ID_RE = /^[^#]*~watch-[0-9a-f]{16}$/;
+export const isWatchIdentity = (id) => WATCH_ID_RE.test(String(id));
+/**
+ * A participant (as LiveKit's room service lists it) with a reserved identity (`~` or `#` anywhere) that holds a
+ * publish or data right, or has a track, or whose rights can't be read (fail closed). Only the Watch route's own
+ * subscribe-only `~watch` connections may carry a reserved identity (DESIGN §1.3).
+ */
+export function reservedWithRights(p) {
+    const id = String(p?.identity || "");
+    if (!/[~#]/.test(id)) return false;
+    if ((p?.tracks || []).length) return true;
+    const perm = p?.permission;
+    if (!perm || typeof perm !== "object") return true;
+    const b = (s, c) => (perm[s] ?? perm[c]) === true;
+    const sources = perm.can_publish_sources ?? perm.canPublishSources;
+    return b("can_publish", "canPublish") || b("can_publish_data", "canPublishData") || b("can_update_metadata", "canUpdateMetadata")
+        || !isWatchIdentity(id) || (Array.isArray(sources) && sources.length > 0);
+}
+
+/** A device id the Watch route serves (the same grammar call moderation parses, so every watcher can be disconnected). */
+export const WATCH_DEVICE_RE = DEVICE_RE; // (identity.mjs: the ONE device rule, 0.3.12)
+
+/**
+ * The grant of a Watch token (DESIGN §1.3): one room, subscribe only. No publish of any track, no data, no metadata
+ * or attribute changes of its own. Pure (tests pin every field).
+ */
+export function watchGrant({ key, user, device, room, nowS, nonce = randomBytes(8).toString("hex") }) {
+    return {
+        iss: key, sub: `${user}:${device}${WATCH_SUFFIX}-${nonce}`, name: user, nbf: nowS - 10, exp: nowS + CALLTOKEN.WATCH_TTL_S,
+        video: {
+            room, roomJoin: true, canSubscribe: true,
+            canPublish: false, canPublishData: false, canPublishSources: [],
+            canUpdateOwnMetadata: false, hidden: false, recorder: false, agent: false,
+        },
+        // Pad on the phone (share claude/tinhat-pad/PAD-PHONE/DESIGN.md, Step A): the chip and the person grouping come ONLY
+        // from these server-minted attributes (canUpdateOwnMetadata false: no participant can set or change its own)
+        attributes: { "tinhat.watch": "1", "tinhat.person": user, "tinhat.pad": "phone", "tinhat.mode": "watch" },
+    };
+}
+
+/** Pad on the phone, Step A: every call sign-in's device id (normal and Watch, MSC4195's claimed device too), whatever the
+ *  room check says — so a signed identity `<verified mxid>:<device>` can be read back to exactly one person. */
+export const CALL_DEVICE_RE = DEVICE_RE; // (identity.mjs: the ONE device rule, 0.3.12)
+
+const b64uJson = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+/** HS256 the way LiveKit's own SDKs sign. */
+export function signLk(payload, secret) {
+    const head = b64uJson({ alg: "HS256", typ: "JWT" });
+    const body = b64uJson(payload);
+    return `${head}.${body}.${createHmac("sha256", secret).update(`${head}.${body}`).digest("base64url")}`;
+}
+
+/** A call-server token's payload if `secret` really signed it (HS256 only), else null. */
+export function verifyLk(jwt, secret) {
+    const p = String(jwt || "").split(".");
+    if (p.length !== 3 || !secret) return null;
+    let head;
+    try { head = JSON.parse(Buffer.from(p[0], "base64url").toString("utf8")); } catch { return null; }
+    if (head?.alg !== "HS256") return null;
+    const want = createHmac("sha256", secret).update(`${p[0]}.${p[1]}`).digest();
+    let got;
+    try { got = Buffer.from(p[2], "base64url"); } catch { return null; }
+    if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
+    try { return JSON.parse(Buffer.from(p[1], "base64url").toString("utf8")); } catch { return null; }
+}
+
+/**
+ * Pad on the phone, Step A (DESIGN.md "STEP A — decisions after review 4", P2): lk-jwt's answer `text` ({url, jwt, …})
+ * with its token RE-MINTED: the same header, identity, room, exp, nbf, every other claim and every grant exactly as
+ * lk-jwt wrote them (an omitted grant stays omitted: LiveKit's defaults keep applying) — the only changes: the
+ * attribute `tinhat.person` = the verified user (any `tinhat.*` attribute it may have carried is dropped first) and a
+ * `canUpdateOwnMetadata: true` turned into false (no participant may set its own attributes). The response keeps
+ * every other field. -> the new response text, or null (not lk-jwt's token: never relayed).
+ */
+export function remint(text, secret, user) {
+    let o;
+    try { o = JSON.parse(text); } catch { return null; }
+    if (!o || typeof o !== "object" || typeof o.jwt !== "string") return null;
+    const p = verifyLk(o.jwt, secret);
+    if (!p || typeof p !== "object" || !p.video || typeof p.video !== "object") return null;
+    // a null-prototype map: an attribute named "__proto__" is copied as an attribute, never into the prototype (review P1)
+    const attrs = Object.create(null);
+    if (p.attributes && typeof p.attributes === "object") for (const [k, v] of Object.entries(p.attributes)) if (!k.startsWith("tinhat.")) attrs[k] = v;
+    attrs["tinhat.person"] = user;
+    const out = { ...p, attributes: attrs };
+    if (p.video.canUpdateOwnMetadata === true) out.video = { ...p.video, canUpdateOwnMetadata: false };
+    const head = o.jwt.split(".")[0];
+    const body = Buffer.from(JSON.stringify(out)).toString("base64url");
+    const jwt = `${head}.${body}.${createHmac("sha256", secret).update(`${head}.${body}`).digest("base64url")}`;
+    return JSON.stringify({ ...o, jwt });
+}
 
 const LEGACY_KEYS = new Set(["room", "openid_token", "device_id"]);
 // MSC4195 as lk-jwt 0.4.0 reads it, plus the delayed-leave fields current Element Call adds (delay_id, delay_timeout,
@@ -208,6 +312,14 @@ export function isOwnConnTestRoom(room, mxid) {
     return m[1] === lp || (lp === "" && m[1] === "user");
 }
 
+/** Whether lk-jwt's answer is a token whose identity has a `~` or `#` (reserved: only the Watch route mints `…~watch`;
+ *  `#` is what LiveKit itself appends), or can't be read at all (then it isn't handed out either). */
+export function reservedIdentity(text) {
+    let p = null;
+    try { p = jwtPayload(JSON.parse(text).jwt); } catch { return true; }
+    return !p || typeof p.sub !== "string" || /[~#]/.test(p.sub);
+}
+
 /** The payload of a JWT lk-jwt just minted (its own answer on loopback: decoded, not verified). */
 function jwtPayload(jwt) {
     const p = String(jwt || "").split(".");
@@ -217,7 +329,9 @@ function jwtPayload(jwt) {
 
 /**
  * deps: { hs: {get(path, token)} (createHs, the internal Synapse), adminToken, serverName, lkJwtUrl,
- *         enabled: () => bool, fetchImpl, now, log, federation?: {userinfo(server, token) -> {sub}|null} (fedresolve) }
+ *         enabled: () => bool, fetchImpl, now, log, federation?: {userinfo(server, token) -> {sub}|null} (fedresolve),
+ *         Watch (§ watchHandler): lkKey, lkSecret, lkApiUrl (the call server's HTTP API), sfuUrl (what clients connect
+ *         to, = lk-jwt's LIVEKIT_URL), wallNow? (epoch ms) — without key/secret/API the Watch route answers 404 }
  */
 export function createCallToken(deps) {
     const { hs, adminToken, serverName, lkJwtUrl } = deps;
@@ -225,6 +339,7 @@ export function createCallToken(deps) {
     const now = deps.now || mono;
     const log = deps.log || ((s) => console.log(s));
     const enabled = deps.enabled || (() => true);
+    const wallNow = deps.wallNow || Date.now;   // JWT times (seconds since the epoch); `now` is the monotonic clock
     const federation = deps.federation || createFedResolver();
     const perClient = new RateLimit(CALLTOKEN.PER_CLIENT_PER_MIN, 60_000, now);
     const lookupsClient = new RateLimit(CALLTOKEN.LOOKUPS_PER_CLIENT_MIN, 60_000, now);
@@ -246,11 +361,13 @@ export function createCallToken(deps) {
     }
 
     /** The user a sign-in from this server belongs to; null = refused; throws "busy" / anything when Synapse fails. */
-    async function localUser(o, ip) {
+    async function localUser(o, ip, fresh = false) {
         const key = sha(o.access_token);
         const hit = users.get(key);
-        if (hit && hit.exp > now()) return hit.user;
-        return once(`u:${key}`, async () => {
+        if (!fresh && hit && hit.exp > now()) return hit.user;
+        // fresh (the Watch route, which signs by itself: no second check by lk-jwt; Astra design round 2 #2): Synapse is
+        // asked now, never a cached answer whose life the caller's expires_in set
+        return once(`${fresh ? "f" : "u"}:${key}`, async () => {
             if (!lookupsClient.hit(ip) || !lookupsGlobal.hit("all")) throw new Error("busy");
             const r = await hs.get(`/_matrix/federation/v1/openid/userinfo?access_token=${encodeURIComponent(o.access_token)}`);
             if (r.ok && typeof r.body?.sub === "string" && serverOf(r.body.sub) === serverName) {
@@ -353,13 +470,9 @@ export function createCallToken(deps) {
             };
             const relay = (up) => { res.set("Content-Type", "application/json"); return res.status(up.status).send(up.text); };
 
-            if (!on) {  // the owner's switch: lk-jwt alone decides, as before 0.3.7, but for the device id (0.3.12)
-                const off = offModeBody(raw.toString("utf8"));
-                if (off.error) { log("[calltoken] refused: not one JSON object, or a device id call moderation couldn't act on (room check off)"); return send(res, 400, { errcode: "M_BAD_JSON", error: off.error }); }
-                const up = await pass(off.body);
-                return up ? relay(up) : undefined;
-            }
-
+            // Pad on the phone, Step A (DESIGN.md "STEP A — review 2" #1): the request is parsed, the caller verified and the
+            // identity canonical on EVERY path. The owner's switch (CALL_TOKEN_ROOM_CHECK=off) turns off only the room
+            // membership check and this route's own rate limit; lk-jwt's /get_token (a client-chosen identity) is never asked.
             let r = parseRequest(raw.toString("utf8"), legacyOk);
             if (r.error) return send(res, 400, { errcode: "M_BAD_JSON", error: r.error });
             if (r.kind === "token") {
@@ -377,12 +490,12 @@ export function createCallToken(deps) {
 
             let user = null;      // the caller, verified before lk-jwt is asked (this server's or another's)
             try {
-                if (!local && !ROOM_ID_RE.test(room)) { log("[calltoken] refused: not a room id (remote caller)"); return refuse(res, "not-member"); }
+                if (on && !local && !ROOM_ID_RE.test(room)) { log("[calltoken] refused: not a room id (remote caller)"); return refuse(res, "not-member"); }
                 user = local ? await localUser(o, ip) : await remoteUser(o, ip);
                 if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
                 // MSC4195: the member it claims to be must be the caller (lk-jwt's own rule for /get_token)
                 if (r.msc4195 && r.claimed_user_id !== user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
-                if (!(local && isOwnConnTestRoom(room, user))) {  // (the connection test's scratch room: this caller's own)
+                if (on && !(local && isOwnConnTestRoom(room, user))) {  // (the connection test's scratch room: this caller's own)
                     if (!ROOM_ID_RE.test(room)) { log(`[calltoken] refused: not a room id (${where} caller)`); return refuse(res, "not-member"); }
                     const ok = await isMember(room, (set) => set.has(user));
                     if (!ok) { log(`[calltoken] refused: not a joined member (${where} caller)`); return refuse(res, "not-member"); }
@@ -394,27 +507,156 @@ export function createCallToken(deps) {
                 return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the room", reason: "check-failed" });
             }
 
-            const up = await pass(canonicalBody(r), r.msc4195 ? "/sfu/get" : path);
+            const up = await pass(canonicalBody(r), "/sfu/get");  // (Step A: lk-jwt's /get_token is never asked)
             if (!up) return undefined;
             // hand out lk-jwt's token only for the identity that was checked (defence in depth: lk-jwt resolved the
             // sign-in again itself)
-            if (up.status === 200 && !(local && isOwnConnTestRoom(room, user))) {
-                let ok = false;
-                try {
-                    const p = jwtPayload(JSON.parse(up.text).jwt);
-                    const id = String(p?.sub || "");
-                    const suffix = `:${r.device_id}`;
-                    const mxid = id.endsWith(suffix) ? id.slice(0, id.length - suffix.length) : "";
-                    if (p?.video?.room === room && mxid && serverOf(mxid) === o.matrix_server_name) ok = mxid === user;
-                } catch { ok = false; }
-                if (!ok) { log(`[calltoken] dropped a minted token: not a joined member (${where} caller)`); return refuse(res, "not-member"); }
-            }
-            return relay(up);
+            // whatever the request was, a normal token never carries a Watch identity (`#`: DESIGN §1.3, Astra d1 #1)
+            if (up.status === 200 && reservedIdentity(up.text)) { log(`[calltoken] dropped a minted token: a reserved (Watch) identity (${where} caller)`); return refuse(res, "reserved-identity"); }
+            if (up.status !== 200) return relay(up);  // lk-jwt's own errors, as it wrote them
+            // Step A: the identity signed is EXACTLY `<verified user>:<device>` for exactly this room — every path, the
+            // connection test's room too (a mismatch is never handed out)
+            let ok = false;
+            try {
+                const p = jwtPayload(JSON.parse(up.text).jwt);
+                ok = p?.sub === `${user}:${r.device_id}` && p?.video?.room === room && serverOf(user) === o.matrix_server_name;
+            } catch { ok = false; }
+            if (!ok) { log(`[calltoken] dropped a minted token: not exactly the caller's account + device (${where} caller)`); return refuse(res, "not-member"); }
+            // no call-server key configured: FAIL CLOSED — lk-jwt's token is never handed out unchecked (Step A code review P1)
+            if (!deps.lkSecret) { log(`[calltoken] no call-server key configured: refused (${where} caller)`); return send(res, 502, { errcode: "M_UNKNOWN", error: "the call sign-in couldn't be completed", reason: "no-key" }); }
+            // Step A: re-minted with the server's own `tinhat.person` (the only attribute grouping trusts); on ANY failure
+            // an error — lk-jwt's token is never relayed instead
+            const out = remint(up.text, deps.lkSecret, user);
+            if (!out) { log(`[calltoken] couldn't re-mint lk-jwt's token (${where} caller): refused`); return send(res, 502, { errcode: "M_UNKNOWN", error: "the call sign-in couldn't be completed", reason: "remint-failed" }); }
+            res.set("Content-Type", "application/json");
+            return res.status(200).send(out);
         };
     }
 
+    /** The call server's room service (twirp), signed per request with a room-admin token for that one room. */
+    /** `room` "" = a room-list token (ListRooms), else a room-admin token for that one room. */
+    async function lkRoomService(method, room, body) {
+        const nowS = Math.floor(wallNow() / 1000);
+        const video = room ? { room, roomAdmin: true } : { roomList: true };
+        const tok = signLk({ iss: deps.lkKey, sub: "tinhat-api-watch", nbf: nowS - 10, exp: nowS + 60, video }, deps.lkSecret);
+        const r = await fetchImpl(`${deps.lkApiUrl}/twirp/livekit.RoomService/${method}`, {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` },
+            body: JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(CALLTOKEN.LK_API_MS),
+        });
+        if (r.status === 404) return null;   // no such room on the call server (nobody is in that call)
+        if (!r.ok) throw new Error(`call server said ${r.status}`);
+        return r.json();
+    }
+
+    /** Remove every reserved identity (`~` or `#`) of `participants` that holds any publish right or a track. */
+    /**
+     * Remove every reserved identity (`~` or `#`) of `participants` that holds a publish right, a track or unreadable
+     * rights, then LIST THE CALL AGAIN and confirm none is left (round 4 P1: fail closed). Throws when one couldn't be
+     * removed or is still there; the Watch route then refuses to sign (502) and the sweep logs an alert.
+     */
+    async function removeReserved(room, participants) {
+        const bad = participants.filter(reservedWithRights);
+        if (!bad.length) return 0;
+        const failed = [];
+        for (const p of bad) {
+            try {
+                await lkRoomService("RemoveParticipant", room, { room, identity: p.identity });
+                log("[calltoken] watch sweep: removed a reserved identity holding publish rights");
+            } catch (e) {
+                failed.push(e?.message || String(e));
+            }
+        }
+        const again = await lkRoomService("ListParticipants", room, { room });
+        const left = (again?.participants || []).filter(reservedWithRights).length;
+        if (failed.length || left) {
+            log(`[calltoken] ALERT watch sweep: ${left} reserved identit${left === 1 ? "y" : "ies"} with publish rights still in a call (${failed.length} removal(s) failed${failed.length ? `: ${failed[0]}` : ""})`);
+            throw new Error("reserved-identity removal failed");
+        }
+        return bad.length;
+    }
+
+    /** The sweep (Astra r3 #1): every call on the call server, every reserved identity with publish rights out. At start
+     *  and every SWEEP_MS. Returns how many were removed; never throws (a failed removal is logged as an ALERT). */
+    async function sweep() {
+        let removed = 0;
+        try {
+            const rooms = (await lkRoomService("ListRooms", "", {}))?.rooms || [];
+            for (const r of rooms) {
+                if (!(Number(r?.num_participants ?? r?.numParticipants ?? 1) > 0) || typeof r?.name !== "string") continue;
+                try {
+                    const list = await lkRoomService("ListParticipants", r.name, { room: r.name });
+                    removed += await removeReserved(r.name, list?.participants || []);
+                } catch (e) {
+                    // (a failed removal has logged its own ALERT; anything else — the list itself failed — is one here)
+                    if (e?.message !== "reserved-identity removal failed") log(`[calltoken] ALERT watch sweep: one call couldn't be checked: ${e?.message || e}`);
+                }
+            }
+        } catch (e) {
+            log(`[calltoken] ALERT watch sweep failed: ${e?.message || e}`);
+        }
+        return removed;
+    }
+
+    /**
+     * POST /calltoken/watch (public /livekit/jwt/watch): a subscribe-only token for a Pad Watch join (WATCH-LEASE/DESIGN.md
+     * §1). Always checked (the owner's switch doesn't reach it), local accounts only, the caller's own device, a JOINED
+     * member (round 5: no pairing requirement — DESIGN T6). No lk-jwt fallback: lk-jwt can't mint a restricted grant. The apps learn that this
+     * server offers Watch from the well-known (features.pad_watch); OPTIONS answers 200 too (a hint only).
+     */
+    function watchHandler() {
+        const watchOk = !!(deps.lkKey && deps.lkSecret && deps.lkApiUrl);
+        return async (req, res) => {
+            res.set("Cache-Control", "no-store");
+            for (const [k, v] of Object.entries(CORS)) res.set(k, v);
+            if (!watchOk) { req.resume?.(); return send(res, 404, { errcode: "M_NOT_FOUND", error: "not found" }); }
+            if (req.method === "OPTIONS") return res.status(200).end();
+            if (req.method !== "POST") return res.status(405).end();
+            const ip = clientKey(req);
+            if (!perClient.hit(ip)) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
+            const raw = await readBody(req);
+            if (!raw) return send(res, 413, { errcode: "M_TOO_LARGE", error: "request too large" });
+            const r = parseRequest(raw.toString("utf8"), true);
+            if (r.error) return send(res, 400, { errcode: "M_BAD_JSON", error: r.error });
+            if (r.kind !== "legacy") return send(res, 400, { errcode: "M_BAD_JSON", error: "a Watch request is {room, openid_token, device_id}" });
+            const o = r.openid, room = r.room, device = r.device_id;
+            const no = (reason, why) => { log(`[calltoken] watch refused: ${why}`); return send(res, 403, { errcode: "M_FORBIDDEN", error: "can't watch that call", reason }); };
+            if (o.matrix_server_name !== serverName) return no("watch-local-only", "not an account of this server");
+            if (!WATCH_DEVICE_RE.test(device)) return no("no-device", "no device id the Watch route serves");
+            let user;
+            try {
+                user = await localUser(o, ip, true);
+                if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
+                if (!ROOM_ID_RE.test(room)) return no("not-member", "not a room id");
+                if (!(await isMember(room, (set) => set.has(user)))) return no("not-member", "not a joined member");
+                const d = await hs.get(`/_synapse/admin/v2/users/${encodeURIComponent(user)}/devices/${encodeURIComponent(device)}`, adminToken);
+                if (d.status === 404) return no("not-your-device", "the device isn't the caller's");
+                if (!d.ok || d.body?.device_id !== device) throw new Error(`device lookup said ${d.status}`);
+                const list = await lkRoomService("ListParticipants", room, { room });
+                // a reserved identity holding publish rights in this call (one issued before ~ was reserved, or LiveKit's
+                // publish=X form) is removed BEFORE a Watch token exists, so the token can never resume it (Astra r3 #1)
+                await removeReserved(room, list?.participants || []);
+                // (round 5: no "another device of yours is in this call" requirement any more — it was a UX tie, not a
+                // security property (DESIGN T6), and it refused the intended use: watching while your computer isn't in
+                // the call. A joined member's own device gets subscribe-only rights: strictly less than /sfu/get gives it.)
+            } catch (e) {
+                if (e?.message === "busy") { res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-in checks, try again shortly" }); }
+                log(`[calltoken] watch check failed: ${e?.message || e}`);
+                return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
+            }
+            const jwt = signLk(watchGrant({ key: deps.lkKey, user, device, room, nowS: Math.floor(wallNow() / 1000) }), deps.lkSecret);
+            log("[calltoken] watch token minted (local caller)");
+            return send(res, 200, { url: deps.sfuUrl, jwt });
+        };
+    }
+
+    if (deps.lkKey && deps.lkSecret && deps.lkApiUrl && deps.sweep !== false) {
+        setTimeout(() => void sweep(), 5_000).unref?.();
+        setInterval(() => void sweep(), CALLTOKEN.SWEEP_MS).unref?.();
+    }
     return {
         handler,
+        watchHandler,
+        sweep,
         notFound: (_req, res) => send(res, 404, { errcode: "M_NOT_FOUND", error: "not found" }),
         _users: users,
     };
@@ -425,6 +667,7 @@ export function installCallToken(app, deps) {
     const ct = createCallToken(deps);
     app.all("/calltoken/sfu/get", safe("calltoken", ct.handler("/sfu/get")));
     app.all("/calltoken/get_token", safe("calltoken", ct.handler("/get_token")));
+    app.all("/calltoken/watch", safe("calltoken", ct.watchHandler()));
     app.all(/^\/calltoken(?:\/|$)/, ct.notFound);
     return ct;
 }

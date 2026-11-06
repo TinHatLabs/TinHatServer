@@ -8,7 +8,7 @@
 //                Hear here · Talk here · Stop watching
 //   PartyCard    the call room's Media Party on the computer: what plays, ▶/⏸, −10 s / +10 s, ⏭, Up next, Add a link
 //                (`party.*`, bound to what the Pad saw playing); "Join on <device>" / "Watch on this phone"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Button, Icon, SearchField, Switch, TextField, ToolButton, cx } from "@/ui";
 import { toast } from "@/core/bus";
 import { useMember } from "@/core/matrix";
@@ -19,6 +19,7 @@ import { DEFAULT_EMOJI, type PadSound } from "@/widgets/soundpad";
 import { partyLinkOk, webSoundOk, whyText } from "@/features/calls/pad/rules";
 import { partyPosNow, type PadView } from "@/features/calls/pad/controller";
 import { WATCH_AVAILABLE } from "@/features/calls/watchAvailable";
+import { onServerOffer, padWatchOffered } from "@/core/server";
 import { useCallStore } from "@/features/calls";
 import { Tile } from "@/features/callui/Tile";
 import { isShareTile, ui, useC } from "@/features/callui/store";
@@ -158,6 +159,7 @@ export function WebSearch({ view, device, mobile, dim, favs, focusSignal }: { vi
 /** "<name> is sharing · Watch", and while this device watches that call: the share (phones), full screen and the
  *  "This phone" row. */
 export function Watch({ view, device, mobile }: { view: PadView; device: string; mobile: boolean }) {
+  const padWatch = useSyncExternalStore(onServerOffer, padWatchOffered, padWatchOffered);
   const watching = useC("watching");
   const callRoom = useC("callRoomId");
   const inCall = useC("inCall");
@@ -200,7 +202,8 @@ export function Watch({ view, device, mobile }: { view: PadView; device: string;
 
   if (!here) {
     // 12.1.6: Watch is off (calls/engine.ts WATCH_AVAILABLE; back in 12.1.7) — no Watch strip
-    if (!sharers.length || !WATCH_AVAILABLE) return null;
+    // and only on a server that mints subscribe-only Watch tokens (WATCH-LEASE/DESIGN.md §1.5)
+    if (!sharers.length || !WATCH_AVAILABLE || !padWatch) return null;
     const who = sharers.length > 1 ? `${nameOf(first, sharers[0]!.u)} and ${sharers.length - 1} more are sharing` : `${nameOf(first, sharers[0]!.u)} is sharing`;
     return (
       <section className={cx(ps.section, s.watchStrip)} data-testid="pad-watch-strip">

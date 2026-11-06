@@ -14,6 +14,7 @@ import { setUiSink } from "@/core/sounds";
 import { AudioClock, type Stamp } from "./envclock";
 // the level tap's worklet: a same-origin file (the app's CSP has no blob: script source)
 import tapWorkletUrl from "./tap.worklet.js?url";
+import { tapLocalTrack, tapRemoteTrack, type Tap, type TapEnv } from "./leveltap";
 
 const log = createLogger("call-audio");
 
@@ -116,6 +117,32 @@ export function idleContext(): void {
     });
 }
 
+// ---- round 11: the OUTPUT TAP (Pad Watch, share claude/tinhat-pad/WATCH-LEASE/ "ROUND 11") ----------------------------
+// The speaker meter's analyser takes in the playback mix ONLY while an output-tap lease is committed (outputtap.ts):
+// openOutputTap() connects master → outAnalyser, its close disconnects exactly that edge (master → destination, the
+// playback route, is never touched). A rebuilt context reconnects it only while the tap is open.
+let outTapOn = false;
+function connectOutTap(): void {
+  if (outTapOn && master && outAnalyser) master.connect(outAnalyser);
+}
+/** Feed the speaker meter's analyser (call only under a committed output-tap lease); returns its disconnect. */
+export function openOutputTap(): () => void {
+  audioContext();
+  if (!outTapOn) {
+    outTapOn = true;
+    connectOutTap();
+  }
+  return () => {
+    if (!outTapOn) return;
+    outTapOn = false;
+    try {
+      if (master && outAnalyser) master.disconnect(outAnalyser);
+    } catch {
+      /* not connected */
+    }
+  };
+}
+
 export function audioContext(): AudioContext {
   idleByUs = false;
   if (!ctx) {
@@ -123,7 +150,8 @@ export function audioContext(): AudioContext {
     master = ctx.createGain();
     outAnalyser = ctx.createAnalyser();
     outAnalyser.fftSize = 1024;
-    master.connect(outAnalyser);
+    // round 11: the speaker meter's analyser is NOT fed here — only an open output tap connects it (openOutputTap)
+    connectOutTap();
     master.connect(ctx.destination);
     workletReady = ctx.audioWorklet
       .addModule(tapWorkletUrl)
@@ -186,62 +214,21 @@ function noteClockEpoch(paired: boolean): void {
 /** A 10 ms RMS envelope tap on a MediaStreamTrack; `onFrames` gets batches of linear RMS values and, from the worklet,
  *  where the batch's last frame goes (envclock.ts Stamp; null = from an older clock epoch, not placeable; undefined from
  *  the analyser fallback). */
-export interface Tap {
-  close(): void;
-  node: AudioNode | null;
-}
-
-export async function tapTrack(track: MediaStreamTrack, onFrames: (frames: number[], stamp?: Stamp | null) => void, via?: AudioNode): Promise<Tap> {
-  const c = audioContext();
-  const ok = await (workletReady ?? Promise.resolve(false));
-  const src = via ?? c.createMediaStreamSource(new MediaStream([track]));
-  if (!ok) {
-    // Fallback: an AnalyserNode polled every 50 ms (one "frame" per poll).
-    const an = c.createAnalyser();
-    an.fftSize = 2048;
-    src.connect(an);
-    const buf = new Float32Array(an.fftSize);
-    const t = setInterval(() => {
-      an.getFloatTimeDomainData(buf);
-      let acc = 0;
-      for (const v of buf) acc += v * v;
-      const r = Math.sqrt(acc / buf.length);
-      onFrames([r, r, r, r, r]);
-    }, 50);
-    openTaps++;
-    let open = true;
-    return {
-      node: an,
-      close() {
-        if (open) openTaps = Math.max(0, openTaps - 1);
-        open = false;
-        clearInterval(t);
-        try {
-          src.disconnect(an);
-        } catch {
-          /* gone */
-        }
-      },
-    };
-  }
-  const node = new AudioWorkletNode(c, "tw-tap", { numberOfInputs: 1, numberOfOutputs: 0 });
-  node.port.onmessage = (e: MessageEvent<{ f: number[]; end: number }>) => onFrames(e.data.f, frameStamp(c, e.data.end, e.data.f.length));
-  src.connect(node);
-  openTaps++;
-  let open = true;
+export type { Tap };
+/** Round 13: what a level tap borrows (leveltap.ts never imports this module: the output mix can't reach a tap) */
+function tapEnv(): TapEnv {
+  const ctx = audioContext();
   return {
-    node,
-    close() {
-      if (open) openTaps = Math.max(0, openTaps - 1);
-      open = false;
-      node.port.onmessage = null;
-      try {
-        src.disconnect(node);
-      } catch {
-        /* gone */
-      }
-    },
+    ctx,
+    ready: workletReady ?? Promise.resolve(false),
+    stamp: frameStamp,
+    opened: () => void openTaps++,
+    closed: () => void (openTaps = Math.max(0, openTaps - 1)),
   };
+}
+/** A leased LOCAL capture's level tap (the call mic / meter, the sameroom raw mic). */
+export function tapTrack(track: MediaStreamTrack, onFrames: (frames: number[], stamp?: Stamp | null) => void): Promise<Tap> {
+  return tapLocalTrack(tapEnv(), track, onFrames);
 }
 
 // ---- remote tracks ---------------------------------------------------------------------------------------
@@ -328,17 +315,21 @@ export function addRemote(sid: string, identity: string, category: CallCategory,
   remotes.set(sid, r);
   frameSinks.set(sid, onFrames);
   gain.gain.value = effectiveGain(r);
-  void tapTrack(track, (frames, stamp) => {
+  // round 13: the remote tap (leveltap.ts) makes its own source from this RECEIVED track (it refuses a track that
+  // isn't a current receiver's); it never sees the playback graph
+  void tapRemoteTrack(tapEnv(), track, (frames, stamp) => {
     let m = 0;
     for (const f of frames) m = Math.max(m, f);
     r.level = Math.max(m, r.level * 0.7);
     r.lastFrameAt = Date.now();
     levelWake(m);
     onFrames?.(r, frames, stamp);
-  }, src).then((t) => {
-    if (remotes.get(sid) === r) r.tap = t;
-    else t.close();
-  });
+  })
+    .then((t) => {
+      if (remotes.get(sid) === r) r.tap = t;
+      else t.close();
+    })
+    .catch((e) => log.warn(`[audio] level tap of ${identity} (${sid}): ${errText(e)}`));
   log.info(`audio ${category} from ${identity} (${sid}) → gain ${gain.gain.value.toFixed(2)}`);
   return r;
 }
@@ -546,9 +537,14 @@ export async function applyOutputDevice(): Promise<void> {
   }
 }
 
+/** Test seam (tools/watch-outtap-ingress.mjs, round 11): the speaker meter's analyser node itself. */
+export function outputAnalyserForTest(): AnalyserNode | null {
+  return outAnalyser;
+}
+
 /** Speaker meter: rms of everything Tin Hat plays (0..1). */
 export function outputLevel(): number {
-  if (!outAnalyser) return 0;
+  if (!outAnalyser || !outTapOn) return 0;
   const buf = new Float32Array(outAnalyser.fftSize);
   outAnalyser.getFloatTimeDomainData(buf);
   let acc = 0;

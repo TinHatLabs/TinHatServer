@@ -241,6 +241,16 @@ def features(st: dict | None = None, s: dict | None = None) -> dict:
         "memories": a["memories"],
         "reports": True,
         "guests": True,  # the guest room (docs/GUESTS.md): off until a manager turns it on, but always offered
+        # Pad Watch: this server mints subscribe-only Watch tokens (/livekit/jwt/watch, calltoken.mjs; share
+        # claude/tinhat-pad/WATCH-LEASE/DESIGN.md). The apps offer Watch only when this is true; an older server has no
+        # key, so no Watch (never a normal token instead).
+        "pad_watch": bool(st.get("calls", True)) and bool(s.get("livekit_secret")),
+        # Pad on the phone, Step A (share claude/tinhat-pad/PAD-PHONE/DESIGN.md): this API re-mints EVERY call token with
+        # the server's own `tinhat.person` and holds every sign-in to the exact account + device, so the apps may show one
+        # tile per person (grouping only when that attribute matches the identity) and the Pad chip from `tinhat.pad`.
+        # (and only once the call-server key pair has been replaced: no pre-0.3.13 credential can join; lkrotate.py)
+        "person_tiles": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
+        "pad_chip": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
     }
 
 

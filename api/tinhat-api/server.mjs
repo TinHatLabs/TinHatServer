@@ -21,7 +21,7 @@ import { normaliseClipUrl, ClipStore, Admitted, createClipSigner, sameHex, oneDo
 import { parseForeignClipUrl, foreignDownload } from "./foreign.mjs";
 import { giphyMediaUrl, sniffImage, readCapped, MEDIA_HEADERS, sniffAudio, sniffClipAudio, SANDBOX_HEADERS } from "./media.mjs";
 import { clearGuestCalls } from "./guestcalls.mjs";
-import { parseIdentity } from "./identity.mjs";
+import { listRoom } from "./vodslist.mjs";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -425,57 +425,13 @@ app.get("/vods/sessions", async (req, res) => {
     if (!(await vodsMemberOf(token, room, user))) return res.status(403).json({ error: "not a member of that room" });
     const sroom = vodsSanitize(room);
     const dir = `${VODS_DIR}/${sroom}`;
-    const out = [];
-    try {
-        for (const s of readdirSync(dir)) {
-            const sd = `${dir}/${s}`;
-            let session = {};
-            try { session = JSON.parse(readFileSync(`${sd}/session.json`, "utf8")); } catch { continue; }
-            const exp = Date.now() + 24 * 3600 * 1000;
-            const urlFor = (f) => {
-                const p = `${sroom}/${s}/${f}`;
-                return `${VODS_PUBLIC_BASE}/file/${p}?exp=${exp}&sig=${vodsSig(p, exp)}`;
-            };
-            const tracks = [];
-            try {
-                for (const line of readFileSync(`${sd}/tracks.jsonl`, "utf8").trim().split("\n")) {
-                    if (!line) continue;
-                    const t = JSON.parse(line);
-                    t.url = urlFor(t.file);
-                    // combined POV file (video + aligned mixed audio) — the player's
-                    // preferred single-file lipsync source (0.8.10)
-                    if (t.kind !== "audio" && existsSync(`${sd}/combined-${t.file}`))
-                        t.combined_url = urlFor(`combined-${t.file}`);
-                    tracks.push(t);
-                }
-            } catch { /* no tracks yet */ }
-            const mixed = existsSync(`${sd}/mixed.mka`) ? urlFor("mixed.mka") : "";
-            // Player gating: live = the call is still being recorded;
-            // ready = post-close processing done (mixed + every video track's
-            // combined file present). A session can be neither (processing window
-            // ~minutes after close, or a crashed recorder) — the player shows
-            // those as "Processing…" until this flips.
-            const live = session.end_ms == null;
-            const ready = !live && mixed !== ""
-                && tracks.filter(t => t.kind !== "audio").every(t => !!t.combined_url);
-            // 0.8.15 polish: card metadata. bytes = on-disk size of the whole session;
-            // people = unique Matrix users behind the tracks (identity is
-            // "@user:server:DEVICE"), first-seen order; empty = nothing was captured.
-            let bytes = 0;
-            try { for (const f of readdirSync(sd)) { try { bytes += statSync(`${sd}/${f}`).size; } catch { /* vanished */ } } } catch { /* unreadable */ }
-            const people = [];
-            for (const t of tracks) {
-                // the shared identity rule (identity.mjs: split at the LAST ':'), so a user on `host:port` keeps the
-                // port (the old first-two-parts regex turned `@u:h:8448:DEV` into `@u:h`); an identity this server
-                // wouldn't mint (another call server's) falls back to the last ':'
-                const id = String(t.identity || "");
-                const mx = parseIdentity(id)?.mxid ?? (id.lastIndexOf(":") > id.indexOf(":") ? id.slice(0, id.lastIndexOf(":")) : "");
-                if (mx.startsWith("@") && !people.includes(mx)) people.push(mx);
-            }
-            out.push({ id: s, ...session, tracks, mixed_url: mixed, live, ready, bytes, people, empty: tracks.length === 0 });
-        }
-    } catch { /* room has no recordings yet */ }
-    out.sort((a, b) => (b.start_ms || 0) - (a.start_ms || 0));
+    const exp = Date.now() + 24 * 3600 * 1000;
+    const urlForSession = (s) => (f) => {
+        const p = `${sroom}/${s}/${f}`;
+        return `${VODS_PUBLIC_BASE}/file/${p}?exp=${exp}&sig=${vodsSig(p, exp)}`;
+    };
+    // the rules live in vodslist.mjs (frameless captures never block `ready`; a repaired copy replaces its original)
+    const out = listRoom(dir, urlForSession);
     res.json({ sessions: out });
 });
 
@@ -1162,11 +1118,15 @@ installGameServers(app, {
 
 // Call sign-ins (security review 2026-10-26, calls round M1b; docs/API.md "Call sign-ins"): Caddy sends every
 // /livekit/jwt request but lk-jwt's health check here, and a token is minted only for a Matrix room the caller is
-// joined in. CALL_TOKEN_ROOM_CHECK=off (the owner's switch) hands everything to lk-jwt unchanged.
+// joined in. CALL_TOKEN_ROOM_CHECK=off (the owner's switch) turns off only that room check: since 0.3.13 every sign-in is
+// still held to the exact account + device and every token re-minted with `tinhat.person` (PAD-PHONE Step A).
 installCallToken(app, {
     hs: reachHs, adminToken: ADMIN_TOKEN, serverName: process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname,
     lkJwtUrl: (process.env.LK_JWT_URL || "http://127.0.0.1:8070").replace(/\/+$/, ""),
     enabled: () => String(process.env.CALL_TOKEN_ROOM_CHECK || "on").trim().toLowerCase() !== "off",
+    // Pad Watch (WATCH-LEASE/DESIGN.md §1): the API mints the subscribe-only Watch token itself (lk-jwt can't)
+    lkKey: LK_KEY, lkSecret: LK_SECRET, lkApiUrl: LK_API_URL.replace(/\/+$/, ""),
+    sfuUrl: process.env.LK_SFU_URL || `wss://${process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname}/livekit/sfu`,
 });
 
 app.listen(PORT, "127.0.0.1", () => {

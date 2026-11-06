@@ -90,6 +90,7 @@ def load_secrets() -> dict:
         "livekit_secret": tok(),
         "system_password": tok(),
         "system_token": None,
+        "livekit_rotated": "new",  # 0.3.13: a new server never had a pre-0.3.13 call credential (lkrotate.py)
     }
     write_json(config.SECRETS_FILE, s)
     return s
