@@ -168,8 +168,51 @@ function installSlot(identity: string, owner: string, index: number, raw: Uint8A
   if (sink?.provider && sink.roomId === sl.roomId) {
     void sink.provider.setRawKey(identity, index, raw).catch((e) => log.warn(`setKey ${identity}: ${errText(e)}`));
     for (const l of keyListeners) l(identity);
+    // PAD-PHONE Step B: the same device's server-vouched Pad Mic / Camera connection decrypts with it too
+    for (const a of aliases.get(`${sl.roomId}|${identity}`) ?? []) {
+      void sink.provider.setRawKey(a, index, raw).catch((e) => log.warn(`setKey ${a}: ${errText(e)}`));
+      for (const l of keyListeners) l(a);
+    }
   }
   return true;
+}
+
+// ---- PAD-PHONE Step B: key aliases --------------------------------------------------------------------------------------
+// A phone in Pad Mic / Camera mode announces its media key as its DEVICE (Olm, to-device: installed under
+// `<mxid>:<device>`), but its call connection is `<mxid>:<device>~pad-<mic|cam>-<16 hex>`. The engine registers that
+// connection as an alias of its device ONLY when the server vouches for it (persontiles keyAliasBase); every key of the
+// device then also goes in under the alias. Dropped when the connection leaves (or the call ends: clearKeyAliases).
+
+/** `${roomId}|${base}` -> the Pad identities that decrypt with base's keys */
+const aliases = new Map<string, Set<string>>();
+
+/** Register `alias` (a server-vouched Pad Mic / Camera identity) as decrypting with `base`'s keys in `roomId`: the
+ *  device's keys held now go in at once. Idempotent. */
+export function addKeyAlias(roomId: string, base: string, alias: string): void {
+  if (!base || !alias || base === alias || ownForms().has(base)) return;
+  const k = `${roomId}|${base}`;
+  const set = aliases.get(k) ?? new Set<string>();
+  if (set.has(alias)) return;
+  set.add(alias);
+  aliases.set(k, set);
+  if (!sink?.provider || sink.roomId !== roomId) return;
+  let n = 0;
+  for (const sl of slots.values()) {
+    if (sl.roomId !== roomId || sl.identity !== base) continue;
+    void sink.provider.setRawKey(alias, sl.index, sl.raw).catch((e) => log.warn(`setKey ${alias}: ${errText(e)}`));
+    n++;
+  }
+  for (const l of keyListeners) l(alias);
+  log.info(`[pad] key alias ${alias} ← ${base} (${n} key(s))`);
+}
+
+/** The connection left: its alias goes. */
+export function dropKeyAlias(roomId: string, alias: string): void {
+  for (const [k, set] of aliases) if (k.startsWith(`${roomId}|`) && set.delete(alias) && !set.size) aliases.delete(k);
+}
+
+export function clearKeyAliases(): void {
+  aliases.clear();
 }
 
 /** Keys buffered for rooms we are not calling in (sent after we left, or early) — drop those > 10 min old. */
@@ -187,6 +230,7 @@ export async function replayKeys(provider: TinHatKeyProvider, roomId: string): P
   for (const s of slots.values()) {
     if (s.roomId !== roomId || own.has(s.identity)) continue;
     await provider.setRawKey(s.identity, s.index, s.raw).catch(() => undefined);
+    for (const a of aliases.get(`${roomId}|${s.identity}`) ?? []) await provider.setRawKey(a, s.index, s.raw).catch(() => undefined);
     n++;
   }
   if (n) log.info(`replayed ${n} buffered key slot(s) into the keyring`);

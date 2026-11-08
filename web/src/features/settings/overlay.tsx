@@ -9,6 +9,7 @@ import { getPref } from "@/core/prefs";
 import { registerAuxWindow } from "@/core/winstate";
 import { getFormFactor } from "@/core/device";
 import { useCallStore } from "@/features/calls";
+import { sameParticipant } from "@/features/calls/identity";
 import type { CallStore } from "@/features/calls/contract";
 import { createLogger } from "@/core/log";
 import { resolveIcon, useIconIndex } from "@/ui/iconpack";
@@ -97,7 +98,8 @@ function fakePills(tick: number): Pill[] {
 function livePills(e: Partial<CallStore>, now: number): Pill[] {
   const speakingOnly = getPref("overlay-mode", "speaking") !== "always";
   const active = e.speakers?.active ?? [];
-  const speakingNow = (id: string) => active.some((a) => a === id || id.startsWith(a + ":") || a.startsWith(id + ":"));
+  // 12.1.11 (assembly-047): the strict rule (calls/identity.ts sameParticipant), not a "x:" prefix
+  const speakingNow = (id: string) => active.some((a) => sameParticipant(a, id));
   const out: Pill[] = [];
   const me = e.speakers?.me ?? "";
   const selfSpeaking = !e.micMuted && !!me && speakingNow(me);

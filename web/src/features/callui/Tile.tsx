@@ -459,7 +459,7 @@ export const Tile = memo(function Tile(p: TileProps) {
           <span className={s.name} style={{ maxWidth: Math.max(40, cw - 8 - glyphCount * 22 - (smOn && cw > 330 ? 130 : 0) - (waveVisible ? 49 : 0) - zoomRoom) }}>
             {share ? `${name} — screen` : name}
           </span>
-          {tile.pad === "watch" && <MarkIcon name="smartphone-symbolic" color="var(--th-tile-name-fg)" tip={self ? "Your phone is watching (Pad)" : `${name} is also on their phone (Pad), watching`} />}
+          {!!tile.pad && <MarkIcon name="smartphone-symbolic" color="var(--th-tile-name-fg)" tip={padTip(tile.pad, self, name)} />}
           {tile.othersLive && <MarkIcon name="audio-input-microphone-symbolic" color="var(--th-tile-name-fg)" tip="Your mic is live on another of your devices" />}
           {!self && tile.partlyMuted && <MarkIcon name="microphone-sensitivity-muted-symbolic" color="var(--th-tile-name-fg)" tip={`A moderator muted ${name} on one of their devices`} />}
           {tile.alts && tile.alts.length > 0 && <MarkIcon name="camera-web-symbolic" color="var(--th-tile-name-fg)" tip={`${name} has another camera — show it`} onClick={() => act("pickCamera")(tile.alts![0])} />}
@@ -756,4 +756,11 @@ function Waveform({ identity, muted }: { identity: string; muted: boolean }) {
       ))}
     </span>
   );
+}
+
+/** PAD-PHONE Step B: the Pad mark's words for a person's Pad modes ("watch", "mic", "camera", joined by "+"). */
+export function padTip(modes: string, self: boolean, name: string): string {
+  const words = modes.split("+").map((m) => (m === "mic" ? "as the mic" : m === "camera" ? "as the camera" : "watching"));
+  const what = words.length > 1 ? `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}` : words[0];
+  return self ? `Your phone (Pad) — ${what}` : `${name} joined from the Pad (phone) — ${what}`;
 }

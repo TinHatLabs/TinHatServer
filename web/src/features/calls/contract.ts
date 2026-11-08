@@ -31,7 +31,7 @@ export interface Tile {
   /** Pad on the phone, Step A (persontiles.ts): every device of this person folded into this tile (sorted; absent or []
    *  for one device) and the Pad chip ("watch" = one of them is their phone, watching). From the SERVER's attributes only. */
   members?: string[];
-  pad?: "" | "watch";
+  pad?: string; // (Step B) the modes: "watch", "mic", "camera", joined by "+" (persontiles padModesOf)
   /** the self tile: one of my other devices' mic is live */
   othersLive?: boolean;
   /** the person's other cameras (tile ids; the UI offers a switch) */
@@ -114,6 +114,16 @@ export interface CallState {
   watching: boolean;
   /** watching and the mic not chosen yet: every capture path refuses (engine captureBarred) */
   noCapture: boolean;
+  /** PAD-PHONE Step B, the phone: This phone's mode ("" = none; watch / mic / camera are watch episodes) */
+  padMode: "" | "watch" | "mic" | "camera";
+  /** the phone's mic is published (Mic mode, after the computer let go) */
+  padMicLive: boolean;
+  /** the phone's Mic / Camera note ("Your phone is the mic", "Your computer didn't answer — …") */
+  padNote: string;
+  /** show "Use phone mic" (the computer didn't answer / took it back) */
+  padNeedsTap: boolean;
+  /** PAD-PHONE Step B, the computer: my phone holds this device's mic (its device name; "" = nobody) */
+  micTakenBy: string;
   cameraOn: boolean;
   sharing: boolean;
   musicPlaying: boolean;
@@ -201,6 +211,14 @@ export interface CallActions {
   watchTalk(on: boolean): void;
   /** watching: hear the call on this device / not */
   watchHear(on: boolean): void;
+  /** PAD-PHONE Step B: This phone · Watch / Mic / Camera in that call (switches; leaves the old mode first) */
+  padUse(roomId: string, mode: "watch" | "mic" | "camera"): void;
+  /** This phone · Stop */
+  padStop(): void;
+  /** "Use phone mic" (the computer didn't answer / took it back) */
+  padUseMicNow(): void;
+  /** the computer: "Take the mic back" from the phone */
+  takeMicBack(): void;
   leaveCall(): void;
   switchCall(roomId: string): void;
   toggleMic(): void;

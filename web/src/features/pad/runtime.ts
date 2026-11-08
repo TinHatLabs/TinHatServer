@@ -22,6 +22,7 @@ import { openSettings, toast } from "@/core/bus";
 import { republishMembership, useCallStore } from "@/features/calls";
 import type { CallStore } from "@/features/calls/contract";
 import { sess } from "@/features/calls/session";
+import { hooks as callHooks, padTakeover, setPadTakeAck, takeoverEnded, takeoverHolder } from "@/features/calls/engine";
 import { MEMBER_TYPE, isRecorder, mxidOf } from "@/features/calls/util";
 import { PAD_CMD, PAD_STATE, padTargets, type PadCat, type PadTarget } from "@/features/calls/pad/rules";
 import { PadTransport, type PadClientLike } from "@/features/calls/pad/transport";
@@ -192,6 +193,7 @@ export function padSnapshot(): PadSnapshot {
       talk: !!c.speakers?.me && (c.speakers?.active ?? []).includes(c.speakers.me),
       sound: liveUrl(sb.playingUrl) ? sb.playingUrl : "",
       gate,
+      takeBy: takeoverHolder(), // (PAD-PHONE Step B) the Pad session whose phone holds this device's mic
     },
     people,
     sounds: { favourites: [...favUrls], roomSounds: inCall ? { [c.callRoomId]: roomSounds.map((r) => r.url) } : {}, recent: recent.map((r) => r.url) },
@@ -276,6 +278,10 @@ const PAD_LINK_KINDS = new Set(["youtube", "ytmusic", "spotify", "apple"]);
 
 /** The receiver's executor: the commands its own buttons call (call store actions, the soundboard store). */
 export const padExec: PadExec = {
+  // PAD-PHONE Step B: the phone takes / gives back this device's mic (engine: a mute reason of its own, leased)
+  takeover: (on, sid, device) => padTakeover(on, sid, deviceName(device) || device),
+  takeoverHolder: () => takeoverHolder(),
+  takeoverEnded: (sid) => takeoverEnded(sid),
   forceMicMuted: (m) => call().forceMicMuted(m),
   toggleMic: () => call().toggleMic(),
   applyDeafen: (on) => call().applyDeafen(on),
@@ -604,6 +610,66 @@ export function installPad(): void {
     if (call().inCall) void republishMembership();
   });
   document.addEventListener("visibilitychange", () => ctrl?.setVisible(pageVisible()));
+  installPhoneMic();
+}
+
+// ---- PAD-PHONE Step B: the phone in Mic mode asks the computer for its mic (docs/PAD.md "Phone as Mic / Camera") ------
+// Through the open Pad (the computer in this call): `takeover.mic {on:true}`, then the receiver's own answer (`take`)
+// lets the engine's gate publish the phone's mic; `take` going false after it was true (the computer took the mic back)
+// stops it again. No open Pad for this call, or a receiver without the op (older): "none" — the engine then relies on the
+// call itself (no live mic of mine elsewhere). Leaving Mic mode gives the mic back (`on:false`), whatever comes next.
+function installPhoneMic(): void {
+  let sent = false;
+  let had = false;
+  let inTick = false; // (sending notifies the stores this tick listens to: never re-entered — the lab's 5 376-send loop)
+  const target = (): PadController | null => {
+    const c = call();
+    return ctrl && !ctrl.isClosed && ctrl.room === c.callRoomId ? ctrl : null;
+  };
+  const tick = () => {
+    if (inTick) return;
+    inTick = true;
+    try {
+      step();
+    } finally {
+      inTick = false;
+    }
+  };
+  const step = () => {
+    const c = call();
+    if (c.padMode !== "mic" || !c.inCall) {
+      sent = had = false;
+      return;
+    }
+    const k = target();
+    if (!k || !k.canSend("takeover.mic")) return setPadTakeAck(had ? "lost" : "none");
+    if (k.takeConfirmed()) {
+      had = true;
+      return setPadTakeAck("ok");
+    }
+    if (had) return setPadTakeAck("lost");
+    if (!sent) {
+      sent = true; // before the send: it notifies synchronously
+      if (!k.setTakeover(true)) sent = false;
+    }
+    setPadTakeAck("wait");
+  };
+  callHooks.onPadMicWanted.push(() => {
+    sent = had = false;
+    tick();
+  });
+  callHooks.onPadMicRetry.push(() => {
+    sent = had = false;
+    tick();
+  });
+  callHooks.onPadMicReleased.push(() => {
+    const k = ctrl && !ctrl.isClosed ? ctrl : null;
+    if (k?.canSend("takeover.mic")) k.setTakeover(false);
+    sent = had = false;
+  });
+  usePadCtrl.subscribe(tick);
+  useCallStore.subscribe(tick);
+  window.setInterval(tick, 1000);
 }
 
 // ---- discovery (the controller side) ----------------------------------------------------------------------

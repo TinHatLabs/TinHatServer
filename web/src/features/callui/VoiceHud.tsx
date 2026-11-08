@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { usePref } from "@/core/prefs";
 import { isRecorder } from "@/core/server";
+import { sameParticipant } from "@/features/calls/identity";
 import { registerAuxWindow } from "@/core/winstate";
 import { Icon, useThemeColours } from "@/ui";
 import { callStore, getC, localpartOf, SELF_ID, tileMxid, useC } from "./store";
@@ -30,9 +31,11 @@ export interface HudPill {
 const LINGER = 1800;
 const MAX_PILLS = 8;
 
+// 12.1.11 (assembly-047): the strict rule (calls/identity.ts sameParticipant = OverlayWindow.qml speakingNow); a
+// "x:" prefix made @a:h speak for @a:h:8448:DEV
 function speakingNow(identity: string, active: string[]): boolean {
   const p = identity || "";
-  return active.some((a) => a === p || p.startsWith(a + ":") || a.startsWith(p + ":"));
+  return active.some((a) => sameParticipant(a, p));
 }
 
 /** OverlayWindow.qml recompute(): self first, then alphabetical; "speaking" mode shows talkers (+1.8 s linger). */

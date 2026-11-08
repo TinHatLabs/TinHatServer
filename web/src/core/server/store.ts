@@ -42,7 +42,7 @@ function previewOffer(): ServerOffer {
     if ((SERVER_FEATURES as readonly string[]).includes(k ?? "") && (v === "0" || v === "1")) features[k as ServerFeature] = v === "1";
   }
   const recorder = devQuery("threcorder") ?? "";
-  return { server: "preview", api: "", web: "", features, recorder: /^@[^:\s]+:[^\s]+$/.test(recorder) && features.memories !== false ? recorder : "", passwordReset: devQuery("thpwreset") === "owner" ? "owner" : "", owner: "", padWatch: devQuery("thpadwatch") === "1" };
+  return { server: "preview", api: "", web: "", features, recorder: /^@[^:\s]+:[^\s]+$/.test(recorder) && features.memories !== false ? recorder : "", passwordReset: devQuery("thpwreset") === "owner" ? "owner" : "", owner: "", padWatch: devQuery("thpadwatch") === "1", padMic: devQuery("thpadmic") === "1", padCamera: devQuery("thpadcamera") === "1" };
 }
 
 function readCache(): ServerOffer {
@@ -136,6 +136,15 @@ export function serverFeatureOn(f: ServerFeature): boolean {
 /** Pad Watch is offered by this server (strict: only `features.pad_watch === true`; never for a guest account). */
 export function padWatchOffered(): boolean {
   return offer.padWatch && !guestNow();
+}
+
+/** PAD-PHONE Step B: the phone's Mic / Camera modes are offered by this server (strict: only `features.pad_mic` /
+ *  `features.pad_camera === true`; never for a guest account). */
+export function padMicOffered(): boolean {
+  return offer.padMic && !guestNow();
+}
+export function padCameraOffered(): boolean {
+  return offer.padCamera && !guestNow();
 }
 
 /** The signed-in account is a temporary guest account (docs/GUESTS.md: some features are withheld from it). */

@@ -29,6 +29,15 @@ export function isParticipantOf(participant: string, mxid: string): boolean {
   return !!mxid && (participant === mxid || mxidOf(participant) === mxid);
 }
 
+/** 12.1.11 (assembly-047): do two call ids (each a LiveKit identity or a bare mxid, in either order) name the same
+ *  participant: the same string, or one is the other's user (isParticipantOf). The call UI's display matches (speaking,
+ *  the voice HUD); two devices of one person are two participants. Replaces `a.startsWith(b + ":")` prefix matches,
+ *  which let `@a:h` claim `@a:h:8448:DEV`. Desktop: identity.rs same_participant + AppCore.qml sameParticipant; vectors
+ *  testvectors/identity.json `sameParticipant` / `participantOf`. */
+export function sameParticipant(a: string, b: string): boolean {
+  return !!a && !!b && (a === b || isParticipantOf(a, b) || isParticipantOf(b, a));
+}
+
 /** What these rules read from a live call membership (callrules LiveSession has both). */
 export interface IdentitySession {
   sender: string;

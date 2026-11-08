@@ -23,7 +23,7 @@ const lkJwtToken = (identity, room, secret = LK_SECRET) => {
     return `${head}.${body}.${createHmac("sha256", secret).update(`${head}.${body}`).digest("base64url")}`;
 };
 
-function setup({ enabled = true, lkSecret = LK_SECRET } = {}) {
+function setup({ enabled = true, lkSecret = LK_SECRET, padState } = {}) {
     const now = clock(1000);
     const s = {
         local: { at: ALICE, ab: BOB, ag: GUEST },            // access token -> user (this server)
@@ -49,6 +49,8 @@ function setup({ enabled = true, lkSecret = LK_SECRET } = {}) {
                 if (s.hold) await s.hold;
                 return { ok: true, status: 200, body: { members, total: members.length } };
             }
+            // PAD-PHONE Step B: the normal route reads the room's own mute records (the ONE effective person mute)
+            if ((m = /^\/_synapse\/admin\/v1\/rooms\/([^/]+)\/state$/.exec(path))) return { ok: true, status: 200, body: { state: s.state?.[decodeURIComponent(m[1])] ?? [] } };
             throw new Error(`unexpected ${path}`);
         },
     };
@@ -75,7 +77,7 @@ function setup({ enabled = true, lkSecret = LK_SECRET } = {}) {
             return u && u.endsWith(`:${server}`) ? { sub: u } : null;
         },
     };
-    const ct = createCallToken({ hs, adminToken: "admintoken", serverName: SN, lkJwtUrl: "http://127.0.0.1:8070", fetchImpl, now, log: (l) => logs.push(l), enabled: () => enabled, federation, lkSecret });
+    const ct = createCallToken({ hs, adminToken: "admintoken", serverName: SN, lkJwtUrl: "http://127.0.0.1:8070", fetchImpl, now, log: (l) => logs.push(l), enabled: () => enabled, federation, lkSecret, ...(padState ? { padState } : {}) });
     async function post(path, body, { method = "POST", ip = "192.0.2.10", raw } = {}) {
         const res = { statusCode: 200, headers: {}, body: undefined, text: undefined };
         res.status = (c) => { res.statusCode = c; return res; };
@@ -577,3 +579,33 @@ test("step_a_review_p1_a___proto___attribute_is_kept_by_the_re_mint", () => {
     assert.equal(p.attributes["tinhat.pad"], undefined, "a tinhat.* the issuer set is dropped");
 });
 
+
+test("Step B review r3 P1 #1: a moderator's mute recorded in the room (no Pad state record) re-mints a normal token without the microphone", async () => {
+    const t = setup();
+    t.s.state = { [ROOM]: [
+        { type: "m.room.power_levels", state_key: "", sender: BOB, content: { users: { [BOB]: 100 }, users_default: 0 } },
+        { type: "dev.tinhat.call.moderation", state_key: ALICE.slice(1), sender: BOB, content: { muted: true }, origin_server_ts: 1 },
+    ] };
+    const r = await t.post("/sfu/get", legacy(ROOM, "at"));
+    assert.equal(r.statusCode, 200);
+    const v = JSON.parse(Buffer.from(r.body.jwt.split(".")[1], "base64url")).video;
+    assert.deepEqual(v.canPublishSources, ["camera", "screen_share", "screen_share_audio"]);
+    t.s.state = { [ROOM]: [] };
+    const r2 = await t.post("/sfu/get", legacy(ROOM, "at"));
+    assert.equal(JSON.parse(Buffer.from(r2.body.jwt.split(".")[1], "base64url")).video.canPublishSources, undefined, "not muted: lk-jwt's grant as it was");
+});
+
+test("Step B review r4 P1 #3: with the Pad state unusable a normal token carries no microphone (mutes unknown: fail closed)", async () => {
+    const { createPadState } = await import("../padstate.mjs");
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "padstate-"));
+    try {
+        writeFileSync(join(dir, "state.json"), "garbage");
+        const t = setup({ padState: createPadState({ file: join(dir, "state.json") }) });
+        const r = await t.post("/sfu/get", legacy(ROOM, "at"));
+        assert.equal(r.statusCode, 200);
+        assert.deepEqual(JSON.parse(Buffer.from(r.body.jwt.split(".")[1], "base64url")).video.canPublishSources, ["camera", "screen_share", "screen_share_audio"]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});

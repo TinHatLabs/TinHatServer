@@ -37,6 +37,8 @@ function setup({ lk = true } = {}) {
                 if (!(room in s.rooms)) return { ok: false, status: 404, body: {} };
                 return { ok: true, status: 200, body: { members: s.rooms[room] } };
             }
+            // (PAD-PHONE Step B: the sweep reads each person's mute records from the room)
+            if (/^\/_synapse\/admin\/v1\/rooms\/[^/]+\/state$/.test(path)) return { ok: true, status: 200, body: { state: [] } };
             if ((m = /^\/_synapse\/admin\/v2\/users\/([^/]+)\/devices\/([^/]+)$/.exec(path))) {
                 const u = decodeURIComponent(m[1]), d = decodeURIComponent(m[2]);
                 return (s.devices[u] || []).includes(d) ? { ok: true, status: 200, body: { device_id: d, user_id: u } } : { ok: false, status: 404, body: {} };

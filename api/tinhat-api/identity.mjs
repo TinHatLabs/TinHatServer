@@ -26,18 +26,27 @@ export const deviceOk = (d) => typeof d === "string" && DEVICE_RE.test(d);
 
 /** A Pad Watch connection's suffix (calltoken.mjs watchGrant): `<mxid>:<device>~watch-<16 lowercase hex>`. */
 export const WATCH_SUFFIX_RE = /~watch-[0-9a-f]{16}$/;
+/** A Pad Mic / Camera connection's suffix (calltoken.mjs padGrant, PAD-PHONE Step B, 0.3.14):
+ *  `<mxid>:<device>~pad-mic-<16 lowercase hex>` / `~pad-cam-<16 lowercase hex>`. m[1] = "mic" | "cam". */
+export const PAD_SUFFIX_RE = /~pad-(mic|cam)-[0-9a-f]{16}$/;
 
-/** `<mxid>:<device>` or (Pad Watch) `<mxid>:<device>~watch-<16hex>` -> {mxid, device} (+ watch: true for a Watch connection) | null (not an identity this
- *  server mints). The ONE parser of call identities: moderation targets by it, and the apps' person tiles follow it. */
+/** `<mxid>:<device>`, or a Pad connection `<mxid>:<device>~watch-<16hex>` / `~pad-mic-<16hex>` / `~pad-cam-<16hex>` ->
+ *  {mxid, device} (+ watch: true for a Watch connection, pad: "mic" | "cam" for a Pad Mic / Camera one) | null (not an
+ *  identity this server mints). The ONE parser of call identities: moderation targets by it, the reserved-identity sweep
+ *  checks by it, and the apps' person tiles follow it. One suffix at most (the device part never holds a '~'). */
 export function parseIdentity(identity) {
     if (typeof identity !== "string") return null;
     const w = WATCH_SUFFIX_RE.exec(identity);
-    const base = w ? identity.slice(0, w.index) : identity;
+    const pd = w ? null : PAD_SUFFIX_RE.exec(identity);
+    const cut = w || pd;
+    const base = cut ? identity.slice(0, cut.index) : identity;
     const i = base.lastIndexOf(":");
     if (i < 0) return null;
     const mxid = base.slice(0, i), device = base.slice(i + 1);
     if (!deviceOk(device) || !MXID_RE.test(mxid)) return null;
-    return w ? { mxid, device, watch: true } : { mxid, device };
+    if (w) return { mxid, device, watch: true };
+    if (pd) return { mxid, device, pad: pd[1] };
+    return { mxid, device };
 }
 
 /** The identity this server mints for (mxid, device), or null when the device id is not one it mints for. */

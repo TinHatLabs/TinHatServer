@@ -3,7 +3,8 @@
 // tiles, mic / camera / screen / music / sound publishing, the receive policy and the
 // one-call-per-device lock. Data topics live in topics.ts, BRB in afk.ts, moderation in
 // moderation.ts, the incoming-call watcher in callwatch.ts, "can they hear me" in hear.ts.
-import { foldPersons, personOf } from "./persontiles";
+import { PAD_LEAVE_GRACE_MS, PersonChimes, chipOf, foldPersons, keyAliasBase, personOf, playMicOf } from "./persontiles";
+import { Handoff, MicGate, type Act, type GateOp } from "./takeover";
 import { forgetReceiver, noteReceiver } from "./leveltap";
 import { makeOutputTap } from "./outputtap";
 import {
@@ -53,11 +54,13 @@ import { pageEpoch, pageHidden, whenVisible, type ResumeInfo } from "@/core/life
 import type { CallCategory, CallState, Dev, ShareOptions, Tile } from "./contract";
 import { getCall, patch, setStatus, useCallStore } from "./store";
 import { sess, sessFor, setSess, type Sess } from "./session";
-import { advanceKeyIndex, announceKeys, currentRecipients, mintKey, type AnnounceResult, type OwnKey, replayKeys, setKeySink, TinHatKeyProvider, clearKeysFor, onPeerKey, recheckPending, keysReceiveOnly, setKeysReceiveOnly } from "./keys";
-import { padWatchOffered } from "@/core/server";
+import { advanceKeyIndex, announceKeys, currentRecipients, mintKey, type AnnounceResult, type OwnKey, replayKeys, setKeySink, TinHatKeyProvider, clearKeysFor, onPeerKey, recheckPending, keysReceiveOnly, setKeysReceiveOnly, addKeyAlias, dropKeyAlias, clearKeyAliases } from "./keys";
+import { padCameraOffered, padMicOffered, padWatchOffered } from "@/core/server";
 import {
   mintSfuToken,
   mintWatchToken,
+  mintPadToken,
+  PAD_NOT_HERE_TEXT,
   WATCH_NOT_HERE_TEXT,
   membershipContent,
   ownLiveCreatedTs,
@@ -78,7 +81,7 @@ import {
 } from "./rtc";
 import * as audio from "./audio";
 import { AFK_TYPE, MEMBER_TYPE, avatarMxc, b64encode, deviceOf, displayName, errText, isRecorder, mxidOf, sleep, withTimeout } from "./util";
-import { REFUSE_TEXT, RESEND_AFTER_USE_MS, createPlanner, mintAtStep, resendPlan, type FocusDecision, type PlanAction } from "./callrules";
+import { REFUSE_TEXT, RESEND_AFTER_USE_MS, createPlanner, jwtPayloadText, mintAtStep, resendPlan, type FocusDecision, type PlanAction } from "./callrules";
 import { askCallHost, dismissHostAsk, trustCallHost } from "./hostsheet";
 import { buildMicOptions, micProcessorFor, rnnoiseAvailable } from "./mic";
 import { av1Probe, av1Watch } from "./av1";
@@ -121,6 +124,10 @@ export const hooks = {
   onShareChanged: [] as Array<(s: Sess) => void>,
   onUserMicToggle: [] as Array<() => void>, // the user changed the mic themselves (BRB drops its restore claim)
   onWatchBegins: [] as Array<() => void>, // 12.1.7: a watch episode begins (meters stop their capture)
+  // PAD-PHONE Step B (the phone's Pad controller listens): Mic mode wants the computer's mic / asks again / gives it back
+  onPadMicWanted: [] as Array<() => void>,
+  onPadMicRetry: [] as Array<() => void>,
+  onPadMicReleased: [] as Array<() => void>,
   joinSound: (_s: Sess) => undefined as void,
 };
 
@@ -347,8 +354,15 @@ export function rebuildTiles(): void {
   // person's other cameras leave the grid (the shown tile lists them in alts: pickCamera switches)
   lastFolded = folded;
   const attrs = (id: string) => s.room.remoteParticipants.get(id)?.attributes;
+  // PAD-PHONE Step B: a server-vouched Pad Mic / Camera connection decrypts with its device's media keys (keys.ts)
+  for (const p of s.room.remoteParticipants.values()) {
+    const base = keyAliasBase(p.identity, p.attributes);
+    if (base) addKeyAlias(s.roomId, base, p.identity);
+  }
   const persons = foldPersons(folded, s.myIdentity, attrs, camPick).filter((t) => !t.altOf);
   patch({ tiles: persons, recOnlyFlags });
+  autoTakeover(s); // (PAD-PHONE Step B) my phone transmitting in this call: muted here
+  padGate(); // (the phone in Mic mode) the call changed: may its mic go out / must it stop?
   reconcileVideo();
 }
 
@@ -646,6 +660,12 @@ export function setRemoteFrameSink(f: FrameSink): void {
 
 function subscribeAudio(track: RemoteAudioTrack, pub: RemoteTrackPublication, p: RemoteParticipant) {
   if (isRecorder(p.identity)) return;
+  // PAD-PHONE Step B: never play a microphone of MY OWN other devices (my phone in Mic mode on my computer = feedback)
+  const s = sess();
+  if (s && pub.source === Track.Source.Microphone && !playMicOf(p.identity, p.attributes, s.myIdentity)) {
+    log.info(`[pad] not playing ${p.identity}'s mic here: it is one of my own devices`);
+    return;
+  }
   const sid = pub.trackSid;
   noteReceiver(track.receiver); // round 13: its level tap accepts only a current receiver's track (leveltap.ts)
   audio.addRemote(sid, p.identity, categoryOf(pub.source), track.mediaStreamTrack, remoteFrameSink);
@@ -784,7 +804,8 @@ export function monitorBarred(): boolean {
  *  takes a lease (capturelease.ts), runs its awaits through captureflow.ts and commits right before it stores its
  *  result. A Watch press (a queued one too) and sign-out revoke them all: what they hold stops at once. */
 export const leases = new CaptureLeases({
-  barred: (k) => (k === "meter" || k === "settings-meter" ? monitorBarred() : captureBarred()),
+  // (PAD-PHONE Step B) the phone's Pad Mic / Camera capture is the inverse: admitted only inside that mode's own episode
+  barred: (k) => (k === "pad-mic" ? !padCaptureAllowed("mic") : k === "pad-camera" ? !padCaptureAllowed("camera") : k === "meter" || k === "settings-meter" ? monitorBarred() : captureBarred()),
   session: () => {
     const cur = sess();
     return cur && !cur.closing ? cur : null;
@@ -1127,6 +1148,26 @@ export function toggleMic(): void {
 }
 
 export function forceMicMuted(muted: boolean): void {
+  // PAD-PHONE Step B (client review r2 #1/#3): EVERY unmute request (the mic button, PTT, Talk, a Pad mic op, Take the
+  // mic back) while the phone holds the mic or a restore is pending goes through the ONE handoff — the hold ends (the
+  // phone sees take:false) and this mic comes on only once the phone has stopped; a mute asked for meanwhile is kept
+  if (!handoffActing) {
+    if (muted) handoff.userMute();
+    else {
+      const s0 = sess();
+      const st0 = getCall();
+      const r = handoff.requestUnmute(s0 ? ownPadMicsLive(s0) : [], st0.serverMuted || (st0.pushToTalk && !st0.pttSpeaking) || st0.localAfk || st0.noCapture); // (the deferred path's blockers exactly: r6)
+      if (r.handled) {
+        publishHold();
+        if (r.act === "none") {
+          // (r3 #5) an automatic hold had no Pad session: the phone can't be told — it has to be stopped there
+          setStatus(r.autoGone ? "Your phone is still sending — stop it there (Pad · This phone · Stop); your mic comes on then" : "Your phone still has the mic — your mic comes on as soon as it stops");
+          log.info("[pad] unmute deferred: the phone still publishes");
+          return;
+        }
+      }
+    }
+  }
   const st = getCall();
   if (st.connecting && !st.inCall) pressedMuteWhileConnecting = muted;
   patch({ micMuted: muted });
@@ -2388,6 +2429,354 @@ function runDecision(d: Decision, why: string): void {
   beginJoin(d.id, d.room);
 }
 
+// ---- PAD-PHONE Step B: the phone's mic takeover (the COMPUTER's side, docs/PAD.md "Phone as Mic / Camera") ----------
+// A receiver-owned mute REASON: the phone of Pad session `sid` holds this device's mic. Taking it mutes; giving it back
+// lifts only this reason (the mic comes back on only if it was on when taken, and no moderator's mute / push-to-talk /
+// BRB holds). Leased to the session (the receiver calls takeoverEnded when it is no longer live). Any unmute of this
+// mic by anyone here (the mic button, Talk, PTT, a Pad `mic {muted:false}`) ends it without a restore: the user took the
+// mic back, and the phone sees `take` go false. `auto`: taken without a session — this device joined a call in which its
+// person's Pad Mic connection was already transmitting; it ends when that connection leaves or a session takes over.
+
+/** the rules (takeover.ts, pure; the desktop runs the same) */
+export const handoff = new Handoff();
+/** set while the handoff itself mutes / unmutes (any other mute meanwhile is the user's own intent: review #3) */
+let handoffActing = false;
+
+/** The Pad Mic identities of MY person publishing an unmuted mic now (from the call's PUBLICATIONS, whatever is
+ *  subscribed: client review r2 #4). */
+function ownPadMicsLive(s: Sess): string[] {
+  const out: string[] = [];
+  for (const p of s.room.remoteParticipants.values()) {
+    if (chipOf(p.identity, p.attributes) !== "mic" || personOf(p.identity, p.attributes) !== s.me) continue;
+    const pub = p.getTrackPublication(Track.Source.Microphone);
+    if (pub && !pub.isMuted) out.push(p.identity);
+  }
+  return out;
+}
+function act(a: Act, why: string): void {
+  if (a === "none") return;
+  handoffActing = true;
+  try {
+    forceMicMuted(a === "mute");
+  } finally {
+    handoffActing = false;
+  }
+  if (a === "unmute") setStatus("Your mic is back on");
+  log.info(`[pad] handoff: ${a} (${why})`);
+}
+function publishHold(): void {
+  patch({ micTakenBy: handoff.hold ? handoff.hold.device || "your phone" : "" });
+}
+/** the deferred restore: re-checked on every call change and twice a second */
+function maybeRestore(): void {
+  const s = sess();
+  const st = getCall();
+  if (!handoff.restorePending) return;
+  if (!s || !st.inCall) return void handoff.ended();
+  // (r3 #3) push-to-talk blocks only while the key is UP (a held key completes the request once safe)
+  const blocked = st.serverMuted || (st.pushToTalk && !st.pttSpeaking) || st.localAfk || st.noCapture || !st.micMuted;
+  act(handoff.check(ownPadMicsLive(s).length > 0, blocked), "the phone has stopped");
+}
+
+/** The receiver's `takeover.mic` (PadExec.takeover). */
+export function padTakeover(on: boolean, sid: string, device: string): void {
+  const st = getCall();
+  if (!on) {
+    if (handoff.hold && handoff.hold.sid === sid) {
+      handoff.release();
+      publishHold();
+      log.info("[pad] the phone gave the mic back");
+      maybeRestore();
+    }
+    return;
+  }
+  if (!(st.inCall || st.connecting) || st.watching) return;
+  act(handoff.take(sid, device, st.micMuted), `${device || "the phone"} took the mic`);
+  publishHold();
+  setStatus("Your phone has the mic");
+}
+
+/** PadExec.takeoverHolder: the session holding the mic ("" = none or an automatic one). */
+export function takeoverHolder(): string {
+  return handoff.holder();
+}
+
+/** PadExec.takeoverEnded: the holder's Pad session is no longer live — the mic goes back (once the phone stopped). */
+export function takeoverEnded(sid: string): void {
+  if (handoff.hold && handoff.hold.sid && handoff.hold.sid === sid) {
+    handoff.release();
+    publishHold();
+    log.info("[pad] the phone's Pad session ended — the mic comes back once the phone has stopped");
+    maybeRestore();
+  }
+}
+
+/** "Take the mic back" on the computer = an unmute request (the one handoff). */
+export function takeMicBack(): void {
+  if (!handoff.hold) return;
+  forceMicMuted(false);
+}
+
+/** A Pad Mic connection of MY OWN person transmitting in this call while nothing holds my mic: join muted (auto). Also
+ *  called BEFORE the local mic is first published at join (the barrier: client review r2 #2), when `joining` is set. */
+function autoTakeover(s: Sess, joining = false): void {
+  const st = getCall();
+  maybeRestore();
+  if ((!st.inCall && !joining) || st.watching) return;
+  const live = ownPadMicsLive(s);
+  if (handoff.hold?.auto && !s.room.remoteParticipants.has(handoff.hold.auto)) {
+    handoff.release();
+    publishHold();
+    maybeRestore();
+    return;
+  }
+  for (const id of live) {
+    const device = id.slice(s.me.length + 1).replace(/~pad-mic-[0-9a-f]{16}$/, "");
+    const a = handoff.autoTake(id, device, st.micMuted, Date.now());
+    if (!handoff.hold || handoff.hold.auto !== id) continue;
+    act(a, `my phone (${device}) is transmitting in this call`);
+    publishHold();
+    setStatus("Your phone has the mic — muted here");
+    return;
+  }
+}
+
+// ---- PAD-PHONE Step B: the phone's Pad modes (the PHONE's side) -----------------------------------------------------
+// Watch · Mic · Camera, each the phone's own connection with its own server-minted token (Watch: subscribe-only; Mic /
+// Camera: a fresh `~pad-mic-` / `~pad-cam-` identity that may publish its ONE source). All three are WATCH episodes of
+// the ledger (the capture bar stays closed: the mic button, shortcuts, screen share and the camera button refuse); the
+// only capture a Mic / Camera episode makes is its mode's own, below, tied to the episode's epoch. Switching = the old
+// connection's media stops first (before any network wait), the takeover is released, the old connection leaves, then
+// the new mode's join (a fresh Room). Mic mode is MUTE FIRST: captured, published only once every receiver asked has
+// answered `take` (padTakeAck) AND no other connection of mine in the call has a live mic; either turning false later
+// unpublishes it again.
+
+export type PhoneMode = "watch" | "mic" | "camera";
+let padWant: { mode: PhoneMode; room: string; epoch: number } | null = null;
+let padEpoch = 0;
+/** the phone's own capture in Mic / Camera mode (one at a time) */
+let padMedia: { epoch: number; mode: "mic" | "camera"; track: MediaStreamTrack; published: boolean; s: Sess; gate?: MicGate; lpub?: LocalTrackPublication | null } | null = null;
+/** the Pad controller's view of the takeover (features/pad runtime): none = no receiver to ask in this call */
+let padAck: { v: "none" | "wait" | "ok" | "lost"; since: number } = { v: "none", since: 0 };
+/** "Use phone mic" pressed: the answer isn't waited for any more (the call itself must still show no live mic of mine) */
+let padOverride = false;
+
+export const MIC_HINT = "Tip: use headphones on the computer, or keep the phone away from its speakers";
+
+/** The phone's own Pad capture may run: this phone is in that mode's watch episode (nothing else ever admits it). */
+function padCaptureAllowed(mode: "mic" | "camera"): boolean {
+  return watchLedger.watching() && padWant?.mode === mode && getCall().padMode === mode;
+}
+
+function offeredMode(mode: PhoneMode): boolean {
+  return mode === "watch" ? padWatchOffered() : mode === "mic" ? padMicOffered() : padCameraOffered();
+}
+
+/** The Pad screen's This phone: Watch / Mic / Camera (any call this phone's person is in — no screen share needed). */
+export function padUse(roomId: string, mode: PhoneMode): void {
+  if (!roomId) return;
+  if (!WATCH_AVAILABLE) return void setStatus(WATCH_OFF_NOTE);
+  if (!offeredMode(mode)) {
+    log.info(`pad ${mode} ${roomId} refused: this server doesn't offer it`);
+    return void setStatus(mode === "watch" ? WATCH_NOT_HERE_TEXT : PAD_NOT_HERE_TEXT);
+  }
+  const st = getCall();
+  if ((st.inCall || st.connecting) && !st.watching) return void setStatus("Leave your call on this phone first");
+  if (st.watching && st.callRoomId === roomId && (st.padMode || "watch") === mode && (st.inCall || st.connecting)) return;
+  padEpoch += 1;
+  const wasMic = st.padMode === "mic";
+  stopPadMedia("switching modes"); // the old mode's capture stops NOW, before any network wait
+  if (wasMic) for (const h of hooks.onPadMicReleased) h();
+  padWant = { mode, room: roomId, epoch: padEpoch };
+  padOverride = false;
+  patch({ padMode: mode, padMicLive: false, padNote: mode === "mic" ? MIC_HINT : "", padNeedsTap: false });
+  log.info(`[pad] this phone: ${mode} in ${roomId} (epoch ${padEpoch})`);
+  if (st.inCall || st.connecting) leaveCall(); // the old connection leaves; the new mode's join queues behind it
+  watchPress(roomId);
+}
+
+/** "Use phone mic" after the computer didn't answer / took it back: ask again, and stop waiting for the answer. */
+export function padUseMicNow(): void {
+  if (getCall().padMode !== "mic") return;
+  padOverride = true;
+  for (const h of hooks.onPadMicRetry) h();
+  patch({ padNeedsTap: false });
+  padGate();
+}
+
+/** The Pad controller reports the takeover's answer (features/pad runtime). */
+export function setPadTakeAck(v: "none" | "wait" | "ok" | "lost"): void {
+  if (padAck.v === v) return;
+  if (v === "lost") padOverride = false;
+  padAck = { v, since: Date.now() };
+  padGate();
+}
+
+/** The mode a watch episode's join runs in (the Watch press and reload rejoins: watch). */
+function padModeFor(roomId: string): PhoneMode {
+  return padWant && padWant.room === roomId ? padWant.mode : "watch";
+}
+
+function stopPadMedia(why: string): void {
+  const m = padMedia;
+  if (!m) return;
+  padMedia = null;
+  try {
+    m.track.stop(); // capture ends now; the publication goes with it (unpublished below)
+  } catch {
+    /* already stopped */
+  }
+  if (m.lpub?.track) void m.s.room.localParticipant.unpublishTrack(m.lpub.track, true).catch(() => undefined);
+  else if (m.published && !m.gate) void m.s.room.localParticipant.unpublishTrack(m.track, true).catch(() => undefined);
+  // (a mic publish still in flight is undone when it lands: runGate sees padMedia !== m)
+  patch({ padMicLive: false });
+  log.info(`[pad] the phone's ${m.mode} stopped (${why})`);
+}
+
+/** Another connection of MY person in this call with a live (unmuted) microphone (read from the call itself). */
+function otherOwnMicLive(s: Sess): boolean {
+  const own = s.room.localParticipant?.identity || s.myIdentity;
+  for (const p of s.room.remoteParticipants.values()) {
+    if (p.identity === own || personOf(p.identity, p.attributes) !== s.me) continue;
+    const pub = p.getTrackPublication(Track.Source.Microphone);
+    if (pub && !pub.isMuted) return true;
+  }
+  return false;
+}
+
+/** Mic mode's gate: publish / unpublish the phone's mic by the rule above. Re-run on every change it reads. Serialized
+ *  (takeover.ts MicGate: one operation in flight, the newest wish applied when it settles — client review r2 #5). */
+function padGate(): void {
+  const m = padMedia;
+  if (!m || m.mode !== "mic" || sess() !== m.s || m.epoch !== padEpoch || !m.gate) return;
+  const s = m.s;
+  const live = otherOwnMicLive(s);
+  const answered = padAck.v === "ok" || padAck.v === "none" || padOverride;
+  const want = !live && answered;
+  if (!want) m.track.enabled = false; // silence at once, whatever is in flight (review r1 #1)
+  if (!want) {
+    if (m.gate.pub || m.gate.busy === "publish") {
+      patch({ padMicLive: false, padNote: "Your computer took the mic back", padNeedsTap: true });
+    } else if (live) {
+      patch({ padNote: padAck.v === "none" ? "Mute your computer first — your phone's mic comes on when it's muted" : "Your computer's mic is still on — mute it there", padNeedsTap: padAck.v !== "none" });
+    } else if (padAck.v === "wait" && Date.now() - padAck.since > 3000) patch({ padNote: "Your computer didn't answer — mute it there, then tap Use phone mic", padNeedsTap: true });
+    else if (padAck.v === "lost") patch({ padNote: "Your computer took the mic back", padNeedsTap: true });
+  }
+  const op = m.gate.set(want);
+  if (!op) reconcileGate(m);
+  runGate(m, op);
+}
+
+/** (r3 #4) the settled state is applied on EVERY gate run (a failed unpublish followed by a reopen starts no operation:
+ *  the track and the live flag must still follow it) */
+function reconcileGate(m: NonNullable<typeof padMedia>): void {
+  if (!m.gate || m.gate.busy) return;
+  if (m.gate.live()) {
+    if (!m.track.enabled) m.track.enabled = true;
+    if (!getCall().padMicLive) patch({ padMicLive: true, padNote: "Your phone is the mic", padNeedsTap: false });
+  } else {
+    if (m.track.enabled && !m.gate.want) m.track.enabled = false;
+    if (getCall().padMicLive && !m.gate.pub) patch({ padMicLive: false });
+  }
+}
+
+function runGate(m: NonNullable<typeof padMedia>, op: GateOp): void {
+  if (!op) return;
+  const s = m.s;
+  const done = (ok: boolean, e?: unknown) => {
+    if (e) log.warn(`[pad] the phone's mic ${op} failed: ${errText(e)}`);
+    const next = m.gate!.settle(ok);
+    m.published = m.gate!.pub;
+    if (padMedia !== m) {
+      // the mode moved on meanwhile: nothing of it may stay published
+      if (m.gate!.pub && m.lpub?.track) void s.room.localParticipant.unpublishTrack(m.lpub.track, true).catch(() => undefined);
+      return;
+    }
+    if (m.gate!.live()) {
+      m.track.enabled = true;
+      patch({ padMicLive: true, padNote: "Your phone is the mic", padNeedsTap: false });
+      log.info("[pad] the phone's mic is live");
+    } else if (!m.gate!.pub) patch({ padMicLive: false });
+    if (op === "publish" && !ok) patch({ padNote: "Couldn't use the phone's mic — try again", padNeedsTap: true });
+    runGate(m, next);
+  };
+  if (op === "publish") {
+    m.track.enabled = m.gate!.want;
+    void s.room.localParticipant
+      .publishTrack(m.track, { source: Track.Source.Microphone, name: "mic", dtx: true, red: true })
+      .then((pub) => { m.lpub = pub; done(true); }, (e: unknown) => done(false, e));
+  } else {
+    m.track.enabled = false;
+    const t = m.lpub?.track;
+    if (!t) return done(true);
+    void s.room.localParticipant
+      .unpublishTrack(t, false)
+      .then(() => { m.lpub = null; done(true); }, (e: unknown) => done(false, e));
+  }
+}
+
+/** A Mic / Camera episode connected: capture its ONE source (Mic: held back by the gate; Camera: published at once). */
+async function padMediaStart(s: Sess, mode: "mic" | "camera", epoch: number): Promise<void> {
+  if (!navigator.mediaDevices?.getUserMedia) return void patch({ padNote: "This browser can't use the phone's " + (mode === "mic" ? "microphone" : "camera") });
+  // the capture is the pad lease's from the moment it exists (admitted only inside this mode's episode: a switch, a
+  // leave or a Watch press revokes it; a revoke during the permission prompt stops what comes back)
+  const lease = leases.take(mode === "mic" ? "pad-mic" : "pad-camera", s);
+  if (!lease) return void log.info(`[pad] ${mode} capture not admitted (the episode moved on)`);
+  let track: MediaStreamTrack;
+  try {
+    track = await startUnder(
+      lease,
+      async () => {
+        const stream = await navigator.mediaDevices.getUserMedia(mode === "mic"
+          ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }
+          : { audio: false, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } });
+        const t = (mode === "mic" ? stream.getAudioTracks() : stream.getVideoTracks())[0];
+        for (const x of stream.getTracks()) if (x !== t) x.stop();
+        if (!t) throw new Error("no track");
+        return t;
+      },
+      (t) => t.stop(),
+    );
+  } catch (e) {
+    lease.done();
+    if (e instanceof Revoked) return;
+    log.warn(`[pad] ${mode} capture refused: ${errText(e)}`);
+    return void patch({ padNote: mode === "mic" ? "Tin Hat can't use this phone's microphone (check its permission)" : "Tin Hat can't use this phone's camera (check its permission)" });
+  }
+  // the episode moved on while the permission prompt was up: nothing of it may start
+  if (sess() !== s || epoch !== padEpoch || getCall().padMode !== mode || !lease.commit()) {
+    track.stop();
+    lease.done();
+    return;
+  }
+  lease.done(); // committed: from here stopPadMedia (switch / leave / the session's end) owns the track
+  stopPadMedia("a new capture");
+  padMedia = { epoch, mode, track, published: false, s, gate: mode === "mic" ? new MicGate() : undefined, lpub: null };
+  s.cleanups.push(() => padMedia?.s === s && stopPadMedia("the call ended"));
+  if (mode === "mic") {
+    padAck = { v: padAck.v, since: Date.now() };
+    for (const h of hooks.onPadMicWanted) h();
+    padGate();
+    // the gate re-reads the call: a timer covers the 3 s "didn't answer" and remote mute changes
+    s.timers.push(setInterval(() => padGate(), 500));
+    return;
+  }
+  padMedia.published = true;
+  try {
+    await s.room.localParticipant.publishTrack(track, camPublishOptions());
+    if (padMedia?.track !== track) return void s.room.localParticipant.unpublishTrack(track, true).catch(() => undefined);
+    patch({ padNote: "Your phone is the camera" });
+    log.info("[pad] the phone's camera is live");
+  } catch (e) {
+    // (review #7) only THIS capture's failure: a newer mode's capture is never stopped by it
+    track.stop();
+    if (padMedia?.track !== track) return;
+    log.warn(`[pad] couldn't publish the phone's camera: ${errText(e)}`);
+    stopPadMedia("publish failed");
+    patch({ padNote: "Couldn't use the phone's camera — try again" });
+  }
+}
+
 /** Watch the call (Pad QOL 2026-10-31): a normal, visible join (membership, token, the usual media keys) with NO
  *  microphone captured, deafened from before connect, camera off. "Talk here" / "Hear here" undo it locally. */
 export { WATCH_AVAILABLE };
@@ -2403,13 +2792,19 @@ export function watchCall(roomId: string): void {
     setStatus(WATCH_NOT_HERE_TEXT);
     return;
   }
+  // (PAD-PHONE Step B) the Watch press is This phone · Watch: from Mic / Camera it switches
+  padUse(roomId, "watch");
+}
+
+/** A Pad episode's press (Watch, Mic or Camera: padWant says which) — the capture bar closes from here on. */
+function watchPress(roomId: string): void {
   // Layer 2: the press revokes every capture lease BEFORE anything else runs (a queued watch too): what they hold
   // stops now, work still inside a platform call stops what it gets back; the watch join waits for them (beginJoin)
   const d = watchLedger.pressWatch(roomId, callPhase());
   if (watchLedger.watching()) {
     const n = leases.revoke("watch");
     if (n) log.info(`[lease] the Watch press stopped ${n} capture(s) still starting`);
-    setStatus(WATCH_MIC_NOTE); // Step A: the plain note (the server refuses anything sent while watching)
+    if (padModeFor(roomId) === "watch") setStatus(WATCH_MIC_NOTE); // Step A: the plain note (the server refuses anything sent while watching)
     retireMicMonitorForWatch(); // (a queued watch too: no meter capture from the press on)
     setKeysReceiveOnly(true); // no media key leaves this device from the press on (§1.7)
   }
@@ -2491,7 +2886,14 @@ function beginJoin(id: number, roomId: string): void {
   // a watch join never goes to the native app (the native call would open its microphone)
   if (!watch && joinNatively(roomId)) return;
   if (watch) retireMicMonitorForWatch();
-  setKeysReceiveOnly(watch); // a watch join sends no media key; a normal join (a press) announces again
+  // PAD-PHONE Step B: a watch episode joins in the phone's chosen mode (Watch / Mic / Camera); a normal join ends it
+  const padMode: PhoneMode | "" = watch ? padModeFor(roomId) : "";
+  if (!watch) {
+    padWant = null;
+    stopPadMedia("a normal join");
+  }
+  // a Watch join sends no media key; a Mic / Camera one and a normal join (a press) announce theirs
+  setKeysReceiveOnly(watch && padMode === "watch");
   if (st.fake) useCallStore.setState({ fake: false });
   const gen = ++joinGen;
   joinTarget = roomId;
@@ -2514,12 +2916,14 @@ function beginJoin(id: number, roomId: string): void {
     watching: watch,
     noCapture: watch,
     gameChat: false,
+    padMode,
+    padMicLive: false,
   });
   setStatus("Joining call…");
   // Backstop: every step of a join is bounded, but a join must never sit at "Connecting…" (Join button
   // disabled) for good — e.g. the page was suspended mid-join by an iOS app switch.
   armJoinDeadline(gen, JOIN_DEADLINE_MS);
-  void doJoin(roomId, gen, restore, watch);
+  void doJoin(roomId, gen, restore, watch, padMode || "");
 }
 
 const JOIN_DEADLINE_MS = 60_000;
@@ -2599,11 +3003,13 @@ function live(s: Sess): boolean {
   return sess() === s && !s.closing;
 }
 
-async function doJoin(roomId: string, gen: number, restore: boolean | null, watch = false): Promise<void> {
+async function doJoin(roomId: string, gen: number, restore: boolean | null, watch = false, padMode: PhoneMode | "" = ""): Promise<void> {
   const ses = getSession();
   const me = ses.userId ?? "";
   const dev = ses.deviceId ?? "";
-  const myIdentity = `${me}:${dev}`;
+  let myIdentity = `${me}:${dev}`;
+  // PAD-PHONE Step B: a Mic / Camera episode publishes (its one source) under its own `~pad-…` identity
+  const padPublish = watch && (padMode === "mic" || padMode === "camera");
   let room: Room | null = null;
   let worker: Worker | null = null;
   let prov: Sess | null = null; // the provisional session once wired (its listeners/timers need disposal)
@@ -2685,8 +3091,17 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null, watc
     }
     // 3. token (OpenID only now, and only to the approved service). A watch join: the server's subscribe-only Watch
     // token (the SFU refuses any publish from it, WATCH-LEASE/DESIGN.md §1), never a normal one instead.
-    const tok = watch ? await mintWatchToken(focus, me, dev) : await mintSfuToken(focus, dev);
+    const tok = !watch ? await mintSfuToken(focus, dev) : padPublish ? await mintPadToken(focus, me, dev, padMode as "mic" | "camera") : await mintWatchToken(focus, me, dev);
     if (stale(gen)) return fail("superseded");
+    if (padPublish) {
+      // the encrypting identity is the connection's own (padTokenProblem checked it is `<me>:<dev>~pad-<mode>-<hex>`)
+      try {
+        const sub = JSON.parse(jwtPayloadText(tok.jwt) ?? "{}").sub;
+        if (typeof sub === "string" && sub.startsWith(`${myIdentity}~pad-`)) myIdentity = sub;
+      } catch {
+        /* checked already */
+      }
+    }
     // 4. leftover session
     const left = sess();
     if (left) await closeSession(left, "leftover");
@@ -2738,8 +3153,8 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null, watc
       return fail("superseded");
     }
     // a watch join mints no key of its own (receive-only, §1.7): nothing to encrypt, nothing to announce
-    const keyIndex = watch ? 0 : advanceKeyIndex();
-    const key = watch ? null : mintKey();
+    const keyIndex = watch && !padPublish ? 0 : advanceKeyIndex();
+    const key = watch && !padPublish ? null : mintKey();
     void clearStaleAway(roomId, me);
     const provider = new TinHatKeyProvider();
     provider.ownIndex = keyIndex;
@@ -2821,7 +3236,13 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null, watc
     } else if (captureBarred()) {
       s.micWanted = false; // watching: no capture, no mic-heal (watchTalk turns it on)
       log.info("watching — joined without a microphone");
+      // PAD-PHONE Step B: a Mic / Camera episode captures its ONE source (its own path, tied to the episode's epoch)
+      const pm = getCall().padMode;
+      if ((pm === "mic" || pm === "camera") && padWant && padWant.room === s.roomId) void padMediaStart(s, pm, padWant.epoch);
     } else {
+      // (PAD-PHONE Step B, client review r2 #2) the muted barrier BEFORE the mic is first published: the initial roster is
+      // known now (connect resolved); my own phone already transmitting -> this mic starts muted
+      autoTakeover(s, true);
       try {
         // joinCall seeded micMuted with the restore / PTT state and forceMicMuted keeps it current, so
         // the store is the latest intent; publishMic applies it once the capture is published.
@@ -3338,7 +3759,9 @@ function wireRoom(s: Sess) {
         return;
       }
       rebuildTiles();
-      if (s.chimesArmedAt && Date.now() >= s.chimesArmedAt) chime("join");
+      // (PAD-PHONE Step B) the chimes are about PEOPLE — a Pad connection of someone already here never chimes
+      const joinC = personChimes.join(p.identity, chimeAttrs(s, p), chimePresent(s, p.identity), Date.now());
+      if (joinC && s.chimesArmedAt && Date.now() >= s.chimesArmedAt) chime("join");
       for (const h of hooks.onParticipantJoined) h(s, p);
     })
     .on(RoomEvent.ParticipantDisconnected, (p) => {
@@ -3350,8 +3773,17 @@ function wireRoom(s: Sess) {
         return;
       }
       missingKeySince.delete(p.identity);
+      dropKeyAlias(s.roomId, p.identity);
       rebuildTiles();
-      chime("leave");
+      if (personChimes.leave(p.identity, chimeAttrs(s, p), chimePresent(s, p.identity), Date.now())) chime("leave");
+      else if (personChimes.pending.size) {
+        // a Pad connection was its person's last one: the leave chimes only if nobody of theirs is back in 5 s
+        const t = setTimeout(() => {
+          if (sess() !== s) return;
+          if (personChimes.tick(chimeAttrs(s, null), chimePresent(s, ""), Date.now()) > 0) chime("leave");
+        }, PAD_LEAVE_GRACE_MS + 50);
+        s.timers.push(t);
+      }
       for (const h of hooks.onParticipantLeft) h(s, p);
     })
     .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub: RemoteTrackPublication, p: RemoteParticipant) => {
@@ -3452,6 +3884,9 @@ function wireRoom(s: Sess) {
   });
   s.cleanups.push(offKey);
   s.chimesArmedAt = 0;
+  personChimes.clear(); // (PAD-PHONE Step B) a new call: no held-back leave of the last one
+  handoff.joined(Date.now()); // (review #5) the auto takeover is a joining rule; nothing of the last call carries over
+  clearKeyAliases();
   s.timers.push(setTimeout(() => (s.chimesArmedAt = Date.now()), 2500));
 }
 const missingLogged = new Set<string>();
@@ -3464,6 +3899,18 @@ async function republishOrPublish(s: Sess) {
       await reconcileMic(s);
     } else await publishMic(s);
   }, s);
+}
+
+/** PAD-PHONE Step B: the person-based call chimes (persontiles PersonChimes), one ledger per call session. */
+export const personChimes = new PersonChimes(); // (exported for the lab gate: tools/pad-call-gate.mjs stepb)
+/** Everyone in the call but `except`: my own connection (its real identity) + every remote one. */
+function chimePresent(s: Sess, except: string): string[] {
+  const own = s.room.localParticipant?.identity || s.myIdentity;
+  return [own, ...s.room.remoteParticipants.keys()].filter((x) => x && x !== except);
+}
+/** Attributes by identity (the one that just left still carries its own). */
+function chimeAttrs(s: Sess, gone: RemoteParticipant | null): (id: string) => Record<string, string> | undefined {
+  return (id) => (gone && id === gone.identity ? gone.attributes : s.room.remoteParticipants.get(id)?.attributes);
 }
 
 function chime(kind: "join" | "leave") {
@@ -3546,6 +3993,17 @@ function clearCallView() {
     publishStats: [],
     hear: {},
   });
+}
+
+/** PAD-PHONE Step B: This phone · Stop — the phone's mode ends: its media stops first, the mic goes back, then it leaves. */
+export function padStop(): void {
+  const wasMic = getCall().padMode === "mic";
+  padEpoch += 1;
+  padWant = null;
+  stopPadMedia("stopped");
+  if (wasMic) for (const h of hooks.onPadMicReleased) h();
+  patch({ padMode: "", padNote: "", padNeedsTap: false, padMicLive: false });
+  leaveCall();
 }
 
 export function leaveCall(): void {
@@ -4214,3 +4672,21 @@ export function sweepGhosts(): void {
 
 export { rnnoiseAvailable };
 export const _debug = { sess, engineState, peekClient, refreshNow: () => (sess() ? refreshMembership(sess()!) : Promise.resolve(false)) };
+
+// PAD-PHONE Step B: when no call is up any more, nothing holds this device's mic, and with no episode current the phone is
+// in no Pad mode (its media already stopped with the call's session)
+useCallStore.subscribe((st, prev) => {
+  if (st.inCall || st.connecting) return;
+  if (handoff.hold || handoff.restorePending) { handoff.ended(); publishHold(); }
+  // only on the edge from a call (or its teardown) to none: a press that sets the mode before its episode exists
+  // (This phone · Mic while not in a call) must keep it
+  const was = prev.inCall || prev.connecting || prev.hangingUp;
+  if (was && !st.hangingUp && !watchLedger.ep && (st.padMode || st.padNote)) {
+    padWant = null;
+    if (st.padMode === "mic") for (const h of hooks.onPadMicReleased) h();
+    patch({ padMode: "", padNote: "", padNeedsTap: false, padMicLive: false });
+  }
+});
+// (PAD-PHONE Step B, review #2) a deferred mic restore is re-checked twice a second (the phone's publication going away
+// may come without a tile change)
+if (typeof window !== "undefined") window.setInterval(() => maybeRestore(), 500);

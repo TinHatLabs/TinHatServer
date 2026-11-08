@@ -477,11 +477,13 @@ export function installCallWatch(): void {
   // Own join/leave chimes + answering stops the ring.
   useCallStore.subscribe((st, prev) => {
     if (st.inCall && !prev.inCall) {
-      playCallChime("join");
+      // (PAD-PHONE Step B) a Pad connection (Watch / Mic / Camera) of someone already in the call never chimes —
+      // on the phone itself neither: its join and leave are silent
+      if (!st.watching) playCallChime("join");
       dismissIncoming(st.callRoomId);
       stopRinging(); // joining any call answers the ring; other rooms' cards stay (with "Switch")
     }
-    if (!st.inCall && prev.inCall) playCallChime("leave");
+    if (!st.inCall && prev.inCall && !prev.watching) playCallChime("leave");
     if (st.hangingUp && !prev.hangingUp) for (const d of [2500, 5000, 7500]) setTimeout(bump, d);
     // REACH §4 / A2.16: once the call is fully over (hang-up, drop, refused join, failure — every path ends
     // here with all four flags down) Safari's audio session is "ambient" again for the UI chimes

@@ -211,7 +211,9 @@ class Templates(unittest.TestCase):
             self.assertIs(apiconf.features({"calls": False}, SECRETS)["pad_watch"], False)
             self.assertIs(apiconf.features({"calls": True}, {**SECRETS, "livekit_secret": ""})["pad_watch"], False)
             R = {**SECRETS, "livekit_rotated": "0.3.13"}
-            for f in ("person_tiles", "pad_chip"):  # Pad on the phone, Step A: re-minting + the key pair already replaced
+            # Pad on the phone, Step A (person_tiles, pad_chip) and Step B (pad_mic, pad_camera, 0.3.14): re-minting + the
+            # key pair already replaced
+            for f in ("person_tiles", "pad_chip", "pad_mic", "pad_camera"):
                 self.assertIs(apiconf.features({"calls": True}, R)[f], True)
                 self.assertIs(apiconf.features({"calls": True}, SECRETS)[f], False, "not before the key pair is replaced")
                 self.assertIs(apiconf.features({"calls": False}, R)[f], False)

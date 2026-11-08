@@ -63,9 +63,13 @@ export interface ServerOffer {
    *  claude/tinhat-pad/WATCH-LEASE/DESIGN.md §1.5). Unlike the features above, absent = NOT offered (an older server
    *  can't do Watch, and Watch never falls back to a normal token). */
   padWatch: boolean;
+  /** PAD-PHONE Step B: `features.pad_mic === true` / `features.pad_camera === true` — the server mints Pad Mic / Camera
+   *  tokens (`/livekit/jwt/pad`). Strict like padWatch: absent = not offered, and never a normal token instead. */
+  padMic: boolean;
+  padCamera: boolean;
 }
 
-export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", web: "", features: Object.freeze({}), recorder: "", passwordReset: "", owner: "", padWatch: false }) as ServerOffer;
+export const NO_OFFER: ServerOffer = Object.freeze({ server: "", api: "", web: "", features: Object.freeze({}), recorder: "", passwordReset: "", owner: "", padWatch: false, padMic: false, padCamera: false }) as ServerOffer;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const own = (o: Record<string, unknown>, k: string): unknown => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
@@ -95,13 +99,15 @@ export function parseOffer(wellKnown: unknown): ServerOffer {
   const ow = isObj(acct) ? own(acct, "owner") : undefined;
   const owner = typeof ow === "string" && MXID.test(ow) ? ow : "";
   const padWatch = isObj(f) && own(f, "pad_watch") === true;
-  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", web: typeof w === "string" ? w.trim() : "", features, recorder, passwordReset, owner, padWatch };
+  const padMic = isObj(f) && own(f, "pad_mic") === true;
+  const padCamera = isObj(f) && own(f, "pad_camera") === true;
+  return { server: typeof server === "string" ? server : "", api: typeof api === "string" ? api : "", web: typeof w === "string" ? w.trim() : "", features, recorder, passwordReset, owner, padWatch, padMic, padCamera };
 }
 
 /** The offer back in the server's own shape (the `dev.tinhat.server` value): what the cache keeps, so parseOffer reads
  *  it back the same. */
 export function offerDoc(o: ServerOffer): Record<string, unknown> {
-  const doc: Record<string, unknown> = { server: o.server, api: o.api, features: o.padWatch ? { ...o.features, pad_watch: true } : { ...o.features } };
+  const doc: Record<string, unknown> = { server: o.server, api: o.api, features: { ...o.features, ...(o.padWatch ? { pad_watch: true } : {}), ...(o.padMic ? { pad_mic: true } : {}), ...(o.padCamera ? { pad_camera: true } : {}) } };
   if (o.web) doc.web = o.web;
   if (o.recorder) doc.recorder = o.recorder;
   if (o.passwordReset || o.owner) {
@@ -133,7 +139,7 @@ export function featureFor(offer: ServerOffer, f: ServerFeature, guest: boolean)
 
 /** The same offer? (the store notifies only on a real change) */
 export function sameOffer(a: ServerOffer, b: ServerOffer): boolean {
-  if (a.server !== b.server || a.api !== b.api || a.web !== b.web || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset || a.owner !== b.owner || a.padWatch !== b.padWatch) return false;
+  if (a.server !== b.server || a.api !== b.api || a.web !== b.web || a.recorder !== b.recorder || a.passwordReset !== b.passwordReset || a.owner !== b.owner || a.padWatch !== b.padWatch || a.padMic !== b.padMic || a.padCamera !== b.padCamera) return false;
   return SERVER_FEATURES.every((k) => a.features[k] === b.features[k]);
 }
 
@@ -308,5 +314,11 @@ export function isGuestAccount(mxid: string | null | undefined): boolean {
  */
 export function isRecorderId(id: string, recorder: string): boolean {
   if (!recorder || !id) return false;
-  return id === recorder || id.startsWith(`${recorder}:`);
+  // 12.1.11 (assembly-047): the account's devices by the strict rule (calls/identity.ts isParticipantOf, inlined: core
+  // imports no feature; desktop AppCore.qml isRecorder): everything before the LAST ':' when that still holds a ':'.
+  // The old `startsWith(recorder + ":")` also named `@rec:h:8448`'s devices the recorder of `@rec:h`.
+  if (id === recorder) return true;
+  const i = id.lastIndexOf(":");
+  const head = i > 0 ? id.slice(0, i) : "";
+  return head.includes(":") && head === recorder;
 }

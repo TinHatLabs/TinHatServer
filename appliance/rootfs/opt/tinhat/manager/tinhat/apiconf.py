@@ -251,6 +251,12 @@ def features(st: dict | None = None, s: dict | None = None) -> dict:
         # (and only once the call-server key pair has been replaced: no pre-0.3.13 credential can join; lkrotate.py)
         "person_tiles": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
         "pad_chip": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
+        # Pad on the phone, Step B (0.3.14): the phone as the person's microphone / camera (/livekit/jwt/pad: a fresh
+        # `~pad-mic-` / `~pad-cam-` identity publishing its ONE source, the device's earlier Pad sessions retired, a
+        # moderator's person mute respected). Each capability on its own: the apps never substitute a normal token. Only
+        # once rotated, like the chip (the chip is how everyone sees whose phone it is).
+        "pad_mic": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
+        "pad_camera": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
     }
 
 

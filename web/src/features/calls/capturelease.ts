@@ -6,7 +6,8 @@
 // wait until that has happened. Pure (no platform code): the case table captureleases.cases.json pins it, byte-identical
 // with the desktop's tinhat_streamer::capture_lease (same runner rules).
 
-export type LeaseKind = "mic" | "meter" | "camera" | "screen" | "share-audio" | "music" | "sameroom" | "conntest" | "settings-meter" | "output-tap";
+// (PAD-PHONE Step B) pad-mic / pad-camera: the phone's own capture in its Pad Mic / Camera episode — admitted ONLY then
+export type LeaseKind = "mic" | "meter" | "camera" | "screen" | "share-audio" | "music" | "sameroom" | "conntest" | "settings-meter" | "output-tap" | "pad-mic" | "pad-camera";
 
 export class Lease {
   private stops: Array<() => void> = [];

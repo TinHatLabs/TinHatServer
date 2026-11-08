@@ -70,6 +70,8 @@ export const PAD_OPS = [
   "party.seek",
   "party.next",
   "party.add",
+  // 2026-11-06 (PAD-PHONE Step B, additive): the phone takes the computer's mic (Mic mode) — receiver-owned, leased
+  "takeover.mic",
 ] as const;
 export const PAD_CATS = ["mic", "screenshare", "music"] as const;
 export type PadCat = (typeof PAD_CATS)[number];
@@ -438,7 +440,8 @@ export type PadCmd =
   | { op: "party.play"; url: string; playing: boolean }
   | { op: "party.seek"; url: string; pos: number }
   | { op: "party.next"; url: string }
-  | { op: "party.add"; url: string; now: boolean };
+  | { op: "party.add"; url: string; now: boolean }
+  | { op: "takeover.mic"; on: boolean };
 
 /** `url` of a party op: the playing url the controller saw ("" = nothing playing): 0–2048 printable ASCII
  *  characters, the same shape as `call.party.url`. */
@@ -536,6 +539,10 @@ function parseCmd(c: Obj): PadCmd | null {
       const now = own(c, "now");
       return partyLinkOk(url) && typeof now === "boolean" ? { op, url, now } : null;
     }
+    case "takeover.mic": {
+      const on = own(c, "on");
+      return typeof on === "boolean" ? { op, on } : null;
+    }
     default:
       return null;
   }
@@ -551,6 +558,8 @@ export interface PadMe {
   brb: boolean;
   /** `padGate` / `use_soundboard`: this call's roles let me play sounds */
   soundRole: boolean;
+  /** Step B: the Pad session (sid) whose phone holds this receiver's mic ("" / absent = none) */
+  takeBy?: string;
 }
 export interface PadSounds {
   /** my favourites (account data dev.tinhat.soundboard_personal) */
@@ -731,6 +740,13 @@ export function checkPadMessage(t: PadSessions, type: string, content: unknown, 
       if (cmd.op === "party.play") return ok(cmd.playing !== pt.playing);
       return ok(true);
     }
+    case "takeover.mic": {
+      // Step B: muting is always allowed (no server-mute / PTT refusal): taking the mic only ever mutes this receiver,
+      // with a mute reason of its own; giving it back only ever lifts that reason (the receiver's glue). A set: run only
+      // when it changes who holds it — this session takes it (from nobody or another session), or gives back its own.
+      const held = me.takeBy ?? "";
+      return cmd.on ? ok(held !== sid) : ok(held === sid);
+    }
   }
 }
 
@@ -756,7 +772,8 @@ export interface PadStateIn {
     room: string;
     gen: string;
     since: number;
-    me: { mic: string; deaf: boolean; brb: boolean; talk: boolean; sound: string; gate: { allowed: boolean; hint: string } };
+    /** take (Step B): this state's session holds the receiver's mic (sent only when true) */
+    me: { mic: string; deaf: boolean; brb: boolean; talk: boolean; sound: string; gate: { allowed: boolean; hint: string }; take?: boolean; /** receiver-internal (never on the wire): the holder's sid */ takeBy?: string };
     people: Array<{ u: string; talk: boolean; micOff: boolean; away: boolean; share?: boolean; vol?: Partial<Record<PadCat, number>>; muted?: Partial<Record<PadCat, boolean>> }>;
     recent: Array<{ name: string; url: string; emoji: string }>;
     /** the call room's Media Party (absent / null = none) */
@@ -844,6 +861,8 @@ export function buildState(input: PadStateIn): { state: Obj; bytes: number } {
         talk: own(mi, "talk") === true,
         sound: sound && cpLen(sound) <= PAD.maxUrl ? { url: sound } : null,
         gate: { allowed: own(gi, "allowed") === true, hint: wellFormed(strOf(own(gi, "hint"))) ? cpTrunc(strOf(own(gi, "hint")), PAD.maxHint) : "" },
+        // additive (Step B): only when this session holds the receiver's mic, so older states are unchanged
+        ...(own(mi, "take") === true ? { take: true } : {}),
       },
       people,
       more: valid - people.length,
@@ -980,6 +999,7 @@ function validStateBody(c: Obj): boolean {
   if (!isObj(gate) || typeof own(gate, "allowed") !== "boolean") return false;
   const hint = own(gate, "hint");
   if (typeof hint !== "string" || cpLen(hint) > PAD.maxHint) return false;
+  if (has(me, "take") && typeof own(me, "take") !== "boolean") return false;
   const people = own(call, "people");
   if (!Array.isArray(people) || people.length > PAD.maxPeople) return false;
   for (const p of people) {

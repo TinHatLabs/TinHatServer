@@ -16,6 +16,7 @@ import { installGameServers } from "./gameservers.mjs";
 import { installWatch } from "./watch.mjs";
 import { installGuests } from "./guests.mjs";
 import { installCallToken } from "./calltoken.mjs";
+import { createPadState } from "./padstate.mjs";
 import { accessConfig, createAccess, SIGNIN_REQUIRED } from "./access.mjs";
 import { normaliseClipUrl, ClipStore, Admitted, createClipSigner, sameHex, oneDownload } from "./clipcache.mjs";
 import { parseForeignClipUrl, foreignDownload } from "./foreign.mjs";
@@ -1050,9 +1051,12 @@ installWatch(app, {
 // Call moderation (RBAC, 2026-09-17): server-mute / disconnect a call participant, authorised
 // by the space's roles (or power levels). Lives in moderation.mjs; it borrows this process'
 // admin token + LiveKit secret and never exposes either.
+// PAD-PHONE Step B: the Pad generation + person-mute state call moderation and the call-token route share (memory only)
+// (persisted next to the API's config: a restart forgets neither a person mute nor a device's generation — Step B review r1)
+const padState = createPadState({ file: process.env.PAD_STATE_FILE || join(CONF, "pad", "state.json"), log: (l) => console.log(l) });
 dropFromCall = installModeration(app, {
     requireMatrixUser, synapse, adminToken: ADMIN_TOKEN,
-    lkApiUrl: LK_API_URL, lkKey: LK_KEY, lkSecret: LK_SECRET, b64u, createHmac,
+    lkApiUrl: LK_API_URL, lkKey: LK_KEY, lkSecret: LK_SECRET, b64u, createHmac, padState,
 }).dropFromCall;
 
 // Registration invite codes (Tin Hat 10.4, 2026-09-19): server operators mint Synapse registration
@@ -1125,7 +1129,7 @@ installCallToken(app, {
     lkJwtUrl: (process.env.LK_JWT_URL || "http://127.0.0.1:8070").replace(/\/+$/, ""),
     enabled: () => String(process.env.CALL_TOKEN_ROOM_CHECK || "on").trim().toLowerCase() !== "off",
     // Pad Watch (WATCH-LEASE/DESIGN.md §1): the API mints the subscribe-only Watch token itself (lk-jwt can't)
-    lkKey: LK_KEY, lkSecret: LK_SECRET, lkApiUrl: LK_API_URL.replace(/\/+$/, ""),
+    lkKey: LK_KEY, lkSecret: LK_SECRET, lkApiUrl: LK_API_URL.replace(/\/+$/, ""), padState,
     sfuUrl: process.env.LK_SFU_URL || `wss://${process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname}/livekit/sfu`,
 });
 

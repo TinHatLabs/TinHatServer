@@ -62,7 +62,7 @@ export interface PadView {
   room: string;
   gen: string;
   since: number;
-  me: { mic: PadMic; deaf: boolean; brb: boolean; talk: boolean; sound: string; gate: { allowed: boolean; hint: string } };
+  me: { mic: PadMic; deaf: boolean; brb: boolean; talk: boolean; sound: string; gate: { allowed: boolean; hint: string }; /** Step B: this session holds the receiver's mic */ take: boolean };
   people: PadPersonView[];
   more: number;
   recent: { name: string; url: string; emoji: string }[];
@@ -138,7 +138,7 @@ export function readView(c: Obj, seenAt = 0): PadView | null {
     room: call.room as string,
     gen: call.gen as string,
     since: call.since as number,
-    me: { mic: me.mic as PadMic, deaf: me.deaf === true, brb: me.brb === true, talk: me.talk === true, sound: sound ? (sound.url as string) : "", gate: { allowed: gate.allowed === true, hint: gate.hint as string } },
+    me: { mic: me.mic as PadMic, deaf: me.deaf === true, brb: me.brb === true, talk: me.talk === true, sound: sound ? (sound.url as string) : "", gate: { allowed: gate.allowed === true, hint: gate.hint as string }, take: me.take === true },
     people,
     more: call.more as number,
     recent: (call.recent as Obj[]).map((r) => ({ name: r.name as string, url: r.url as string, emoji: r.emoji as string })),
@@ -630,6 +630,15 @@ export class PadController {
   }
   leave(): boolean {
     return this.command("leave", {}, null);
+  }
+  /** PAD-PHONE Step B: take the receiver's mic (Mic mode) / give it back. No optimistic change: the phone publishes only
+   *  on the receiver's own answer (takeConfirmed). */
+  setTakeover(on: boolean): boolean {
+    return this.command("takeover.mic", { on }, null);
+  }
+  /** The receiver's last accepted state says this session holds its mic. */
+  takeConfirmed(): boolean {
+    return !this.closed && !!this.sess && this.truth?.me.take === true;
   }
   /** A tap on a sound: ≤ 4/s, the newest waiting tap wins. */
   playSound(url: string): void {

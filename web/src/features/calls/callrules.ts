@@ -301,7 +301,7 @@ export async function postSfuGet(
   serviceUrl: string,
   body: string,
   signal?: AbortSignal,
-  path: "/sfu/get" | "/watch" = "/sfu/get",
+  path: "/sfu/get" | "/watch" | "/pad" = "/sfu/get",
 ): Promise<{ url: string; jwt: string }> {
   const res = await fetchFn(`${serviceUrl.replace(/\/+$/, "")}${path}`, sfuGetInit(body, signal));
   if (isRedirectAnswer(res)) throw new Error(REDIRECT_REFUSED_TEXT);
@@ -845,6 +845,54 @@ export function jsonDuplicateKey(text: string): string | null {
   } catch (e) {
     return (e as Error).message || "not JSON";
   }
+}
+
+/** The phone's Pad modes that publish (PAD-PHONE Step B): the token's `tinhat.mode`, its identity tag, its ONE source. */
+export type PadMode = "mic" | "camera";
+const PAD_MODE_TAG: Record<PadMode, string> = { mic: "mic", camera: "cam" };
+
+/**
+ * Why a Pad Mic / Camera token's payload is not the exact profile of that mode (null = it is), PAD-PHONE Step B (server
+ * calltoken.mjs padGrant): `sub` = our identity + `~pad-<mic|cam>-<16 hex>`, one room, join + subscribe + publish,
+ * exactly the mode's ONE source (`["microphone"]` / `["camera"]`), data / metadata / hidden / recorder / agent explicitly
+ * false, the server's attributes exactly (person = this account, pad = phone, mode, a decimal generation) and NOTHING
+ * else. A Watch-shaped or a normal token is refused: a Mic / Camera join never runs on anything but its own pass. The SFU
+ * enforcing the grant (and the server's sweep) is what makes it safe; this is the client's check of the issuer.
+ */
+export function padTokenProblem(payload: unknown, want: { identity: string; room: string; mode: PadMode }): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "not a token payload";
+  const tag = PAD_MODE_TAG[want.mode];
+  if (!tag) return "not a Pad mode";
+  const p = payload as Record<string, unknown>;
+  for (const k of Object.keys(p)) if (!WATCH_TOP_KEYS.has(k)) return `unexpected claim ${k}`;
+  const pre = `${want.identity}~pad-${tag}-`;
+  if (typeof p.sub !== "string" || /[#~]/.test(want.identity) || !p.sub.startsWith(pre) || !/^[0-9a-f]{16}$/.test(p.sub.slice(pre.length)))
+    return `not this device's Pad ${want.mode} identity`;
+  const v = p.video;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "no video grant";
+  const g = v as Record<string, unknown>;
+  for (const k of Object.keys(g)) if (!WATCH_VIDEO_KEYS.has(k)) return `unexpected grant ${k}`;
+  if (g.room !== want.room) return "another room";
+  if (g.roomJoin !== true || g.canSubscribe !== true || g.canPublish !== true) return "can't join to publish";
+  for (const k of ["canPublishData", "canUpdateOwnMetadata", "hidden", "recorder", "agent"]) if (g[k] !== false) return `${k} isn't false`;
+  const src = g.canPublishSources;
+  if (!Array.isArray(src) || src.length !== 1 || src[0] !== (want.mode === "mic" ? "microphone" : "camera")) return "not exactly its one source";
+  const a = p.attributes;
+  if (!a || typeof a !== "object" || Array.isArray(a)) return "no Pad attributes";
+  const A = a as Record<string, unknown>;
+  const mine = want.identity.slice(0, want.identity.lastIndexOf(":"));
+  if (Object.keys(A).sort().join(",") !== "tinhat.gen,tinhat.mode,tinhat.pad,tinhat.person") return "not the Pad attributes";
+  if (A["tinhat.person"] !== mine || A["tinhat.pad"] !== "phone" || A["tinhat.mode"] !== want.mode) return "not the Pad attributes";
+  if (typeof A["tinhat.gen"] !== "string" || !/^[0-9]{1,16}$/.test(A["tinhat.gen"])) return "not the Pad attributes";
+  return null;
+}
+
+/** padTokenProblem on the token's RAW payload text (a repeated key refused first, as for Watch). */
+export function padTokenProblemRaw(text: string | null, want: { identity: string; room: string; mode: PadMode }): string | null {
+  if (text === null) return "not a token payload";
+  const dup = jsonDuplicateKey(text);
+  if (dup) return `the payload isn't plain JSON (${dup})`;
+  return padTokenProblem(JSON.parse(text), want);
 }
 
 /** watchTokenProblem on the token's RAW payload text: refused when any object repeats a key (jsonDuplicateKey). */

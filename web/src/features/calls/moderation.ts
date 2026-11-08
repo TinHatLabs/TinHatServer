@@ -310,20 +310,38 @@ function who(s: Sess, identity: string): string {
   return n || localpart(mxidOf(identity));
 }
 
-async function moderate(s: Sess, action: "mute" | "unmute" | "disconnect", target: string, announce: boolean): Promise<void> {
+/** PAD-PHONE Step B: the server's per-device answer to a person-wide action. */
+interface PersonResult {
+  done?: number;
+  failed?: number;
+  devices?: Array<{ identity: string; result: "ok" | "failed" | "skipped"; reason?: string; error?: string }>;
+}
+
+async function moderate(s: Sess, action: "mute" | "unmute" | "disconnect", target: string, announce: boolean, person = false): Promise<void> {
   const myName = displayName(s.roomId, s.me);
   const w = who(s, target);
   if (action === "disconnect") sendData("tinhat.moderation", { action: "disconnect", target, by: s.myIdentity, name: myName }, { to: [target] });
   try {
-    await apiJson("/moderation/call", { method: "POST", json: { room_id: s.roomId, action, target }, timeoutMs: 10000 });
+    // (Step B) a person tile's Mute / Remove: every connection of theirs (their phone's Pad ones too), answered per device
+    const r = (await apiJson("/moderation/call", { method: "POST", json: { room_id: s.roomId, action, target, ...(person ? { scope: "person" } : {}) }, timeoutMs: 10000 })) as PersonResult | undefined;
     if (sess() !== s) return; // the call ended (or another began) while the server answered
-    sendData("tinhat.moderation", { action, target, by: s.myIdentity, name: myName });
-    if (action === "mute") {
-      shields.set(target, { by: s.myIdentity, name: myName });
-      iMuted.add(target);
-    } else if (action === "unmute") {
-      shields.delete(target);
-      iMuted.delete(target);
+    const okIds = person && Array.isArray(r?.devices) ? r!.devices!.filter((d) => d.result === "ok").map((d) => d.identity) : [target];
+    for (const id of okIds) {
+      if (action === "disconnect" && id !== target) sendData("tinhat.moderation", { action: "disconnect", target: id, by: s.myIdentity, name: myName }, { to: [id] });
+      sendData("tinhat.moderation", { action, target: id, by: s.myIdentity, name: myName });
+      if (action === "mute") {
+        shields.set(id, { by: s.myIdentity, name: myName });
+        iMuted.add(id);
+      } else if (action === "unmute") {
+        shields.delete(id);
+        iMuted.delete(id);
+      }
+    }
+    if (person && (r?.failed ?? 0) > 0) {
+      const total = (r?.done ?? 0) + (r?.failed ?? 0);
+      const verb = action === "mute" ? "muted" : action === "unmute" ? "unmuted" : "removed";
+      if (announce) setError(`Only ${r?.done ?? 0} of ${total} of ${w}'s devices were ${verb} — the call server refused the rest`);
+      announce = false;
     }
     rebuildTiles();
     if (action !== "disconnect" && announce) {
@@ -352,6 +370,8 @@ function precheck(target: string, action: "mute" | "unmute" | "disconnect"): { s
 }
 
 async function run(target: string, action: "mute" | "unmute" | "disconnect"): Promise<string> {
+  // PAD-PHONE Step B: the menu of a PERSON tile (their devices folded in: members) acts on the whole person
+  if ((getCall().tiles ?? []).some((t) => t.participant === target && (t.members?.length ?? 0) > 1)) return runPerson(target, action);
   const r = precheck(target, action);
   if (typeof r === "string") {
     setStatus(r);
@@ -364,6 +384,20 @@ async function run(target: string, action: "mute" | "unmute" | "disconnect"): Pr
 export const serverMute = (t: string) => run(t, "mute");
 export const serverUnmute = (t: string) => run(t, "unmute");
 export const disconnectParticipant = (t: string) => run(t, "disconnect");
+
+/** PAD-PHONE Step B: Mute / Unmute / Remove on a PERSON tile (several devices folded in): every connection of theirs. */
+async function runPerson(target: string, action: "mute" | "unmute" | "disconnect"): Promise<string> {
+  const r = precheck(target, action);
+  if (typeof r === "string") {
+    setStatus(r);
+    return r;
+  }
+  void moderate(r.s, action, r.id, true, true);
+  return "";
+}
+export const serverMutePerson = (t: string) => runPerson(t, "mute");
+export const serverUnmutePerson = (t: string) => runPerson(t, "unmute");
+export const disconnectPerson = (t: string) => runPerson(t, "disconnect");
 
 /** rolesActive/containerOf re-exported for the menu (kick/ban from space are the spaces feature's). */
 export { rolesActive, containerOf };

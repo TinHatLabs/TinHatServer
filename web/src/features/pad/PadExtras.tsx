@@ -6,6 +6,8 @@
 //   Watch        "<name> is sharing · Watch": this device joins the call to WATCH (a normal, visible join: no mic
 //                captured, deafened, camera off); phones show the share here with Full screen; "This phone" row:
 //                Hear here · Talk here · Stop watching
+//   PhoneModes   (PAD-PHONE Step B) "This phone": Watch · Mic · Camera in ANY call the person is in — no screen share
+//                needed (2026-11-06); switching leaves the old mode first; Mic mode's notes + "Use phone mic"
 //   PartyCard    the call room's Media Party on the computer: what plays, ▶/⏸, −10 s / +10 s, ⏭, Up next, Add a link
 //                (`party.*`, bound to what the Pad saw playing); "Join on <device>" / "Watch on this phone"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -19,7 +21,7 @@ import { DEFAULT_EMOJI, type PadSound } from "@/widgets/soundpad";
 import { partyLinkOk, webSoundOk, whyText } from "@/features/calls/pad/rules";
 import { partyPosNow, type PadView } from "@/features/calls/pad/controller";
 import { WATCH_AVAILABLE } from "@/features/calls/watchAvailable";
-import { onServerOffer, padWatchOffered } from "@/core/server";
+import { onServerOffer, padCameraOffered, padMicOffered, padWatchOffered } from "@/core/server";
 import { useCallStore } from "@/features/calls";
 import { Tile } from "@/features/callui/Tile";
 import { isShareTile, ui, useC } from "@/features/callui/store";
@@ -168,8 +170,11 @@ export function Watch({ view, device, mobile }: { view: PadView; device: string;
   const deaf = useC("deafened");
   const micMuted = useC("micMuted");
   const tiles = useC("tiles");
-  const here = watching && callRoom === view.room && (inCall || connecting);
-  const elsewhere = (inCall || connecting) && !here;
+  const padMode = useC("padMode");
+  // (PAD-PHONE Step B) only a WATCH connection shows the share here: Mic / Camera have This phone's own section
+  const mine = watching && callRoom === view.room && (inCall || connecting);
+  const here = mine && (padMode === "watch" || !padMode);
+  const elsewhere = (inCall || connecting) && !mine;
   const sharers = view.people.filter((p) => p.share);
   const first = useMember(view.room, sharers[0]?.u ?? "");
   const shares = useMemo(() => (tiles ?? []).filter((t) => isShareTile(t) && t.participant !== "You" && t.id !== "vid_selfshare"), [tiles]);
@@ -282,9 +287,61 @@ export function Watch({ view, device, mobile }: { view: PadView; device: string;
         <span className={s.phoneHead}>This phone</span>
         <Switch text="Hear here" checked={!deaf} onToggled={(on) => useCallStore.getState().watchHear(on)} data-testid="pad-hear" />
         <Switch text={talking && !micMuted ? "Talk here · live" : "Talk here"} checked={talking && !micMuted} onToggled={(on) => useCallStore.getState().watchTalk(on)} data-testid="pad-talk" />
-        <Button text="Stop watching" onClick={() => useCallStore.getState().leaveCall()} data-testid="pad-stop-watching" />
+        <Button text="Stop watching" onClick={() => useCallStore.getState().padStop()} data-testid="pad-stop-watching" />
       </div>
       <div className={s.stripNote}>Mute, deafen and Leave above are {device}'s.</div>
+    </section>
+  );
+}
+
+// ---- this phone: Watch · Mic · Camera (PAD-PHONE Step B) --------------------------------------------------------------
+
+const MODE_LABEL = { watch: "Watching", mic: "The mic", camera: "The camera" } as const;
+
+/** "This phone": use the phone in this call to watch, as the mic or as the camera — in any call (no share needed). Each
+ *  is offered only when this server mints that mode's pass (well-known pad_watch / pad_mic / pad_camera). */
+export function PhoneModes({ view, device, mobile }: { view: PadView; device: string; mobile: boolean }) {
+  const pw = useSyncExternalStore(onServerOffer, padWatchOffered, padWatchOffered);
+  const pm = useSyncExternalStore(onServerOffer, padMicOffered, padMicOffered);
+  const pc = useSyncExternalStore(onServerOffer, padCameraOffered, padCameraOffered);
+  const watching = useC("watching");
+  const callRoom = useC("callRoomId");
+  const inCall = useC("inCall");
+  const connecting = useC("connecting");
+  const padMode = useC("padMode");
+  const note = useC("padNote");
+  const needsTap = useC("padNeedsTap");
+  const micLive = useC("padMicLive");
+  if (!WATCH_AVAILABLE || (!pw && !pm && !pc)) return null;
+  const mine = watching && callRoom === view.room && (inCall || connecting);
+  const cur = mine ? padMode || "watch" : "";
+  const elsewhere = (inCall || connecting) && !mine;
+  const use = (mode: "watch" | "mic" | "camera") => {
+    if (mobile && mode === "watch") ui().set({ mobileMin: true });
+    useCallStore.getState().padUse(view.room, mode);
+  };
+  const title = !cur ? "This phone" : connecting && !inCall ? "This phone · joining…" : `This phone · ${MODE_LABEL[cur]}${cur === "mic" ? (micLive ? " · live" : " · waiting") : ""}`;
+  return (
+    <section className={ps.section} data-testid="pad-phone-modes" data-mode={cur}>
+      <Head title={title} hint={cur ? undefined : "use it in this call"} />
+      <div className={s.phoneRow}>
+        {pw && <Button text="Watch" highlighted={cur === "watch"} disabled={elsewhere} onClick={() => use("watch")} data-testid="pad-mode-watch" />}
+        {pm && <Button text="Mic" highlighted={cur === "mic"} disabled={elsewhere} onClick={() => use("mic")} data-testid="pad-mode-mic" />}
+        {pc && <Button text="Camera" highlighted={cur === "camera"} disabled={elsewhere} onClick={() => use("camera")} data-testid="pad-mode-camera" />}
+        {cur && <Button text="Stop" flat onClick={() => useCallStore.getState().padStop()} data-testid="pad-mode-stop" />}
+      </div>
+      {cur === "mic" && needsTap && (
+        <div className={s.phoneRow}>
+          <Button text="Use phone mic" highlighted onClick={() => useCallStore.getState().padUseMicNow()} data-testid="pad-mic-now" />
+        </div>
+      )}
+      <div className={s.stripNote} data-testid="pad-mode-note">
+        {elsewhere
+          ? "Leave your call on this phone first."
+          : cur
+            ? note || (cur === "watch" ? "Watching — the mic may take a moment to switch off; nothing is sent." : "")
+            : `Joins on this phone — everyone sees it's your phone (Pad). Mute, deafen and Leave above stay ${device}'s.`}
+      </div>
     </section>
   );
 }

@@ -47,7 +47,10 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { RateLimit, clientKey, mono, ROOM_ID_RE, safe } from "./reachcommon.mjs";
 import { createFedResolver } from "./fedresolve.mjs";
-import { DEVICE_RE, MXID_RE } from "./identity.mjs";
+import { DEVICE_RE, MXID_RE, parseIdentity } from "./identity.mjs";
+import { createPadState, padKey } from "./padstate.mjs";
+import { enumIs, isAudioTrack, isNormalMuteRestriction, mayPublishMic, normalMutePermission } from "./callmute.mjs";
+import { callModerationRoles, decideCallModeration } from "./moderation.mjs";
 
 export const CALLTOKEN = Object.freeze({
     MAX_BODY: 16 * 1024,
@@ -60,6 +63,9 @@ export const CALLTOKEN = Object.freeze({
     WATCH_TTL_S: 300,           // a Watch token: 5 minutes to join (LiveKit refreshes a live connection's token itself)
     LK_API_MS: 5_000,           // the call server's room service (the pairing check)
     SWEEP_MS: 60_000,           // the reserved-identity sweep
+    PAD_TTL_S: 300,             // a Pad Mic / Camera token: 5 minutes to join (LiveKit refreshes a live connection's token)
+    PAD_PER_ACCOUNT: 6,         // Pad connections (Watch + Mic + Camera, live or a token handed out) of one account in one call
+    MUTE_SWEEP_MS: 10_000,      // the person-mute enforcement in rooms with a mute in force (arrivals)
 });
 
 /** The LiveKit identity of a Watch connection (Pad Watch, WATCH-LEASE/DESIGN.md §1.3): `<mxid>:<device>~watch`. Not `#`:
@@ -72,14 +78,75 @@ export const WATCH_SUFFIX = "~watch";
  *  can only ever resume a session that this same token created. */
 export const WATCH_ID_RE = /^[^#]*~watch-[0-9a-f]{16}$/;
 export const isWatchIdentity = (id) => WATCH_ID_RE.test(String(id));
+/** A Pad Mic / Camera connection's identity (PAD-PHONE Step B, 0.3.14; padGrant): `<mxid>:<device>~pad-mic-<16 hex>` /
+ *  `~pad-cam-<16 hex>`, a fresh nonce per token (never resumable across modes or switches). */
+export const PAD_ID_RE = /^[^#]*~pad-(mic|cam)-[0-9a-f]{16}$/;
+/** The Pad modes this route mints, as the token's `tinhat.mode` and the identity's tag. */
+export const PAD_MODES = Object.freeze({ mic: { tag: "mic", source: "MICROPHONE", sourceN: 2, type: "AUDIO", typeN: 0 }, camera: { tag: "cam", source: "CAMERA", sourceN: 1, type: "VIDEO", typeN: 1 } });
+const modeOfTag = (tag) => (tag === "mic" ? "mic" : tag === "cam" ? "camera" : null);
+
+// LiveKit's room service speaks protojson: enums as names ("MICROPHONE"), sometimes numbers, and a zero value (AUDIO,
+// UNKNOWN) may be left out (callmute.mjs enumIs: a missing track type is AUDIO, a missing source is UNKNOWN).
+const sourceList = (perm) => {
+    const v = perm.can_publish_sources ?? perm.canPublishSources;
+    return v === undefined || v === null ? [] : v;
+};
+
 /**
- * A participant (as LiveKit's room service lists it) with a reserved identity (`~` or `#` anywhere) that holds a
- * publish or data right, or has a track, or whose rights can't be read (fail closed). Only the Watch route's own
- * subscribe-only `~watch` connections may carry a reserved identity (DESIGN §1.3).
+ * Why a Pad Mic / Camera connection breaks its mode's contract (DESIGN §8 #1/#2/#3/#7/#11), or "" (it doesn't):
+ * - its identity must parse (identity.mjs) with the mode tag, and its server-minted attributes must say the same:
+ *   tinhat.pad=phone, tinhat.mode=<mode>, tinhat.person=<its mxid>, a tinhat.gen (unreadable attributes: fail closed);
+ * - rights: never data, metadata, hidden, recorder or agent; publishing only its mode's ONE source (a moderator's mute
+ *   may take publishing away: can_publish false is always within the contract);
+ * - tracks: only its mode's media kind from its mode's source (canPublishSources checks the client's source LABEL, so an
+ *   audio track labelled "camera" passes the SFU: this is the backstop);
+ * - the generation: a session of a token a later one replaced, or of a device with no generation on record (fail closed:
+ *   padstate.mjs persists every one this API hands out);
+ * - a Mic connection of a person a moderator muted that still may publish its mic.
  */
-export function reservedWithRights(p) {
+export function padViolation(p, padState, room) {
+    const id = String(p?.identity || "");
+    const m = PAD_ID_RE.exec(id);
+    const who = parseIdentity(id);
+    if (!m || !who || !who.pad || who.pad !== m[1]) return "identity";
+    const mode = modeOfTag(m[1]);
+    const M = PAD_MODES[mode];
+    const a = p?.attributes;
+    if (!a || typeof a !== "object") return "attributes";
+    if (a["tinhat.pad"] !== "phone" || a["tinhat.mode"] !== mode || a["tinhat.person"] !== who.mxid) return "attributes";
+    if (typeof a["tinhat.gen"] !== "string" || !/^[0-9]{1,16}$/.test(a["tinhat.gen"])) return "attributes";
+    const perm = p?.permission;
+    if (!perm || typeof perm !== "object" || Array.isArray(perm)) return "rights";
+    const b = (sn, cm) => (perm[sn] ?? perm[cm]) === true;
+    if (b("can_publish_data", "canPublishData") || b("can_update_metadata", "canUpdateMetadata") || b("hidden", "hidden")
+        || b("recorder", "recorder") || b("agent", "agent")) return "rights";
+    const sources = sourceList(perm);
+    if (!Array.isArray(sources)) return "rights";
+    if (b("can_publish", "canPublish")) {
+        if (sources.length !== 1 || !enumIs(sources[0], M.source, M.sourceN)) return "rights";
+    }
+    for (const t of p.tracks || []) {
+        if (!enumIs(t?.type, M.type, M.typeN) || !enumIs(t?.source, M.source, M.sourceN)) return "track";
+    }
+    if (padState && room) {
+        const cur = padState.current(room, who.mxid, who.device);
+        if (a["tinhat.gen"] !== cur) return "generation";
+        if (mode === "mic" && b("can_publish", "canPublish") && padState.isMuted(room, who.mxid)) return "person-muted";
+    }
+    return "";
+}
+
+/**
+ * A participant (as LiveKit's room service lists it) with a reserved identity (`~` or `#` anywhere) that must go:
+ * - a Pad Watch connection (`~watch-<16 hex>`) holding any publish or data right, a track, or unreadable rights;
+ * - a Pad Mic / Camera connection (`~pad-mic-` / `~pad-cam-`, Step B) breaking its mode's contract (padViolation);
+ * - any other reserved identity (fail closed).
+ * `padState` / `room` (optional): the generation + person-mute checks of Pad Mic / Camera connections.
+ */
+export function reservedWithRights(p, padState = null, room = "") {
     const id = String(p?.identity || "");
     if (!/[~#]/.test(id)) return false;
+    if (PAD_ID_RE.test(id)) return padViolation(p, padState, room) !== "";
     if ((p?.tracks || []).length) return true;
     const perm = p?.permission;
     if (!perm || typeof perm !== "object") return true;
@@ -107,6 +174,27 @@ export function watchGrant({ key, user, device, room, nowS, nonce = randomBytes(
         // Pad on the phone (share claude/tinhat-pad/PAD-PHONE/DESIGN.md, Step A): the chip and the person grouping come ONLY
         // from these server-minted attributes (canUpdateOwnMetadata false: no participant can set or change its own)
         attributes: { "tinhat.watch": "1", "tinhat.person": user, "tinhat.pad": "phone", "tinhat.mode": "watch" },
+    };
+}
+
+/**
+ * The grant of a Pad Mic / Camera token (PAD-PHONE Step B, DESIGN §8 #2/#3): one room, a FRESH identity
+ * `<mxid>:<device>~pad-<mic|cam>-<16 hex>`, publishing exactly its mode's ONE source (every field explicit: an empty
+ * source list would mean "every source" while canPublish is true, and an omitted canPublishData would follow canPublish),
+ * subscribe, no data, no metadata or attribute changes of its own, nothing hidden / recorder / agent. The attributes are
+ * the server's: the person, the Pad mark, the mode and the device's generation (`gen`, padstate.mjs). Pure.
+ */
+export function padGrant({ key, user, device, room, nowS, mode, gen, nonce = randomBytes(8).toString("hex") }) {
+    const M = PAD_MODES[mode];
+    if (!M) throw new Error("unknown Pad mode");
+    return {
+        iss: key, sub: `${user}:${device}~pad-${M.tag}-${nonce}`, name: user, nbf: nowS - 10, exp: nowS + CALLTOKEN.PAD_TTL_S,
+        video: {
+            room, roomJoin: true, canSubscribe: true,
+            canPublish: true, canPublishData: false, canPublishSources: [mode === "mic" ? "microphone" : "camera"],
+            canUpdateOwnMetadata: false, hidden: false, recorder: false, agent: false,
+        },
+        attributes: { "tinhat.person": user, "tinhat.pad": "phone", "tinhat.mode": mode, "tinhat.gen": String(gen) },
     };
 }
 
@@ -144,7 +232,7 @@ export function verifyLk(jwt, secret) {
  * `canUpdateOwnMetadata: true` turned into false (no participant may set its own attributes). The response keeps
  * every other field. -> the new response text, or null (not lk-jwt's token: never relayed).
  */
-export function remint(text, secret, user) {
+export function remint(text, secret, user, restrict = null) {
     let o;
     try { o = JSON.parse(text); } catch { return null; }
     if (!o || typeof o !== "object" || typeof o.jwt !== "string") return null;
@@ -156,6 +244,15 @@ export function remint(text, secret, user) {
     attrs["tinhat.person"] = user;
     const out = { ...p, attributes: attrs };
     if (p.video.canUpdateOwnMetadata === true) out.video = { ...p.video, canUpdateOwnMetadata: false };
+    // Step B (code review r1 P1 #4): while a moderator has this person muted, a publishing token never carries the
+    // microphone (the normal call mute's sources; everything else exactly as lk-jwt wrote it)
+    if (restrict === "muted" && out.video.canPublish !== false) {
+        // the normal mute's sources, intersected with lk-jwt's own list when it has one (never wider: code review r2)
+        const mute = ["camera", "screen_share", "screen_share_audio"];
+        const had = Array.isArray(out.video.canPublishSources) && out.video.canPublishSources.length ? out.video.canPublishSources : null;
+        const srcs = had ? mute.filter((x) => had.includes(x)) : mute;
+        out.video = srcs.length ? { ...out.video, canPublishSources: srcs } : { ...out.video, canPublish: false, canPublishSources: [] };
+    }
     const head = o.jwt.split(".")[0];
     const body = Buffer.from(JSON.stringify(out)).toString("base64url");
     const jwt = `${head}.${body}.${createHmac("sha256", secret).update(`${head}.${body}`).digest("base64url")}`;
@@ -341,6 +438,7 @@ export function createCallToken(deps) {
     const enabled = deps.enabled || (() => true);
     const wallNow = deps.wallNow || Date.now;   // JWT times (seconds since the epoch); `now` is the monotonic clock
     const federation = deps.federation || createFedResolver();
+    const padState = deps.padState || createPadState();
     const perClient = new RateLimit(CALLTOKEN.PER_CLIENT_PER_MIN, 60_000, now);
     const lookupsClient = new RateLimit(CALLTOKEN.LOOKUPS_PER_CLIENT_MIN, 60_000, now);
     const lookupsGlobal = new RateLimit(CALLTOKEN.LOOKUPS_GLOBAL_MIN, 60_000, now);
@@ -526,7 +624,24 @@ export function createCallToken(deps) {
             if (!deps.lkSecret) { log(`[calltoken] no call-server key configured: refused (${where} caller)`); return send(res, 502, { errcode: "M_UNKNOWN", error: "the call sign-in couldn't be completed", reason: "no-key" }); }
             // Step A: re-minted with the server's own `tinhat.person` (the only attribute grouping trusts); on ANY failure
             // an error — lk-jwt's token is never relayed instead
-            const out = remint(up.text, deps.lkSecret, user);
+            // Step B (DESIGN §8 #7/#11, code review r1 P1 #4, P2 #7): under the person's lock — a person mute in force
+            // re-mints without the microphone, and every token for a device advances its Pad generation, so a Pad Mic /
+            // Camera session of that device from before (Talk here = a normal rejoin) is swept as stale
+            let out;
+            try {
+                out = await padState.serial(room, user, async () => {
+                    // the ONE effective mute: the persisted state or the room's own record (fail closed if it can't be read)
+                    let muted = await effectivelyMuted(room, user);
+                    // (code review r5 P2 #3) the store may have turned unusable while the read was awaited: re-check now
+                    if (!padState.ok()) muted = true;
+                    const o = remint(up.text, deps.lkSecret, user, muted ? "muted" : null);
+                    if (o && padState.ok()) padState.advanceIfKnown(room, user, r.device_id);
+                    return o;
+                });
+            } catch (e) {
+                log(`[calltoken] couldn't record the sign-in (${where} caller): ${e?.message || e}`);
+                return send(res, 502, { errcode: "M_UNKNOWN", error: "the call sign-in couldn't be completed", reason: "state" });
+            }
             if (!out) { log(`[calltoken] couldn't re-mint lk-jwt's token (${where} caller): refused`); return send(res, 502, { errcode: "M_UNKNOWN", error: "the call sign-in couldn't be completed", reason: "remint-failed" }); }
             res.set("Content-Type", "application/json");
             return res.status(200).send(out);
@@ -548,14 +663,16 @@ export function createCallToken(deps) {
         return r.json();
     }
 
-    /** Remove every reserved identity (`~` or `#`) of `participants` that holds any publish right or a track. */
     /**
-     * Remove every reserved identity (`~` or `#`) of `participants` that holds a publish right, a track or unreadable
-     * rights, then LIST THE CALL AGAIN and confirm none is left (round 4 P1: fail closed). Throws when one couldn't be
-     * removed or is still there; the Watch route then refuses to sign (502) and the sweep logs an alert.
+     * Remove every reserved identity (`~` or `#`) of `participants` that breaks a STATE-FREE rule (a Watch connection with
+     * a publish right, a track or unreadable rights; a Pad Mic / Camera connection breaking its mode's grant, attributes or
+     * media kinds; any other reserved form), then LIST THE CALL AGAIN and confirm none is left (round 4 P1: fail closed).
+     * Throws when one couldn't be removed or is still there; a route then refuses to sign (502) and the sweep logs an
+     * alert. The rules that depend on the Pad state (generations, the person mute) run only in the sweep, each person
+     * under their own lock (sweepPerson): a route holding one person's lock never takes another's (code review r2 P1 #2).
      */
     async function removeReserved(room, participants) {
-        const bad = participants.filter(reservedWithRights);
+        const bad = participants.filter((p) => reservedWithRights(p, null, room));
         if (!bad.length) return 0;
         const failed = [];
         for (const p of bad) {
@@ -567,7 +684,7 @@ export function createCallToken(deps) {
             }
         }
         const again = await lkRoomService("ListParticipants", room, { room });
-        const left = (again?.participants || []).filter(reservedWithRights).length;
+        const left = (again?.participants || []).filter((p) => reservedWithRights(p, null, room)).length;
         if (failed.length || left) {
             log(`[calltoken] ALERT watch sweep: ${left} reserved identit${left === 1 ? "y" : "ies"} with publish rights still in a call (${failed.length} removal(s) failed${failed.length ? `: ${failed[0]}` : ""})`);
             throw new Error("reserved-identity removal failed");
@@ -575,26 +692,329 @@ export function createCallToken(deps) {
         return bad.length;
     }
 
-    /** The sweep (Astra r3 #1): every call on the call server, every reserved identity with publish rights out. At start
-     *  and every SWEEP_MS. Returns how many were removed; never throws (a failed removal is logged as an ALERT). */
-    async function sweep() {
+    /**
+     * One person's state-dependent sweep step in one call, under THEIR lock (moderation and issuance for them wait; the
+     * call is listed again inside, so nothing acts on a stale snapshot — code review r2 P1 #2):
+     * - a Pad Mic / Camera connection whose generation isn't its device's current one (or has none on record: fail
+     *   closed), or a muted person's Pad Mic that can still publish -> removed;
+     * - a Watch connection that isn't its device's latest Watch identity (a replaced one) -> removed (a pre-0.3.14 one,
+     *   with no record, is left alone: it can't publish);
+     * - a normal connection of a MUTED person that can still publish a mic (an arrival, a rejoin) -> the normal mute;
+     * - a normal connection of a person a FRESH, readable check says is not muted that still carries the normal mute's
+     *   exact restriction (this server's own: a past mute, an outage's enforcement, a token minted while muted) -> lifted
+     *   to the token's own grant (every source, the other bits kept: code review r9/r10, the stateless model). Also
+     *   after a restart: nothing to remember.
+     * - the device records of every current Pad session kept alive (touch).
+     */
+    async function sweepPerson(room, mxid) {
+        return padState.serial(room, mxid, async () => {
+            const list = (await lkRoomService("ListParticipants", room, { room }))?.participants;
+            if (!list) return 0;
+            let n = 0;
+            // the ONE effective mute (code review r3 P1 #1), read INSIDE the person's lock (r4 P2 #4): the persisted state
+            // or the room's own record (unless an explicit unmute through this API superseded it). Unknown (the room
+            // can't be read, or the Pad state is unusable) = muted for enforcement, and nothing is lifted this round.
+            let known = true, mutedNow;
+            try { mutedNow = await effectivelyMuted(room, mxid); } catch (e) { known = false; mutedNow = true; log(`[calltoken] ALERT pad sweep: the person's mute couldn't be read (${e?.message || e}) — enforced as muted`); }
+            const view = { current: (r, u, d) => (padState.ok() ? padState.current(r, u, d) : null), isMuted: () => mutedNow };
+            for (const p of list) {
+                const id = String(p?.identity || "");
+                const w = parseIdentity(id);
+                if (!w || w.mxid !== mxid) continue;
+                // (r7 #4) the store turning unusable during the awaits = unknown from here on: enforced muted, nothing lifted
+                if (!padState.ok()) { known = false; mutedNow = true; view.isMuted = () => true; }
+                try {
+                    if (w.pad) {
+                        const why = padViolation(p, view, room);
+                        if (why) { await lkRoomService("RemoveParticipant", room, { room, identity: id }); n += 1; log(`[calltoken] pad sweep: removed a Pad session (${why})`); }
+                        else padState.touch(room, mxid, w.device);
+                    } else if (w.watch) {
+                        const latest = padState.latestWatch(room, mxid, w.device);
+                        if (latest !== null && latest !== id) { await lkRoomService("RemoveParticipant", room, { room, identity: id }); n += 1; log("[calltoken] pad sweep: removed a replaced Watch session"); }
+                        else padState.touch(room, mxid, w.device);
+                    } else if (mutedNow) {
+                        const live = (p.tracks || []).some((t) => isAudioTrack(t) && t.muted !== true && !enumIs(t?.source, "SCREEN_SHARE_AUDIO", 4));
+                        if (!mayPublishMic(p.permission) && !live) continue;
+                        for (const t of p.tracks || []) if (isAudioTrack(t)) await lkRoomService("MutePublishedTrack", room, { room, identity: id, track_sid: t.sid, muted: true });
+                        // (round 9, simplified) the normal call mute: the publish sources without the microphone, every other
+                        // bit kept. On a Tin Hat Server a normal connection's own grant always allows every source (lk-jwt
+                        // never sets a list; the only list a normal token carries is the muted re-mint's), so the lift below
+                        // ("every source", the other bits kept) gives back exactly that grant — no per-session records
+                        await lkRoomService("UpdateParticipant", room, { room, identity: id, permission: normalMutePermission(p.permission) });
+                        n += 1;
+                        log("[calltoken] mute sweep: a muted person's connection could publish a mic — muted again");
+                    } else if (known && padState.ok() && isNormalMuteRestriction(p.permission)) {
+                        // a fresh, readable check says nothing mutes this person: the normal mute's exact restriction on a
+                        // normal connection is this server's own (moderation, the sweep, the muted re-mint — nothing else
+                        // writes it) and is stale: lifted to the token's own grant (every source, the other bits kept)
+                        await lkRoomService("UpdateParticipant", room, { room, identity: id, permission: { ...normalMutePermission(p.permission), can_publish_sources: [] } });
+                        n += 1;
+                        log("[calltoken] mute sweep: lifted a stale normal-mute restriction (the person isn't muted)");
+                    }
+                } catch (e) {
+                    log(`[calltoken] ALERT pad sweep: couldn't act on a connection (${e?.message || e})${w.pad || w.watch || mutedNow ? " — removing it" : ""}`);
+                    if (w.pad || w.watch || mutedNow) await lkRoomService("RemoveParticipant", room, { room, identity: id }).catch(() => undefined);
+                }
+            }
+            return n;
+        });
+    }
+
+    /** The sweep (Astra r3 #1): every call on the call server — the state-free reserved-identity rules for everyone, then
+     *  each person's state-dependent step under their own lock. At start and every SWEEP_MS; rooms with a person mute in
+     *  force and a call running: every MUTE_SWEEP_MS. Never two at once: a request while one runs is MERGED into the next
+     *  run (a full one dominates; code review r3 P2 #7), and the promise returned settles when that coverage is done.
+     *  After a full sweep that listed every call, records of devices with no session anywhere are reclaimed (r3 P2 #8).
+     *  Returns how many were removed; never throws (a failed removal is logged as an ALERT). */
+    let sweeping = null;
+    let want = null;     // null = nothing pending; "all" | Set of rooms
+    function sweep(only = null) {
+        want = !only || want === "all" ? "all" : new Set([...(want || []), ...only]);
+        if (sweeping) return sweeping;
+        sweeping = (async () => {
+            let removed = 0;
+            while (want) {
+                const cover = want;
+                want = null;
+                removed += await sweepOnce(cover === "all" ? null : cover);
+            }
+            return removed;
+        })().finally(() => { sweeping = null; });
+        return sweeping;
+    }
+    async function sweepOnce(only) {
         let removed = 0;
+        let complete = !only;
+        const live = new Set();
         try {
-            const rooms = (await lkRoomService("ListRooms", "", {}))?.rooms || [];
+            const lr = await lkRoomService("ListRooms", "", {});
+            if (lr === null) throw new Error("the call server's room list answered 404"); // never "no calls" (r4 P2 #6)
+            let rooms = lr?.rooms || [];
+            if (only) rooms = rooms.filter((r) => only.has(r?.name));
             for (const r of rooms) {
                 if (!(Number(r?.num_participants ?? r?.numParticipants ?? 1) > 0) || typeof r?.name !== "string") continue;
                 try {
                     const list = await lkRoomService("ListParticipants", r.name, { room: r.name });
-                    removed += await removeReserved(r.name, list?.participants || []);
+                    if (list === null) continue; // no call in that room right now
+                    const ps = list?.participants || [];
+                    removed += await removeReserved(r.name, ps);
+                    const people = new Set();
+                    for (const p of ps) {
+                        const w = parseIdentity(String(p?.identity || ""));
+                        if (!w) continue;
+                        people.add(w.mxid);
+                        if (w.watch || w.pad) live.add(padKey(r.name, w.mxid, w.device));
+                    }
+                    for (const m of people) removed += await sweepPerson(r.name, m);
                 } catch (e) {
+                    complete = false;
                     // (a failed removal has logged its own ALERT; anything else — the list itself failed — is one here)
                     if (e?.message !== "reserved-identity removal failed") log(`[calltoken] ALERT watch sweep: one call couldn't be checked: ${e?.message || e}`);
                 }
             }
         } catch (e) {
+            complete = false;
             log(`[calltoken] ALERT watch sweep failed: ${e?.message || e}`);
         }
+        if (complete) padState.reclaim(live);
         return removed;
+    }
+
+    /** Step B (DESIGN §8 #17, code review r1 P2 #6, r2 P2 #4): the account's Pad devices in this call — devices with a live
+     *  Watch / Mic / Camera connection or a Watch / Pad token handed out in the last PAD_TTL — other than this device, at
+     *  the cap. Per device there is at most ONE current Pad session (each token retires the device's earlier ones; a
+     *  replaced Mic / Camera one is stale by its generation, a replaced Watch one by its identity: the sweep removes them). */
+    function overLimit(room, user, device, participants) {
+        const devs = padState.issuedDevices(room, user);
+        for (const p of participants) {
+            const w = parseIdentity(String(p?.identity || ""));
+            if (w && w.mxid === user && (w.watch || w.pad)) devs.add(w.device);
+        }
+        devs.delete(device);
+        return devs.size >= CALLTOKEN.PAD_PER_ACCOUNT;
+    }
+
+    /** The room's creators with unlimited power (room v12+ and its draft org.matrix.hydra.11: the creator and
+     *  additional_creators, never listed in power_levels — moderation.mjs creatorsOf, the same rule). */
+    function creatorsOf(state) {
+        const c = state.find((e) => e?.type === "m.room.create" && e?.state_key === "");
+        if (!c) return new Set();
+        const v = String(c.content?.room_version ?? "1");
+        if (!((/^\d+$/.test(v) && Number(v) >= 12) || v === "org.matrix.hydra.11")) return new Set();
+        const out = new Set(typeof c.sender === "string" ? [c.sender] : []);
+        for (const u of Array.isArray(c.content?.additional_creators) ? c.content.additional_creators : []) if (typeof u === "string") out.add(u);
+        return out;
+    }
+
+    /** The people the room's own records say a moderator muted (dev.tinhat.call.moderation, state key = the user without
+     *  '@', {muted: true}, written by someone whose power reaches that event type — default 50; a v12 creator always),
+     *  each unless an explicit unmute through this API came after the record. A record counts only when its sender may
+     *  moderate that person's call by /moderation/call's own rule (moderation.mjs callModerationDecision: the
+     *  moderate_calls permission and a HIGHER rank, never above the room's power levels): anyone can write the state
+     *  event from any Matrix client, so its sender is held to the same rule as the API route. Throws when the room (or a
+     *  space that governs it) can't be read. */
+    async function roomMuteSet(room) {
+        const out = new Set();
+        if (!ROOM_ID_RE.test(room)) return out; // the connection test's scratch room: no Matrix room, no records
+        const r = await hs.get(`/_synapse/admin/v1/rooms/${encodeURIComponent(room)}/state`, adminToken);
+        // (code review r5 P1) a 404 for a Matrix room id is UNKNOWN, never "nobody muted": fail closed
+        if (r.status === 404) throw new Error("room state said 404");
+        if (!r.ok || !Array.isArray(r.body?.state)) throw new Error(`room state said ${r.status}`);
+        const st = r.body.state;
+        const spaces = new Map();  // a governing space's state, read at most once per call
+        let roles;                 // the governing spaces' roles (callModerationRoles), worked out once, when needed
+        // indexed once per read (a room may hold many records): the members, and the only two events the rank rule reads
+        const members = new Map();
+        for (const e of st) if (e?.type === "m.room.member" && typeof e.state_key === "string") members.set(e.state_key, e);
+        const rankState = st.filter((e) => (e?.type === "m.room.create" || e?.type === "m.room.power_levels") && e?.state_key === "");
+        const readSpace = async (id) => {
+            if (spaces.has(id)) return spaces.get(id);
+            const sr = await hs.get(`/_synapse/admin/v1/rooms/${encodeURIComponent(id)}/state`, adminToken);
+            const v = sr.status === 404 ? null : (sr.ok && Array.isArray(sr.body?.state) ? sr.body.state : undefined);
+            if (v === undefined) throw new Error(`space state said ${sr.status}`);
+            spaces.set(id, v);
+            return v;
+        };
+        const creators = creatorsOf(st);
+        const plEv = st.find((e) => e?.type === "m.room.power_levels" && e?.state_key === "");
+        const pl = plEv?.content || {};
+        const need = Number(pl.events?.["dev.tinhat.call.moderation"] ?? pl.state_default ?? 50) || 0;
+        const create = st.find((e) => e?.type === "m.room.create" && e?.state_key === "");
+        const users = pl.users || {};
+        const levelOf = (u) => {
+            if (creators.has(u)) return Infinity;
+            if (!plEv) return u === create?.sender ? 100 : 0; // no power levels: the creator has 100
+            return Object.prototype.hasOwnProperty.call(users, u) ? Number(users[u]) || 0 : Number(pl.users_default ?? 0) || 0;
+        };
+        for (const ev of st) {
+            if (ev?.type !== "dev.tinhat.call.moderation" || typeof ev.state_key !== "string" || ev.content?.muted !== true) continue;
+            const who = `@${ev.state_key}`;
+            const un = padState.unmutedAt(room, who);
+            if (un && Number(ev.origin_server_ts ?? 0) < un) continue;
+            if (out.has(who) || !(levelOf(ev.sender) >= need) || typeof ev.sender !== "string") continue;
+            // a moderator who was kicked or banned since no longer holds anyone muted (leaving on their own keeps it)
+            const sm = members.get(ev.sender);
+            const ms = sm?.content?.membership;
+            if (ms === "ban" || (ms === "leave" && sm.sender !== ev.sender)) continue;
+            if (roles === undefined) {
+                try { roles = await callModerationRoles(room, st, readSpace); } catch (e) {
+                    if (e?.status !== 403) throw e;
+                    // more parent links than anyone can judge: the room's own power levels decide (an owner's mute still
+                    // counts, a lower moderator's about the owner still doesn't)
+                    log("[calltoken] a room links to too many spaces: its mute records are judged by its power levels");
+                    roles = [];
+                }
+            }
+            if (decideCallModeration(rankState, roles, ev.sender, who).allowed) out.add(who);
+        }
+        return out;
+    }
+    /** The ONE effective person mute (code review r3 P1 #1): the persisted state, or the room's own record. */
+    async function stateMuted(room, user) {
+        return (await roomMuteSet(room)).has(user);
+    }
+    // (code review r4 P1 #3) while the Pad state is unusable the API's own mutes are unknown: everyone counts as muted
+    // (normal tokens without the microphone, no Pad Mic) until the owner repairs it — fail closed, logged as an ALERT
+    const effectivelyMuted = async (room, user) => !padState.ok() || padState.isMuted(room, user) || (await stateMuted(room, user));
+
+    /**
+     * Step B (DESIGN §8 #7): before a device gets a new Watch / Pad token for a room, its EARLIER Pad connections there
+     * (Watch, Mic, Camera) leave the call, and the call is listed again to confirm. Throws when one couldn't be removed
+     * (the route then refuses to sign: an old Mic session and a new one never overlap). -> the participants left.
+     */
+    async function retireDevice(room, user, device, participants) {
+        const mine = (p) => { const w = parseIdentity(String(p?.identity || "")); return !!w && w.mxid === user && w.device === device && (w.watch || !!w.pad); };
+        const old = participants.filter(mine);
+        if (!old.length) return participants;
+        for (const p of old) {
+            try { await lkRoomService("RemoveParticipant", room, { room, identity: p.identity }); } catch (e) { log(`[calltoken] pad: an earlier session couldn't be retired: ${e?.message || e}`); }
+        }
+        const again = (await lkRoomService("ListParticipants", room, { room }))?.participants || [];
+        if (again.some(mine)) { log("[calltoken] ALERT pad: an earlier Pad session of a device is still in the call"); throw new Error("retire failed"); }
+        log(`[calltoken] pad: retired ${old.length} earlier Pad session(s) of a device`);
+        return again;
+    }
+
+    /**
+     * POST /calltoken/pad (public /livekit/jwt/pad), PAD-PHONE Step B: a Pad Mic or Camera token
+     * ({room, openid_token, device_id, mode: "mic" | "camera"}). The Watch route's checks (always on, local accounts, a
+     * fresh sign-in check, the caller's own device, a JOINED member), then: a Mic token never while a moderator has the
+     * person muted (403 server-muted), the device's earlier Pad sessions in this call retired first, at most
+     * PAD_PER_ACCOUNT live Pad connections per account per call, and a new generation stamped. No lk-jwt fallback, and a
+     * Watch request is never answered with a publishing token. The apps learn the modes from the well-known
+     * (features.pad_mic / pad_camera).
+     */
+    function padHandler() {
+        const padOk = !!(deps.lkKey && deps.lkSecret && deps.lkApiUrl);
+        return async (req, res) => {
+            res.set("Cache-Control", "no-store");
+            for (const [k, v] of Object.entries(CORS)) res.set(k, v);
+            if (!padOk) { req.resume?.(); return send(res, 404, { errcode: "M_NOT_FOUND", error: "not found" }); }
+            if (req.method === "OPTIONS") return res.status(200).end();
+            if (req.method !== "POST") return res.status(405).end();
+            const ip = clientKey(req);
+            if (!perClient.hit(ip)) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
+            const raw = await readBody(req);
+            if (!raw) return send(res, 413, { errcode: "M_TOO_LARGE", error: "request too large" });
+            let v;
+            try { v = JSON.parse(raw.toString("utf8")); } catch { return send(res, 400, { errcode: "M_BAD_JSON", error: "body is not valid JSON" }); }
+            if (!isObj(v)) return send(res, 400, { errcode: "M_BAD_JSON", error: "body must be a JSON object" });
+            const mode = v.mode;
+            if (mode !== "mic" && mode !== "camera") return send(res, 400, { errcode: "M_BAD_JSON", error: "mode must be \"mic\" or \"camera\"" });
+            const rest = { ...v };
+            delete rest.mode;
+            const r = parseRequest(JSON.stringify(rest), true);
+            if (r.error) return send(res, 400, { errcode: "M_BAD_JSON", error: r.error });
+            if (r.kind !== "legacy") return send(res, 400, { errcode: "M_BAD_JSON", error: "a Pad request is {room, openid_token, device_id, mode}" });
+            const o = r.openid, room = r.room, device = r.device_id;
+            const no = (reason, why, status = 403) => { log(`[calltoken] pad refused: ${why}`); return send(res, status, { errcode: "M_FORBIDDEN", error: "can't use the phone in that call", reason }); };
+            if (o.matrix_server_name !== serverName) return no("pad-local-only", "not an account of this server");
+            if (!DEVICE_RE.test(device)) return no("no-device", "no device id the Pad route serves");
+            let user;
+            try {
+                user = await localUser(o, ip, true);
+                if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
+                if (!ROOM_ID_RE.test(room)) return no("not-member", "not a room id");
+                if (!(await isMember(room, (set) => set.has(user)))) return no("not-member", "not a joined member");
+                const d = await hs.get(`/_synapse/admin/v2/users/${encodeURIComponent(user)}/devices/${encodeURIComponent(device)}`, adminToken);
+                if (d.status === 404) return no("not-your-device", "the device isn't the caller's");
+                if (!d.ok || d.body?.device_id !== device) throw new Error(`device lookup said ${d.status}`);
+            } catch (e) {
+                if (e?.message === "busy") { res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-in checks, try again shortly" }); }
+                log(`[calltoken] pad check failed: ${e?.message || e}`);
+                return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
+            }
+            // one step per person in this room at a time (all three routes and moderation): the retirement, the count, the
+            // mute check and the generation can't interleave
+            if (!padState.ok()) return send(res, 503, { errcode: "M_UNKNOWN", error: "the server's Pad state can't be read — ask the owner", reason: "pad-state" });
+            return padState.serial(room, user, async () => {
+                let gen;
+                try {
+                    if (mode === "mic" && (await effectivelyMuted(room, user))) return no("server-muted", "a moderator muted this person");
+                    let list = (await lkRoomService("ListParticipants", room, { room }))?.participants || [];
+                    // a reserved identity breaking its contract goes first (as on the Watch route), then this device's
+                    // earlier Pad sessions
+                    await removeReserved(room, list);
+                    list = (await lkRoomService("ListParticipants", room, { room }))?.participants || [];
+                    list = await retireDevice(room, user, device, list);
+                    if (overLimit(room, user, device, list)) return no("pad-limit", "too many Pad connections of this account in the call", 429);
+                    // code review r1 P1 #3: the last check right before signing — a mute set while this request waited on
+                    // the call server refuses it (moderation takes the same lock, so nothing interleaves from here on)
+                    if (mode === "mic" && (await effectivelyMuted(room, user))) return no("server-muted", "a moderator muted this person");
+                    gen = padState.advance(room, user, device);
+                    padState.noteIssued(room, user, device);
+                } catch (e) {
+                    log(`[calltoken] pad check failed: ${e?.message || e}`);
+                    return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
+                }
+                const jwt = signLk(padGrant({ key: deps.lkKey, user, device, room, mode, gen, nowS: Math.floor(wallNow() / 1000) }), deps.lkSecret);
+                log(`[calltoken] pad ${mode} token minted (local caller)`);
+                return send(res, 200, { url: deps.sfuUrl, jwt });
+            }).catch((e) => {
+                log(`[calltoken] pad failed: ${e?.message || e}`);
+                if (!res.headersSent) send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
+            });
+        };
     }
 
     /**
@@ -635,6 +1055,7 @@ export function createCallToken(deps) {
                 // a reserved identity holding publish rights in this call (one issued before ~ was reserved, or LiveKit's
                 // publish=X form) is removed BEFORE a Watch token exists, so the token can never resume it (Astra r3 #1)
                 await removeReserved(room, list?.participants || []);
+                // (Step B: the retirement, the account limit, the generation and the signing run under the person's lock below)
                 // (round 5: no "another device of yours is in this call" requirement any more — it was a UX tie, not a
                 // security property (DESIGN T6), and it refused the intended use: watching while your computer isn't in
                 // the call. A joined member's own device gets subscribe-only rights: strictly less than /sfu/get gives it.)
@@ -643,19 +1064,45 @@ export function createCallToken(deps) {
                 log(`[calltoken] watch check failed: ${e?.message || e}`);
                 return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
             }
-            const jwt = signLk(watchGrant({ key: deps.lkKey, user, device, room, nowS: Math.floor(wallNow() / 1000) }), deps.lkSecret);
-            log("[calltoken] watch token minted (local caller)");
-            return send(res, 200, { url: deps.sfuUrl, jwt });
+            // Step B (DESIGN §8 #7, code review r1 P2 #6/#7): this device's earlier Pad sessions in this call (a Mic one above
+            // all) leave first, the account limit counts Watch too, and its generation advances — all under the person's
+            // lock, signing included (a Watch token carries no tinhat.gen: 12.1.9 apps check its exact attributes)
+            if (!padState.ok()) return send(res, 503, { errcode: "M_UNKNOWN", error: "the server's Pad state can't be read — ask the owner", reason: "pad-state" });
+            return padState.serial(room, user, async () => {
+                try {
+                    const again = (await lkRoomService("ListParticipants", room, { room }))?.participants || [];
+                    const left = await retireDevice(room, user, device, again);
+                    if (overLimit(room, user, device, left)) return no("pad-limit", "too many Pad connections of this account in the call");
+                    padState.advance(room, user, device);
+                    padState.noteIssued(room, user, device);
+                } catch (e) {
+                    log(`[calltoken] watch check failed: ${e?.message || e}`);
+                    return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
+                }
+                const grant = watchGrant({ key: deps.lkKey, user, device, room, nowS: Math.floor(wallNow() / 1000) });
+                try { padState.noteWatch(room, user, device, grant.sub); } catch (e) {
+                    return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
+                }
+                const jwt = signLk(grant, deps.lkSecret);
+                log("[calltoken] watch token minted (local caller)");
+                return send(res, 200, { url: deps.sfuUrl, jwt });
+            }).catch((e) => {
+                log(`[calltoken] watch failed: ${e?.message || e}`);
+                if (!res.headersSent) send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
+            });
         };
     }
 
     if (deps.lkKey && deps.lkSecret && deps.lkApiUrl && deps.sweep !== false) {
         setTimeout(() => void sweep(), 5_000).unref?.();
         setInterval(() => void sweep(), CALLTOKEN.SWEEP_MS).unref?.();
+        setInterval(() => { const m = padState.mutedRooms(); if (m.size) void sweep(m); }, CALLTOKEN.MUTE_SWEEP_MS).unref?.(); // (coalesced; only rooms with a call running)
     }
     return {
         handler,
         watchHandler,
+        padHandler,
+        padState,
         sweep,
         notFound: (_req, res) => send(res, 404, { errcode: "M_NOT_FOUND", error: "not found" }),
         _users: users,
@@ -668,6 +1115,7 @@ export function installCallToken(app, deps) {
     app.all("/calltoken/sfu/get", safe("calltoken", ct.handler("/sfu/get")));
     app.all("/calltoken/get_token", safe("calltoken", ct.handler("/get_token")));
     app.all("/calltoken/watch", safe("calltoken", ct.watchHandler()));
+    app.all("/calltoken/pad", safe("calltoken", ct.padHandler()));
     app.all(/^\/calltoken(?:\/|$)/, ct.notFound);
     return ct;
 }

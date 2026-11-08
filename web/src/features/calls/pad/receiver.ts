@@ -81,6 +81,8 @@ export interface PadSnapshot {
     sound: string;
     /** padGate(inCall, callPerms) */
     gate: { allowed: boolean; hint: string };
+    /** PAD-PHONE Step B: the Pad session (sid) whose phone holds this device's mic ("" / absent = none) */
+    takeBy?: string;
   };
   /** the people in the call with me (bare ids, not me, devices folded, no recorder) */
   people: PadPerson[];
@@ -113,6 +115,12 @@ export interface PadExec {
   partyNext?(url: string): void;
   /** `sid` / `re` = the command's session and seq: its outcome comes back in call.party.add */
   partyAdd?(room: string, url: string, now: boolean, sid: string, re: number): void;
+  /** PAD-PHONE Step B: the phone of session `sid` (device `device`) takes this device's mic / gives it back */
+  takeover?(on: boolean, sid: string, device: string): void;
+  /** the session holding the mic ("" = none): checked whenever sessions end */
+  takeoverHolder?(): string;
+  /** the holder's session ended (lapsed, closed, replaced, refused, Pad off, reset): the mic goes back */
+  takeoverEnded?(sid: string): void;
 }
 
 /** me.mic of the state: a moderator's lock first, then push to talk, then the mute. */
@@ -128,7 +136,7 @@ export function ctxOf(snap: PadSnapshot, padOn: boolean): PadCtx {
     padOn,
     call: snap.call ? { room: snap.call.room, gen: snap.call.gen } : null,
     participants: snap.people.map((p) => p.u),
-    me: { micMuted: snap.me.micMuted, ptt: snap.me.ptt, serverMuted: snap.me.serverMuted, deaf: snap.me.deaf, brb: snap.me.brb, soundRole: snap.me.gate.allowed },
+    me: { micMuted: snap.me.micMuted, ptt: snap.me.ptt, serverMuted: snap.me.serverMuted, deaf: snap.me.deaf, brb: snap.me.brb, soundRole: snap.me.gate.allowed, takeBy: snap.me.takeBy ?? "" },
     sounds: snap.sounds,
     party: snap.party ? { in: snap.party.in, host: snap.party.host, url: snap.party.url, playing: snap.party.playing } : null,
   };
@@ -141,7 +149,7 @@ export function stateCall(snap: PadSnapshot): PadStateIn["call"] {
     room: snap.call.room,
     gen: snap.call.gen,
     since: snap.call.since,
-    me: { mic: micWord(snap.me), deaf: snap.me.deaf, brb: snap.me.brb, talk: snap.me.talk, sound: snap.me.sound, gate: snap.me.gate },
+    me: { mic: micWord(snap.me), deaf: snap.me.deaf, brb: snap.me.brb, talk: snap.me.talk, sound: snap.me.sound, gate: snap.me.gate, takeBy: snap.me.takeBy ?? "" },
     people: snap.people.map((p) => ({ u: p.u, talk: p.talk, micOff: p.micOff, away: p.away, share: p.share === true, vol: { ...p.vol }, muted: { ...p.muted } })),
     recent: snap.recent.map((r) => ({ name: r.name, url: r.url, emoji: r.emoji })),
     party: snap.party
@@ -165,7 +173,7 @@ export function stateCall(snap: PadSnapshot): PadStateIn["call"] {
  * Run one ACCEPTED command (`verdict.ok && verdict.run`) through the receiver's own command for it. Returns what it
  * called (for the log). `open` / `ping` / `close` call nothing.
  */
-export function execPadCmd(cmd: PadCmd, snap: PadSnapshot, x: PadExec, meta: { sid: string; re: number } = { sid: "", re: 0 }): string {
+export function execPadCmd(cmd: PadCmd, snap: PadSnapshot, x: PadExec, meta: { sid: string; re: number; device?: string } = { sid: "", re: 0 }): string {
   switch (cmd.op) {
     case "sound.play": {
       const ref = snap.named.find((s) => s.url === cmd.url);
@@ -239,6 +247,10 @@ export function execPadCmd(cmd: PadCmd, snap: PadSnapshot, x: PadExec, meta: { s
       if (!snap.call || !x.partyAdd) return "";
       x.partyAdd(snap.call.room, cmd.url, cmd.now, meta.sid, meta.re);
       return cmd.now ? "addLink(playNow)" : "addLink";
+    case "takeover.mic":
+      if (!x.takeover) return "";
+      x.takeover(cmd.on, meta.sid, meta.device ?? "");
+      return `takeover(${cmd.on})`;
     default:
       return "";
   }
@@ -343,7 +355,7 @@ export class PadReceiver {
       else this.log.debug?.(line);
     } else if (!v.ok) this.log.info(`REFUSED ${op} seq ${v.re} from ${who}: ${v.why}`);
     if (v.ok && v.run && v.cmd) {
-      const did = execPadCmd(v.cmd, snap, this.d.exec, { sid: v.sid, re: v.re });
+      const did = execPadCmd(v.cmd, snap, this.d.exec, { sid: v.sid, re: v.re, device: facts.senderDevice });
       this.log.info(`${v.cmd.op} seq ${v.re} from ${who} → ${did}`);
     }
     for (const sid of v.evicted) {
@@ -362,8 +374,17 @@ export class PadReceiver {
     // what the command changed reaches the OTHER sessions too (and a live slider push, which is never answered)
     if (v.ok && v.run) this.poke();
     if (this.table.live(now).length !== liveBefore || v.evicted.length || (v.ok && (op === "open" || op === "close"))) this.d.changed?.();
+    this.checkTake();
     this.armSweep();
     return v;
+  }
+
+  /** PAD-PHONE Step B: the takeover is leased to its session — when that session is no longer live, the mic goes back. */
+  private checkTake(): void {
+    const sid = this.d.exec.takeoverHolder?.() ?? "";
+    if (!sid || this.table.get(sid, this.d.now())) return;
+    this.log.info(`the Pad session holding the mic ended — giving the mic back`);
+    this.d.exec.takeoverEnded?.(sid);
   }
 
   private ctx(snap: PadSnapshot): PadCtx {
@@ -373,7 +394,9 @@ export class PadReceiver {
   /** Send one state to `sid` on `device` (a reply goes at once; a push / final checks rule 10 first). */
   private state(sid: string, device: string, a: { re: number; ok: boolean; why: string; call: PadStateIn["call"] }, isReply: boolean): void {
     const now = this.d.now();
-    const { state } = buildState({ sid, rseq: ++this.rseq, rt: now, re: a.re, ok: a.ok, why: a.why, call: a.call });
+    // (Step B) `take` is per session: true only in the holder's own state
+    const call = a.call ? { ...a.call, me: { ...a.call.me, take: !!a.call.me.takeBy && a.call.me.takeBy === sid } } : null;
+    const { state } = buildState({ sid, rseq: ++this.rseq, rt: now, re: a.re, ok: a.ok, why: a.why, call });
     this.table.markPushed(sid, now);
     // what a LIVE session was last sent (nothing is kept for a sid without one: Astra 2026-10-25 #5)
     if (this.table.get(sid, now)?.device === device) this.sent.set(sid, { body: bodySig(a.call), talk: talkSig(a.call) });
@@ -507,6 +530,7 @@ export class PadReceiver {
     this.table.refuse(device, now);
     for (const sid of sids) this.final(sid, device, "closed");
     this.log.info(`${device} closed with × — refused until the call changes`);
+    this.checkTake();
     this.d.changed?.();
   }
 
@@ -516,6 +540,7 @@ export class PadReceiver {
     const live = this.table.live(now).map((s) => ({ sid: s.sid, device: s.device }));
     this.table.clear(now);
     for (const s of live) this.final(s.sid, s.device, "off");
+    this.checkTake();
     if (live.length) this.d.changed?.();
   }
 
@@ -527,6 +552,7 @@ export class PadReceiver {
     this.pokeTimer = this.sweepTimer = null;
     this.table.clear(this.d.now());
     this.sent.clear();
+    this.checkTake();
     this.d.changed?.();
   }
 
@@ -541,6 +567,7 @@ export class PadReceiver {
       }
       if (gone.length) {
         this.log.info(`${gone.length} Pad session(s) lapsed`);
+        this.checkTake();
         this.d.changed?.();
       }
       this.armSweep();

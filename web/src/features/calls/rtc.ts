@@ -11,7 +11,7 @@ import { callerMembership } from "./memberprobe";
 import { MATRIX_ORIGIN, bearerAllowed } from "@/core/bearer";
 import { getPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
-import { applyHostPolicy, normalizeFocusUrl, postSfuGet, watchTokenProblemRaw, jwtPayloadText, callHostsOf, contentLive, focusDecision, ownFoci, rosterCounts, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
+import { applyHostPolicy, normalizeFocusUrl, postSfuGet, watchTokenProblemRaw, padTokenProblemRaw, jwtPayloadText, type PadMode, callHostsOf, contentLive, focusDecision, ownFoci, rosterCounts, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
 import { clientMarker } from "./av1";
 import { deviceStateKey, nativeDeviceId, pageOwnsMembership } from "@/features/native";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, MEMBERSHIP_EXPIRES_MS, defaultFocusUrl, displayName, avatarMxc, sleep, withTimeout, errText } from "./util";
@@ -230,6 +230,36 @@ export async function mintWatchToken(focus: ApprovedFocus, userId: string, devic
   return tok;
 }
 export const WATCH_NOT_HERE_TEXT = "This server can't do Watch yet";
+
+/** PAD-PHONE Step B: a Pad Mic / Camera token from the own server's Pad route (`{service}/pad`, the /sfu/get body + `mode`,
+ *  the same once-only / no-redirect rules as Watch). Only the own server's focus; the answer must be that mode's exact
+ *  profile (callrules.padTokenProblem) or the join fails — never a normal or a Watch token instead. */
+export async function mintPadToken(focus: ApprovedFocus, userId: string, deviceId: string, mode: PadMode): Promise<SfuToken> {
+  if (focus?.approvedAs !== "own" || !focus.serviceUrl) throw new Error(PAD_NOT_HERE_TEXT);
+  const n = normalizeFocusUrl(focus.serviceUrl);
+  if (!("url" in n) || n.url !== focus.serviceUrl) throw new Error("the call service's address isn't a valid https address");
+  const c = peekClient();
+  if (!c) throw new Error("not signed in");
+  const openid = await withTimeout(c.getOpenIdToken(), 15000, "the call sign-in (OpenID) request timed out");
+  const tok = await postSfuGet(
+    (url, init) => fetch(url, init),
+    focus.serviceUrl,
+    JSON.stringify({ room: focus.alias, openid_token: openid, device_id: deviceId, mode }),
+    AbortSignal.timeout(20000),
+    "/pad",
+  ).catch((e: unknown) => {
+    const t = errText(e);
+    if ((e as { name?: string })?.name === "TimeoutError") throw new Error("the phone's sign-in timed out (20s)");
+    if (/HTTP 40[45]/.test(t)) throw new Error(PAD_NOT_HERE_TEXT);
+    if (/server-muted/.test(t)) throw new Error("A moderator muted you in this call — the phone can't take the mic");
+    if (/pad-limit/.test(t)) throw new Error("Too many of your devices are using Pad in this call");
+    throw e;
+  });
+  const why = padTokenProblemRaw(jwtPayloadText(tok.jwt), { identity: `${userId}:${deviceId}`, room: focus.alias, mode });
+  if (why) throw new Error(`the server's Pad ${mode} pass isn't what it should be (${why}) — not joining`);
+  return tok;
+}
+export const PAD_NOT_HERE_TEXT = "This server can't use the phone as a mic or camera yet";
 
 // ---- membership content / publish / refresh / tombstone -------------------------------------------
 

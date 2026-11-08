@@ -1,6 +1,9 @@
 // Call moderation — the ONE privileged path into LiveKit that Tin Hat clients may call.
 //
-//   POST /moderation/call   { room_id, action: "mute"|"unmute"|"disconnect", target: "<mxid>:<DEVICE>" }
+//   POST /moderation/call   { room_id, action: "mute"|"unmute"|"disconnect", target: "<mxid>:<DEVICE>", scope?: "person" }
+//   scope "person" (PAD-PHONE Step B, 0.3.14): the action covers EVERY current connection of the target's person (their
+//   computer, their phone's Pad Watch / Mic / Camera connection) and is answered per device; a person mute also stays
+//   on the person (padstate.mjs): the Pad route refuses them a Mic token until an unmute.
 //   Authorization: Bearer <the caller's Matrix access token>
 //
 // Why this lives here: a moderator muting someone in a call cannot be a client-side request
@@ -34,6 +37,8 @@
 // LiveKit facts this relies on (verified 2026-09-17 against lk-jwt-service logs): the LiveKit
 // room name is the Matrix room id, and a participant identity is `<mxid>:<DEVICE_ID>`.
 import { isConnectionOf, parseIdentity } from "./identity.mjs";
+import { createPadState } from "./padstate.mjs";
+import { isAudioTrack, isNormalMuteRestriction, normalMutePermission, padMicPermission } from "./callmute.mjs";
 
 const CALL_MOD_TYPE = "dev.tinhat.call.moderation";
 const ROLE_TYPE = "dev.tinhat.role";
@@ -67,6 +72,161 @@ class Ttl {
     set(k, v) { this.m.set(k, { v, exp: Date.now() + this.ms }); if (this.m.size > 512) this.m.delete(this.m.keys().next().value); return v; }
 }
 
+function membership(state, mxid) {
+    const ev = state.find((e) => e.type === "m.room.member" && e.state_key === mxid);
+    return ev?.content?.membership || "leave";
+}
+
+/** Room v12 and later (and its draft, org.matrix.hydra.11): the creator and additional_creators have unlimited power
+ *  and are never listed in power_levels (review of 116d103, #8: they were ignored). Others: nobody. */
+function creatorsOf(state) {
+    const c = state.find((e) => e.type === "m.room.create" && e.state_key === "");
+    if (!c) return new Set();
+    const v = String(c.content?.room_version ?? "1");
+    if (!((/^\d+$/.test(v) && Number(v) >= 12) || v === "org.matrix.hydra.11")) return new Set();
+    const out = new Set(typeof c.sender === "string" ? [c.sender] : []);
+    for (const u of Array.isArray(c.content?.additional_creators) ? c.content.additional_creators : []) if (typeof u === "string") out.add(u);
+    return out;
+}
+
+function powerLevel(state, mxid) {
+    if (creatorsOf(state).has(mxid)) return Infinity;
+    const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
+    const users = pl.users || {};
+    const v = Object.prototype.hasOwnProperty.call(users, mxid) ? users[mxid] : (pl.users_default ?? 0);
+    return Number(v) || 0;
+}
+
+function modThreshold(state) {
+    const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
+    const ev = pl.events || {};
+    return Object.prototype.hasOwnProperty.call(ev, CALL_MOD_TYPE) ? Number(ev[CALL_MOD_TYPE]) : 50;
+}
+
+/** The power level a state event of `type` needs in a room (events[type] ?? state_default ?? 50). */
+function stateLevel(state, type) {
+    const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
+    const ev = pl.events || {};
+    if (Object.prototype.hasOwnProperty.call(ev, type)) return Number(ev[type]) || 0;
+    return Number(pl.state_default ?? 50) || 0;
+}
+
+/** Users with authority in a room (their power level reaches m.room.power_levels'), joined ones only when asked. */
+function authorities(state, joinedOnly) {
+    const need = stateLevel(state, "m.room.power_levels");
+    const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
+    const out = new Set();
+    for (const u of [...creatorsOf(state), ...Object.keys(pl.users || {})]) {
+        if (powerLevel(state, u) < need) continue;
+        if (joinedOnly && membership(state, u) !== "join") continue;
+        out.add(u);
+    }
+    return out;
+}
+
+/**
+ * The spaces whose roles govern this room: [{id, state}] (see the rule at the top). `readState(roomId)` reads another
+ * room's state (null = not on this server). Throws when a space the room names can't be read (the caller answers 502:
+ * an established binding never fails open).
+ */
+async function governingSpaces(roomId, state, readState) {
+    const links = state.filter((e) => e.type === "m.space.parent" && typeof e.state_key === "string" && e.state_key !== roomId
+        && ROOM_ID_RE.test(e.state_key));                        // a key that can't be a room is no space
+    if (!links.length) return [];
+    // every link is read (none may be skipped: skipping one could drop a binding), so their number is bounded
+    if (links.length > MAX_PARENT_LINKS) throw Object.assign(new Error("too many parent links"), { status: 403 });
+    const roomAuthority = stateLevel(state, "m.room.power_levels");
+    const roomRunners = authorities(state, false);
+    const out = [];
+    for (const link of links) {
+        const linked = Array.isArray(link.content?.via) && link.content.via.length > 0;
+        const byAuthority = typeof link.sender === "string" && powerLevel(state, link.sender) >= roomAuthority;
+        if (byAuthority && !linked) continue;                    // the room's own authority unlinked it
+        const ps = await readState(link.state_key);              // throws -> 502
+        if (!ps) continue;                                       // not on this server: nothing to read roles from
+        if (!byAuthority) {
+            // someone below the room's authority set (or cleared) this link: only a space run by the room counts
+            const spaceRunners = authorities(ps, true);
+            if (![...spaceRunners].some((u) => roomRunners.has(u))) continue;
+            if (linked) {
+                const child = ps.find((e) => e.type === "m.space.child" && e.state_key === roomId);
+                const listed = !!child && Array.isArray(child.content?.via) && child.content.via.length > 0;
+                const unlistedByNobody = !!child && !listed && !(typeof child.sender === "string"
+                    && powerLevel(ps, child.sender) >= stateLevel(ps, "m.room.power_levels"));
+                if (!listed && !unlistedByNobody) continue;      // a one-sided link by a moderator binds nothing
+            }
+            // an emptied link set by someone below the room's authority still binds (fail closed)
+        }
+        out.push({ id: link.state_key, state: ps });
+    }
+    return out;
+}
+
+/** Roles as the client's roles_model sees them. active=false when the space never set roles up. */
+function rolesOf(state) {
+    const roles = new Map();
+    for (const e of state) {
+        if (e.type !== ROLE_TYPE || !e.content || !e.content.name) continue;
+        roles.set(e.state_key, {
+            rank: e.state_key === EVERYONE ? 0 : Math.max(0, Math.min(100, Number(e.content.rank) || 0)),
+            perms: new Set(Array.isArray(e.content.permissions) ? e.content.permissions.map(String) : []),
+        });
+    }
+    const members = new Map();
+    for (const e of state) {
+        if (e.type !== MEMBER_ROLES_TYPE || !e.content) continue;
+        const list = Array.isArray(e.content.roles) ? e.content.roles.map(String) : [];
+        members.set("@" + e.state_key, list);
+    }
+    const active = roles.has(EVERYONE);
+    const rankOf = (mxid) => (members.get(mxid) || []).reduce((m, id) => Math.max(m, roles.get(id)?.rank ?? 0), 0);
+    const has = (mxid, perm) => {
+        if (roles.get(EVERYONE)?.perms.has(perm)) return true;
+        return (members.get(mxid) || []).some((id) => roles.get(id)?.perms.has(perm));
+    };
+    return { active, rankOf, has };
+}
+
+/**
+ * May `me` moderate `targetMxid`'s call in this room (the rule at the top)? -> {allowed, why, rolesActive}. The ONE
+ * rank rule: /moderation/call asks it for a request, and the call-token side asks it for each of the room's own mute
+ * records (dev.tinhat.call.moderation written as raw state), so a record counts only when its sender could have muted
+ * that person here. Throws like governingSpaces (status 403: too many parent links; else the spaces couldn't be read).
+ */
+export async function callModerationDecision(roomId, state, me, targetMxid, readState) {
+    return decideCallModeration(state, await callModerationRoles(roomId, state, readState), me, targetMxid);
+}
+
+/** The roles of every governing space that has them set up (the part of the rule that doesn't depend on who asks):
+ *  worked out once per room, then decideCallModeration for each pair. Throws like governingSpaces. */
+export async function callModerationRoles(roomId, state, readState) {
+    const governing = await governingSpaces(roomId, state, readState);
+    return governing.map((g) => rolesOf(g.state)).filter((r) => r.active);
+}
+
+/** The rank rule for one pair, given callModerationRoles' answer ([] = the room's power levels decide). */
+export function decideCallModeration(state, active, me, targetMxid) {
+    if (me === targetMxid) return { allowed: false, why: "You can't moderate yourself", rolesActive: false };
+    let allowed, why;
+    if (active.length) {
+        const myPl = powerLevel(state, me), theirPl = powerLevel(state, targetMxid);
+        allowed = true;
+        for (const roles of active) {
+            const mine = roles.rankOf(me), theirs = roles.rankOf(targetMxid);
+            if (!roles.has(me, "moderate_calls")) { allowed = false; why = "You can't moderate calls in this space"; break; }
+            if (mine <= theirs) { allowed = false; why = "They rank at or above you"; break; }
+        }
+        // a roles rank never beats the call room's own power levels (M4)
+        if (allowed && (theirPl > myPl || (theirPl >= 100 && theirPl >= myPl))) { allowed = false; why = "They rank at or above you"; }
+    } else {
+        const mine = powerLevel(state, me), theirs = powerLevel(state, targetMxid);
+        if (mine < modThreshold(state)) { allowed = false; why = "You can't moderate calls in this room"; }
+        else if (mine <= theirs) { allowed = false; why = "They rank at or above you"; }
+        else allowed = true;
+    }
+    return { allowed, why, rolesActive: active.length > 0 };
+}
+
 /**
  * Mount the endpoint. `deps` are the host process' own helpers so this file holds no secret
  * of its own: { requireMatrixUser, synapse, adminToken, lkApiUrl, lkKey, lkSecret, b64u, createHmac, log }.
@@ -80,6 +240,7 @@ export function installModeration(app, deps) {
         return { dropFromCall: async () => 0 };
     }
 
+    const padState = deps.padState || createPadState();
     const stateCache = new Ttl(10_000);   // room id -> state events (admin API)
     const rate = new Map();               // mxid -> [timestamps]
 
@@ -118,119 +279,6 @@ export function installModeration(app, deps) {
         return stateCache.set(roomId, r.body.state || []);
     }
 
-    function membership(state, mxid) {
-        const ev = state.find((e) => e.type === "m.room.member" && e.state_key === mxid);
-        return ev?.content?.membership || "leave";
-    }
-
-    /** Room v12 and later (and its draft, org.matrix.hydra.11): the creator and additional_creators have unlimited power
-     *  and are never listed in power_levels (review of 116d103, #8: they were ignored). Others: nobody. */
-    function creatorsOf(state) {
-        const c = state.find((e) => e.type === "m.room.create" && e.state_key === "");
-        if (!c) return new Set();
-        const v = String(c.content?.room_version ?? "1");
-        if (!((/^\d+$/.test(v) && Number(v) >= 12) || v === "org.matrix.hydra.11")) return new Set();
-        const out = new Set(typeof c.sender === "string" ? [c.sender] : []);
-        for (const u of Array.isArray(c.content?.additional_creators) ? c.content.additional_creators : []) if (typeof u === "string") out.add(u);
-        return out;
-    }
-
-    function powerLevel(state, mxid) {
-        if (creatorsOf(state).has(mxid)) return Infinity;
-        const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
-        const users = pl.users || {};
-        const v = Object.prototype.hasOwnProperty.call(users, mxid) ? users[mxid] : (pl.users_default ?? 0);
-        return Number(v) || 0;
-    }
-
-    function modThreshold(state) {
-        const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
-        const ev = pl.events || {};
-        return Object.prototype.hasOwnProperty.call(ev, CALL_MOD_TYPE) ? Number(ev[CALL_MOD_TYPE]) : 50;
-    }
-
-    /** The power level a state event of `type` needs in a room (events[type] ?? state_default ?? 50). */
-    function stateLevel(state, type) {
-        const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
-        const ev = pl.events || {};
-        if (Object.prototype.hasOwnProperty.call(ev, type)) return Number(ev[type]) || 0;
-        return Number(pl.state_default ?? 50) || 0;
-    }
-
-    /** Users with authority in a room (their power level reaches m.room.power_levels'), joined ones only when asked. */
-    function authorities(state, joinedOnly) {
-        const need = stateLevel(state, "m.room.power_levels");
-        const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
-        const out = new Set();
-        for (const u of [...creatorsOf(state), ...Object.keys(pl.users || {})]) {
-            if (powerLevel(state, u) < need) continue;
-            if (joinedOnly && membership(state, u) !== "join") continue;
-            out.add(u);
-        }
-        return out;
-    }
-
-    /**
-     * The spaces whose roles govern this room: [{id, state}] (see the rule at the top). Throws when a space the room
-     * names can't be read (the caller answers 502: an established binding never fails open).
-     */
-    async function governingSpaces(roomId, state) {
-        const links = state.filter((e) => e.type === "m.space.parent" && typeof e.state_key === "string" && e.state_key !== roomId
-            && ROOM_ID_RE.test(e.state_key));                        // a key that can't be a room is no space
-        if (!links.length) return [];
-        // every link is read (none may be skipped: skipping one could drop a binding), so their number is bounded
-        if (links.length > MAX_PARENT_LINKS) throw Object.assign(new Error("too many parent links"), { status: 403 });
-        const roomAuthority = stateLevel(state, "m.room.power_levels");
-        const roomRunners = authorities(state, false);
-        const out = [];
-        for (const link of links) {
-            const linked = Array.isArray(link.content?.via) && link.content.via.length > 0;
-            const byAuthority = typeof link.sender === "string" && powerLevel(state, link.sender) >= roomAuthority;
-            if (byAuthority && !linked) continue;                    // the room's own authority unlinked it
-            const ps = await roomState(link.state_key);              // throws -> 502
-            if (!ps) continue;                                       // not on this server: nothing to read roles from
-            if (!byAuthority) {
-                // someone below the room's authority set (or cleared) this link: only a space run by the room counts
-                const spaceRunners = authorities(ps, true);
-                if (![...spaceRunners].some((u) => roomRunners.has(u))) continue;
-                if (linked) {
-                    const child = ps.find((e) => e.type === "m.space.child" && e.state_key === roomId);
-                    const listed = !!child && Array.isArray(child.content?.via) && child.content.via.length > 0;
-                    const unlistedByNobody = !!child && !listed && !(typeof child.sender === "string"
-                        && powerLevel(ps, child.sender) >= stateLevel(ps, "m.room.power_levels"));
-                    if (!listed && !unlistedByNobody) continue;      // a one-sided link by a moderator binds nothing
-                }
-                // an emptied link set by someone below the room's authority still binds (fail closed)
-            }
-            out.push({ id: link.state_key, state: ps });
-        }
-        return out;
-    }
-
-    /** Roles as the client's roles_model sees them. active=false when the space never set roles up. */
-    function rolesOf(state) {
-        const roles = new Map();
-        for (const e of state) {
-            if (e.type !== ROLE_TYPE || !e.content || !e.content.name) continue;
-            roles.set(e.state_key, {
-                rank: e.state_key === EVERYONE ? 0 : Math.max(0, Math.min(100, Number(e.content.rank) || 0)),
-                perms: new Set(Array.isArray(e.content.permissions) ? e.content.permissions.map(String) : []),
-            });
-        }
-        const members = new Map();
-        for (const e of state) {
-            if (e.type !== MEMBER_ROLES_TYPE || !e.content) continue;
-            const list = Array.isArray(e.content.roles) ? e.content.roles.map(String) : [];
-            members.set("@" + e.state_key, list);
-        }
-        const active = roles.has(EVERYONE);
-        const rankOf = (mxid) => (members.get(mxid) || []).reduce((m, id) => Math.max(m, roles.get(id)?.rank ?? 0), 0);
-        const has = (mxid, perm) => {
-            if (roles.get(EVERYONE)?.perms.has(perm)) return true;
-            return (members.get(mxid) || []).some((id) => roles.get(id)?.perms.has(perm));
-        };
-        return { active, rankOf, has };
-    }
 
     function rateLimited(mxid) {
         const now = Date.now();
@@ -245,31 +293,33 @@ export function installModeration(app, deps) {
         return participants.find((p) => p.identity === identity) || null;
     }
 
+    // PAD-PHONE Step B: a Pad Mic connection is muted / unmuted within its token's grant (callmute.mjs padMicPermission);
+    // never the normal mute's "every source but the mic" or the unmute's "every source" (the sweep would treat that as a
+    // breach — and a wider grant is never written to a Pad connection)
     async function doMute(room, p) {
         let tracksMuted = 0;
+        const pad = parseIdentity(String(p.identity || ""))?.pad;
         for (const t of p.tracks || []) {
-            const type = String(t.type || "");
-            if (type !== "AUDIO" && type !== "1") continue;
+            // (Step B code review r1 P2 #8) AUDIO = "AUDIO" / 0 / "0" / left out (protojson's zero value); VIDEO never
+            if (!isAudioTrack(t)) continue;
             await twirp("MutePublishedTrack", room, { room, identity: p.identity, track_sid: t.sid, muted: true });
             tracksMuted += 1;
         }
         const cur = p.permission;
-        await twirp("UpdateParticipant", room, {
-            room, identity: p.identity,
-            permission: {
-                can_subscribe: permBool(cur, "can_subscribe", "canSubscribe"),
-                can_publish: permBool(cur, "can_publish", "canPublish"),
-                can_publish_data: permBool(cur, "can_publish_data", "canPublishData"),
-                can_update_metadata: permBool(cur, "can_update_metadata", "canUpdateMetadata"),
-                hidden: permBool(cur, "hidden", "hidden"),
-                can_publish_sources: MUTED_PUBLISH_SOURCES,
-            },
-        });
+        if (pad === "mic") {
+            await twirp("UpdateParticipant", room, { room, identity: p.identity, permission: padMicPermission(cur, true) });
+            return tracksMuted;
+        }
+        await twirp("UpdateParticipant", room, { room, identity: p.identity, permission: normalMutePermission(cur) });
         return tracksMuted;
     }
 
     async function doUnmute(room, p) {
         const cur = p.permission;
+        if (parseIdentity(String(p.identity || ""))?.pad === "mic") {
+            await twirp("UpdateParticipant", room, { room, identity: p.identity, permission: padMicPermission(cur, false) });
+            return;
+        }
         await twirp("UpdateParticipant", room, {
             room, identity: p.identity,
             permission: {
@@ -285,15 +335,18 @@ export function installModeration(app, deps) {
 
     app.post("/moderation/call", requireMatrixUser, async (req, res) => {
         const me = req.matrixUser;
-        const { room_id: roomId, action, target } = req.body || {};
+        const { room_id: roomId, action, target, scope } = req.body || {};
         const m = parseIdentity(target);
-        if (typeof roomId !== "string" || !ROOM_ID_RE.test(roomId) || !ACTIONS.has(action) || !m) {
+        if (typeof roomId !== "string" || !ROOM_ID_RE.test(roomId) || !ACTIONS.has(action) || !m || !(scope === undefined || scope === "person" || scope === "device")) {
             return res.status(400).json({ error: "room_id, action (mute|unmute|disconnect) and target (<mxid>:<device>) are required" });
         }
+        const person = scope === "person";
         const targetMxid = m.mxid;
         // a Pad Watch connection publishes nothing and may never be given publish rights: mute/unmute don't apply to it
-        // (Disconnect does)
-        if (m.watch && action !== "disconnect") return res.status(409).json({ error: "They're only watching (nothing to mute)", reason: "watching" });
+        // (Disconnect does); nor to a Pad Camera connection (Step B: it publishes only its camera, which a call mute
+        // leaves on for everyone). A person-wide action passes over them.
+        if (!person && m.watch && action !== "disconnect") return res.status(409).json({ error: "They're only watching (nothing to mute)", reason: "watching" });
+        if (!person && m.pad === "cam" && action !== "disconnect") return res.status(409).json({ error: "That's only their camera (nothing to mute)", reason: "camera-only" });
         const line = (status, extra = "") => log(`[moderation] ${me} ${action} ${target} in ${roomId} -> ${status}${extra ? " " + extra : ""}`);
         if (targetMxid === me) { line(400, "self"); return res.status(400).json({ error: "You can't moderate yourself" }); }
         if (rateLimited(me)) { line(429); return res.status(429).json({ error: "Slow down — too many moderation requests" }); }
@@ -308,41 +361,100 @@ export function installModeration(app, deps) {
         if (membership(state, me) !== "join") { line(403, "not joined"); return res.status(403).json({ error: "You're not in that room" }); }
 
         // Authorise: roles from every governing space whose roles are set up (all must allow), power levels otherwise.
-        let governing;
-        try { governing = await governingSpaces(roomId, state); } catch (e) {
+        let decision;
+        try { decision = await callModerationDecision(roomId, state, me, targetMxid, roomState); } catch (e) {
             if (e.status === 403) { line(403, e.message); return res.status(403).json({ error: "This room links to too many spaces to tell who may moderate its calls" }); }
             line(502, `space: ${e.message}`); return res.status(502).json({ error: "Couldn't read the room's space from the homeserver" });
         }
-        const active = governing.map((g) => rolesOf(g.state)).filter((r) => r.active);
-        let allowed, why;
-        if (active.length) {
-            const myPl = powerLevel(state, me), theirPl = powerLevel(state, targetMxid);
-            allowed = true;
-            for (const roles of active) {
-                const mine = roles.rankOf(me), theirs = roles.rankOf(targetMxid);
-                if (!roles.has(me, "moderate_calls")) { allowed = false; why = "You can't moderate calls in this space"; break; }
-                if (mine <= theirs) { allowed = false; why = "They rank at or above you"; break; }
-            }
-            // a roles rank never beats the call room's own power levels (M4)
-            if (allowed && (theirPl > myPl || (theirPl >= 100 && theirPl >= myPl))) { allowed = false; why = "They rank at or above you"; }
-        } else {
-            const mine = powerLevel(state, me), theirs = powerLevel(state, targetMxid);
-            if (mine < modThreshold(state)) { allowed = false; why = "You can't moderate calls in this room"; }
-            else if (mine <= theirs) { allowed = false; why = "They rank at or above you"; }
-            else allowed = true;
-        }
+        const { allowed, why, rolesActive } = decision;
         if (!allowed) { line(403, why); return res.status(403).json({ error: why }); }
+
+        // Step B: a person-wide action — every current connection of theirs, answered per device. Under the person's lock
+        // (padstate.mjs serial: no Pad / Watch / normal token for them is minted in between), the person state first (a
+        // Pad Mic token asked for while this runs is refused), then every connection; then the call is listed ONCE MORE and
+        // a connection that arrived meanwhile gets the same action (the sweep re-applies a mute to later arrivals).
+        if (person) {
+            const one = async (p, devices, counter) => {
+                const id = String(p.identity || "");
+                const w = parseIdentity(id);
+                // a reserved form this server never mints as such (`…#X`, an old `~`): never a permission rebuilt for it —
+                // it is taken out of the call (code review r1 P1 #1)
+                if (!w || (/[#~]/.test(id) && !w.watch && !w.pad)) {
+                    try { await twirp("RemoveParticipant", roomId, { room: roomId, identity: id }); devices.push({ identity: id, result: "ok", reason: "removed" }); }
+                    catch (e) { devices.push({ identity: id, result: "failed", error: String(e.message || e).slice(0, 200) }); }
+                    return;
+                }
+                if (action !== "disconnect" && (w.watch || w.pad === "cam")) { devices.push({ identity: id, result: "skipped", reason: w.watch ? "watching" : "camera-only" }); return; }
+                try {
+                    if (action === "mute") counter.tracks += await doMute(roomId, p);
+                    else if (action === "unmute") await doUnmute(roomId, p);
+                    else await twirp("RemoveParticipant", roomId, { room: roomId, identity: id });
+                    devices.push({ identity: id, result: "ok" });
+                } catch (e) {
+                    devices.push({ identity: id, result: "failed", error: String(e.message || e).slice(0, 200) });
+                }
+            };
+            const theirs = (list) => list.filter((p) => { const w = parseIdentity(String(p.identity || "")); return w ? w.mxid === targetMxid : isConnectionOf(String(p.identity || ""), targetMxid); });
+            let out;
+            try {
+                out = await padState.serial(roomId, targetMxid, async () => {
+                    if (action === "mute") padState.setMuted(roomId, targetMxid, me);
+                    else if (action === "unmute") padState.clearMuted(roomId, targetMxid);
+                    const { participants: list = [] } = await twirp("ListParticipants", roomId, { room: roomId });
+                    const first = theirs(list);
+                    if (!first.length) return null;
+                    const devices = [];
+                    const counter = { tracks: 0 };
+                    for (const p of first) await one(p, devices, counter);
+                    if (action !== "unmute") {
+                        const seen = new Set(first.map((p) => p.identity));
+                        const { participants: again = [] } = await twirp("ListParticipants", roomId, { room: roomId });
+                        for (const p of theirs(again)) if (!seen.has(p.identity)) await one(p, devices, counter);
+                    }
+                    return { devices, tracksMuted: counter.tracks };
+                });
+            } catch (e) {
+                line(502, e.message); return res.status(502).json({ error: `The call server refused: ${e.message}` });
+            }
+            if (!out) { line(404, "not in call"); return res.status(404).json({ error: "They're not in the call" }); }
+            const { devices, tracksMuted } = out;
+            const done = devices.filter((d) => d.result === "ok").length;
+            const failed = devices.filter((d) => d.result === "failed").length;
+            line(failed && !done ? 502 : 200, `person: ${done} done, ${failed} failed, ${devices.length - done - failed} skipped`);
+            if (failed && !done) return res.status(502).json({ error: "The call server refused every device", action, target, devices });
+            return res.json({ ok: failed === 0, action, target, scope: "person", tracksMuted, done, failed, devices, rolesActive });
+        }
 
         // Act on the SFU.
         try {
             const p = await findParticipant(roomId, target);
             if (!p) { line(404, "not in call"); return res.status(404).json({ error: "They're not in the call" }); }
             let tracksMuted = 0;
-            if (action === "mute") tracksMuted = await doMute(roomId, p);
-            else if (action === "unmute") await doUnmute(roomId, p);
+            let others = [];
+            // the person state follows a device mute too (Step B): their phone can't take the mic while it holds
+            if (action === "mute") tracksMuted = await padState.serial(roomId, targetMxid, async () => { padState.setMuted(roomId, targetMxid, me); return doMute(roomId, p); });
+            else if (action === "unmute") others = await padState.serial(roomId, targetMxid, async () => {
+                padState.clearMuted(roomId, targetMxid);
+                await doUnmute(roomId, p);
+                const res = [];
+                // (code review r2 P2 #5) the person is unmuted: the normal mute the sweep put on their OTHER normal
+                // connections (a person mute covers arrivals) is lifted too — a device unmute from an older app included
+                const { participants: list = [] } = await twirp("ListParticipants", roomId, { room: roomId });
+                for (const o of list) {
+                    const w = parseIdentity(String(o.identity || ""));
+                    if (!w || w.mxid !== targetMxid || w.watch || w.pad || o.identity === p.identity) continue;
+                    // the normal mute's exact restriction is this server's own (round 9: no records needed)
+                    if (!isNormalMuteRestriction(o.permission)) continue;
+                    // a failure is reported (the sweep lifts what's left: the person has an explicit unmute on record)
+                    try { await doUnmute(roomId, o); res.push({ identity: o.identity, result: "ok" }); }
+                    catch (e) { res.push({ identity: o.identity, result: "failed", error: String(e.message || e).slice(0, 200) }); }
+                }
+                return res;
+            });
             else await twirp("RemoveParticipant", roomId, { room: roomId, identity: target });
             line(200, action === "mute" ? `${tracksMuted} track(s)` : "");
-            return res.json({ ok: true, action, target, tracksMuted, rolesActive: active.length > 0 });
+            const othersFailed = (others || []).filter((o) => o.result === "failed").length;
+            return res.json({ ok: othersFailed === 0, action, target, tracksMuted, ...(others?.length ? { others } : {}), rolesActive });
         } catch (e) {
             line(502, e.message);
             return res.status(502).json({ error: `The call server refused: ${e.message}` });

@@ -26,7 +26,7 @@ import { DEFAULT_EMOJI, padSounds, type PadSound } from "@/widgets/soundpad";
 import { whyText, type PadCat } from "@/features/calls/pad/rules";
 import type { PadPersonView, PadView } from "@/features/calls/pad/controller";
 import { closePad, openPad, padController, useDeviceName, usePadCtrl, usePadDevices, usePadTargets } from "./runtime";
-import { PartyCard, Watch, WebSearch } from "./PadExtras";
+import { PartyCard, PhoneModes, Watch, WebSearch } from "./PadExtras";
 import s from "./PadScreen.module.css";
 
 const PENDING_RING = "var(--th-pad-pending-ring)";
@@ -85,6 +85,7 @@ function PadScreen() {
     <div ref={inner} className={s.content}>
       <MyRow view={view} device={device} dim={!live} onLeave={() => setLeaveAsk(true)} />
       <Watch view={view} device={device} mobile={mobile} />
+      <PhoneModes view={view} device={device} mobile={mobile} />
       <Sounds view={view} device={device} mobile={mobile} dim={!live} />
       <PartyCard view={view} device={device} dim={!live} />
       <People view={view} onPick={(u, el) => setVol({ u, anchor: el })} />

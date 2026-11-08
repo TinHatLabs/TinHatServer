@@ -4,6 +4,7 @@
 // (the "statusRight" call-bar slot, beside Rec / Clip).
 import { useRef } from "react";
 import { Icon, cx, useIsMobile, useTip } from "@/ui";
+import { useCallStore } from "@/features/calls";
 import { refusePadDevice, useDeviceName, usePadReceiver } from "./runtime";
 import s from "./PadChip.module.css";
 
@@ -24,13 +25,32 @@ function Chip({ device, mobile }: { device: string; mobile: boolean }) {
   );
 }
 
+/** PAD-PHONE Step B: my phone holds this device's mic — "📱 <phone> has the mic · Take the mic back". */
+function TakeChip({ by, mobile }: { by: string; mobile: boolean }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useTip(ref, `Your phone (${by}) is your microphone in this call, so this device's mic is muted. Take the mic back to talk from here.`, { delay: 300 });
+  return (
+    <span ref={ref} className={cx(s.chip, mobile && s.mobile)} data-testid="pad-take-chip">
+      <span aria-hidden>📱</span>
+      <span className={s.text}>
+        <b>{by}</b> has the mic
+      </span>
+      <button type="button" className={s.x} onClick={() => useCallStore.getState().takeMicBack()} data-testid="pad-take-back">
+        Take the mic back
+      </button>
+    </span>
+  );
+}
+
 /** One chip per controlling device (usually one). */
 function PadChips({ mobile }: { mobile: boolean }) {
   const sessions = usePadReceiver((x) => x.sessions);
+  const takenBy = useCallStore((x) => x.micTakenBy);
   const devices = [...new Set(sessions.map((x) => x.device))];
-  if (!devices.length) return null;
+  if (!devices.length && !takenBy) return null;
   return (
     <>
+      {takenBy && <TakeChip by={takenBy} mobile={mobile} />}
       {devices.map((d) => (
         <Chip key={d} device={d} mobile={mobile} />
       ))}

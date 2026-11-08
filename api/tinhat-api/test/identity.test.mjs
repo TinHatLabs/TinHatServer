@@ -39,6 +39,8 @@ function tokenRoute({ enabled }) {
     const hs = {
         async get(path) {
             if (path.startsWith("/_matrix/federation/v1/openid/userinfo")) return { ok: true, status: 200, body: { sub: ALICE } };
+            // (PAD-PHONE Step B: the normal route reads the room's own mute records)
+            if (path.endsWith("/state")) return { ok: true, status: 200, body: { state: [] } };
             return { ok: true, status: 200, body: { members: [ALICE, BOB] } };
         },
     };
