@@ -5,24 +5,26 @@ import { spawn, execFile } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installModeration } from "./moderation.mjs";
-import { abuseReport, isAbuse, ABUSE_PER_DAY as ABUSE_PER_DAY_MAX, ABUSE_MAX_BYTES, ABUSE_SUFFIX, ABUSE_TOTAL_MAX_BYTES } from "./reports.mjs";
+import { abuseReport, isAbuse, ABUSE_PER_DAY as ABUSE_PER_DAY_MAX, ABUSE_MAX_BYTES, ABUSE_SUFFIX, ABUSE_TOTAL_MAX_BYTES, depthWithin, reportText, quotaFile } from "./reports.mjs";
 import { installInvites } from "./invites.mjs";
-import { createHs, createMatrixAuth, RateLimit, clientKey, ipBucket, trustProxy } from "./reachcommon.mjs";
+import { createHs, createMatrixAuth, RateLimit, clientKey, ipBucket, trustProxy, wall } from "./reachcommon.mjs";
 import { createLimits } from "./limits.mjs";
 import { installPresence } from "./presence.mjs";
+import { installNetwork } from "./network.mjs";
 import { installPush } from "./push.mjs";
 import { RING } from "./ring.mjs";
 import { installGameServers } from "./gameservers.mjs";
 import { installWatch } from "./watch.mjs";
 import { installGuests } from "./guests.mjs";
-import { installCallToken } from "./calltoken.mjs";
+import { installCallToken, rotatedFromEnv } from "./calltoken.mjs";
 import { createPadState } from "./padstate.mjs";
 import { accessConfig, createAccess, SIGNIN_REQUIRED } from "./access.mjs";
 import { normaliseClipUrl, ClipStore, Admitted, createClipSigner, sameHex, oneDownload } from "./clipcache.mjs";
 import { parseForeignClipUrl, foreignDownload } from "./foreign.mjs";
 import { giphyMediaUrl, sniffImage, readCapped, MEDIA_HEADERS, sniffAudio, sniffClipAudio, SANDBOX_HEADERS } from "./media.mjs";
 import { clearGuestCalls } from "./guestcalls.mjs";
-import { listRoom } from "./vodslist.mjs";
+import { listRoom, historySince, visibleSince, sinceFromState, membershipStart } from "./vodslist.mjs";
+import { vodsQuery, vodsAllowed, memberCache } from "./vodslinks.mjs";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -109,7 +111,8 @@ function rateLimit(req, res, next) {
 // its own 2 KB body reader, whoami cached per token (reachcommon).
 // + the guest room (guests.mjs): its own limits (knocks per address), and the waiting page polls every 2 s.
 // + call sign-ins (calltoken.mjs): their own per-address limit and body reader (lk-jwt's request shapes).
-const REACH_PATH = /^\/(?:presence\/?$|push\/|gameservers\/|guests(?:\/|$)|guest\/(?:door|knock|ticket)$|calltoken(?:\/|$))/;
+// + /network (network.mjs, open network slice 1): per-user limit, no body.
+const REACH_PATH = /^\/(?:presence\/?$|network\/?$|push\/|gameservers\/|guests(?:\/|$)|guest\/(?:door|knock|ticket)$|calltoken(?:\/|$))/;
 
 // ---- this server's own extras (Tin Hat Server) -------------------------------------------------------------------
 // Registered before the limiter and the JSON parser: they read their own bodies (the web server caps the sizes).
@@ -130,29 +133,46 @@ app.post("/speedtest/up", (req, res) => {
 });
 // Problem reports and shared logs go to THIS server's owner (the dashboard's Reports card) and nowhere else. Both need
 // the sender's own Matrix token; a report is JSON (≤ 1 MB), a log is any bytes (≤ 12 MB), named by the sender.
-function readRaw(req, max) {
+function readRaw(req, max, timeoutMs = 120_000) {
     return new Promise((resolve, reject) => {
-        const chunks = [];
+        // copied into ONE buffer that doubles as needed (never more than `max`): what is held doesn't depend on how
+        // many pieces the body came in (a million 1-byte chunks are a million objects otherwise)
+        let buf = Buffer.alloc(0);
         let n = 0;
-        req.on("data", (c) => {
+        // a sender that trickles its body doesn't hold a reading slot (admitRead) for ever
+        const timer = setTimeout(() => { buf = null; reject(new Error("too slow")); req.destroy(); }, timeoutMs);
+        const onData = (c) => {
+            if (n + c.length > max) {
+                // nothing more is kept: the rest is drained (so the 413 gets through) and dropped as it arrives
+                clearTimeout(timer); buf = null; req.removeListener("data", onData); req.resume();
+                reject(new Error("too big"));
+                return;
+            }
+            if (n + c.length > buf.length) {
+                const grown = Buffer.alloc(Math.min(max, Math.max(64 * 1024, buf.length * 2, n + c.length)));
+                buf.copy(grown, 0, 0, n);
+                buf = grown;
+            }
+            c.copy(buf, n);
             n += c.length;
-            if (n > max) { reject(new Error("too big")); req.resume(); return; }  // drained, so the 413 gets through
-            chunks.push(c);
-        });
-        req.on("end", () => resolve(Buffer.concat(chunks)));
-        req.on("error", reject);
+        };
+        req.on("data", onData);
+        req.on("end", () => { clearTimeout(timer); if (buf) resolve(buf.subarray(0, n)); });
+        req.on("error", (e) => { clearTimeout(timer); reject(e); });
     });
 }
 // Quotas (reports and logs accumulate on the server's disk): guests can't send them; each person at most 20 a day;
 // all of them together at most 200 MB (the dashboard's Reports card shows them, the owner deletes them there).
-const REPORTS_PER_DAY = new RateLimit(20, 24 * 3600_000);
+// The daily quotas run on the wall clock and are kept in a file, so a restart doesn't hand everybody a fresh day.
+const REPORTS_PER_DAY = new RateLimit(20, 24 * 3600_000, wall);
 const REPORTS_MAX_BYTES = 200 * 1024 * 1024;
 function storedBytes() {
     let n = 0;
     for (const d of ["reports", "logs"]) {
         try {
             for (const f of readdirSync(join(CONF, d))) {
-                if (f.endsWith(ABUSE_SUFFIX)) continue;  // abuse reports: tiny, outside the cap (reports.mjs)
+                // abuse reports (reports/ only): tiny, outside the cap (reports.mjs); a log counts whatever its name
+                if (d === "reports" && f.endsWith(ABUSE_SUFFIX)) continue;
                 try { n += statSync(join(CONF, d, f)).size; } catch { /* gone */ }
             }
         } catch { /* none yet */ }
@@ -170,16 +190,55 @@ function abuseBytes() {
     } catch { /* none yet */ }
     return n;
 }
+/** Spend one of `limit`'s tries for this person (written down for the next start). null = spent; else {status, error}. */
+function charge(limit, who) {
+    if (!limit.hit(who)) return { status: 429, error: "That's enough reports for today." };
+    if (!QUOTAS.save()) return { status: 503, error: "The server can't keep count of reports right now; try again later." };
+    return null;
+}
+// At most 2 report / log bodies of one person and 8 of everybody's are read at a time (each is held in memory until it
+// is complete, before any quota can be charged).
+const READING = { per: new Map(), all: 0 };
+function admitRead(req, res) {
+    // a caller already gone (its "close" has fired) is never counted: nothing would ever give the slot back
+    if (req.destroyed || res.destroyed || res.writableEnded || req.socket?.destroyed) return false;
+    const who = req.matrixUser;
+    const mine = READING.per.get(who) || 0;
+    if (mine >= 2 || READING.all >= 8) return false;
+    READING.per.set(who, mine + 1);
+    READING.all++;
+    let done = false;
+    res.on("close", () => {
+        if (done) return;
+        done = true;
+        READING.all--;
+        const n = (READING.per.get(who) || 1) - 1;
+        if (n) READING.per.set(who, n); else READING.per.delete(who);
+    });
+    return true;
+}
+// every try at a report or a log, whatever becomes of it (the daily quotas count only what was read): 100 an hour each
+const REPORT_TRIES = new RateLimit(100, 3600_000);
+const readBusy = (req, res) => { req.resume(); res.set("Retry-After", "10"); return res.status(429).json({ error: "Busy with other reports, try again shortly." }); };
 function reportAllowed(req, res, incoming) {
     if (/^@guest-/.test(req.matrixUser || "")) { res.status(403).json({ error: "Guests can't send reports." }); return false; }
-    if (!REPORTS_PER_DAY.hit(req.matrixUser)) { res.status(429).json({ error: "That's enough reports for today." }); return false; }
+    const c = charge(REPORTS_PER_DAY, req.matrixUser);
+    if (c) { res.status(c.status).json({ error: c.error }); return false; }
     if (storedBytes() + incoming > REPORTS_MAX_BYTES) { res.status(507).json({ error: "The server's report inbox is full; its owner needs to clear it." }); return false; }
     return true;
 }
 const fileStamp = () => `${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 8)}`;
 const safeName = (s) => String(s || "").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) || "file";
 // Abuse reports (reports.mjs) have their own quota and never count toward the size cap: they are tiny.
-const ABUSE_PER_DAY = new RateLimit(ABUSE_PER_DAY_MAX, 24 * 3600_000);
+const ABUSE_PER_DAY = new RateLimit(ABUSE_PER_DAY_MAX, 24 * 3600_000, wall);
+const QUOTAS = quotaFile(join(CONF, "report-quotas.json"), { reports: REPORTS_PER_DAY, abuse: ABUSE_PER_DAY },
+    { readFileSync, writeFileSync, renameSync, statSync });
+QUOTAS.load();
+/** An async route whose failure answers 500 instead of escaping (Express 4 doesn't catch a rejected handler). */
+const guarded = (fn) => (req, res, next) => Promise.resolve().then(() => fn(req, res, next)).catch((e) => {
+    console.error(`[api] ${req.method} ${req.path}: ${e && e.message}`);
+    if (!res.headersSent) res.status(500).json({ error: "something went wrong" });
+});
 async function storeReport(req, res) {
     if (/^@guest-/.test(req.matrixUser || "")) { req.resume(); return res.status(403).json({ error: "Guests can't send reports." }); }
     // neither quota left: refuse before reading anything; only abuse reports left: read no more than one of those
@@ -188,39 +247,58 @@ async function storeReport(req, res) {
         req.resume();
         return res.status(429).json({ error: "That's enough reports for today." });
     }
+    if (!REPORT_TRIES.hit(req.matrixUser)) { req.resume(); return res.status(429).json({ error: "That's enough reports for now." }); }
+    if (!admitRead(req, res)) return readBusy(req, res);
     const max = bugOk ? 1024 * 1024 : ABUSE_MAX_BYTES;
+    // a body that can't be taken is charged like any other try (so refused ones aren't free)
+    const refuse = (status, error) => {
+        const c = charge(bugOk ? REPORTS_PER_DAY : ABUSE_PER_DAY, req.matrixUser);
+        if (c?.status === 503) return res.status(503).json({ error: c.error });
+        return res.status(status).json({ error });
+    };
     let raw;
-    try { raw = await readRaw(req, max); } catch { return res.status(413).json({ error: `report too big (${bugOk ? "1 MB" : "16 KB"})` }); }
+    try { raw = await readRaw(req, max); } catch { return refuse(413, `report too big (${bugOk ? "1 MB" : "16 KB"})`); }
     let report;
-    try { report = JSON.parse(raw.toString("utf8") || "{}"); } catch { return res.status(400).json({ error: "report must be JSON" }); }
+    try { report = JSON.parse(raw.toString("utf8") || "{}"); } catch { return refuse(400, "report must be JSON"); }
+    if (!depthWithin(report)) return refuse(400, "report is nested too deeply");
     const abuse = isAbuse(report);
     if (abuse) {  // every try counts, a refused one too
-        if (raw.length > ABUSE_MAX_BYTES) return res.status(413).json({ error: "report too big (16 KB)" });
-        if (!ABUSE_PER_DAY.hit(req.matrixUser)) return res.status(429).json({ error: "That's enough reports for today." });
+        if (raw.length > ABUSE_MAX_BYTES) return refuse(413, "report too big (16 KB)");
+        const c = charge(ABUSE_PER_DAY, req.matrixUser);
+        if (c) return res.status(c.status).json({ error: c.error });
         report = abuseReport(report, req.matrixUser);
         if (report.error) return res.status(400).json({ error: report.error });
-        if (abuseBytes() + raw.length > ABUSE_TOTAL_MAX_BYTES) return res.status(507).json({ error: "The server's report inbox is full; its owner needs to clear it." });
-    } else if (!reportAllowed(req, res, raw.length)) {
+    }
+    // what is written (compact JSON) is what counts against the caps
+    const out = reportText({ at: Date.now(), user: req.matrixUser, report });
+    if (out.error) return abuse ? res.status(out.status).json({ error: out.error }) : refuse(out.status, out.error);
+    if (abuse) {
+        if (abuseBytes() + out.bytes > ABUSE_TOTAL_MAX_BYTES) return res.status(507).json({ error: "The server's report inbox is full; its owner needs to clear it." });
+    } else if (!reportAllowed(req, res, out.bytes)) {
         return;
     }
     const dir = join(CONF, "reports");
     mkdirSync(dir, { recursive: true });
     const id = abuse ? `${fileStamp()}-abuse` : fileStamp();
-    writeFileSync(join(dir, `${id}.json`), JSON.stringify({ at: Date.now(), user: req.matrixUser, report }, null, 1), { mode: 0o600 });
+    writeFileSync(join(dir, `${id}.json`), out.text, { mode: 0o600 });
     res.json({ ok: true, id });
 }
-app.post("/reports", requireMatrixUser, storeReport);
-app.post("/reports/api/reports", requireMatrixUser, storeReport); // the path older web apps use
-app.post("/logs/upload", requireMatrixUser, async (req, res) => {
+app.post("/reports", requireMatrixUser, guarded(storeReport));
+app.post("/reports/api/reports", requireMatrixUser, guarded(storeReport)); // the path older web apps use
+app.post("/logs/upload", requireMatrixUser, guarded(async (req, res) => {
+    if (!REPORT_TRIES.hit(req.matrixUser)) { req.resume(); return res.status(429).json({ error: "That's enough reports for now." }); }
+    if (!admitRead(req, res)) return readBusy(req, res);
     if (!reportAllowed(req, res, Number(req.headers["content-length"]) || 0)) { req.resume(); return; }
     let raw;
     try { raw = await readRaw(req, 12 * 1024 * 1024); } catch { return res.status(413).json({ error: "log too big (12 MB)" }); }
+    // the header may be absent or small: the bytes actually read are what counts
+    if (storedBytes() + raw.length > REPORTS_MAX_BYTES) return res.status(507).json({ error: "The server's report inbox is full; its owner needs to clear it." });
     const dir = join(CONF, "logs");
     mkdirSync(dir, { recursive: true });
     const id = `${fileStamp()}-${safeName(req.matrixUser)}-${safeName(req.query.name)}`;
     writeFileSync(join(dir, id), raw, { mode: 0o600 });
     res.json({ ok: true, id });
-});
+}));
 
 app.use((req, res, next) => (REACH_PATH.test(req.path) ? next() : rateLimit(req, res, next)));
 const jsonBody = express.json({ limit: "8kb" });
@@ -395,7 +473,20 @@ if (!VODS_SECRET) {
     try { writeFileSync(join(CONF, "vods.secret"), VODS_SECRET, { mode: 0o600 }); } catch { /* ephemeral */ }
 }
 const vodsSanitize = (r) => r.replace(/[^A-Za-z0-9._@-]/g, "_");
-const vodsSig = (p, exp) => createHmac("sha256", VODS_SECRET).update(`${p}\0${exp}`).digest("hex").slice(0, 32);
+// RECORDER-8: links are bound to the person they were issued to, who must still be joined to the room. With no admin
+// token there is no member list to check against: then the signature alone decides (as before).
+const vodsJoined = memberCache(async (room) => {
+    if (!ADMIN_TOKEN) return { has: () => true };
+    const r = await fetch(`${HS_INTERNAL}/_synapse/admin/v1/rooms/${encodeURIComponent(room)}/members`,
+        { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }, signal: AbortSignal.timeout(5000) });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error(`members said ${r.status}`);
+    const b = await r.json();
+    return new Set(Array.isArray(b.members) ? b.members : []);
+});
+const vodsCheck = (p, query) => vodsAllowed({ secret: VODS_SECRET, sameHex, vodsDir: VODS_DIR, joined: vodsJoined, now: Date.now }, p, query);
+// at most 30 thumbnails a minute per link (each is an ffmpeg run; the 3 slots are shared by everybody)
+const THUMBS_PER_LINK = new RateLimit(30, 60_000);
 
 async function matrixWhoami(token) {
     try {
@@ -406,15 +497,38 @@ async function matrixWhoami(token) {
         return (await r.json()).user_id || null;
     } catch { return null; }
 }
-async function vodsMemberOf(token, room, user) {
+/** What the caller may see of a room's memories (vodslist.mjs historySince). The caller's membership event (when they
+ *  joined) and the room's history visibility come from Synapse's admin state API, whose events carry their real
+ *  envelopes (a client-API read could hand back content the member wrote themselves). Without an admin token: the
+ *  caller's own token says whether they are joined, and no join time is known (only what is still live from now on,
+ *  unless the history is shared). null = not a member (or unreadable). */
+async function vodsSince(token, room, user) {
     try {
-        const r = await fetch(
-            `${HS_INTERNAL}/_matrix/client/v3/rooms/${encodeURIComponent(room)}/state/m.room.member/${encodeURIComponent(user)}`,
-            { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) },
-        );
-        if (!r.ok) return false;
-        return (await r.json()).membership === "join";
-    } catch { return false; }
+        if (ADMIN_TOKEN) {
+            const r = await fetch(`${HS_INTERNAL}/_synapse/admin/v1/rooms/${encodeURIComponent(room)}/state`,
+                { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }, signal: AbortSignal.timeout(10000) });
+            if (!r.ok) return null;
+            const st = (await r.json())?.state;
+            if (!Array.isArray(st)) return null;
+            const fetchEvent = async (id) => {
+                const e = await fetch(`${HS_INTERNAL}/_synapse/admin/v1/fetch_event/${encodeURIComponent(id)}`,
+                    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }, signal: AbortSignal.timeout(5000) });
+                return e.ok ? (await e.json())?.event ?? null : null;
+            };
+            return sinceFromState(st, user, Date.now(), await membershipStart(st, user, fetchEvent));
+        }
+        const read = async (type, key = "") => {
+            const r = await fetch(`${HS_INTERNAL}/_matrix/client/v3/rooms/${encodeURIComponent(room)}/state/${encodeURIComponent(type)}/${encodeURIComponent(key)}`,
+                { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) });
+            return { status: r.status, body: r.ok ? await r.json() : null };
+        };
+        const m = await read("m.room.member", user);
+        if (!m.body) return null;
+        const hv = await read("m.room.history_visibility");
+        if (!hv.body && hv.status !== 404) return null;  // unreadable: never assume "shared"
+        return historySince({ membership: m.body.membership, joinedAt: NaN, user,
+            historyVisibility: hv.body ? hv.body.history_visibility : "shared" });
+    } catch { return null; }
 }
 
 app.get("/vods/sessions", async (req, res) => {
@@ -423,16 +537,18 @@ app.get("/vods/sessions", async (req, res) => {
     if (!token || !room) return res.status(400).json({ error: "room + bearer token required" });
     const user = await matrixWhoami(token);
     if (!user) return res.status(401).json({ error: "bad token" });
-    if (!(await vodsMemberOf(token, room, user))) return res.status(403).json({ error: "not a member of that room" });
+    const since = await vodsSince(token, room, user);
+    if (since === null) return res.status(403).json({ error: "not a member of that room" });
     const sroom = vodsSanitize(room);
     const dir = `${VODS_DIR}/${sroom}`;
     const exp = Date.now() + 24 * 3600 * 1000;
     const urlForSession = (s) => (f) => {
         const p = `${sroom}/${s}/${f}`;
-        return `${VODS_PUBLIC_BASE}/file/${p}?exp=${exp}&sig=${vodsSig(p, exp)}`;
+        return `${VODS_PUBLIC_BASE}/file/${p}?${vodsQuery(VODS_SECRET, p, exp, user)}`;
     };
     // the rules live in vodslist.mjs (frameless captures never block `ready`; a repaired copy replaces its original)
-    const out = listRoom(dir, urlForSession);
+    const now = Date.now();
+    const out = listRoom(dir, urlForSession, room).filter((e) => visibleSince(e, since, now));
     res.json({ sessions: out });
 });
 
@@ -442,14 +558,16 @@ app.get("/vods/sessions", async (req, res) => {
 // are LIVE gst pipelines; thumbs remain only as the per-tile fallback + posters.
 let thumbBusy = 0;
 const THUMB_MAX = 3;
-app.get("/vods/thumb/:room/:session/:file", (req, res) => {
+app.get("/vods/thumb/:room/:session/:file", async (req, res) => {
+    try { await vodsThumb(req, res); } catch (e) { console.error(`[vods] thumb: ${e?.message}`); if (!res.headersSent) res.status(500).end(); }
+});
+async function vodsThumb(req, res) {
     const { room, session, file } = req.params;
-    const exp = Number(req.query.exp || 0);
-    const s = String(req.query.sig || "");
-    const t = Math.max(0, Math.min(86400, Number(req.query.t || 0)));
+    const t = Math.max(0, Math.min(86400, typeof req.query.t === "string" && /^[0-9]{1,6}(\.[0-9]{1,3})?$/.test(req.query.t) ? Number(req.query.t) : 0));
     const p = `${room}/${session}/${file}`;
-    if (p.includes("..") || p.includes("//")) return res.status(400).end();
-    if (!exp || exp < Date.now() || !sameHex(s, vodsSig(p, exp))) return res.status(403).end();  // constant-time
+    const ok = await vodsCheck(p, req.query);  // constant-time signature compare + the holder still in the room
+    if (!ok.ok) return res.status(ok.status).end();
+    if (!THUMBS_PER_LINK.hit(String(req.query.sig || ""))) { res.setHeader("Retry-After", "10"); return res.status(429).end(); }
     if (thumbBusy >= THUMB_MAX) {
         res.setHeader("Retry-After", "2");
         return res.status(503).end();
@@ -482,15 +600,14 @@ app.get("/vods/thumb/:room/:session/:file", (req, res) => {
         } catch {}
     });
     setTimeout(() => { try { ff.kill("SIGKILL"); } catch {} }, 8000);
-});
+}
 
-app.get("/vods/file/:room/:session/:file", (req, res) => {
+app.get("/vods/file/:room/:session/:file", async (req, res) => {
     const { room, session, file } = req.params;
-    const exp = Number(req.query.exp || 0);
-    const s = String(req.query.sig || "");
     const p = `${room}/${session}/${file}`;
-    if (p.includes("..") || p.includes("//")) return res.status(400).end();
-    if (!exp || exp < Date.now() || !sameHex(s, vodsSig(p, exp))) return res.status(403).end();  // constant-time
+    let ok;
+    try { ok = await vodsCheck(p, req.query); } catch { ok = { status: 500 }; }  // signature (constant time) + the holder still in the room
+    if (!ok.ok) return res.status(ok.status).end();
     res.sendFile(p, { root: VODS_DIR, acceptRanges: true, headers: SANDBOX_HEADERS }, (err) => {
         if (err && !res.headersSent) res.status(404).end();
     });
@@ -1080,6 +1197,12 @@ if (process.env.TINHAT_BOX === "1") {
 // address on the compose network, the one private address Synapse's ip_range_whitelist allows).
 // reachHs / reachAuth: created next to HS_INTERNAL above (pinned at start, REACH A2.4).
 installPresence(app, { auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN, serverName: process.env.SERVER_NAME || "" });
+// What the apps need to know about this server's federation (network.mjs; docs/API.md "Federation for the apps"): the
+// mode and the Tin Hat servers connected by code, from network.json (the manager's apiconf.publish_network).
+installNetwork(app, {
+    auth: reachAuth, path: join(CONF, "network.json"),
+    isGuest: (mxid) => guestAccounts.some((a) => a.user === mxid) || /^@guest-/i.test(mxid),
+});
 installPush(app, {
     auth: reachAuth, hs: reachHs, adminToken: ADMIN_TOKEN, dir: CONF,
     gatewayListen: { host: process.env.PUSH_GATEWAY_HOST || "127.0.0.1", port: Number(process.env.PUSH_GATEWAY_PORT || 3091) },
@@ -1130,8 +1253,15 @@ installCallToken(app, {
     enabled: () => String(process.env.CALL_TOKEN_ROOM_CHECK || "on").trim().toLowerCase() !== "off",
     // Pad Watch (WATCH-LEASE/DESIGN.md §1): the API mints the subscribe-only Watch token itself (lk-jwt can't)
     lkKey: LK_KEY, lkSecret: LK_SECRET, lkApiUrl: LK_API_URL.replace(/\/+$/, ""), padState,
+    // the call-server key pair replaced (lkrotate.py): on a Tin Hat Server the manager says so explicitly (fail closed
+    // when it doesn't); elsewhere only an explicit "0" holds the person attributes back
+    rotated: rotatedFromEnv(process.env),
     sfuUrl: process.env.LK_SFU_URL || `wss://${process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname}/livekit/sfu`,
 });
+
+// A rejected promise nobody awaited (an async route Express 4 doesn't watch) is logged, not fatal: one bad request
+// must not take calls, sounds and pushes down for everybody. Thrown exceptions still end the process (unknown state).
+process.on("unhandledRejection", (e) => console.error(`[api] unhandled rejection: ${e && e.stack ? e.stack : e}`));
 
 app.listen(PORT, "127.0.0.1", () => {
     console.log(`Tin Hat API listening on 127.0.0.1:${PORT} (conf ${CONF})`);

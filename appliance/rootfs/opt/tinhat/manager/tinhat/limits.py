@@ -16,6 +16,10 @@ import time
 from typing import Callable, Iterable
 
 OVERALL = 5
+
+# Invites from other servers (tinhat_network.NetworkRules, docs/NETWORK-RULES.md; design A5), per sliding hour:
+# from one server (accepted and refused alike), to one person here from people they don't know, into the whole box.
+INVITE_QUOTAS = {"per_server": 20, "per_recipient": 5, "overall": 100, "window_s": 3600}
 HARD = 25
 MAX_CALLERS = 4096
 

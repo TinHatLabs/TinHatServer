@@ -115,6 +115,50 @@ class ReportsCard(unittest.TestCase):
             self.assertNotIn("abuse", items["b.json"])
             self.assertEqual(items["b.json"]["title"], "crash")
 
+    def test_a_pile_of_one_kind_never_pushes_the_other_off(self):
+        """Round 3 security review, ACCWEB-3: abuse reports and problem reports / logs are cut separately, with totals."""
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(apiconf, "DIR", Path(d)):
+            (Path(d) / "reports").mkdir()
+            (Path(d) / "logs").mkdir()
+            abuse = {"kind": "abuse", "type": "abuse", "category": "spam", "reported_user": f"@bad:{SN}"}
+            for i in range(3):
+                f = Path(d) / "reports" / f"old-{i}-abuse.json"
+                f.write_text(json.dumps({"at": 1, "user": f"@me:{SN}", "report": abuse}))
+                os.utime(f, (1000 + i, 1000 + i))
+            for i in range(80):  # one member's flood of newer problem reports and logs
+                f = Path(d) / ("reports" if i % 2 else "logs") / f"new-{i}-x-y.json"
+                f.write_text(json.dumps({"at": 2, "user": f"@me:{SN}", "report": {"type": "bug", "title": str(i)}}))
+                os.utime(f, (5000 + i, 5000 + i))
+            doc = apiconf.reports_doc()
+            self.assertEqual(sum(1 for i in doc["items"] if "abuse" in i), 3, "the older abuse reports are still listed")
+            self.assertEqual((doc["abuseTotal"], doc["abuseShown"], doc["otherTotal"], doc["otherShown"]), (3, 3, 80, 50))
+            self.assertEqual(len(apiconf.reports_doc(None, None)["items"]), 83, "Show all")
+            self.assertEqual([i["at"] for i in doc["items"]], sorted((i["at"] for i in doc["items"]), reverse=True))
+            self.assertEqual(apiconf.reports(), doc["items"], "the older call answers the same")
+
+    def test_a_report_about_the_owner_doesnt_name_its_sender(self):
+        """Round 3 security review, ACCWEB-4: the owner reads the dashboard; a report about them doesn't say who sent it."""
+        own = f"@owner:{SN}"
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(apiconf, "DIR", Path(d)), \
+                mock.patch.object(apiconf, "owner_ids", lambda st=None: {own}):
+            (Path(d) / "reports").mkdir()
+            for name, who in (("x-abuse.json", own), ("y-abuse.json", f"@bad:{SN}")):
+                (Path(d) / "reports" / name).write_text(json.dumps({"at": 1, "user": f"@me:{SN}", "report": {
+                    "kind": "abuse", "type": "abuse", "category": "harassment", "reported_user": who, "reporter": f"@me:{SN}"}}))
+            items = {i["name"]: i for i in apiconf.reports()}
+            self.assertEqual((items["x-abuse.json"]["user"], items["x-abuse.json"].get("reporterHidden")), ("", True))
+            self.assertEqual(items["y-abuse.json"]["user"], f"@me:{SN}", "about someone else: shown as before")
+            red = json.loads(apiconf.redacted_report((Path(d) / "reports" / "x-abuse.json").read_text()))
+            self.assertEqual((red["user"], red["report"]["reporter"], red["report"]["reported_user"]), ("", "", own))
+            self.assertEqual(items["x-abuse.json"]["size"], len(apiconf.redacted_report((Path(d) / "reports" / "x-abuse.json").read_text()).encode()),
+                             "the size shown is the redacted copy's (no hint of the sender's id length)")
+        self.assertFalse(apiconf.about_owner(own, ""), "no owner known: nothing hidden")
+        self.assertFalse(apiconf.about_owner(f"{own}:8448", own))
+        st = {"server_name": "new.example", "admin": "@owner:new.example", "former_names": [{"name": SN}]}
+        self.assertEqual(apiconf.owner_ids(st), {"@owner:new.example", f"@owner:{SN}"}, "after a move: both names")
+        self.assertTrue(apiconf.about_owner(f"@owner:{SN}", apiconf.owner_ids(st)))
+        self.assertFalse(apiconf.about_owner(f"@owner:other.example", apiconf.owner_ids(st)))
+
 
 
 @unittest.skipUnless(HAVE_AIOHTTP, "needs aiohttp")
@@ -145,6 +189,16 @@ class SynapseEventReports(unittest.TestCase):
         self.assertEqual(self.run_with(200, {"data": "junk"})[0], (None, 0))
         out, seen = self.run_with(200, {"event_reports": []}, token=None)
         self.assertEqual((out, seen), ((None, 0), []))
+
+    def test_a_matrix_report_about_the_owner_doesnt_name_its_sender(self):
+        """Round 3 security review, ACCWEB-4 (the Matrix list too)."""
+        own = f"@owner:{SN}"
+        body = {"event_reports": [{"id": 1, "user_id": f"@me:{SN}", "sender": own, "room_id": f"!r:{SN}", "event_id": "$e"},
+                                  {"id": 2, "user_id": f"@me:{SN}", "sender": f"@bad:{SN}", "room_id": f"!r:{SN}", "event_id": "$f"}]}
+        with mock.patch.object(apiconf, "owner_ids", lambda st=None: {own}):
+            out, _ = self.run_with(200, body)
+        self.assertEqual((out[0][0]["user"], out[0][0].get("reporterHidden")), ("", True))
+        self.assertEqual((out[0][1]["user"], out[0][1].get("reporterHidden")), (f"@me:{SN}", None))
 
     def test_a_long_reason_is_kept(self):
         out, _ = self.run_with(200, {"event_reports": [{"id": 1, "reason": "x" * 999 + "!" + "y" * 50}]})

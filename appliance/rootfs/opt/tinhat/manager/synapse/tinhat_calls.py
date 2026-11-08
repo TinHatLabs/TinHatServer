@@ -1,7 +1,7 @@
 """tinhat_calls — a Synapse module: the Tin Hat API hears about call membership changes, so a DM call rings on phones
 whose app is closed (DM ringing, server half: docs/API.md "Ringing", docs/PHONE-PUSH.md).
 
-Two small things, nothing else:
+Three small things, nothing else:
   - on every new `org.matrix.msc3401.call.member` state event (the type the apps ring on), in any room this server is
     in, local or over federation, it pokes the API with the room and the event id. The poke carries nothing the API
     trusts: the API reads the room's state itself through the admin API before it rings anyone, so a forged poke can
@@ -14,6 +14,14 @@ Two small things, nothing else:
     the same rule the apps use (an enabled override rule for the room without "notify"). A VoIP push must ring once it
     is sent, so "muted" is decided before anything goes out. With `caller`, also "ignored": whether that user ignores
     the caller (m.ignored_user_list).
+
+  - a call membership names its owner in its state key (`_@user:server_DEVICE_m.call`, MatrixRTC), and Matrix itself
+    doesn't hold anyone to that (MSC3757 isn't on): any member could overwrite someone else's — and with it their
+    "Never record me" marker (round 3 security review, RECORDER-1). An event of a call-membership type whose state key
+    names a user (`_@…` or `@…`) must come from that user: the key is `_<sender>_…`, `<sender>` or `<sender>_…`.
+    Every other key is left alone. Synapse asks modules about events made on THIS server (any app, any client, the
+    API acting as a user); events from other servers don't come through here (no split view of a room's state), so
+    the recorder keeps its own rule for those.
 
 Where the API listens: call-hook.json, which the API writes into /var/lib/tinhat/api/public (mounted read-only here).
 No file, or a file without an http URL: no pokes.
@@ -28,6 +36,20 @@ from synapse.module_api import ModuleApi
 logger = logging.getLogger(__name__)
 
 CALL_MEMBER_TYPE = "org.matrix.msc3401.call.member"
+# every call-membership type a Tin Hat app or the API knows (guestcalls.mjs CALL_MEMBER_TYPES)
+OWNED_TYPES = frozenset((CALL_MEMBER_TYPE, "m.call.member", "m.rtc.member"))
+
+
+def key_owned_by(state_key: str, sender: str) -> bool:
+    """Does this call-membership state key belong to `sender` (or name no user at all)? A user id ends with its server
+    name (letters, digits, '.', '-', a port, or a bracketed IPv6 address): never '_', so `<sender>_` can't be the start
+    of another user's id."""
+    if not isinstance(state_key, str) or not isinstance(sender, str) or not sender.startswith("@"):
+        return False
+    k = state_key[1:] if state_key.startswith("_@") else state_key
+    if not k.startswith("@"):
+        return True  # names nobody: nothing to protect
+    return k == sender or k.startswith(sender + "_")
 MUTED_PATH = "/_synapse/tinhat/v1/push_muted"
 MAX_IN_FLIGHT = 8
 
@@ -85,7 +107,7 @@ class CallHook:
         self.api = api
         self.hook = _File(os.path.join(config.get("dir", "/tinhat-api"), "call-hook.json"))
         self.in_flight: dict[str, bool] = {}  # room -> another poke wanted after this one
-        api.register_third_party_rules_callbacks(on_new_event=self.on_new_event)
+        api.register_third_party_rules_callbacks(on_new_event=self.on_new_event, check_event_allowed=self.check_event_allowed)
         api.register_web_resource(MUTED_PATH, _Muted(self))
 
     @staticmethod
@@ -95,6 +117,30 @@ class CallHook:
     def hook_url(self) -> str:
         u = self.hook.get().get("url")
         return u if isinstance(u, str) and u.startswith("http://") and len(u) < 512 else ""
+
+    # ---- owned call memberships --------------------------------------------------------------------------------
+    async def check_event_allowed(self, event, _state_events):
+        # decided from the event alone; anything unexpected refuses only a call-membership event (fail closed there,
+        # never for anything else)
+        try:
+            if not (isinstance(event.type, str) and event.type in OWNED_TYPES):
+                return True, None
+        except Exception:  # noqa: BLE001  not an event this rule can read: not a call membership
+            return True, None
+        try:
+            if not event.is_state():
+                return True, None
+            if key_owned_by(event.state_key, event.sender):
+                return True, None
+        except Exception:  # noqa: BLE001
+            logger.exception("tinhat_calls: couldn't check a call membership's owner; refused")
+            return False, None
+        try:
+            logger.info("tinhat_calls: refused %s from %s for the state key %r in %s (someone else's call membership)",
+                        event.type, event.sender, event.state_key, event.room_id)
+        except Exception:  # noqa: BLE001
+            pass
+        return False, None
 
     # ---- the poke ----------------------------------------------------------------------------------------------
     async def on_new_event(self, event, *_state) -> None:

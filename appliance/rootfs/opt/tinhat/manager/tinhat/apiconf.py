@@ -26,6 +26,8 @@ network (`tinhat_backend`'s gateway, e.g. 198.18.16.1): the one address a contai
 at. The gateway listens there only, and Synapse's ip_range_whitelist names only that address (templates.homeserver_yaml),
 so the pusher URL a device registers can't make Synapse talk to anything else on the box.
 """
+import contextlib
+import fcntl
 import ipaddress
 import json
 import logging
@@ -257,7 +259,102 @@ def features(st: dict | None = None, s: dict | None = None) -> dict:
         # once rotated, like the chip (the chip is how everyone sees whose phone it is).
         "pad_mic": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
         "pad_camera": bool(st.get("calls", True)) and bool(s.get("livekit_secret")) and bool(s.get("livekit_rotated")),
+        # Open network (share MATRIX-FRONTEND-DESIGN.md B7): which network mode this server is in, a word, not a switch
+        # ("home" | "connected"; "open" arrives with 0.4.0). The apps read only booleans as switches, so this never
+        # turns a feature off in an older app.
+        "network": network_mode(st),
+        # Each person's rule for invites from other servers (dev.tinhat.invite_rules account data) is enforced by this
+        # server (tinhat_network.NetworkRules, docs/NETWORK-RULES.md): the apps show the setting only when this is true.
+        "invite_rules": network_mode(st) != "home",
     }
+
+
+def network_mode(st: dict | None = None) -> str:
+    """"home": no federation listener at all (setup's home-network mode); "connected": only the allow-list
+    (docs/FEDERATION.md). The open Matrix network ("open") is the 0.4.0 switch and not offered yet."""
+    st = st if st is not None else state.load_state()
+    return "home" if st.get("mode", "lan") == "lan" else "connected"
+
+
+def network(st: dict | None = None) -> dict:
+    """What the apps read at GET /api/network (api network.mjs; docs/API.md "Federation for the apps"): the mode and
+    the Tin Hat servers connected by code, so the apps can tell a room made on a connected Tin Hat server (Tin Hat's
+    own room state may be sent there) from a room on any other server. Servers allowed by name are plain Matrix
+    servers and are NOT listed. `blocked`: the owner's deny-list (netrules.py; the apps hide its people like ignored
+    users); a blocked server is never `connected`, whatever the connections say. `invites`: the rule a person has
+    when they never chose one (tinhat_network.NetworkRules)."""
+    from . import netrules  # imported here: netrules imports this module
+    st = st if st is not None else state.load_state()
+    mode = network_mode(st)
+    blocked = netrules.names(st) if mode != "home" else []
+    conns = set()
+    if mode != "home":
+        for c in st.get("connections") or []:
+            srv = c.get("server") if isinstance(c, dict) else None
+            if isinstance(srv, str) and srv.strip():
+                conns.add(srv.strip().lower())
+    return {"v": 1, "mode": mode, "connected": netrules.without_blocked(conns, blocked), "blocked": blocked,
+            "invites": {"default": "known"}}
+
+
+#: network.json carries when it was written; the API refuses one older than NETWORK_MAX_AGE_S (apps fail closed), and
+#: the manager's minute loop writes it again once it is older than NETWORK_RENEW_S. So a list that could not be
+#: replaced (a disconnect whose publish failed in a way that also kept the old file) is served for at most that long
+#: (astra r2 P1). Keep NETWORK_MAX_AGE_S equal to the API's NETWORK.MAX_AGE_S (network.mjs).
+NETWORK_RENEW_S = 3600
+NETWORK_MAX_AGE_S = 6 * 3600
+
+
+def publish_network(st: dict | None = None, now: float | None = None) -> bool:
+    """network.json in the API's folder (GET /api/network; the API re-reads it every few seconds: no restart).
+
+    Always from the state on disk, read under one lock across processes (the dashboard, the loop, the console): a
+    publisher holding an older snapshot can never put back a connection that was ended since (astra r1 P2). `st` is
+    accepted for the callers' convenience and ignored. Any failure while holding the lock removes the old file, so the
+    API answers 503 and the apps stop treating any server as connected until it is written again (fail closed); a
+    failure before the lock is bounded by the file's age (NETWORK_MAX_AGE_S). Written when the content changed or it
+    is older than NETWORK_RENEW_S. True when it was written."""
+    del st
+    t = int(time.time() if now is None else now)
+    ensure_dirs()
+    path = DIR / "network.json"
+    with _network_lock():
+        try:
+            doc = network(state.load_state())
+            try:
+                old = json.loads(path.read_text())
+                if isinstance(old, dict) and isinstance(old.get("issued"), int) and 0 <= t - old["issued"] < NETWORK_RENEW_S \
+                        and {k: v for k, v in old.items() if k != "issued"} == doc:
+                    return False
+            except (OSError, ValueError):
+                pass  # missing or unreadable: written below
+            state.write_text(path, json.dumps({**doc, "issued": t}, sort_keys=True) + "\n", 0o600)
+        except BaseException:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                logging.getLogger("tinhat.apiconf").exception("couldn't remove a stale network.json (it expires by itself)")
+            raise
+    return True
+
+
+@contextlib.contextmanager
+def _network_lock(wait_s: float = 10.0):
+    """An exclusive flock on DIR/network.lock, waited for up to wait_s (then taken anyway would be wrong: raise)."""
+    fd = os.open(DIR / "network.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("network.json is being written by another process")
+                time.sleep(0.05)
+        yield
+    finally:
+        os.close(fd)
 
 
 def recorder(st: dict | None = None) -> str:
@@ -304,6 +401,9 @@ def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str 
         "VODS_DIR": "/vods",
         "LK_API_URL": "http://127.0.0.1:7880",
         "LK_API_KEY": s["livekit_key"],
+        # the call-server key pair replaced since 0.3.13 (lkrotate.py): until then the API attributes no token to a
+        # person and refuses Pad Mic / Camera (the features below say the same)
+        "LK_ROTATED": "1" if s.get("livekit_rotated") else "0",
         "TRUST_PROXY": "loopback",  # Caddy on this box hands over the caller's address
         "PUSH_GATEWAY_HOST": gw,
         "PUSH_GATEWAY_PORT": str(GATEWAY_PORT),
@@ -362,11 +462,57 @@ def write(st: dict | None = None, s: dict | None = None) -> bool:
         if not p.exists() or p.read_text() != text:
             state.write_text(p, text, 0o600)
             changed = True
+    try:
+        publish_network()  # read live by the API (no restart), so it doesn't count as a change here
+    except Exception:  # noqa: BLE001 - never fails the write; publish_network removed the old file (apps fail closed)
+        logging.getLogger("tinhat.apiconf").exception("couldn't publish network.json")
     return changed
 
 
-def reports(limit: int = 50) -> list[dict]:
+def owner_ids(st: dict | None = None) -> set:
+    """The owner's id under this server's name and every former one (a report filed before "Move to your own domain"
+    names the owner as they were then)."""
+    st = st if st is not None else state.load_state()
+    me = owner(st)
+    if not me:
+        return set()
+    local = me[1:].split(":", 1)[0]
+    names = {st.get("server_name") or ""} | {f["name"] for f in st.get("former_names") or [] if isinstance(f, dict) and f.get("name")}
+    return {f"@{local}:{n}" for n in names if n}
+
+
+def about_owner(reported_user: str, me=None) -> bool:
+    """Is this abuse report about the server owner (the one person who reads the dashboard)? Then the card doesn't name
+    who sent it (round 3 security review, ACCWEB-4: the apps say the reported person isn't told who reported them).
+    `me`: owner_ids() (or one id), worked out once by a caller that checks many reports."""
+    me = owner_ids() if me is None else ({me} if isinstance(me, str) else set(me))
+    me.discard("")
+    return isinstance(reported_user, str) and reported_user in me
+
+
+def redacted_report(text: str) -> str:
+    """A stored abuse report about the owner without its sender: what Download hands out for it."""
+    try:
+        j = json.loads(text)
+    except (ValueError, RecursionError):
+        return text
+    if isinstance(j, dict):
+        j["user"] = ""
+        if isinstance(j.get("report"), dict):
+            j["report"]["reporter"] = ""
+    return json.dumps(j, indent=1)
+
+
+def reports(limit: int = 50, abuse_limit: int | None = 200) -> list[dict]:
     """Problem reports and shared logs people sent to this server, newest first (the dashboard's Reports card)."""
+    return reports_doc(limit, abuse_limit)["items"]
+
+
+def reports_doc(limit: int | None = 50, abuse_limit: int | None = 200) -> dict:
+    """The Reports card's list: abuse reports ("Report…" on a person or a message) and problem reports / logs are cut
+    to their newest `abuse_limit` / `limit` SEPARATELY (None = all), so a pile of one kind never pushes the other off
+    the card (round 3 security review, ACCWEB-3), with how many of each there are. Newest first."""
+    me = owner_ids()
     out = []
     for kind in ("reports", "logs"):
         d = DIR / kind
@@ -380,7 +526,7 @@ def reports(limit: int = 50) -> list[dict]:
             except OSError:
                 continue
             item = {"kind": kind[:-1], "name": p.name, "size": stt.st_size, "at": int(stt.st_mtime)}
-            if kind == "reports":
+            if kind == "reports" and stt.st_size <= 2 * 1024 * 1024:  # (an older API wrote bigger, deeper files: listed by name)
                 try:
                     j = json.loads(p.read_text())
                     item["user"] = str(j.get("user") or "")
@@ -390,13 +536,21 @@ def reports(limit: int = 50) -> list[dict]:
                         item["abuse"] = {k: str(body.get(k) or "")[:n] for k, n in (
                             ("category", 20), ("reported_user", 300), ("room_id", 300), ("event_id", 300),
                             ("details", 1000))}
-                except (OSError, ValueError):
+                        if about_owner(item["abuse"]["reported_user"], me):
+                            item["user"], item["reporterHidden"] = "", True
+                            item["size"] = len(redacted_report(p.read_text()).encode())  # the size of what Download gives
+                except (OSError, ValueError, RecursionError):  # a file from an older API may be nested very deep
                     pass
             else:
                 item["user"] = p.name.split("-", 2)[1] if p.name.count("-") >= 2 else ""
             out.append(item)
     out.sort(key=lambda i: i["at"], reverse=True)
-    return out[:limit]
+    abuse = [i for i in out if "abuse" in i]
+    other = [i for i in out if "abuse" not in i]
+    a = abuse if abuse_limit is None else abuse[:abuse_limit]
+    o = other if limit is None else other[:limit]
+    items = sorted(a + o, key=lambda i: i["at"], reverse=True)
+    return {"items": items, "abuseTotal": len(abuse), "abuseShown": len(a), "otherTotal": len(other), "otherShown": len(o)}
 
 
 def report_path(kind: str, name: str) -> Path | None:

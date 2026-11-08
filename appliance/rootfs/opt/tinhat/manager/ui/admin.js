@@ -180,7 +180,9 @@ async function tabOverview(el, quiet) {
           : bad.length ? "Open Maintenance to restart them."
           : `${o.serverName} is ${serious ? "running" : "healthy"}. ${plural(o.counts.people, "person", "people")}, ${o.counts.rooms === null || o.counts.rooms === undefined ? "?" : plural(o.counts.rooms, "room", "rooms")}.`),
         watch.length ? h("div.stack-sm", watch.map((w) => h(`div.note${w.level === "bad" ? ".bad" : ""}`, w.text, " ",
-          h("a", { href: "#maintenance", onclick: (e) => { e.preventDefault(); goTab("maintenance"); } }, "Maintenance")))) : null),
+          h("a", { href: "#maintenance", onclick: (e) => { e.preventDefault(); goTab("maintenance"); } }, "Maintenance")))) : null,
+        o.proxyHint ? h("div.note.bad", "Everyone on your home network looks like your proxy (", h("span.mono", o.proxyHint), ") to this server, so they share one sign-in limit. ",
+          h("a", { href: "#network", onclick: (e) => { e.preventDefault(); goTab("network"); } }, "Name your proxy in Network")) : null),
       h("div.row.wrap",
         h("a.btn.ghost", { href: `https://${(o.api && o.api.web) || o.serverName}/` }, "Open Tin Hat"),
         h("button.btn.cta", { onclick: () => goTab("invites") }, "Invite someone"))),
@@ -527,32 +529,39 @@ function reportsCard(o) {
   // the room or the message in the web app (the owner opens it signed in as themselves; nothing is fetched here)
   const openLink = (room, event) => room && web ? h("a.btn.ghost.small", { href: `https://${web}/#/room/${encodeURIComponent(room)}${event ? "/" + encodeURIComponent(event) : ""}`, target: "_blank", rel: "noopener" }, event ? "Open the message" : "Open the room") : null;
   const download = (it) => h("a.btn.ghost.small", { href: `/admin/api/reports/file?kind=${it.kind}&name=${encodeURIComponent(it.name)}` }, "Download");
-  const abuseItem = (who, reporter, at, category, details, room, event, extra, more) => h("div.item",
+  const abuseItem = (who, reporter, at, category, details, room, event, extra, more, hidden = false) => h("div.item",
     h("div.grow",
       h("div.k", h("span.chip.bad", "Abuse report"), " ", category ? `${category}: ` : "", who || (event ? "a message" : "?")),
-      h("div.s", `from ${reporter || "?"} · ${when(at)}${event ? " · a message" : ""}${extra ? ` · ${extra}` : ""}`),
+      h("div.s", `from ${reporter || (hidden ? "someone (not shown: the report is about you)" : "?")} · ${when(at)}${event ? " · a message" : ""}${extra ? ` · ${extra}` : ""}`),
       details ? h("div.s", `“${details}”`) : null),
     openLink(room, event), more || null);
   const row = (it) => {
-    if (it.source === "matrix") return abuseItem(it.reported_user, it.user, it.at, "", it.reason, it.room_id, it.event_id, `through Matrix${it.room ? ` in ${it.room}` : ""}`);
+    if (it.source === "matrix") return abuseItem(it.reported_user, it.user, it.at, "", it.reason, it.room_id, it.event_id, `through Matrix${it.room ? ` in ${it.room}` : ""}`, null, !!it.reporterHidden);
     if (it.abuse) {
       const a = it.abuse;
-      return abuseItem(a.reported_user, it.user, it.at, a.category, a.details, a.room_id, a.event_id, "", download(it));
+      return abuseItem(a.reported_user, it.user, it.at, a.category, a.details, a.room_id, a.event_id, "", download(it), !!it.reporterHidden);
     }
     return h("div.item",
       h("div.grow", h("div.k", it.kind === "report" ? (it.title || "Problem report") : `Log: ${it.name.split("-").slice(4).join("-") || it.name}`),
         h("div.s", `${it.user || "?"} · ${when(it.at)} · ${Math.max(1, Math.round(it.size / 1024))} KB`)),
       download(it));
   };
+  let every = false;
   const load = async () => {
     try {
-      const r = await api("/admin/api/reports");
+      const r = await api(every ? "/admin/api/reports?all=1" : "/admin/api/reports");
       const all = [...r.reports, ...(r.matrix || []).map((m) => ({ ...m, source: "matrix" }))].sort((a, b) => b.at - a.at);
       // one odd entry never hides the others
       const safe = (it) => { try { return row(it); } catch { return h("div.item", h("div.grow.muted", `A report this page can't show (${it.name || it.id || "?"})`)); } };
       const notes = [];
       if (r.matrix === null) notes.push(h("div.item", h("div.grow.muted", "Reports sent through Matrix couldn't be read just now (is chat running?). Refresh to try again.")));
       else if (r.matrixTotal > r.matrix.length) notes.push(h("div.item", h("div.grow.muted", `Showing the newest ${r.matrix.length} of ${r.matrixTotal} reports sent through Matrix.`)));
+      // abuse reports and problem reports / logs are cut separately, so neither pushes the other off; say when either is cut
+      const cut = [];
+      if (r.abuseTotal > r.abuseShown) cut.push(`${r.abuseShown} of ${r.abuseTotal} abuse reports`);
+      if (r.otherTotal > r.otherShown) cut.push(`${r.otherShown} of ${r.otherTotal} problem reports and logs`);
+      if (cut.length) notes.unshift(h("div.item", h("div.grow.muted", `Showing the newest ${cut.join(" and ")}.`),
+        h("button.btn.ghost.small", { type: "button", onclick: () => { every = true; load(); } }, "Show all")));
       list.replaceChildren(...(all.length ? all.map(safe)
         : [h("div.item", h("div.grow.muted", "Nothing yet. People send these from the app's Report a problem, Share logs and Report…; they stay on this server."))]), ...notes);
     } catch (ex) {
@@ -886,8 +895,9 @@ function relayCard(n, el) {
 }
 
 /** Behind the owner's reverse proxy: which address(es) count as the proxy. Named, nobody else on the home network may
- * connect to the proxy port or say who the caller is (the sign-in limits count that address). Never set by itself:
- * the server shows where the proxy connects from and offers it. */
+ * connect to the proxy port or say who the caller is (the sign-in limits count that address). Named by itself only
+ * right after a 0.3.15+ setup or restore (the owner's first visit through the proxy); an older server is offered it
+ * (px.homeCollapse: everyone at home looks like the proxy until it is named). */
 function proxyTrustCard(px, el) {
   const named = px.trusted || [];
   const input = h("input", { type: "text", value: named.join(", "), placeholder: px.peer || "192.168.1.5", autocomplete: "off", spellcheck: "false", "aria-label": "Your reverse proxy's address" });
@@ -906,12 +916,22 @@ function proxyTrustCard(px, el) {
   const use = px.peer && !named.includes(px.peer)
     ? h("button.btn.ghost", { type: "button", onclick: () => send([...named, px.peer]) }, `Use ${px.peer}`) : null;
   const clear = named.length ? h("button.btn.ghost", { type: "button", onclick: () => send([]) }, "Any home-network address") : null;
+  const collapse = px.homeCollapse
+    ? h("div.note.bad.stack-sm",
+      h("div", "Everyone on your home network looks like your proxy (", h("span.mono", px.homeCollapse), ") to this server: they share one sign-in limit, and Devices shows that address for all of them. Name your proxy to fix it."),
+      h("div.row.wrap", h("button.btn", { type: "button", onclick: () => send([px.homeCollapse]) }, `Name ${px.homeCollapse} as your proxy`)),
+      h("small.muted", "Does another device at home connect to port " + px.port + " directly (not through the proxy)? Add its address too, or it will be refused."))
+    : null;
+  const auto = px.autonamed && named.includes(px.autonamed.peer)
+    ? h("p.small.muted", "Named by itself after setup: ", h("span.mono", px.autonamed.peer), ", the address your proxy connected from. If your proxy has more than one address (or another device at home connects to port " + px.port + " directly), add them here.")
+    : null;
   return h("div.card.stack",
     h("div.row.wrap.between", h("h2", "Who counts as your proxy"),
       h(`span.chip.${named.length ? "good" : "muted"}`, h("span.dot"), named.length ? named.join(", ") : "Any home-network address")),
     h("p.muted", named.length
       ? "Only these addresses may connect to this server's port " + px.port + " and tell it who the visitor is."
-      : "Right now any device on your home network may connect to port " + px.port + " and tell this server who the visitor is, so a device at home could dodge the sign-in limits. Name your proxy to close that."),
+      : "Right now any device on your home network may connect to port " + px.port + " and tell this server who the visitor is, and visitors at home are counted as your proxy's address. Name your proxy to fix both."),
+    collapse, auto,
     px.peer ? h("p.small", "This page reached the server through ", h("span.mono", px.peer), ".") : null,
     h("label.field", h("span", "Your reverse proxy's address"), input,
       h("small", "The address your proxy connects to this server from; several with commas. A small network (like 192.168.1.0/28) works too.")),
@@ -1219,7 +1239,90 @@ function connectionsCard(netEl) {
       || [...el.querySelectorAll("button")].some((b) => b.dataset.sure === "1"));
     if ((card.querySelector(".note") || other.querySelector(".note") || quiet % 5 === 0) && !busy) render();
   }, 3000);
-  return [card, other];
+  return [card, other, blockedServersCard()];
+}
+
+// ---- the deny-list: servers this one refuses (docs/NETWORK-RULES.md) ------------------------------------------------
+
+const REFUSAL_TEXT = { "server-blocked": "from a blocked server", "invite-rules": "the person's invite setting", "too-many-invites": "too many invites" };
+
+function blockedServersCard() {
+  const card = h("div.card.stack", h("h2", "Blocked servers"), h("div.row", h("span.spin"), h("span.muted", "Loading…")));
+  const sure = "Your server stops accepting messages, invites and pictures from it. Rooms you share with it keep going: it still gets what people here say in them, through Matrix. Leave those rooms to stop that.";
+  const render = async () => {
+    let b;
+    try {
+      b = await api("/admin/api/blocked-servers");
+    } catch (ex) {
+      card.replaceChildren(h("h2", "Blocked servers"), h("div.error", ex.message));
+      return;
+    }
+    const err = h("div.error.hidden");
+    const fail = (ex) => { err.textContent = ex.message; err.classList.remove("hidden"); };
+    const rows = (b.blocked || []).map((x) => {
+      const btn = h("button.btn.ghost.small", { type: "button" }, "Unblock");
+      const what = h("div.s.hidden", "Its messages, invites and new pictures reach this server again. Pictures and files removed while it was blocked don't come back by themselves.");
+      btn.addEventListener("click", async () => {
+        if (btn.dataset.sure !== "1") { btn.dataset.sure = "1"; btn.textContent = "Yes, unblock"; what.classList.remove("hidden"); return; }
+        btn.disabled = true;
+        try { const r = await api(`/admin/api/blocked-servers/${encodeURIComponent(x.server)}`, { method: "DELETE" }); toast(r.message); render(); } catch (ex) { fail(ex); btn.disabled = false; }
+      });
+      return h("div.item.code", h("div.grow", h("div.k.mono", x.server),
+        h("div.s", [`blocked ${dateText(x.since * 1000)}`, x.reason].filter(Boolean).join(" · ")), what), btn);
+    });
+    const name = h("input", { type: "text", placeholder: "example.org", autocapitalize: "none", spellcheck: "false", maxlength: "300" });
+    const why = h("input", { type: "text", placeholder: "spam invites (only you see this)", maxlength: "200" });
+    const note = h("div.note.hidden", sure);
+    const go = h("button.btn.cta", { type: "submit" }, "Block");
+    const block = async (server, reason) => {
+      const r = await api("/admin/api/blocked-servers", { json: { server, reason } });
+      toast(r.message);
+      render();
+    };
+    const form = h("form.stack-sm", {
+      onsubmit: async (e) => {
+        e.preventDefault();
+        err.classList.add("hidden");
+        if (go.dataset.sure !== "1") { go.dataset.sure = "1"; go.textContent = "Yes, block"; note.classList.remove("hidden"); return; }
+        go.disabled = true;
+        go.textContent = "Blocking…";
+        try { await block(name.value.trim(), why.value.trim()); } catch (ex) { fail(ex); go.disabled = false; go.textContent = "Yes, block"; }
+      },
+    }, h("div.k", "Block a server by name"), h("div.row.wrap.end-items",
+      h("label.field.inline", h("span", "Its name"), name), h("label.field.inline", h("span", "Why (optional)"), why), go),
+      note, h("p.small.muted", "The part after the colon in people's Matrix IDs: for @sam:example.org, type example.org."));
+    const busy = (b.busy || []).filter((x) => !(b.blocked || []).some((y) => y.server === x.server)).map((x) => {
+      const btn = h("button.btn.ghost.small", { type: "button" }, "Block");
+      const what = h("div.s.hidden", sure);
+      btn.addEventListener("click", async () => {
+        if (btn.dataset.sure !== "1") { btn.dataset.sure = "1"; btn.textContent = "Yes, block"; what.classList.remove("hidden"); return; }
+        btn.disabled = true;
+        try { await block(x.server, `${x.refused} invites refused in a day`); } catch (ex) { fail(ex); btn.disabled = false; }
+      });
+      return h("div.item.code", h("div.grow", h("div.k.mono", x.server), h("div.s", `${x.refused} invites refused in the last 24 hours`), what), btn);
+    });
+    const recent = (b.refusals || []).map((x) => h("div.item", h("div.grow",
+      h("div.s", `${dateText(x.at * 1000)} · an invite from ${x.server} · ${REFUSAL_TEXT[x.reason] || x.reason}`))));
+    card.replaceChildren(...[
+      h("h2", "Blocked servers"),
+      h("p.muted", "Servers this one refuses: their invites, pictures and requests never get in, even when they are connected or allowed by name (the entry there is kept, so Unblock brings it back as it was). People here can also choose who may invite them from other servers; by default only people they already know."),
+      b.applying ? h("div.note", "Restarting the chat server to apply a change… (a few seconds)") : null,
+      rows.length ? h("div.list", rows) : h("p.small.muted", "No servers blocked."),
+      form,
+      busy.length ? h("div.stack-sm", h("div.k", "Busy servers (refused invites, last 24 hours)"), h("div.list", busy)) : null,
+      recent.length ? h("div.stack-sm", h("div.k", "Recently refused"), h("div.list", recent)) : null,
+      err].filter(Boolean));
+  };
+  render();
+  let quiet = 0;
+  const tick = setInterval(() => {
+    if (!document.body.contains(card) || tab !== "network") return clearInterval(tick);
+    quiet += 1;
+    const editing = card.contains(document.activeElement) || [...card.querySelectorAll("input")].some((i) => i.value)
+      || [...card.querySelectorAll("button")].some((b) => b.dataset.sure === "1");
+    if ((card.querySelector(".note:not(.hidden)") || quiet % 10 === 0) && !editing) render();
+  }, 3000);
+  return card;
 }
 
 // ---- boot ----------------------------------------------------------------------------------------------------------

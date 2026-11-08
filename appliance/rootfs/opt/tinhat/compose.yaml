@@ -50,7 +50,11 @@ services:
     logging: *logging
 
   synapse:
-    image: matrixdotorg/synapse:v1.145.0
+    # Stock Synapse 1.145.0 + upstream security fixes (1.152.1 / 1.157.2; docs/SYNAPSE-PATCHES.md) and Pillow 13.0.0 /
+    # msgpack 1.2.4, built into the image by provision.sh from build/synapse/Dockerfile. Upgrading Synapse to
+    # 1.164.1 or later goes back to the stock image.
+    image: tinhat/synapse:v1.145.0-th2
+    pull_policy: never
     restart: unless-stopped
     depends_on:
       postgres:
@@ -104,7 +108,7 @@ services:
     # Synapse reaches at the box's address on the backend network) and game servers. Its environment, keys and state
     # are written by the manager into /var/lib/tinhat/api (manager/tinhat/apiconf.py); recordings are read from
     # /var/lib/tinhat/vods.
-    image: tinhat/api:0.3.14
+    image: tinhat/api:0.3.15
     pull_policy: never
     network_mode: host
     restart: unless-stopped
@@ -116,7 +120,7 @@ services:
 
   games:
     # The games catalogue (the Game Reel's list of games + cover art), from the same image.
-    image: tinhat/api:0.3.14
+    image: tinhat/api:0.3.15
     pull_policy: never
     network_mode: host
     restart: unless-stopped

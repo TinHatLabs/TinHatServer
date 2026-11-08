@@ -204,6 +204,21 @@ class WebAppCSP(unittest.TestCase):
                 with self.assertLogs("tinhat.templates", "WARNING"):
                     self.assertEqual(templates.web_app_csp(self.marker(bad)), "")
 
+    def test_frame_ancestors_only_none_or_self(self):
+        """Round 3 security review, ACCWEB-5: a policy whose frame-ancestors lets any other site frame the app is refused."""
+        ok = "default-src 'self'; frame-ancestors 'none'"
+        self.assertIsNone(templates.csp_problem(ok))
+        self.assertIsNone(templates.csp_problem("default-src 'self'; frame-ancestors 'self'"))
+        self.assertIsNone(templates.csp_problem("default-src 'self';frame-ancestors 'NONE'"))
+        for bad in ("default-src 'self'; frame-ancestors *", "default-src 'self'; frame-ancestors https:",
+                    "default-src 'self'; frame-ancestors 'self' https://evil.example", "frame-ancestors 'none'; frame-ancestors *",
+                    "default-src 'self'; frame-ancestors", "default-src 'self'; x-frame-ancestors 'none'",
+                    "default-src 'self' frame-ancestors 'none'",
+                    "frame-ancestors 'self'; default-src 'self', frame-ancestors *",
+                    "frame-ancestors 'self', frame-ancestors 'none'"):
+            self.assertIsNotNone(templates.csp_problem(bad), bad)
+            self.assertEqual(templates.web_csp_line(bad), "", bad)
+
     def test_web_csp_line_never_writes_a_bad_value(self):
         for bad in ('default-src "self"; frame-ancestors x', "frame-ancestors 'self'\nimport evil", "frame-ancestors {env.X}",
                     "default-src 'self'"):

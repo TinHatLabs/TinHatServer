@@ -55,6 +55,11 @@ def _setup():
     od.HOST_RE = eval(host_re, {"re": re})  # noqa: S307  (our own source line)
     pkg.owndomain = sys.modules[f"{NAME}.owndomain"] = od
     pkg.compose = sys.modules[f"{NAME}.compose"] = types.ModuleType(f"{NAME}.compose")
+    # the apps' view of the connections (apiconf.publish_network, open network slice 1): recorded, never written
+    api = types.ModuleType(f"{NAME}.apiconf")
+    api.published = []
+    api.publish_network = lambda st=None: api.published.append(sorted(c["server"] for c in state.load_state().get("connections") or []))
+    pkg.apiconf = sys.modules[f"{NAME}.apiconf"] = api
     fed = _load("federation", pkg)
     return pkg, config, state, fed
 
@@ -322,6 +327,62 @@ class Wiring(unittest.TestCase):
         self.assertIn('"/admin/api/allowed-servers"', page)
         self.assertIn("`/admin/api/allowed-servers/${encodeURIComponent(x.server)}`", page)
         self.assertIn("federation.adopt()", web.split("async def on_startup(", 1)[1].split("app.on_startup", 1)[0])
+
+
+class AppsAreTold(Base):
+    """Open network slice 1: every connection change republishes the apps' view (GET /api/network), and a failure
+    there never fails the change itself (Synapse's list is what matters; the apps read again later)."""
+
+    def test_connect_and_disconnect_republish(self):
+        api = PKGMOD.apiconf
+        api.published.clear()
+        self.write(**HAND_SET)
+        self.run_(self.f._add("crew.tinhat.me", "code TC-AAAA-BBBB"))
+        self.assertEqual(api.published[-1], ["crew.tinhat.me"])
+        self.run_(self.f._remove("crew.tinhat.me", notify=False))
+        self.assertEqual(api.published[-1], [])
+        self.assertEqual(len(api.published), 2)
+
+    def test_a_failed_publish_on_disconnect_is_retried(self):
+        """astra r1 P1: the dangerous direction. The disconnect stands, and the apps' view catches up."""
+        api = PKGMOD.apiconf
+        keep, keep_retry = api.publish_network, self.f._schedule_publish_retry
+        self.write(**{**HAND_SET, "connections": [{"server": "crew.tinhat.me", "since": 1, "by": "x"}],
+                      "federation": ["crew.tinhat.me", "matrix.example.org"]})
+        fails = [1]
+
+        def flaky(st=None):
+            if fails:
+                fails.pop()
+                raise OSError("disk full")
+            keep(st)
+        api.publish_network = flaky
+        self.f._schedule_publish_retry = lambda: keep_retry(delays=(0, 0))
+        api.published.clear()
+        try:
+            with self.assertLogs("tinhat.federation", level="ERROR"):
+                self.run_(self.f._remove("crew.tinhat.me", notify=False))
+            self.assertEqual(self.st()["federation"], ["matrix.example.org"])  # the disconnect itself stands
+            self.assertEqual(api.published, [[]])  # and the retry published the list without crew
+        finally:
+            api.publish_network, self.f._schedule_publish_retry = keep, keep_retry
+
+    def test_a_failing_publish_never_fails_the_change(self):
+        api = PKGMOD.apiconf
+        keep = api.publish_network
+
+        def boom(_st=None):
+            raise OSError("disk full")
+        api.publish_network = boom
+        self.f._schedule_publish_retry = lambda: None  # the retry has its own test
+        try:
+            self.write(**HAND_SET)
+            with self.assertLogs("tinhat.federation", level="ERROR"):
+                self.run_(self.f._add("crew.tinhat.me", "code TC-AAAA-BBBB"))
+            self.assertEqual(self.st()["federation"], ["crew.tinhat.me", "matrix.example.org"])
+            self.assertEqual(self.applied[-1], ["crew.tinhat.me", "matrix.example.org"])
+        finally:
+            api.publish_network = keep
 
 
 if __name__ == "__main__":

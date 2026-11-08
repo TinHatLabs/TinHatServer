@@ -129,9 +129,55 @@ def ipv6_addresses() -> list[str]:
     return out
 
 
+_ROUTE_PAIRS = {"dev", "proto", "scope", "metric", "pref", "expires", "src", "mtu", "advmss", "hoplimit", "table"}
+_ROUTE_FLAGS = {"linkdown"}
+
+
+def _plain_route(words: list) -> bool:
+    """`ip -6 -o route` attributes of a directly reached route only (see _onlink_v6)."""
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in _ROUTE_FLAGS:
+            i += 1
+        elif w in _ROUTE_PAIRS and i + 1 < len(words):
+            i += 2
+        else:
+            return False
+    return True
+
+
+def _onlink_v6(ifname: str) -> list:
+    """The IPv6 networks the kernel reaches directly on `ifname` (routes without a gateway: what the router advertised,
+    or what the interface was configured with), longest first."""
+    import ipaddress
+    out = []
+    try:
+        r = subprocess.run(["ip", "-6", "-o", "route", "show", "dev", ifname], capture_output=True, text=True, timeout=3)
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            # only a plain route counts: a prefix, then nothing but these attributes (anything else — a gateway `via`,
+            # a nexthop object `nhid`, several `nexthop`s, an `encap` tunnel, a route type such as `local` or
+            # `unreachable`, or a word this check doesn't know — means "not reached directly here")
+            if not parts or not _plain_route(parts[1:]):
+                continue
+            try:
+                out.append(ipaddress.ip_network(parts[0], strict=False))
+            except ValueError:
+                continue
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return out
+
+
 def ipv6_nets() -> list:
     """The box's own on-link IPv6 networks (global addresses on real interfaces, as addresses() picks them): a device
-    connecting from inside one of them is on the home network, even over its global IPv6 address."""
+    connecting from inside one of them is on the home network, even over its global IPv6 address.
+
+    Never more than a /64 (round 3 security review, RN-4): an interface configured with a /48 (as some providers do)
+    counts only its own /64, and an address of its own (/65../128, as DHCPv6 hands out) counts its /64 only when the
+    kernel reaches that /64 directly on the same interface (a home router advertises it; a rented server given one
+    address on a provider's network usually has no such route, so its neighbours aren't "home")."""
     import ipaddress
     out = []
     try:
@@ -142,8 +188,13 @@ def ipv6_nets() -> list:
             if ifname == "lo" or ifname.startswith(("lo:", "loopback", "docker", "br-", "veth", "wg-")):
                 continue
             addr, _, plen = cidr.partition("/")
-            plen = min(int(plen or 64), 64)  # a DHCPv6 /128 still sits in its /64
-            net = ipaddress.ip_network(f"{addr}/{plen}", strict=False)
+            plen = int(plen or 128)
+            a = ipaddress.ip_address(addr)
+            net64 = ipaddress.ip_network(f"{addr}/64", strict=False)
+            if plen > 64 and not any(n.prefixlen <= 64 and a in n for n in _onlink_v6(ifname)):
+                net = ipaddress.ip_network(f"{addr}/{plen}", strict=False)  # just its own address(es)
+            else:
+                net = net64
             if net not in out:
                 out.append(net)
     except (OSError, subprocess.SubprocessError, IndexError, ValueError):

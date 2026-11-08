@@ -25,7 +25,7 @@ from urllib.parse import quote
 
 from aiohttp import web
 
-from . import access, apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
+from . import access, apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, netrules, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
 from . import caddylock, pyenv, restoresafe, setuptls, templates
 from .install import Installer, validate, write_synapse_config
 from .synapse import Synapse
@@ -143,6 +143,17 @@ def status_for_outside(out: dict) -> dict:
                                  if isinstance(x, dict)],
                        "running": bool(p.get("running"))}  # always the same keys (no steps once ready)
     return doc
+
+
+def _via(req: web.Request) -> str:
+    """Behind the owner's reverse proxy: the X-Forwarded-For the request arrived at Caddy with (Caddy's X-Tinhat-Via on
+    the dashboard's route, which replaces whatever a caller sent); "" from a browser that connected straight to it."""
+    return req.headers.get("X-Tinhat-Via", "") if state.behind_proxy() else ""
+
+
+def _via_proto(req: web.Request) -> str:
+    """The X-Forwarded-Proto the request arrived at Caddy with (X-Tinhat-Via-Proto), behind the owner's proxy."""
+    return req.headers.get("X-Tinhat-Via-Proto", "") if state.behind_proxy() else ""
 
 
 def _peer(req: web.Request) -> str:
@@ -305,7 +316,7 @@ class Manager:
         # to start while the list isn't empty: both checks run without an await in between)
         self.federation = federation.Federation(
             self._apply_federation, busy=lambda: "The server is moving to its new address; try again when it's done."
-            if self.mover.running else None)
+            if self.mover.running else None, edge_cb=self._apply_edge)
         # The setup page's unlock survives the manager restarting too (an update before a restore restarts it).
         self.setup_sessions = sessions.Sessions(4, config.STATE_DIR / "setup-sessions.json", max_hours=24)
         self.sessions = sessions.Sessions(SESSION_HOURS, max_hours=SESSION_MAX_HOURS)  # survives the manager restarting
@@ -320,6 +331,7 @@ class Manager:
         self.net: dict | None = None        # what the wizard's browser measured between itself and the box
         self._bench_lock = asyncio.Lock()
         self._apply_lock = asyncio.Lock()  # one settings change at a time
+        self._autoname_tried: float | None = None  # (owndomain.autoname_candidate: at most one try per 10 min)
         self._noise = os.urandom(1 << 20)   # 1 MiB of random bytes for the download test (incompressible)
 
     # ---- helpers ------------------------------------------------------------------------------------------------
@@ -684,9 +696,34 @@ class Manager:
         return _json({"mxid": s["mxid"], "serverName": st.get("server_name"), "mode": st.get("mode", "lan"),
                       "zone": environment.env()["zone"]})
 
+    async def _proxy_autoname(self, req: web.Request) -> None:
+        """0.3.15: right after setting up (or restoring) behind the owner's reverse proxy with no proxy named, the
+        owner's first dashboard visit THROUGH the proxy names it (owndomain.autoname_candidate), with the same checks as
+        a save by hand. Without it every caller at home would look like the proxy."""
+        def candidate() -> str | None:
+            return owndomain.autoname_candidate(state.load_state(), _peer(req), _via(req), hw.addresses(), _via_proto(req))
+        peer = candidate()
+        if not peer or (self._autoname_tried is not None and time.monotonic() - self._autoname_tried < 600):
+            return
+        self._autoname_tried = time.monotonic()
+        async with self._apply_lock:  # everything judged again under the lock (a change may have landed meanwhile)
+            if candidate() != peer:
+                return
+            if (refused := owndomain.proxy_save_problem([peer], peer, hw.addresses())) is not None:
+                log.warning("didn't name the reverse proxy %s by itself: %s", peer, refused)
+                return
+            ok, why = await apply_proxy_addresses([peer])
+        if not ok:
+            log.warning("didn't name the reverse proxy %s by itself (the web server refused it): %s", peer, why)
+            return
+        state.save_state(proxy_autoname=None, proxy_autonamed={"peer": peer, "at": int(time.time())})
+        _cache.pop("proxies", None)
+        log.info("named the reverse proxy by itself after setup: %s (the address the owner's dashboard came through)", peer)
+
     async def overview(self, req: web.Request) -> web.Response:
         if not self._admin(req):
             return _err("Sign in first.", 401)
+        await self._proxy_autoname(req)
         st = state.load_state()
         ps = await compose.ps()
         wanted = ["caddy", "postgres", "synapse"] + (["livekit", "lk-jwt"] if st.get("calls", True) else [])
@@ -713,6 +750,8 @@ class Manager:
             "api": apiconf.doc(st), "python": pyenv.CURRENT or None,
             "counts": {"people": len([u for u in people if not u.get("deactivated")]), "rooms": await self.synapse.room_count(tok) if tok else None},
             "watch": await self._watch(),
+            # everyone at home looks like the proxy (no proxy named): the Overview points at Network → name it
+            "proxyHint": owndomain.home_collapse(st, _peer(req), _via(req), hw.addresses()),
         })
 
     async def _watch(self) -> list[dict]:
@@ -1086,7 +1125,10 @@ class Manager:
         if not self._admin(req):
             return _err("Sign in first.", 401)
         matrix, total = await self._event_reports()
-        return _json({"reports": await asyncio.to_thread(apiconf.reports), "matrix": matrix, "matrixTotal": total})
+        every = req.query.get("all") == "1"  # "Show all" on the card
+        doc = await asyncio.to_thread(apiconf.reports_doc, None if every else 50, None if every else 200)
+        return _json({"reports": doc["items"], "abuseTotal": doc["abuseTotal"], "abuseShown": doc["abuseShown"],
+                      "otherTotal": doc["otherTotal"], "otherShown": doc["otherShown"], "matrix": matrix, "matrixTotal": total})
 
     async def _event_reports(self) -> tuple[list[dict] | None, int]:
         """Reports people sent through Matrix itself (an app without the Tin Hat API, a guest, any Matrix client):
@@ -1102,11 +1144,14 @@ class Manager:
         if code != 200 or not isinstance(body, dict) or not isinstance(body.get("event_reports"), list):
             return None, 0
         out = []
+        me = apiconf.owner_ids()
         for r in body.get("event_reports") or []:
             if not isinstance(r, dict):
                 continue
+            hidden = apiconf.about_owner(str(r.get("sender") or ""), me)  # about the owner: who sent it isn't shown
             out.append({"id": r.get("id"), "at": int((r.get("received_ts") or 0) / 1000),
-                        "user": str(r.get("user_id") or ""), "reported_user": str(r.get("sender") or ""),
+                        "user": "" if hidden else str(r.get("user_id") or ""), **({"reporterHidden": True} if hidden else {}),
+                        "reported_user": str(r.get("sender") or ""),
                         "room_id": str(r.get("room_id") or ""), "event_id": str(r.get("event_id") or ""),
                         "room": str(r.get("name") or r.get("canonical_alias") or "")[:120],
                         "reason": str(r.get("reason") or "")[:1000]})
@@ -1119,6 +1164,17 @@ class Manager:
         p = apiconf.report_path(req.query.get("kind", ""), req.query.get("name", ""))
         if p is None:
             return _err("No such report.", 404)
+        if p.name.endswith("-abuse.json"):  # about the owner: handed out without its sender (apiconf.about_owner)
+            try:
+                text = p.read_text()
+                j = json.loads(text)
+                about = j.get("report", {}).get("reported_user") if isinstance(j, dict) and isinstance(j.get("report"), dict) else None
+            except (OSError, ValueError, RecursionError):
+                about, text = None, None
+            if text is not None and apiconf.about_owner(about):
+                return web.Response(text=apiconf.redacted_report(text), content_type="application/json", headers={
+                    "Content-Disposition": f'attachment; filename="{p.name}"', "Cache-Control": "no-store",
+                    "X-Content-Type-Options": "nosniff"})
         return web.FileResponse(p, headers={"Content-Disposition": f'attachment; filename="{p.name}"',
                                             "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
@@ -1153,10 +1209,14 @@ class Manager:
     async def network(self, req: web.Request) -> web.Response:
         if not self._admin(req):
             return _err("Sign in first.", 401)
+        await self._proxy_autoname(req)
         doc = self._network_doc()
         await self._relay_offer(doc)
         if isinstance(doc.get("proxy"), dict):  # where this page came through: the proxy card offers it
             doc["proxy"]["peer"] = _peer(req) or None
+            st = state.load_state()
+            doc["proxy"]["homeCollapse"] = owndomain.home_collapse(st, _peer(req), _via(req), hw.addresses())
+            doc["proxy"]["autonamed"] = st.get("proxy_autonamed") or None
         doc["dashboardAccess"] = access.doc(caller=_client(req), own_nets=_home_nets())
         if doc.get("domain"):  # where the domain points now, next to where the home is: the owner's job for most providers
             doc["domain"]["resolves"] = await asyncio.to_thread(owndomain.resolves_to, doc["serverName"])
@@ -1206,6 +1266,7 @@ class Manager:
                 log.warning("proxy addresses %s not applied: %s", new, why)
                 return _err("The web server didn't take these settings; nothing changed.", 500)
         _cache.pop("proxies", None)
+        state.save_state(proxy_autoname=None)  # the owner chose: never named by itself after this
         log.info("%s set the reverse proxy's addresses: %s", s["mxid"], ", ".join(new) or "any home-network address")
         return _json({"ok": True, "trusted": new})
 
@@ -1911,15 +1972,28 @@ class Manager:
         if self.mover.running:  # the move refuses connected servers; this one waits for the next change
             return False, "the server is moving to its new address"
         async with self._apply_lock:
+            if self.mover.running:  # again under the lock: a queued apply waits for the move (astra r2)
+                return False, "the server is moving to its new address"
             st = state.load_state()
             feats = st.get("features") or {"calls": st.get("calls", True), "previews": False, "directory": True, "uploadMb": 100}
-            write_synapse_config(st["server_name"], state.load_secrets(), feats, allow)
+            # home-network mode has no federation listener at all (None), whatever list a change hands over (a block
+            # saved there: astra r1 on the deny-list)
+            write_synapse_config(st["server_name"], state.load_secrets(), feats, None if st.get("mode", "lan") == "lan" else allow)
             rc, out = await compose.restart("synapse")
             for _ in range(120):
                 if await self.synapse.healthy():
                     return True, f"allowlist {allow}"
                 await asyncio.sleep(1)
             return False, "the chat server didn't come back"
+
+    async def _apply_edge(self) -> tuple[bool, str]:
+        """The deny-list into the Caddyfile (templates.with_fed_deny), checked and reloaded the usual way."""
+        if self.mover.running:
+            return False, "the server is moving to its new address (the minute loop writes it afterwards)"
+        async with self._apply_lock:
+            if self.mover.running:  # again under the lock: a move may have started while this waited (astra max r1)
+                return False, "the server is moving to its new address (the minute loop writes it afterwards)"
+            return await _apply_with_caddy()
 
     async def fed_confirm(self, req: web.Request) -> web.Response:
         server = self.federation.confirm(req.match_info["nonce"])
@@ -2024,6 +2098,42 @@ class Manager:
             return busy
         ok, msg = await self.federation.disallow(req.match_info["server"])
         log.info("%s remove allowed %s: %s", s["mxid"], req.match_info["server"][:80], msg)
+        return _json({"ok": True, "message": msg}) if ok else _err(msg, 400)
+
+    # ---- the deny-list: Network → Blocked servers (netrules.py, docs/NETWORK-RULES.md) ------------------------------
+    async def blocked_get(self, req: web.Request) -> web.Response:
+        if not self._admin(req):
+            return _err("Sign in first.", 401)
+        st = state.load_state()
+        return _json({"mode": st.get("mode", "lan"), "blocked": netrules.entries(st),
+                      "refusals": netrules.recent_refusals(), "busy": netrules.busy_servers(),
+                      "applying": self.federation.applying})
+
+    async def blocked_add(self, req: web.Request) -> web.Response:
+        s = self._admin(req)
+        if not s or not self._csrf_ok(req):
+            return _err("Sign in first.", 401)
+        if (busy := self._moving()) is not None:
+            return busy
+        try:
+            body = await req.json()
+        except ValueError:
+            return _err("Bad request.", 400)
+        if not isinstance(body, dict) or not isinstance(body.get("server"), str) or len(body["server"]) > 300 \
+                or not isinstance(body.get("reason", ""), str) or len(body.get("reason", "")) > 1000:
+            return _err("Type the other server's name, like example.org.", 400)
+        ok, msg = await self.federation.block(body["server"], s["mxid"], body.get("reason", ""))
+        log.info("%s block %r: %s", s["mxid"], body["server"][:80], msg)
+        return _json({"ok": True, "message": msg}) if ok else _err(msg, 400)
+
+    async def blocked_delete(self, req: web.Request) -> web.Response:
+        s = self._admin(req)
+        if not s or not self._csrf_ok(req):
+            return _err("Sign in first.", 401)
+        if (busy := self._moving()) is not None:
+            return busy
+        ok, msg = await self.federation.unblock(req.match_info["server"])
+        log.info("%s unblock %s: %s", s["mxid"], req.match_info["server"][:80], msg)
         return _json({"ok": True, "message": msg}) if ok else _err(msg, 400)
 
     async def restart_service(self, req: web.Request) -> web.Response:
@@ -2157,6 +2267,9 @@ def build_app() -> web.Application:
     r.add_delete("/admin/api/connections/{server}", m.connections_delete)
     r.add_post("/admin/api/allowed-servers", m.allowed_add)
     r.add_delete("/admin/api/allowed-servers/{server}", m.allowed_delete)
+    r.add_get("/admin/api/blocked-servers", m.blocked_get)
+    r.add_post("/admin/api/blocked-servers", m.blocked_add)
+    r.add_delete("/admin/api/blocked-servers/{server}", m.blocked_delete)
     r.add_post("/admin/api/login", m.login)
     r.add_post("/admin/api/login-token", m.login_token)
     r.add_post("/admin/api/logout", m.logout)
@@ -2341,7 +2454,10 @@ async def _background(m: Manager) -> None:
         if tick % 6 == 5 and state.phase() == "ready":
             await _guard("pending Caddyfile", _write_pending_caddyfile(m))
             await _guard("dashboard access", _keep_access_gate(m))
+            await _guard("deny-list at the web server", _keep_fed_deny(m))
+            await _guard("deny-list in Synapse", _keep_synapse_denylist(m))
             await _guard("setup https site", _drop_setup_site(m))
+            await _guard("network.json", _renew_network())
         try:
             console.refresh()
             await mdns.keep_setup_alias(state.phase() == "ready")
@@ -2351,6 +2467,12 @@ async def _background(m: Manager) -> None:
         except Exception:  # noqa: BLE001
             log.exception("background tick failed")
         await asyncio.sleep(10)
+
+
+async def _renew_network() -> None:
+    """Once a minute: the apps' view of the connections (GET /api/network) is rewritten when it changed, went missing
+    or is an hour old, so a failed publish heals and the API's age limit never cuts off a healthy server."""
+    apiconf.publish_network()
 
 
 _gate_reloaded = False  # this manager made Caddy load its file once since it started
@@ -2393,6 +2515,59 @@ async def _keep_access_gate(m: Manager) -> None:
         _gate_reloaded = rc == 0
         if rc != 0:
             log.warning("dashboard access: the web server didn't load its settings: %s", out[-300:])
+
+
+def fed_deny_stale(live: str, names: list[str]) -> bool:
+    """Whether the live Caddyfile's deny-list refusal (templates.with_fed_deny) differs from the owner's list: missing
+    from a `handle /_matrix/*` block, an old list, or one left after the last Unblock."""
+    return templates.with_fed_deny(templates.strip_fed_deny(live), names) != live
+
+
+async def _keep_fed_deny(m: Manager) -> None:
+    """Once a minute: the deny-list at the web server follows the owner's list (a write that failed, an update that
+    rewrote the Caddyfile from older templates, a restore)."""
+    st = state.load_state()
+    if st.get("phase") != "ready" or m.mover.running:
+        return
+    try:
+        live = config.CADDYFILE.read_text()
+    except OSError:
+        return
+    if not fed_deny_stale(live, netrules.names(st)):
+        return
+    async with m._apply_lock:
+        if m.mover.running:  # again under the lock: a move may have started while this waited (astra max r1)
+            return
+        ok, why = await _apply_with_caddy()
+    if ok:
+        log.info("deny-list: the web server's settings follow the owner's list again")
+    else:
+        log.warning("deny-list: couldn't write it into the web server's settings: %s", why)
+
+
+def synapse_denylist_stale(hs_yaml: str, names: list[str]) -> bool:
+    """Whether homeserver.yaml was written for another deny-list than the owner's (its media line carries it). A file
+    from before the deny-list with nothing blocked has nothing to enforce (no restart just for the update)."""
+    if not names and "\nprevent_media_downloads_from:" not in hs_yaml:
+        return False
+    return f"\nprevent_media_downloads_from: {json.dumps(sorted(names))}\n" not in hs_yaml
+
+
+async def _keep_synapse_denylist(m: Manager) -> None:
+    """Once a minute: Synapse's allow-list and media refusals follow the owner's deny-list (a restart that failed, or
+    a manager that stopped between the web server's part and Synapse's: astra r1). Never while a change applies."""
+    st = state.load_state()
+    if st.get("phase") != "ready" or m.mover.running or m.federation.applying or m.federation.apply_lock.locked():
+        return
+    if not state.public_mode(st):
+        return
+    try:
+        text = (config.SYNAPSE_DIR / "homeserver.yaml").read_text()
+    except OSError:
+        return
+    if synapse_denylist_stale(text, netrules.names(st)):
+        log.info("deny-list: Synapse's settings don't carry the owner's list yet: applying it")
+        m.federation._schedule_apply()
 
 
 async def _write_pending_caddyfile(m: Manager) -> None:

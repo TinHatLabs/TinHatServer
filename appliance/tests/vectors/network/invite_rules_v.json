@@ -1,0 +1,393 @@
+{
+ "about": "dev.tinhat.invite_rules: how every Tin Hat side reads the `v` of a person's rule for invites from other servers (server: Synapse module tinhat_network.parse_rule; the apps copy this file byte for byte). Each case's content_json is the account data's JSON text (null = no account data); parse it with your own JSON parser, then read it.",
+ "type": "dev.tinhat.invite_rules",
+ "read": {
+  "accepted_v": "a JSON number whose correctly rounded double (IEEE 754 binary64, round-to-nearest) is exactly 1 (1, 1.0, 1e0, 0.99999999999999999, ...: after JSON parsing these are the same value in JavaScript; a Rust reader needs serde_json's float_roundtrip feature or another correctly rounding parser), or the string \"1\" or \"1.0\" exactly (after JSON unescaping; no spaces or other digits); never a boolean",
+  "rejected_v": "nobody: any other v, or no v, in a document that has other keys. Never looser than what the person stored, whatever they stored",
+  "no_document": "known (the default): no account data, or an empty JSON object (Tin Hat's way to clear the setting; Matrix can't delete account data)",
+  "rule_word": "with an accepted v: remote = exactly \"anyone\", \"known\" or \"nobody\"; anything else = known (unchanged)",
+  "unreadable": "nobody, like a rejected v: a document that isn't a JSON object, isn't valid JSON, or holds anywhere a number whose double isn't finite (1e400, a 400-digit integer), whatever your parser does with it"
+ },
+ "cases": [
+  {
+   "name": "v integer 1",
+   "content_json": "{\"v\":1,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v string \"1\"",
+   "content_json": "{\"v\":\"1\",\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v string \"1.0\"",
+   "content_json": "{\"v\":\"1.0\",\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v number 1.0",
+   "content_json": "{\"v\":1.0,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v number 1.00",
+   "content_json": "{\"v\":1.00,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v number 1e0",
+   "content_json": "{\"v\":1e0,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v number 1E0",
+   "content_json": "{\"v\":1E0,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v number 10e-1",
+   "content_json": "{\"v\":10e-1,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v number 0.1e1",
+   "content_json": "{\"v\":0.1e1,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v number 1.0000000000000001 (a double: exactly 1)",
+   "content_json": "{\"v\":1.0000000000000001,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "accepted v, rule known",
+   "content_json": "{\"v\":1,\"remote\":\"known\"}",
+   "rule": "known"
+  },
+  {
+   "name": "accepted v, rule nobody",
+   "content_json": "{\"v\":\"1.0\",\"remote\":\"nobody\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "accepted v, other keys too",
+   "content_json": "{\"remote\":\"anyone\",\"v\":1,\"extra\":true}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v 2",
+   "content_json": "{\"v\":2,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"2\"",
+   "content_json": "{\"v\":\"2\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 0",
+   "content_json": "{\"v\":0,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v -1",
+   "content_json": "{\"v\":-1,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v -0",
+   "content_json": "{\"v\":-0,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 1.5",
+   "content_json": "{\"v\":1.5,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"1.5\"",
+   "content_json": "{\"v\":\"1.5\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 1.9",
+   "content_json": "{\"v\":1.9,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 0.9999999",
+   "content_json": "{\"v\":0.9999999,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v null",
+   "content_json": "{\"v\":null,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v true",
+   "content_json": "{\"v\":true,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v false",
+   "content_json": "{\"v\":false,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"01\"",
+   "content_json": "{\"v\":\"01\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \" 1\"",
+   "content_json": "{\"v\":\" 1\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"1 \"",
+   "content_json": "{\"v\":\"1 \",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"1.\"",
+   "content_json": "{\"v\":\"1.\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"1.00\"",
+   "content_json": "{\"v\":\"1.00\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"1.0e0\"",
+   "content_json": "{\"v\":\"1.0e0\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"1e0\"",
+   "content_json": "{\"v\":\"1e0\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"+1\"",
+   "content_json": "{\"v\":\"+1\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"one\"",
+   "content_json": "{\"v\":\"one\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v empty string",
+   "content_json": "{\"v\":\"\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v string \"v1\"",
+   "content_json": "{\"v\":\"v1\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v huge integer",
+   "content_json": "{\"v\":100000000000000000001,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 1e400 (too big for a double)",
+   "content_json": "{\"v\":1e400,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 1e-400 (rounds to 0)",
+   "content_json": "{\"v\":1e-400,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v object",
+   "content_json": "{\"v\":{\"v\":1},\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v list [1]",
+   "content_json": "{\"v\":[1],\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v empty list",
+   "content_json": "{\"v\":[],\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v missing",
+   "content_json": "{\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v missing, rule nobody",
+   "content_json": "{\"remote\":\"nobody\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v key differs in case",
+   "content_json": "{\"V\":1,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "no document",
+   "content_json": null,
+   "rule": "known"
+  },
+  {
+   "name": "empty document (Matrix's way of clearing account data)",
+   "content_json": "{}",
+   "rule": "known"
+  },
+  {
+   "name": "accepted v, unknown rule word",
+   "content_json": "{\"v\":1,\"remote\":\"everyone\"}",
+   "rule": "known"
+  },
+  {
+   "name": "accepted v, rule word in another case",
+   "content_json": "{\"v\":1,\"remote\":\"Anyone\"}",
+   "rule": "known"
+  },
+  {
+   "name": "accepted v, rule missing",
+   "content_json": "{\"v\":1}",
+   "rule": "known"
+  },
+  {
+   "name": "accepted v, rule null",
+   "content_json": "{\"v\":1,\"remote\":null}",
+   "rule": "known"
+  },
+  {
+   "name": "v 0.9999999999999999 (a double just below 1)",
+   "content_json": "{\"v\":0.9999999999999999,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 1.0000000000000002 (a double just above 1)",
+   "content_json": "{\"v\":1.0000000000000002,\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v 0.99999999999999999 (rounds to exactly 1)",
+   "content_json": "{\"v\":0.99999999999999999,\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "a number too big for a double elsewhere in the document",
+   "content_json": "{\"v\":1,\"remote\":\"anyone\",\"extra\":1e400}",
+   "rule": "nobody"
+  },
+  {
+   "name": "a huge integer elsewhere in the document",
+   "content_json": "{\"v\":1,\"remote\":\"anyone\",\"extra\":9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999}",
+   "rule": "nobody"
+  },
+  {
+   "name": "a number too big for a double, nested",
+   "content_json": "{\"v\":1,\"remote\":\"anyone\",\"extra\":{\"a\":[1,-1e999]}}",
+   "rule": "nobody"
+  },
+  {
+   "name": "a number too big for a double as the rule word",
+   "content_json": "{\"v\":1,\"remote\":1e400}",
+   "rule": "nobody"
+  },
+  {
+   "name": "ordinary numbers elsewhere are fine",
+   "content_json": "{\"v\":1,\"remote\":\"anyone\",\"extra\":[1.5,-2,1e300]}",
+   "rule": "anyone"
+  },
+  {
+   "name": "v fullwidth digit one",
+   "content_json": "{\"v\":\"\\uff11\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v Arabic-Indic digit one",
+   "content_json": "{\"v\":\"\\u0661\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v \"1\" with a zero-width space",
+   "content_json": "{\"v\":\"1\\u200b\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v \"1\" with a no-break space",
+   "content_json": "{\"v\":\"\\u00a01\",\"remote\":\"anyone\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v \"1\" written as a JSON escape",
+   "content_json": "{\"v\":\"\\u0031\",\"remote\":\"anyone\"}",
+   "rule": "anyone"
+  },
+  {
+   "name": "rule word as a JSON escape",
+   "content_json": "{\"v\":1,\"remote\":\"\\u006eobody\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "rule word true",
+   "content_json": "{\"v\":1,\"remote\":true}",
+   "rule": "known"
+  },
+  {
+   "name": "rule word a number",
+   "content_json": "{\"v\":1,\"remote\":1}",
+   "rule": "known"
+  },
+  {
+   "name": "rule word a list",
+   "content_json": "{\"v\":1,\"remote\":[\"anyone\"]}",
+   "rule": "known"
+  },
+  {
+   "name": "v missing, only another key",
+   "content_json": "{\"extra\":1}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v missing, rule known",
+   "content_json": "{\"remote\":\"known\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "a v-1 document nested inside doesn't count",
+   "content_json": "{\"inner\":{\"v\":1,\"remote\":\"anyone\"}}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v rejected, rule nobody",
+   "content_json": "{\"v\":2,\"remote\":\"nobody\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "v rejected, rule known",
+   "content_json": "{\"v\":2,\"remote\":\"known\"}",
+   "rule": "nobody"
+  },
+  {
+   "name": "not JSON at all",
+   "content_json": "{\"v\":1,",
+   "rule": "nobody"
+  },
+  {
+   "name": "the document is a list",
+   "content_json": "[]",
+   "rule": "nobody"
+  },
+  {
+   "name": "the document is a string",
+   "content_json": "\"\"",
+   "rule": "nobody"
+  }
+ ]
+}

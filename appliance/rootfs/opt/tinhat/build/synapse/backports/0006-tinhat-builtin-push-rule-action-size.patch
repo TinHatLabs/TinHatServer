@@ -1,0 +1,24 @@
+diff --git a/storage/databases/main/push_rule.py b/storage/databases/main/push_rule.py
+index 5086f4639b08365a7d060d1906a571365ddba310..230a3b81ddbd37178f44b40c89f6deb608ba0910 100644
+--- a/storage/databases/main/push_rule.py
++++ b/storage/databases/main/push_rule.py
+@@ -890,6 +890,19 @@ class PushRulesWorkerStore(
+             event_stream_ordering: int,
+         ) -> None:
+             if is_default_rule:
++                # Not upstream (Tin Hat Server): the same size limit as a custom
++                # rule's. A built-in rule's actions are stored per user as well,
++                # and written to `push_rules_stream` on every change.
++                rule_body_size = _push_rule_size_for_limits(
++                    conditions_json="[]", actions_json=actions_json
++                )
++                if rule_body_size > self._config.limits.rule_size:
++                    raise SynapseError(
++                        HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
++                        f"Push rule size exceeds server limit ({rule_body_size} bytes > {self._config.limits.rule_size} bytes).",
++                        Codes.UNKNOWN,
++                    )
++
+                 # Add a dummy rule to the rules table with the user specified
+                 # actions.
+                 priority_class = -1

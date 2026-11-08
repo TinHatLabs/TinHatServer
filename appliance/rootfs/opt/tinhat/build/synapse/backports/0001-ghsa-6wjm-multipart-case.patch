@@ -1,0 +1,13 @@
+diff --git a/http/site.py b/http/site.py
+index 6ced5b98b3cc95151875cfb1de30b24bb54e0a75..46f43fb1e9d9340799c9c86204aff2cb77f22edb 100644
+--- a/http/site.py
++++ b/http/site.py
+@@ -278,7 +278,7 @@ class SynapseRequest(Request):
+         # See: https://github.com/element-hq/synapse/security/advisories/GHSA-rfq8-j7rh-8hf2
+         if command == b"POST":
+             ctype = self.requestHeaders.getRawHeaders(b"content-type")
+-            if ctype and b"multipart/form-data" in ctype[0]:
++            if ctype and b"multipart/form-data" in ctype[0].lower():
+                 logger.warning(
+                     "Aborting connection from %s because `content-type: multipart/form-data` is unsupported: %s %s",
+                     self.client,

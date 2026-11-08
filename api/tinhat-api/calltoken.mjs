@@ -47,7 +47,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { RateLimit, clientKey, mono, ROOM_ID_RE, safe } from "./reachcommon.mjs";
 import { createFedResolver } from "./fedresolve.mjs";
-import { DEVICE_RE, MXID_RE, parseIdentity } from "./identity.mjs";
+import { DEVICE_RE, MXID_RE, parseIdentity, portShapedConnection } from "./identity.mjs";
 import { createPadState, padKey } from "./padstate.mjs";
 import { enumIs, isAudioTrack, isNormalMuteRestriction, mayPublishMic, normalMutePermission } from "./callmute.mjs";
 import { callModerationRoles, decideCallModeration } from "./moderation.mjs";
@@ -145,6 +145,7 @@ export function padViolation(p, padState, room) {
  */
 export function reservedWithRights(p, padState = null, room = "") {
     const id = String(p?.identity || "");
+    if (portShapedConnection(id)) return true;  // a device id this server no longer signs in (round 3 ID-2): out
     if (!/[~#]/.test(id)) return false;
     if (PAD_ID_RE.test(id)) return padViolation(p, padState, room) !== "";
     if ((p?.tracks || []).length) return true;
@@ -163,7 +164,7 @@ export const WATCH_DEVICE_RE = DEVICE_RE; // (identity.mjs: the ONE device rule,
  * The grant of a Watch token (DESIGN §1.3): one room, subscribe only. No publish of any track, no data, no metadata
  * or attribute changes of its own. Pure (tests pin every field).
  */
-export function watchGrant({ key, user, device, room, nowS, nonce = randomBytes(8).toString("hex") }) {
+export function watchGrant({ key, user, device, room, nowS, nonce = randomBytes(8).toString("hex"), person = true }) {
     return {
         iss: key, sub: `${user}:${device}${WATCH_SUFFIX}-${nonce}`, name: user, nbf: nowS - 10, exp: nowS + CALLTOKEN.WATCH_TTL_S,
         video: {
@@ -173,7 +174,8 @@ export function watchGrant({ key, user, device, room, nowS, nonce = randomBytes(
         },
         // Pad on the phone (share claude/tinhat-pad/PAD-PHONE/DESIGN.md, Step A): the chip and the person grouping come ONLY
         // from these server-minted attributes (canUpdateOwnMetadata false: no participant can set or change its own)
-        attributes: { "tinhat.watch": "1", "tinhat.person": user, "tinhat.pad": "phone", "tinhat.mode": "watch" },
+        // `person` false (the call-server key pair not replaced yet, lkrotate.py): the watch mark alone, as before 0.3.13
+        attributes: person ? { "tinhat.watch": "1", "tinhat.person": user, "tinhat.pad": "phone", "tinhat.mode": "watch" } : { "tinhat.watch": "1" },
     };
 }
 
@@ -231,8 +233,11 @@ export function verifyLk(jwt, secret) {
  * attribute `tinhat.person` = the verified user (any `tinhat.*` attribute it may have carried is dropped first) and a
  * `canUpdateOwnMetadata: true` turned into false (no participant may set its own attributes). The response keeps
  * every other field. -> the new response text, or null (not lk-jwt's token: never relayed).
+ * `person` false (the call-server key pair not replaced yet, lkrotate.py; security review round 3, PAD-3): every
+ * `tinhat.*` attribute is still dropped, but no `tinhat.person` is added — a credential from before 0.3.13 may still
+ * join, so nothing may be grouped by person until the key pair has been replaced.
  */
-export function remint(text, secret, user, restrict = null) {
+export function remint(text, secret, user, restrict = null, { person = true } = {}) {
     let o;
     try { o = JSON.parse(text); } catch { return null; }
     if (!o || typeof o !== "object" || typeof o.jwt !== "string") return null;
@@ -241,7 +246,7 @@ export function remint(text, secret, user, restrict = null) {
     // a null-prototype map: an attribute named "__proto__" is copied as an attribute, never into the prototype (review P1)
     const attrs = Object.create(null);
     if (p.attributes && typeof p.attributes === "object") for (const [k, v] of Object.entries(p.attributes)) if (!k.startsWith("tinhat.")) attrs[k] = v;
-    attrs["tinhat.person"] = user;
+    if (person) attrs["tinhat.person"] = user;
     const out = { ...p, attributes: attrs };
     if (p.video.canUpdateOwnMetadata === true) out.video = { ...p.video, canUpdateOwnMetadata: false };
     // Step B (code review r1 P1 #4): while a moderator has this person muted, a publishing token never carries the
@@ -257,6 +262,13 @@ export function remint(text, secret, user, restrict = null) {
     const body = Buffer.from(JSON.stringify(out)).toString("base64url");
     const jwt = `${head}.${body}.${createHmac("sha256", secret).update(`${head}.${body}`).digest("base64url")}`;
     return JSON.stringify({ ...o, jwt });
+}
+
+/** Has the call-server key pair been replaced (lkrotate.py)? On a Tin Hat Server the manager says so in LK_ROTATED and
+ *  only an exact "1" counts (missing or anything else: not yet, fail closed); elsewhere only an explicit "0" says no. */
+export function rotatedFromEnv(env) {
+    const v = String(env.LK_ROTATED ?? "").trim();
+    return env.TINHAT_BOX === "1" ? v === "1" : v !== "0";
 }
 
 const LEGACY_KEYS = new Set(["room", "openid_token", "device_id"]);
@@ -295,7 +307,7 @@ function openid(o) {
     return { access_token: str(t, "access_token"), token_type: str(t, "token_type"), matrix_server_name: str(t, "matrix_server_name"), expires_in: e ?? 0 };
 }
 
-const DEVICE_ERR = (k) => `${k} must be 1-64 letters, digits, '_', '-', '+' or '/'`;
+const DEVICE_ERR = (k) => `${k} must be 1-64 letters, digits, '_', '-', '+' or '/' (and not a number of 1-5 digits)`;
 
 /**
  * Every value of `o` whose key Go's encoding/json could match to the field `name`, in document order. Go matches field
@@ -439,6 +451,9 @@ export function createCallToken(deps) {
     const wallNow = deps.wallNow || Date.now;   // JWT times (seconds since the epoch); `now` is the monotonic clock
     const federation = deps.federation || createFedResolver();
     const padState = deps.padState || createPadState();
+    // the call-server key pair has been replaced since 0.3.13 (lkrotate.py; the manager says so in LK_ROTATED): until then
+    // no token carries the person attributes and Pad Mic / Camera is refused (security review round 3, PAD-3)
+    const rotated = deps.rotated !== false;
     const perClient = new RateLimit(CALLTOKEN.PER_CLIENT_PER_MIN, 60_000, now);
     const lookupsClient = new RateLimit(CALLTOKEN.LOOKUPS_PER_CLIENT_MIN, 60_000, now);
     const lookupsGlobal = new RateLimit(CALLTOKEN.LOOKUPS_GLOBAL_MIN, 60_000, now);
@@ -634,7 +649,7 @@ export function createCallToken(deps) {
                     let muted = await effectivelyMuted(room, user);
                     // (code review r5 P2 #3) the store may have turned unusable while the read was awaited: re-check now
                     if (!padState.ok()) muted = true;
-                    const o = remint(up.text, deps.lkSecret, user, muted ? "muted" : null);
+                    const o = remint(up.text, deps.lkSecret, user, muted ? "muted" : null, { person: rotated });
                     if (o && padState.ok()) padState.advanceIfKnown(room, user, r.device_id);
                     return o;
                 });
@@ -938,8 +953,9 @@ export function createCallToken(deps) {
     /**
      * POST /calltoken/pad (public /livekit/jwt/pad), PAD-PHONE Step B: a Pad Mic or Camera token
      * ({room, openid_token, device_id, mode: "mic" | "camera"}). The Watch route's checks (always on, local accounts, a
-     * fresh sign-in check, the caller's own device, a JOINED member), then: a Mic token never while a moderator has the
-     * person muted (403 server-muted), the device's earlier Pad sessions in this call retired first, at most
+     * fresh sign-in check, the caller's own device, a JOINED member), then: neither a Mic nor a Camera token while a
+     * moderator has the person muted (403 server-muted; a Camera session could carry a voice under another label until the
+     * next sweep, and a fresh token would start it again: security review round 3, PAD-2), the device's earlier Pad sessions in this call retired first, at most
      * PAD_PER_ACCOUNT live Pad connections per account per call, and a new generation stamped. No lk-jwt fallback, and a
      * Watch request is never answered with a publishing token. The apps learn the modes from the well-known
      * (features.pad_mic / pad_camera).
@@ -952,6 +968,8 @@ export function createCallToken(deps) {
             if (!padOk) { req.resume?.(); return send(res, 404, { errcode: "M_NOT_FOUND", error: "not found" }); }
             if (req.method === "OPTIONS") return res.status(200).end();
             if (req.method !== "POST") return res.status(405).end();
+            // the apps offer Pad Mic / Camera only once the key pair has been replaced (apiconf features): held here too
+            if (!rotated) { req.resume?.(); return send(res, 503, { errcode: "M_UNKNOWN", error: "Pad isn't ready on this server until its next update", reason: "not-rotated" }); }
             const ip = clientKey(req);
             if (!perClient.hit(ip)) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
             const raw = await readBody(req);
@@ -990,7 +1008,7 @@ export function createCallToken(deps) {
             return padState.serial(room, user, async () => {
                 let gen;
                 try {
-                    if (mode === "mic" && (await effectivelyMuted(room, user))) return no("server-muted", "a moderator muted this person");
+                    if (await effectivelyMuted(room, user)) return no("server-muted", "a moderator muted this person");
                     let list = (await lkRoomService("ListParticipants", room, { room }))?.participants || [];
                     // a reserved identity breaking its contract goes first (as on the Watch route), then this device's
                     // earlier Pad sessions
@@ -1000,7 +1018,7 @@ export function createCallToken(deps) {
                     if (overLimit(room, user, device, list)) return no("pad-limit", "too many Pad connections of this account in the call", 429);
                     // code review r1 P1 #3: the last check right before signing — a mute set while this request waited on
                     // the call server refuses it (moderation takes the same lock, so nothing interleaves from here on)
-                    if (mode === "mic" && (await effectivelyMuted(room, user))) return no("server-muted", "a moderator muted this person");
+                    if (await effectivelyMuted(room, user)) return no("server-muted", "a moderator muted this person");
                     gen = padState.advance(room, user, device);
                     padState.noteIssued(room, user, device);
                 } catch (e) {
@@ -1079,7 +1097,7 @@ export function createCallToken(deps) {
                     log(`[calltoken] watch check failed: ${e?.message || e}`);
                     return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
                 }
-                const grant = watchGrant({ key: deps.lkKey, user, device, room, nowS: Math.floor(wallNow() / 1000) });
+                const grant = watchGrant({ key: deps.lkKey, user, device, room, nowS: Math.floor(wallNow() / 1000), person: rotated });
                 try { padState.noteWatch(room, user, device, grant.sub); } catch (e) {
                     return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
                 }

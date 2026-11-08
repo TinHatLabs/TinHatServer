@@ -35,6 +35,13 @@ Proxy Manager, a NAS's built-in one) that owns ports 80 and 443 and the certific
   `reverse_proxy` and Traefik do the right thing by default (they drop a header from a caller they don't trust and
   write their own); don't switch on Caddy's `trusted_proxies` / Traefik's `forwardedHeaders.insecure` /
   `trustedIPs` for addresses on the internet. Nginx Proxy Manager appends (fine as it is).
+- **Name your proxy** (Dashboard → Network → "Who counts as your proxy", or on the console `tinhat proxy-addresses --set
+  ADDRESS`, the address your proxy connects to this server from). Until it is named, every home-network address counts
+  as a proxy, so a visitor **at home** looks like your proxy: everyone at home shares one sign-in limit, and Devices
+  shows the proxy's address for them (visitors from the internet are seen correctly either way). A server set up or
+  restored with 0.3.15 or later names it by itself on your first dashboard visit through the proxy; an older one shows
+  the offer on the Overview and the Network page. Once named, only it (and this machine) may connect to port 8080: add
+  any other device at home that connects there directly (a monitoring box, say).
 - Bodies up to the largest file people may send plus 5 MB (Features → "Biggest file people can send"), and at least
   12 MB (shared logs).
 - A read timeout of a few minutes (chat keeps requests open while it waits for messages); no response buffering.

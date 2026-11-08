@@ -16,8 +16,11 @@
  * A device id a call sign-in may carry: what Synapse (`[A-Z]{10}`), Element X / rust-sdk (password login, and QR login,
  * which takes the device's Curve25519 key in unpadded base64 as its device id: `+` and `/` possible) and the Tin Hat
  * apps make. Never a ':' (the identity must stay unambiguous) and nothing call moderation can't target (the same rule).
+ * Never a number of 1-5 digits either (security review round 3, ID-2): `@a:h` + device `8448` would read `@a:h:8448`,
+ * which is also the bare id of a user on `h:8448`, and helpers that compare against bare user ids would mix the two up.
+ * No app makes such ids (Synapse's are 10 capital letters); tinhat_rules refuses them at sign-in as well.
  */
-export const DEVICE_RE = /^[A-Za-z0-9_+/-]{1,64}$/;
+export const DEVICE_RE = /^(?![0-9]{1,5}$)[A-Za-z0-9_+/-]{1,64}$/;
 
 /** A Matrix user id: `@localpart:server`, server = a DNS name or an IPv6 literal, with an optional port. m[1] = server. */
 export const MXID_RE = /^@[^:\s]{1,255}:([A-Za-z0-9.-]{1,255}(?::\d{1,5})?|\[[0-9A-Fa-f:.]{2,45}\](?::\d{1,5})?)$/;
@@ -47,6 +50,17 @@ export function parseIdentity(identity) {
     if (w) return { mxid, device, watch: true };
     if (pd) return { mxid, device, pad: pd[1] };
     return { mxid, device };
+}
+
+/** A connection made with a device id of 1-5 digits (before this server refused them, round 3 ID-2): `<mxid>:<digits>`
+ *  (a Pad / Watch suffix too). It reads like another user's bare id, so moderation can't tell whose it is: the sweep
+ *  takes it out of the call (calltoken.mjs reservedWithRights). */
+export function portShapedConnection(identity) {
+    if (typeof identity !== "string") return false;
+    const cut = WATCH_SUFFIX_RE.exec(identity) || PAD_SUFFIX_RE.exec(identity);
+    const base = cut ? identity.slice(0, cut.index) : identity;
+    const i = base.lastIndexOf(":");
+    return i > 0 && /^[0-9]{1,5}$/.test(base.slice(i + 1)) && MXID_RE.test(base.slice(0, i));
 }
 
 /** The identity this server mints for (mxid, device), or null when the device id is not one it mints for. */

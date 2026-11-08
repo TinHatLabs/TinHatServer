@@ -25,7 +25,7 @@ const GOOD = ["ABCDEFGHIJ", "abcdefghij", "0123456789", "a_b-c", "_", "-", "x".r
 const CORPUS = [...GOOD, ...BAD];
 for (let c = 0x20; c < 0x7f; c++) { const ch = String.fromCharCode(c); CORPUS.push(ch, `ABCDE${ch}FGHIJ`); }
 
-function tokenRoute({ enabled }) {
+function tokenRoute({ enabled, rotated }) {
     const upCalls = [];
     async function fetchImpl(url, init) {
         upCalls.push(url);
@@ -44,7 +44,7 @@ function tokenRoute({ enabled }) {
             return { ok: true, status: 200, body: { members: [ALICE, BOB] } };
         },
     };
-    const ct = createCallToken({ hs, adminToken: "t", serverName: SN, lkJwtUrl: "http://lk", fetchImpl, now: clock(1), log: () => {}, enabled: () => enabled, federation: { userinfo: async () => null }, lkSecret: TEST_LK_SECRET });
+    const ct = createCallToken({ hs, adminToken: "t", serverName: SN, lkJwtUrl: "http://lk", fetchImpl, now: clock(1), log: () => {}, enabled: () => enabled, federation: { userinfo: async () => null }, lkSecret: TEST_LK_SECRET, rotated });
     let ip = 0;
     async function post(path, body) {
         const res = { statusCode: 200, headers: {} };
@@ -207,4 +207,50 @@ test("agreement: moderation can act on EVERY identity the token route mints, and
         // users on a server with a port or an IPv6 literal can be moderated too (the old IDENTITY_RE refused IPv6)
         for (const u of ["@carol:home.test:8448", "@dave:[2001:db8::1]:8448"]) assert.equal(parseIdentity(`${u}:DEV`)?.mxid, u);
     } finally { mod.restore(); }
+});
+
+test("round 3 PAD-3: before the key pair is replaced, a normal call token carries no tinhat.person (room check on and off)", async () => {
+    const attrs = (r) => JSON.parse(Buffer.from(r.body.jwt.split(".")[1], "base64url")).attributes || {};
+    for (const enabled of [true, false]) {
+        const off = await tokenRoute({ enabled, rotated: false }).post("/sfu/get", legacy("DESK"));
+        assert.equal(off.statusCode, 200, JSON.stringify(off.body));
+        assert.equal(attrs(off)["tinhat.person"], undefined, `enabled=${enabled}`);
+        const on = await tokenRoute({ enabled }).post("/sfu/get", legacy("DESK"));
+        assert.equal(attrs(on)["tinhat.person"], ALICE, `enabled=${enabled}: rotated`);
+    }
+});
+
+test("round 3 ID-2: a device id of 1-5 digits is refused (`@a:h` + `8448` would read as the user `@a:h:8448`); longer numbers stay", () => {
+    for (const d of ["8448", "1", "0", "65535", "99999", "00000"]) {
+        assert.ok(!DEVICE_RE.test(d), d);
+        assert.equal(identityOf(ALICE, d), null, d);
+    }
+    for (const d of ["123456", "0123456789", "8448A", "A8448", "8448_", "84-48"]) assert.ok(DEVICE_RE.test(d), d);
+    // the identity of a port user's own device still parses as theirs; a would-be `@alice:home.test` + `8448` doesn't
+    assert.deepEqual(parseIdentity(`${ALICE}:8448:PHONE`), { mxid: `${ALICE}:8448`, device: "PHONE" });
+    assert.equal(parseIdentity(`${ALICE}:8448`), null);
+});
+
+test("round 3 ID-2: the call sign-in route refuses a port-shaped device (room check on and off)", async () => {
+    for (const enabled of [true, false]) {
+        const { post, upCalls } = tokenRoute({ enabled });
+        for (const [path, body] of [["/sfu/get", legacy("8448")], ["/sfu/get", msc("8448")], ["/get_token", msc("8448")]])
+            assert.equal((await post(path, body)).statusCode, 400, `enabled=${enabled} ${path}`);
+        assert.equal(upCalls.length, 0, "never forwarded to lk-jwt");
+        assert.equal((await post("/sfu/get", legacy("8448A"))).statusCode, 200, "a device that only starts with digits is fine");
+    }
+});
+
+test("round 3 ID-2: a connection already in a call with a numeric device is taken out by the sweep; a port user's own isn't", async () => {
+    const { reservedWithRights } = await import("../calltoken.mjs");
+    const { portShapedConnection } = await import("../identity.mjs");
+    const P = (identity) => ({ identity, permission: { can_publish: true, can_subscribe: true }, tracks: [] });
+    for (const id of [`${ALICE}:8448`, `${ALICE}:1`, `${ALICE}:8448~watch-0123456789abcdef`, `${ALICE}:65535~pad-mic-0123456789abcdef`]) {
+        assert.equal(portShapedConnection(id), true, id);
+        assert.equal(reservedWithRights(P(id)), true, id);
+    }
+    for (const id of [`${ALICE}:DESK`, `${ALICE}:8448:DESK`, `${ALICE}:123456`, "@a:[::1]:8448:DEV"]) {
+        assert.equal(portShapedConnection(id), false, id);
+        assert.equal(reservedWithRights(P(id)), false, id);
+    }
 });

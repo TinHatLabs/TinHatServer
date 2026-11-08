@@ -1,0 +1,54 @@
+diff --git a/rest/client/push_rule.py b/rest/client/push_rule.py
+index 39b0cde47b8fe296e00376ce3d06fecc3cbb31e9..f606f137d95e79aa5b989c6d4f2d77fd747d101b 100644
+--- a/rest/client/push_rule.py
++++ b/rest/client/push_rule.py
+@@ -29,6 +29,8 @@ from synapse.api.errors import (
+     SynapseError,
+     UnrecognizedRequestError,
+ )
++from synapse.api.ratelimiting import Ratelimiter
++from synapse.config.ratelimiting import RatelimitSettings
+ from synapse.handlers.push_rules import InvalidRuleException, RuleSpec, check_actions
+ from synapse.http.server import HttpServer
+ from synapse.http.servlet import (
+@@ -47,6 +49,14 @@ if TYPE_CHECKING:
+     from synapse.server import HomeServer
+ 
+ 
++# Not upstream (Tin Hat Server): every accepted change appends a row to
++# `push_rules_stream`, so writes need a per-user rate. The burst covers a client
++# rewriting every built-in rule (enabled + actions) at once.
++_PUSH_RULE_WRITE_LIMIT = RatelimitSettings(
++    key="push_rule_writes", per_second=0.2, burst_count=100
++)
++
++
+ class PushRuleRestServlet(RestServlet):
+     PATTERNS = client_patterns("/(?P<path>pushrules/.*)$", v1=True)
+     SLIGHTLY_PEDANTIC_TRAILING_SLASH_ERROR = (
+@@ -66,6 +76,9 @@ class PushRuleRestServlet(RestServlet):
+         )
+         self._push_rules_handler = hs.get_push_rules_handler()
+         self._push_rule_linearizer = Linearizer(name="push_rules", clock=hs.get_clock())
++        self._write_ratelimiter = Ratelimiter(
++            store=self.store, clock=hs.get_clock(), cfg=_PUSH_RULE_WRITE_LIMIT
++        )
+ 
+     async def on_PUT(self, request: SynapseRequest, path: str) -> tuple[int, JsonDict]:
+         if not self._is_push_worker:
+@@ -74,6 +87,7 @@ class PushRuleRestServlet(RestServlet):
+         requester = await self.auth.get_user_by_req(request)
+         user_id = requester.user.to_string()
+ 
++        await self._write_ratelimiter.ratelimit(requester)
+         async with self._push_rule_linearizer.queue(user_id):
+             return await self.handle_put(request, path, user_id)
+ 
+@@ -147,6 +161,7 @@ class PushRuleRestServlet(RestServlet):
+         requester = await self.auth.get_user_by_req(request)
+         user_id = requester.user.to_string()
+ 
++        await self._write_ratelimiter.ratelimit(requester)
+         async with self._push_rule_linearizer.queue(user_id):
+             return await self.handle_delete(request, path, user_id)
+ 

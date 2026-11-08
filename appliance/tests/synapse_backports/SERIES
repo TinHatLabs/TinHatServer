@@ -1,0 +1,8 @@
+# Upstream's own regression tests for the backported fixes (the same commits as build/synapse/backports/SERIES,
+# plus 0000 = GHSA-rgv2's), applied to a v1.145.0 checkout's tests/ by test_synapse_backports.py.
+e6673ee8d0594143cc3b47c35904bab25416d8852d11f27aa21994391533ab19 0000-ghsa-rgv2-todevice-spoof.patch
+9a76d2d68b1b5bf1ab745f88914c0922887d85d6d3d3de7c3042a0e50107eba5 0001-ghsa-6wjm-multipart-case.patch
+6491daecc7bf5c953495fa752c76daa743ae5867a5c0a366733d620aebd15403 0002-ghsa-27p5-qcjr-r66v-federation-room-checks.patch
+05cfad02acbe79df58214df70f86e329ff465fc7bc9aa4f9b36c2cea60953123 0003-ghsa-95fh-no-relayed-401.patch
+cafc38eddbc8e7fb5c48fa18c444f4ffc0d7f4a9104ab8f42ac85f0b1e25ba1f 0004-ghsa-fp53-push-rule-limits.patch
+1d45df83ce21fd89230e6a5e0704000f18272865b78fae38d4432118e140bce5 0005-ghsa-8q93-workerlock-cap.patch

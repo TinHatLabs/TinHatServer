@@ -183,3 +183,123 @@ test("listRoom: an unfinished repaired copy (no media, no mix, or still open) hi
 test("listRoom: a missing room directory is an empty list", () => {
     assert.deepEqual(listRoom(join(tmpdir(), "no-such-room-" + process.pid), ufs), []);
 });
+
+// ---- round 3 security review, RECORDER-5: which recordings a member may see ----------------------------------------------
+import { historySince, visibleSince, sinceFromState, membershipStart } from "../vodslist.mjs";
+
+test("historySince: shared / world_readable rooms show everything to members; joined / invited / unknown from the join on; guests always from the join", () => {
+    const base = { membership: "join", joinedAt: 5000, user: "@a:x", now: 9000 };
+    assert.equal(historySince({ ...base, historyVisibility: "shared" }), 0);
+    assert.equal(historySince({ ...base, historyVisibility: "world_readable" }), 0);
+    for (const hv of ["joined", "invited", "something-new", undefined]) assert.equal(historySince({ ...base, historyVisibility: hv }), 5000, String(hv));
+    assert.equal(historySince({ ...base, historyVisibility: "shared", user: "@guest-abc:x" }), 5000);
+    assert.equal(historySince({ ...base, historyVisibility: "joined", joinedAt: NaN }), 9000, "join time unknown: only from now on");
+    for (const m of ["leave", "invite", "ban", undefined]) assert.equal(historySince({ ...base, membership: m, historyVisibility: "shared" }), null, String(m));
+});
+
+test("visibleSince: a session is visible when it ended at or after the join (or is still live)", () => {
+    assert.equal(visibleSince({ end_ms: 100 }, 0), true);
+    assert.equal(visibleSince({ end_ms: 100 }, 101), false);
+    assert.equal(visibleSince({ end_ms: 101 }, 101), true);
+    assert.equal(visibleSince({ live: true }, 101, 500), true);
+    assert.equal(visibleSince({}, 101), false, "no end and not live: not shown under the join rule");
+});
+
+test("sinceFromState: the join time is the member event's own (from the admin API's envelopes, never its content)", () => {
+    const me = "@b:x";
+    const st = (hv, member) => [{ type: "m.room.history_visibility", state_key: "", content: { history_visibility: hv } }, member];
+    const joined = { type: "m.room.member", state_key: me, sender: me, origin_server_ts: 7000,
+        content: { membership: "join", origin_server_ts: 1, content: { membership: "join" } } };
+    assert.equal(sinceFromState(st("joined", joined), me, 9000), 7000, "a timestamp written into the content is ignored");
+    assert.equal(sinceFromState(st("shared", joined), me, 9000), 0);
+    assert.equal(sinceFromState([joined], me, 9000), 0, "no history_visibility: the spec's default (shared)");
+    assert.equal(sinceFromState(st("joined", { ...joined, content: { membership: "leave" } }), me, 9000), null);
+    assert.equal(sinceFromState(st("joined", joined), "@other:x", 9000), null, "not in the room");
+});
+
+// ---- 0.3.15 assembly: the membership start, not the latest member event (a rename is not a new join) ------------------
+const ROOMX = "!r:x";
+const mev = (id, ts, membership, replaces, user = "@b:x", extra = {}) => ({ event_id: id, type: "m.room.member", state_key: user, room_id: ROOMX,
+    origin_server_ts: ts, content: { membership, ...extra }, unsigned: replaces ? { replaces_state: replaces } : {} });
+const stateOf = (hv, ev) => [{ type: "m.room.history_visibility", state_key: "", content: { history_visibility: hv } }, ev];
+const chainFn = (evs) => { const m = new Map(evs.map((e) => [e.event_id, e])); const f = async (id) => { f.calls++; return m.get(id) ?? null; }; f.calls = 0; return f; };
+
+test("membershipStart: a rename after joining keeps the older recordings (joined history)", async () => {
+    const f = chainFn([mev("$j", 7000, "join")]);
+    const cur = mev("$r", 9000, "join", "$j", "@b:x", { displayname: "new" });
+    const st = stateOf("joined", cur);
+    const start = await membershipStart(st, "@b:x", f);
+    assert.equal(start, 7000);
+    const since = sinceFromState(st, "@b:x", 10000, start);
+    assert.equal(visibleSince({ end_ms: 8000 }, since), true, "a recording from before the rename, after the join");
+    assert.equal(visibleSince({ end_ms: 6000 }, since), false, "from before the join: still hidden");
+    assert.equal(visibleSince({ end_ms: 8000 }, sinceFromState(st, "@b:x", 10000)), false, "the old rule hid it (the bug)");
+});
+test("membershipStart: several renames walk back to the first join", async () => {
+    const f = chainFn([mev("$r1", 8000, "join", "$j"), mev("$j", 7000, "join", "$i"), mev("$i", 6000, "invite")]);
+    assert.equal(await membershipStart(stateOf("joined", mev("$r2", 9000, "join", "$r1")), "@b:x", f), 7000);
+});
+test("membershipStart: a real leave and rejoin starts again from the rejoin", async () => {
+    const f = chainFn([mev("$l", 8000, "leave", "$j"), mev("$j", 1000, "join")]);
+    assert.equal(await membershipStart(stateOf("joined", mev("$rj", 9000, "join", "$l")), "@b:x", f), 9000);
+    assert.equal(f.calls, 1, "stops at the first non-join");
+});
+test("membershipStart: invited history starts at the invite that led to this membership", async () => {
+    const f = chainFn([mev("$j", 7000, "join", "$i"), mev("$i", 6000, "invite", "$l"), mev("$l", 5000, "leave", "$old"), mev("$old", 1000, "join")]);
+    assert.equal(await membershipStart(stateOf("invited", mev("$r", 9000, "join", "$j")), "@b:x", f), 6000, "rename, join, then the invite");
+    assert.equal(await membershipStart(stateOf("joined", mev("$r", 9000, "join", "$j")), "@b:x", f), 7000, "joined history: the join, not the invite");
+    assert.equal(await membershipStart(stateOf("invited", mev("$j2", 9000, "join", "$l")), "@b:x", f), 9000, "invited history, no invite before it: the join");
+});
+test("membershipStart: a guest who renames keeps its view (always from the join, also in shared rooms)", async () => {
+    const me = "@guest-1:x", f = chainFn([mev("$j", 7000, "join", "$i", me), mev("$i", 6000, "invite", null, me)]);
+    const st = stateOf("shared", mev("$r", 9000, "join", "$j", me));
+    const start = await membershipStart(st, me, f);
+    assert.equal(start, 7000, "from the join, not the rename");
+    assert.equal(sinceFromState(st, me, 10000, start), 7000, "the guest rule applies in a shared room");
+    assert.equal(await membershipStart(stateOf("invited", mev("$r", 9000, "join", "$j", me)), me, f), 7000, "a guest never gets the invite rule");
+});
+test("membershipStart: shared rooms read no extra events", async () => {
+    const f = chainFn([]);
+    assert.equal(await membershipStart(stateOf("shared", mev("$r", 9000, "join", "$j")), "@b:x", f), 9000);
+    assert.equal(f.calls, 0);
+});
+test("membershipStart: an unreadable or foreign event, or a chain over the bound, fails closed to the current event", async () => {
+    assert.equal(await membershipStart(stateOf("joined", mev("$r", 9000, "join", "$gone")), "@b:x", chainFn([])), 9000, "null");
+    assert.equal(await membershipStart(stateOf("joined", mev("$r", 9000, "join", "$x")), "@b:x", async () => { throw new Error("down"); }), 9000, "rejected");
+    const other = chainFn([mev("$x", 1000, "join", null, "@other:x")]);
+    assert.equal(await membershipStart(stateOf("joined", mev("$r", 9000, "join", "$x")), "@b:x", other), 9000, "another person's event");
+    const roomB = chainFn([{ ...mev("$x", 1000, "join"), room_id: "!other:x" }]);
+    assert.equal(await membershipStart(stateOf("joined", mev("$r", 9000, "join", "$x")), "@b:x", roomB), 9000, "another room's event");
+    const long = []; for (let i = 0; i < 70; i++) long.push(mev(`$e${i}`, 100 + i, "join", `$e${i + 1}`));
+    const f = chainFn(long);
+    assert.equal(await membershipStart(stateOf("joined", mev("$r", 9000, "join", "$e0")), "@b:x", f), 9000, "over the bound");
+    assert.equal(f.calls, 50, "bounded");
+    let t = 0; const slow = chainFn(long);
+    assert.equal(await membershipStart(stateOf("joined", mev("$r", 9000, "join", "$e0")), "@b:x", slow, { clock: () => (t += 3000), deadlineMs: 8000 }), 9000, "past the deadline");
+    assert.ok(slow.calls < 5);
+});
+test("membershipStart: a read that returns after the deadline is not used (fails closed)", async () => {
+    let t = 0;
+    const f = chainFn([mev("$i", 6000, "invite")]);
+    const slow = async (id) => { t += 9000; return f(id); };
+    assert.equal(await membershipStart(stateOf("invited", mev("$j", 9000, "join", "$i")), "@b:x", slow, { clock: () => t, deadlineMs: 8000 }), 9000);
+});
+test("membershipStart: not joined stays not joined", async () => {
+    const st = stateOf("joined", mev("$l", 9000, "leave", "$j"));
+    assert.equal(sinceFromState(st, "@b:x", 10000, await membershipStart(st, "@b:x", chainFn([]))), null);
+});
+
+// ---- round 3 security review, RECORDER-10: one directory, two room ids -------------------------------------------------
+test("listRoom: sessions of another room sharing the directory name are never listed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "vods-room-"));
+    try {
+        for (const [id, room] of [["mine", "!a/b:evil.example"], ["theirs", "!a_b:evil.example"], ["noroom", undefined]]) {
+            mkdirSync(join(dir, id));
+            writeFileSync(join(dir, id, "session.json"), JSON.stringify({ ...(room ? { room } : {}), start_ms: 1, end_ms: 2 }));
+        }
+        const ids = (room) => listRoom(dir, () => (f) => f, room).map((e) => e.id).sort();
+        assert.deepEqual(ids("!a/b:evil.example"), ["mine"]);
+        assert.deepEqual(ids("!a_b:evil.example"), ["theirs"]);
+        assert.deepEqual(ids(undefined), ["mine", "noroom", "theirs"], "no room given: as before (the repair tool's own use)");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+});

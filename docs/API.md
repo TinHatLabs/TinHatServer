@@ -68,6 +68,39 @@ deletes nothing from an app; docs/ACCOUNT-SAFETY.md); left out while no owner is
 The phone apps' link files, `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`, are served
 next to it in every mode (docs/DEEPLINKS.md).
 
+`features.network` (open network, slice 1) = this server's network mode, a word, not a switch: `"home"` (no
+federation) or `"connected"` (only the allow-list, docs/FEDERATION.md); `"open"` arrives with the open Matrix network
+switch (0.4.0, not offered yet). The apps read only booleans as switches, so older apps ignore it.
+`features.invite_rules: true` (0.3.9 slice) = this server enforces each person's rule for invites from other servers
+(`dev.tinhat.invite_rules`, docs/NETWORK-RULES.md); the apps show that setting only when it is true.
+
+## Federation for the apps: `GET /api/network` (open network, slice 1)
+
+The apps tell three kinds of rooms apart (the shared vectors `open-network.json` in both app repositories): rooms made
+on this server, rooms made on a Tin Hat server **connected** to this one by code (Tin Hat's own room state may be sent
+there, as far as that room's own power levels allow; its power levels are never rewritten), and rooms on any other
+Matrix server (Tin Hat's extras stay out, read receipts are private). Only this server knows its connections:
+
+```
+GET /api/network          Authorization: Bearer <the caller's Matrix token>
+200 {"v": 1, "mode": "connected", "connected": ["squad.example"], "blocked": ["spam.example"],
+     "invites": {"default": "known"}}                                               (+ "issued" in the file only)
+```
+- `connected`: the Tin Hat servers connected by code, sorted. Servers **allowed by name** are plain Matrix servers and
+  are not listed (their rooms are "other" for the apps). Empty in `home` mode.
+- `blocked`: the owner's deny-list (Network → Blocked servers, docs/NETWORK-RULES.md), sorted; the server refuses
+  them (allow-list, invites, media, Caddy). The apps hide their people like ignored users. A blocked server is never
+  in `connected`. Empty in `home` mode.
+- `invites.default`: the rule a person has for invites from other servers when they never chose one (`"known"`).
+- `401` no/bad token, `403 {code: "guest"}` for guest accounts, `429 {code: "rate"}` over 30 reads a minute per
+  account, `503 {code: "off"}` when the manager hasn't written the file (the apps then treat every other server's room
+  as "other": fail closed).
+- Source: `network.json` in `/var/lib/tinhat/api` (0600), written by the manager (`apiconf.publish_network`) at setup,
+  every update and every connection change, renewed hourly by the manager's loop, and re-read by the API every few
+  seconds (no restart). The file carries `issued` (unix seconds): the API refuses one older than 6 hours or from the
+  future, so a list the manager failed to replace can't outlive that (503, the apps fail closed). Any failure while
+  writing removes the old file.
+
 ## Who may use the extras (0.3.4, security review 2026-10-26)
 The GIF picker (`/api/gifs/*`), Media Party (`/api/watch/*`) and the soundboard's search and clip cache
 (`/api/soundboard/search|clip|fetch`) spend the owner's Giphy/YouTube quota and fetch from myinstants and other Tin Hat
@@ -182,7 +215,11 @@ included. Behind your own reverse proxy nothing changes for you: keep forwarding
    by the call's moderators: a `:` would make the identity ambiguous, and before 0.3.12 a device such as `X.1` got a
    token that `/moderation/call` refused to act on. Synapse's own device ids (`[A-Z]{10}`) and those of the Tin Hat
    apps and Element X all fit, a device signed in by QR code included (rust-sdk: its key in unpadded base64, hence `+`
-   and `/`); hidden devices (cross-signing keys) never ask for a call sign-in.
+   and `/`); hidden devices (cross-signing keys) never ask for a call sign-in. Never a number of 1–5 digits either:
+   `@a:h` with device `8448` would read like the bare id of the user `@a:h:8448`, so such a device gets no
+   call sign-in, and the Synapse module `tinhat_rules` refuses a sign-in that names one (`403 M_FORBIDDEN`). No app
+   makes such ids. Existing ones (an older sign-in that chose one) keep working for chat but can't join calls; sign
+   that device out and in again. To count them: `select count(*) from devices where device_id ~ '^[0-9]{1,5}$'`.
 2. MSC4195 requests (`{room_id, slot_id, openid_token, member: {id, claimed_user_id, claimed_device_id}}` plus
    Element Call's optional `delay_id` / `delay_timeout` / `delay_cs_api_url`, on lk-jwt's `/get_token` or its
    `/sfu/get`; **Element Call's newer method**: what it uses to subscribe to another server's call server, and what

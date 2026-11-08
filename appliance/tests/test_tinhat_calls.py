@@ -204,5 +204,57 @@ class Template(unittest.TestCase):
         self.assertIn("  - module: tinhat_calls.CallHook\n    config:\n      dir: /tinhat-api\n", src)
 
 
+
+
+class OwnedCallMemberships(unittest.TestCase):
+    """Round 3 security review, RECORDER-1: a call membership whose state key names a user comes only from that user
+    (it carries their "Never record me"); other keys and other event types are untouched."""
+
+    def setUp(self):
+        self.api = FakeApi()
+        tinhat_calls.CallHook({"dir": tempfile.mkdtemp()}, self.api)
+        self.check = self.api.cb["check_event_allowed"]
+
+    def allowed(self, type_, key, sender, state=True):
+        ev = Ev(type_, state=state)
+        ev.state_key, ev.sender = key, sender
+        return asyncio.run(self.check(ev, {}))[0]
+
+    def test_someone_elses_membership_is_refused(self):
+        for t in ("org.matrix.msc3401.call.member", "m.call.member", "m.rtc.member"):
+            self.assertFalse(self.allowed(t, "_@victim:example.org_DESK_m.call", "@mallory:example.org"), t)
+            self.assertFalse(self.allowed(t, "@victim:example.org_DESK", "@mallory:example.org"), t)
+            self.assertFalse(self.allowed(t, "@victim:example.org", "@mallory:example.org"), t)
+
+    def test_ones_own_is_allowed(self):
+        for key in ("_@me:example.org_DESK_m.call", "_@me:example.org_DESK", "@me:example.org", "@me:example.org_DESK"):
+            self.assertTrue(self.allowed("org.matrix.msc3401.call.member", key, "@me:example.org"), key)
+        self.assertTrue(self.allowed("org.matrix.msc3401.call.member", "_@me:[::1]:8448_D_m.call", "@me:[::1]:8448"))
+
+    def test_lookalike_owners(self):
+        # a port user and the plain user, and a localpart that extends another
+        self.assertFalse(self.allowed("org.matrix.msc3401.call.member", "_@a:h.test:8448_D_m.call", "@a:h.test"))
+        self.assertFalse(self.allowed("org.matrix.msc3401.call.member", "_@a:h.test_D_m.call", "@a:h.test:8448"))
+        self.assertFalse(self.allowed("org.matrix.msc3401.call.member", "_@ab:h.test_D_m.call", "@a:h.test"))
+        self.assertFalse(self.allowed("org.matrix.msc3401.call.member", "_@a_b:h.test_D_m.call", "@a:h.test"))
+
+    def test_keys_naming_nobody_and_other_types_pass(self):
+        self.assertTrue(self.allowed("org.matrix.msc3401.call.member", "", "@me:example.org"))
+        self.assertTrue(self.allowed("org.matrix.msc3401.call.member", "something", "@me:example.org"))
+        self.assertTrue(self.allowed("m.room.topic", "_@victim:example.org_DESK_m.call", "@mallory:example.org"))
+        self.assertTrue(self.allowed("org.matrix.msc3401.call.member", "_@victim:example.org_D", "@mallory:example.org", state=False))
+
+    def test_a_broken_event_refuses_only_call_memberships(self):
+        class Broken(Ev):
+            def is_state(self):
+                raise RuntimeError("boom")
+        ev = Broken("org.matrix.msc3401.call.member")
+        self.assertFalse(asyncio.run(self.check(ev, {}))[0])
+        ev2 = Broken("m.room.message")
+        self.assertTrue(asyncio.run(self.check(ev2, {}))[0])
+
+    def test_the_poke_is_still_registered(self):
+        self.assertIn("on_new_event", self.api.cb)
+
 if __name__ == "__main__":
     unittest.main()

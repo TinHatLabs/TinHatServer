@@ -25,7 +25,7 @@ import time
 
 import aiohttp
 
-from . import compose, config, environment, limits, owndomain, state
+from . import compose, config, environment, limits, netrules, owndomain, state
 
 log = logging.getLogger("tinhat.federation")
 
@@ -86,6 +86,18 @@ def normalize_matrix(server: str) -> tuple[str | None, str | None]:
         return None, ("Use the server's name as it appears after the colon in people's Matrix IDs, like example.org: "
                       "not an address or a home-network name.")
     return s, None
+
+
+def _publish_network() -> bool:
+    """The apps' view of the connections (apiconf.publish_network: GET /api/network), from the state on disk. Never
+    fails a change; on failure the old file is gone (the apps fail closed) and the caller retries. True when done."""
+    try:
+        from . import apiconf  # imported here: apiconf is the API's module, this one runs without it in some tests
+        apiconf.publish_network()
+        return True
+    except Exception:  # noqa: BLE001 - the list in Synapse is what matters; retried below
+        log.exception("couldn't publish network.json for the apps")
+        return False
 
 
 def connections() -> list[dict]:
@@ -149,8 +161,9 @@ def confirm_ok(body: object, server: str, me: str | None) -> bool:
 
 
 class Federation:
-    def __init__(self, apply_cb, busy=lambda: None):
+    def __init__(self, apply_cb, busy=lambda: None, edge_cb=None):
         self.apply_cb = apply_cb  # async (allowlist) -> (ok, message): rewrite homeserver.yaml + restart Synapse
+        self.edge_cb = edge_cb  # async () -> (ok, message): rewrite the Caddyfile from the state + reload (the deny-list)
         self.busy = busy  # () -> why the owner's changes must wait now (a move running), else None
         self.pending: dict[str, tuple[str, float]] = {}  # nonce -> (server we're talking to, expiry)
         self.fails = limits.Fails("connect", "disconnect")  # wrong connection codes / disconnect calls, per caller
@@ -316,6 +329,57 @@ class Federation:
         log.info("removed %s from the servers allowed by name", target)
         return True, f"Removed {target}. People here and there can't reach each other any more."
 
+    # ---- the deny-list (netrules.py) ---------------------------------------------------------------------------
+    async def block(self, server: str, by: str, reason: str = "") -> tuple[bool, str]:
+        """Block a server: its federation requests, invites and media are refused (netrules.py). Its entry under
+        connections or servers allowed by name stays, so Unblock brings back exactly what was there."""
+        own = str(state.load_state().get("server_name") or "")
+        target, why = netrules.normalize_block(server, own)
+        if not target:
+            return False, why
+        reason = " ".join(str(reason or "").split())[:netrules.MAX_REASON]
+        async with self.lock:
+            st = state.load_state()
+            cur = netrules.entries(st)
+            if target in {e["server"] for e in cur}:
+                return False, f"{target} is already blocked."
+            if len(cur) >= netrules.MAX_BLOCKED:
+                return False, f"At most {netrules.MAX_BLOCKED} servers can be blocked."
+            if why := self.busy():
+                return False, why
+            self._save_blocked(cur + [{"server": target, "since": int(time.time()), "by": by, "reason": reason}])
+        log.info("blocked %s (%s)", target, by)
+        return True, (f"Blocked {target}. Your server stops accepting messages, invites and pictures from it "
+                      "(the chat server restarts to apply it, a few seconds).")
+
+    async def unblock(self, server: str) -> tuple[bool, str]:
+        target = (server or "").strip().lower()
+        async with self.lock:
+            st = state.load_state()
+            cur = netrules.entries(st)
+            left = [e for e in cur if e["server"] != target]  # exactly the entry the dashboard shows
+            if len(left) == len(cur):
+                return False, "That server isn't blocked."
+            if why := self.busy():
+                return False, why
+            self._save_blocked(left)
+        log.info("unblocked %s", target)
+        return True, (f"Unblocked {target}. Pictures and files removed while it was blocked don't come back by "
+                      "themselves.")
+
+    def _save_blocked(self, entries: list[dict]) -> None:
+        """One write of the deny-list, then everything that reads it: the module's live file, the apps' list, and in
+        the background the Caddyfile (first: it takes effect in under a second) and Synapse (allow-list, media)."""
+        state.save_state(blocked_servers=entries)
+        try:
+            netrules.publish_rules()
+        except OSError:
+            log.exception("couldn't publish network-rules.json (Synapse gets the list with its restart)")
+        if not _publish_network():
+            self._schedule_publish_retry()
+        if state.public_mode():  # home-network mode federates with nobody: the list waits there (astra r1)
+            self._schedule_apply(edge=True)
+
     def make_code(self, by: str) -> dict:
         now = time.time()
         codes = [c for c in (state.load_state().get("connect_codes") or []) if c["expires"] > now - 7 * 86400]
@@ -330,12 +394,20 @@ class Federation:
         state.save_state(connect_codes=left)
         return len(left) != len(codes)
 
-    def _schedule_apply(self):
-        """Synapse only reads its allowlist at start: restart it in the background (both sides answer first)."""
+    def _schedule_apply(self, edge: bool = False):
+        """Synapse only reads its allowlist at start: restart it in the background (both sides answer first).
+        edge: the deny-list changed: the Caddyfile is written and reloaded first (when that fails, the manager's
+        minute loop writes it again: web._keep_fed_deny)."""
         async def run():
             async with self.apply_lock:
                 self.applying = True
                 try:
+                    if edge and self.edge_cb is not None:
+                        try:
+                            ok, msg = await self.edge_cb()
+                            log.info("deny-list at the web server (%s): %s", ok, msg)
+                        except Exception:  # noqa: BLE001 - Synapse still gets its part; the loop retries the edge
+                            log.exception("couldn't write the deny-list into the web server's settings")
                     ok, msg = await self.apply_cb(allowlist())
                     log.info("allowlist applied (%s): %s", ok, msg)
                 finally:
@@ -346,7 +418,20 @@ class Federation:
         """Change our lists and Synapse's list in ONE write (both lists, never just the connections), then apply."""
         new = {**st, **lists}
         state.save_state(**lists, federation=sorted(_servers(new)))
+        if not _publish_network():
+            self._schedule_publish_retry()
         self._schedule_apply()
+
+    def _schedule_publish_retry(self, delays=(5, 30, 120, 600)):
+        """network.json couldn't be written (it was removed: the apps fail closed meanwhile): try again from the state
+        on disk a few times. The next update / Features change / connection change writes it too."""
+        async def run():
+            for d in delays:
+                await asyncio.sleep(d)
+                if _publish_network():
+                    log.info("network.json published on retry")
+                    return
+        asyncio.get_running_loop().create_task(run())
 
     async def _add(self, server: str, by: str):
         adopt()

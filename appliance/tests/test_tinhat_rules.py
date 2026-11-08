@@ -83,6 +83,18 @@ class Rules(unittest.TestCase):
         self.assertTrue(ok(r.user_may_invite("@alice:example.org", "@bob:example.org", OTHER)))
 
 
+class PortShapedDevices(unittest.TestCase):
+    """Security review round 3, ID-2: a sign-in naming a device id of 1-5 digits is refused (it would read like a port)."""
+
+    def test_refused_at_sign_in(self):
+        r = rules([])
+        self.assertIn("check_login_for_spam", r.api.cb if hasattr(r, "api") else {})
+        for d in ("8448", "1", "0", "65535", "99999"):
+            self.assertFalse(ok(r.check_login_for_spam("@alice:example.org", d, None, [])), d)
+        for d in (None, "ABCDEFGHIJ", "123456", "0123456789", "8448A", "A8448", "q1w2E3r4+T5y6/U7i8O9p0AaSsDdFfGgHhJjKkLlZzX"):
+            self.assertTrue(ok(r.check_login_for_spam("@alice:example.org", d, None, [])), d)
+
+
 class OwnerGuard(unittest.TestCase):
     def test_a_vanished_or_broken_file_keeps_the_last_owner(self):
         import os, time
@@ -322,7 +334,7 @@ class HomeserverYaml(unittest.TestCase):
         tpl = Path(__file__).resolve().parents[1] / "rootfs/opt/tinhat/manager/tinhat/templates.py"
         src = tpl.read_text()
         block = src[src.index("  - module: tinhat_rules.GuestRules"):src.index("  - module: tinhat_calls.CallHook")]
-        self.assertIn("connected: {federation_whitelist}", block)
+        self.assertIn("connected: {guard_connected}", block)  # the connections only, never the whole allow-list (slice 1b)
         self.assertIn("former: {former_names}", block)
         try:  # rendered and parsed, where the manager's modules load (they need nothing but the standard library)
             import yaml
@@ -337,14 +349,22 @@ class HomeserverYaml(unittest.TestCase):
             secrets_ = {"postgres_password": "x", "registration_shared_secret": "y", "macaroon_secret_key": "z",
                         "form_secret": "w"}
             doc = yaml.safe_load(templates.homeserver_yaml("chat.example.org", secrets_, {}, ["friend.org", "b.org"],
-                                                           former=["old.tinhat.me", "bad name"]))
+                                                           former=["old.tinhat.me", "bad name"], connected=["friend.org", "gone.org"]))
+            cased = yaml.safe_load(templates.homeserver_yaml("chat.example.org", secrets_, {}, ["Friend.org"], connected=["friend.org"]))
+            plain = yaml.safe_load(templates.homeserver_yaml("chat.example.org", secrets_, {}, ["friend.org", "b.org"]))
         finally:
             for k in [k for k in sys.modules if k == "tinhat" or k.startswith("tinhat.")]:
                 del sys.modules[k]
             sys.modules.update(saved)
             sys.path.remove(str(tpl.parents[1]))
         mod = next(m for m in doc["modules"] if m["module"] == "tinhat_rules.GuestRules")["config"]
-        self.assertEqual(mod["connected"], ["b.org", "friend.org"])
+        # only the Tin Hat connections (by code) that are on the list; b.org is allowed by name: a plain Matrix server
+        # whose rooms an old app must not rewrite (open network slice 1b, found on the federated lab pair)
+        self.assertEqual(mod["connected"], ["friend.org"])
+        pmod = next(m for m in plain["modules"] if m["module"] == "tinhat_rules.GuestRules")["config"]
+        self.assertEqual(pmod["connected"], [])  # no connections given: none (never the whole allow-list)
+        cmod = next(m for m in cased["modules"] if m["module"] == "tinhat_rules.GuestRules")["config"]
+        self.assertEqual(cmod["connected"], [])  # exact names only: Synapse's allow-list doesn't admit friend.org here
         self.assertEqual(mod["former"], ["old.tinhat.me"])
         self.assertEqual(sorted(doc["federation_domain_whitelist"]), ["b.org", "friend.org"])
 

@@ -18,7 +18,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp.abc import AbstractResolver
 
-from . import apiconf, caddylock, compose, config, console, environment, hw, names, owndomain, relay, restoresafe, state, templates
+from . import apiconf, caddylock, compose, config, console, environment, hw, names, netrules, owndomain, relay, restoresafe, state, templates
 from .synapse import Synapse
 
 log = logging.getLogger("tinhat.install")
@@ -686,6 +686,9 @@ class Installer:
         except FileNotFoundError:
             pass
         st = state.load_state()
+        if state.behind_proxy(st) and not owndomain.proxies(st):  # name the proxy on the owner's first visit through it
+            state.save_state(proxy_autoname=True)                  # (web.Manager._proxy_autoname; 0.3.15)
+            st = state.load_state()
         apiconf.write(st, state.load_secrets())
         write_wellknowns(st, a["server_name"], a["calls"])
         rc, out = await compose.up("api", "games")
@@ -917,6 +920,8 @@ def refresh_configs(force: bool = False, caddyfile_to=None) -> list[str]:
         if former:  # moved to its own domain (move.py): the old names keep answering while they last
             caddyfile = templates.with_former_names(caddyfile, sn, [(f["name"], _former_tls(f, s)) for f in former])
             mode = 0o600
+        # the deny-list at the edge: federation requests claiming a blocked server get 403 (netrules.py)
+        caddyfile = templates.with_fed_deny(caddyfile, netrules.names(st))
         state.write_text(caddyfile_to or config.CADDYFILE, caddyfile, mode)
     return [str(f) for f in files if (f.read_bytes() if f.exists() else None) != before[f]]
 
@@ -1037,11 +1042,20 @@ def write_synapse_config(server_name: str, secrets: dict, features: dict, federa
     extra = []
     if federation is not None and environment.write_bundle() is not None:
         extra = environment.synapse_root_files()
+    st = state.load_state()
+    blocked = netrules.names(st)
+    try:
+        netrules.publish_rules(st)  # the live copy tinhat_network reads (the list below is its copy from the start)
+    except OSError:
+        log.exception("couldn't publish network-rules.json (Synapse still has the list from homeserver.yaml)")
     state.write_text(syn / "homeserver.yaml",
                      templates.homeserver_yaml(server_name, secrets, features, federation, extra,
                                                push_gateway=apiconf.docker_gateway(),
                                                former=[f.get("name") for f in state.load_state().get("former_names") or []
-                                                       if isinstance(f, dict)]), 0o600)
+                                                       if isinstance(f, dict)],
+                                               connected=[c.get("server") for c in st.get("connections") or []
+                                                          if isinstance(c, dict)],
+                                               blocked=blocked), 0o600)
     state.write_text(syn / "log.config", templates.LOG_CONFIG, 0o644)
     if not (syn / "signing.key").exists():
         state.write_text(syn / "signing.key", templates.signing_key(), 0o600)

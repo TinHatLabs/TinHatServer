@@ -71,6 +71,19 @@ for m in acmedns cloudflare porkbun desec duckdns; do
   grep -q "^dns.providers.$m\$" <<<"$CADDY_MODULES" || { echo "caddy is missing dns.providers.$m" >&2; exit 1; }
 done
 docker image rm -f caddy:2.10.2-builder >/dev/null 2>&1 || true
+# Synapse: the stock image + upstream security fixes (build/synapse/: the to-device sender check, backports/, the
+# Pillow / msgpack pins), built here like Caddy.
+SYNAPSE_REF=$(load_reused synapse)
+if [ -n "$SYNAPSE_REF" ]; then
+  [ "$SYNAPSE_REF" = tinhat/synapse:v1.145.0-th2 ] || docker tag "$SYNAPSE_REF" tinhat/synapse:v1.145.0-th2
+  echo "synapse: reused $SYNAPSE_REF ($(docker image inspect -f '{{.Id}}' tinhat/synapse:v1.145.0-th2))"
+else
+  docker build -q -t tinhat/synapse:v1.145.0-th2 /opt/tinhat/build/synapse
+  docker image rm -f matrixdotorg/synapse@sha256:9e33e40f6e69ac7dbac331a5fa29f39b7a4f8b7765476c76fe22055014dcccb1 >/dev/null 2>&1 || true  # only the build's base: servers never run it
+fi
+# the fixes must be in the image's own Synapse (a reused image too)
+docker run --rm -i --entrypoint python tinhat/synapse:v1.145.0-th2 - < /opt/tinhat/build/synapse/check_todevice_fix.py
+docker run --rm -i --entrypoint python tinhat/synapse:v1.145.0-th2 - < /opt/tinhat/build/synapse/check_backports.py
 # The Tin Hat API (api/ in the repository: the soundboard, GIFs, presence, push, game servers, the games catalogue).
 API_TAG="tinhat/api:$(cat "$P/VERSION")"
 API_REF=$(load_reused api)
@@ -98,7 +111,8 @@ docker image prune -f >/dev/null
     echo "$img $(docker image inspect -f '{{index .RepoDigests 0}}' "$img" | cut -d@ -f2)"
   done
   echo "tinhat/caddy:2.10.2-dns $(docker image inspect -f '{{.Id}}' tinhat/caddy:2.10.2-dns) ($(docker run --rm tinhat/caddy:2.10.2-dns caddy version | cut -d' ' -f1), caddy-dns: acmedns v0.7.0 cloudflare v0.2.4 porkbun v0.3.1 desec v1.1.0 duckdns v0.5.0)"
-  echo "$API_TAG $(docker image inspect -f '{{.Id}}' "$API_TAG") (the Tin Hat API, node 22)"; } \
+  echo "$API_TAG $(docker image inspect -f '{{.Id}}' "$API_TAG") (the Tin Hat API, node 22)"
+  echo "tinhat/synapse:v1.145.0-th2 $(docker image inspect -f '{{.Id}}' tinhat/synapse:v1.145.0-th2) (matrixdotorg/synapse:v1.145.0 + upstream security fixes from 1.152.1 and 1.157.2, size and rate limits on push rules, pillow 13.0.0, msgpack 1.2.4)"; } \
   | sort > /opt/tinhat/images.lock
 cat /opt/tinhat/images.lock
 

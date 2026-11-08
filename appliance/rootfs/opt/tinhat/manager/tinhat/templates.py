@@ -69,6 +69,9 @@ password_config:
 # A small private server. It talks only to the Tin Hat servers its owner connected in the dashboard (connection
 # codes, both owners agree); an empty list means no other server at all. No public room directory outside it.
 federation_domain_whitelist: {federation_whitelist}
+# Servers the owner blocked (Network → Blocked servers) are left out of the list above, and no new pictures or files
+# are fetched from them.
+prevent_media_downloads_from: {blocked_servers}
 trusted_key_servers: []
 {extra_ca}suppress_key_server_warning: true
 allow_public_rooms_over_federation: false
@@ -97,14 +100,24 @@ modules:
     config:
       dir: /tinhat-api
       # rooms whose creator is on one of these count as ours (other servers' rooms: no automatic Tin Hat power-level
-      # writes from older apps, tinhat_rules.check_event_allowed)
-      connected: {federation_whitelist}
+      # writes from older apps, tinhat_rules.check_event_allowed): the Tin Hat servers CONNECTED by code only, never a
+      # server allowed by name (a plain Matrix server; open network slice 1b, found on the federated lab pair)
+      connected: {guard_connected}
       former: {former_names}
   # DM ringing: the Tin Hat API hears about call membership changes (pokes only; it reads the room itself) and asks
   # whether a room is muted for someone before a phone rings (docs/API.md "Ringing").
   - module: tinhat_calls.CallHook
     config:
       dir: /tinhat-api
+  # The owner's deny-list and each person's rule for invites from other servers, with invite quotas kept in
+  # /data/tinhat-network.db (docs/NETWORK-RULES.md). The list here is read at start; network-rules.json next to the
+  # module is read live; a server on either is blocked.
+  - module: tinhat_network.NetworkRules
+    config:
+      db: /data/tinhat-network.db
+      blocked: {blocked_servers}
+      connected: {guard_connected}
+      quotas: {invite_quotas}
 
 # New people land in the server's first room: the manager joins them (newcomers.py), not Synapse's auto_join_rooms,
 # which would join the guest room's temporary accounts to #general too.
@@ -172,10 +185,17 @@ disable_existing_loggers: false
 
 
 def homeserver_yaml(server_name: str, s: dict, features: dict | None = None, federation: list[str] | None = None,
-                    extra_ca: list[str] | None = None, push_gateway: str = "", former: list[str] | None = None) -> str:
+                    extra_ca: list[str] | None = None, push_gateway: str = "", former: list[str] | None = None,
+                    connected: list[str] | None = None, blocked: list[str] | None = None) -> str:
     """federation=None: home-network mode (no federation listener at all); a list: from-anywhere mode, federating
-    only with those servers. extra_ca: the lab's roots (Pebble + lab CA), one file each, for federation."""
+    only with those servers. extra_ca: the lab's roots (Pebble + lab CA), one file each, for federation.
+    connected: the Tin Hat servers connected by code (a subset of `federation`): the only other servers whose rooms
+    the foreign-room guard counts as ours. None = none (the strict default; servers allowed by name never count).
+    blocked: the owner's deny-list (netrules.py): never on the federation list nor counted as connected, whatever the
+    other lists say; their media isn't fetched and tinhat_network refuses their invites."""
     f = features or {}
+    bl = {str(b).lower().rstrip(".") for b in blocked or [] if isinstance(b, str) and b.strip()}
+    federation = None if federation is None else [x for x in federation if isinstance(x, str) and x.lower().rstrip(".") not in bl]
     # Synapse refuses private addresses for pushers (and federation, identity servers); the Tin Hat API's push
     # gateway listens on the box's own address on the compose network (apiconf.py), the one exception.
     gw = (f"# Web push: the Tin Hat API's gateway on this box (the only private address Synapse may talk to).\n"
@@ -194,9 +214,19 @@ def homeserver_yaml(server_name: str, s: dict, features: dict | None = None, fed
         form_secret=s["form_secret"],
         listener_names=", ".join(names),
         federation_whitelist=json.dumps(sorted(set(federation or []))),
+        # exact names, as Synapse's allow-list matches them (astra guardfix r1: no case folding into trust)
+        guard_connected=json.dumps(sorted({c for c in connected or [] if isinstance(c, str)}
+                                          & {x for x in federation or [] if isinstance(x, str)})),
         former_names=json.dumps(sorted({x for x in former or [] if isinstance(x, str) and is_hostname(x)})),
+        blocked_servers=json.dumps(sorted(bl)),
+        invite_quotas=json.dumps(_invite_quotas(), sort_keys=True),
         extra_ca=f"federation_custom_ca_list: {json.dumps(extra_ca)}\n" if extra_ca else "",
     )
+
+
+def _invite_quotas() -> dict:
+    from . import limits  # imported here: the template tests load this file on its own
+    return dict(limits.INVITE_QUOTAS)
 
 
 def signing_key() -> str:
@@ -266,6 +296,14 @@ CADDY_SETUP_PROXY_ONLY = """\
 # (CADDY_ANYWHERE and its former names), never on a home-network name (the server's own CA) or behind the owner's
 # reverse proxy (see CADDY_PROXY).
 HEADERS_SNIPPET = """\
+# Every route to Synapse imports this first. Synapse takes no multipart/form-data, and 1.145 refused it only when
+# spelled in lower case (GHSA-6wjm-9p2x-gvpm: any other spelling is buffered in memory before auth). The image has
+# upstream's fix too; this refuses every spelling here, before Synapse sees the request. header_regexp tests each
+# Content-Type header the request carries.
+(tinhat_no_multipart) {
+	@tinhat_multipart header_regexp Content-Type (?i)multipart/form-data
+	respond @tinhat_multipart 415
+}
 (tinhat_headers) {
 	header {
 		-Server
@@ -295,8 +333,15 @@ def csp_problem(csp: str) -> str | None:
     """Why `csp` can't go into the Caddyfile as one quoted word (or would let other sites frame the app), or None."""
     if not isinstance(csp, str) or not _CSP_OK.fullmatch(csp) or any(c in csp for c in '"\\{}`'):
         return "it has characters the Caddyfile can't take (one line of printable ASCII, no quotes, backslashes or braces)"
-    if "frame-ancestors" not in csp:
+    # (round 3 security review, ACCWEB-5) the app may be framed by nobody or by itself only: every frame-ancestors
+    # directive must be exactly 'none' or 'self' (a browser obeys the first; none may say more), and there must be one
+    if "," in csp:  # a comma starts a second policy in the same header: one policy only
+        return "it holds more than one policy (a comma)"
+    fa = [d.split() for d in csp.split(";") if d.split()[:1] and d.split()[0].lower() == "frame-ancestors"]
+    if not fa:
         return "it doesn't say frame-ancestors"
+    if any(len(d) != 2 or d[1].lower() not in ("'none'", "'self'") for d in fa):
+        return "its frame-ancestors lets other sites frame the app (only 'none' or 'self')"
     return None
 
 
@@ -457,9 +502,11 @@ https://{server_name} {{
 		file_server
 	}}
 {app_links}	handle /_matrix/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008
 	}}
 	handle /_synapse/client/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008
 	}}
 	# Call sign-ins go to the Tin Hat API first (calltoken.mjs): it asks lk-jwt for a token only when the caller is in
@@ -580,9 +627,11 @@ https://{server_name} {{
 		file_server
 	}}
 {app_links}	handle /_matrix/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008
 	}}
 	handle /_synapse/client/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008
 	}}
 	# Call sign-ins go to the Tin Hat API first (calltoken.mjs): it asks lk-jwt for a token only when the caller is in
@@ -697,7 +746,8 @@ CADDY_PROXY = """\
 		protocols h1 h2
 		# Your proxy: the address(es) you named in the dashboard (else any home-network address), or this same
 		# machine's own addresses. Strict: the caller is the first address from the right that isn't one of these,
-		# so nothing a browser writes into X-Forwarded-For itself counts.
+		# so nothing a browser writes into X-Forwarded-For itself counts. With none named, a caller at home is one
+		# of these too, so it shows as your proxy's address: name your proxy (the dashboard offers it).
 		trusted_proxies static {trusted}{own_ips}
 		trusted_proxies_strict
 	}}
@@ -732,11 +782,13 @@ CADDY_PROXY = """\
 {app_links}	# Synapse reads the first address in X-Forwarded-For: give it (and the manager) only the caller, as worked out
 	# above, so both count the same address.
 	handle /_matrix/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008 {{
 			header_up X-Forwarded-For {{client_ip}}
 		}}
 	}}
 	handle /_synapse/client/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008 {{
 			header_up X-Forwarded-For {{client_ip}}
 		}}
@@ -776,6 +828,10 @@ CADDY_PROXY = """\
 			# the address that connected to this port (the owner's proxy): the dashboard shows it, and won't save a
 			# proxy list that leaves it out
 			header_up X-Tinhat-Peer {{remote_host}}
+			# the X-Forwarded-For this request ARRIVED with (empty from a browser that connects straight to this port):
+			# came through a proxy or not (owndomain.home_collapse). Set here, so nothing a caller sends counts.
+			header_up X-Tinhat-Via {{http.request.header.X-Forwarded-For}}
+			header_up X-Tinhat-Via-Proto {{http.request.header.X-Forwarded-Proto}}
 		}}
 	}}
 {api_routes}	handle {{
@@ -992,9 +1048,11 @@ https://{old} {{
 		file_server
 	}}
 	handle /_matrix/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008
 	}}
 	handle /_synapse/client/* {{
+		import tinhat_no_multipart
 		reverse_proxy 127.0.0.1:8008
 	}}
 	# Call sign-ins go to the Tin Hat API first (calltoken.mjs): it asks lk-jwt for a token only when the caller is in
@@ -1575,3 +1633,82 @@ CADDY_PROXY = _limited(CADDY_PROXY, template=True)
 CADDY_PROXY_OWN_SITES = _limited(CADDY_PROXY_OWN_SITES, template=True, define=False)
 CADDY_FORMER_SITE = _limited(CADDY_FORMER_SITE, template=True, define=False)
 CADDY_API = _limited(CADDY_API, template=False, define=False)
+
+
+# ---- the deny-list at the edge (netrules.py; docs/NETWORK-RULES.md) -------------------------------------------------
+# A federation request carries `Authorization: X-Matrix origin=…,key=…,sig=…`. Caddy refuses one whose origin claims a
+# blocked server with 403 before Synapse works on it. The pattern follows how Synapse 1.145 itself reads the header
+# (synapse/federation/transport/server/_base.py _parse_auth_header), so no spelling Synapse would take for a blocked
+# server gets past it:
+#   - the value must start "X-Matrix " (one or more spaces); parameters are split at commas with blanks around them;
+#     a parameter's name is compared without regard to case, its value runs to the next comma;
+#   - an unquoted value is the origin as it stands; a value starting with a quote loses its first AND last character
+#     (whatever the last one is) and then every backslash-escape (\x -> x);
+#   - every Authorization header is looked at (Synapse takes the origin of the last X-Matrix one: any of them claiming
+#     a blocked server is refused);
+#   - the name is matched without regard to case, with or without a trailing dot, and with anything after a colon:
+#     Synapse reads the port with Python's int() ("+8448", "8_448", " 8448" and other scripts' digits all count:
+#     astra max r1), and every one of those reaches the same machine.
+# Anything Caddy refuses here is a request that claims to come from a blocked server; a forged claim only hurts the
+# forger. Statistics and automatic sanctions never come from this parse (design A4/A7).
+FED_DENY_REFUSED = "This server doesn't accept requests from that server."
+_FED_HANDLE = re.compile(r"^(\t+)handle /_matrix/\* \{$")
+_FED_NAME = re.compile(r"[a-z0-9.-]{1,253}")
+
+
+def _rx_char(c: str, escaped: bool) -> str:
+    lit = re.escape(c) if c in ".-" else c
+    return (r"\\?" + lit) if escaped else lit
+
+
+def fed_deny_regex(names) -> str:
+    """The RE2 pattern (also valid for Python's re) an Authorization header value matches when it claims one of
+    `names` (lower-case server names, netrules.normalize_block) as its X-Matrix origin."""
+    ns = sorted({n for n in names or [] if isinstance(n, str) and _FED_NAME.fullmatch(n)})
+    if not ns:
+        raise ValueError("no server names")
+    plain = "|".join("".join(_rx_char(c, False) for c in n) for n in ns)
+    esc = "|".join("".join(_rx_char(c, True) for c in n) for n in ns)
+    end = r"[ \t]*(?:,|$)"
+    return (r"^X-Matrix +(?:.*,[ \t]*)?(?i:origin)=(?i:"
+            rf"(?:{plain})\.?(?::[^,]*)?{end}"
+            rf"|\"(?:{esc})(?:\\?\.)?(?:\\?:[^,]*)?[^,]{end})")
+
+
+_FED_DENY_LINE = re.compile(r"^\t+(?:@tinhat_blocked_origin_[0-9]+ header_regexp Authorization `[^`\n]*`|"
+                            r"respond @tinhat_blocked_origin_[0-9]+ \"[^\"\n]*\" 403)\n?$")
+
+
+def strip_fed_deny(caddyfile: str) -> str:
+    """caddyfile without the lines with_fed_deny put in."""
+    return "".join(l for l in caddyfile.splitlines(keepends=True) if not _FED_DENY_LINE.match(l))
+
+
+def _goes_to_synapse(lines, i: int) -> bool:
+    """Whether the block body starting at lines[i] goes to Synapse: its proxy line, after the multipart refusal when it
+    has one (a Caddyfile written before that refusal existed doesn't)."""
+    if i < len(lines) and lines[i].strip() == "import tinhat_no_multipart":
+        i += 1
+    return i < len(lines) and lines[i].strip().startswith("reverse_proxy 127.0.0.1:8008")
+
+
+def with_fed_deny(caddyfile: str, names) -> str:
+    """caddyfile (rendered) with the deny-list's refusal first in every `handle /_matrix/* {` block that goes to
+    Synapse (the plain-http sites' blocks only redirect); as it was when nothing is blocked."""
+    ns = sorted({n for n in names or [] if isinstance(n, str) and _FED_NAME.fullmatch(n)})
+    if not ns:
+        return caddyfile
+    rx = fed_deny_regex(ns)
+    if "`" in rx:
+        raise ValueError("a backtick in the pattern")
+    lines = caddyfile.splitlines(keepends=True)
+    out, k = [], 0
+    for i, line in enumerate(lines):
+        out.append(line)
+        m = _FED_HANDLE.match(line.rstrip("\n"))
+        if m and _goes_to_synapse(lines, i + 1):
+            k += 1
+            ind = m.group(1) + "\t"
+            out.append(f"{ind}@tinhat_blocked_origin_{k} header_regexp Authorization `{rx}`\n")
+            out.append(f"{ind}respond @tinhat_blocked_origin_{k} \"{FED_DENY_REFUSED}\" 403\n")
+    return "".join(out)

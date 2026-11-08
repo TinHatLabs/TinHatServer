@@ -1,0 +1,19 @@
+# The upstream Synapse fixes backported to 1.145.0, applied in this order by apply_backports.py (Dockerfile).
+# <sha256 of the patch file> <patch file>. 0001-0005 are upstream's own changes to the `synapse` package, unmodified; 0006 and 0007 are ours:
+#   0001 GHSA-6wjm-9p2x-gvpm  e8601840677a1c7ce1ccf42509c4e0dae20fc225 (1.157.2)  multipart check case-insensitive
+#   0002 GHSA-27p5-4f45-gx76  3772859fbcaac6ffa2baeea0025307fbdc192cbb (1.157.2)  /get_missing_events same-room check
+#        GHSA-qcjr-46gf-7f4r  68139e5234724c441b3b3beaa30a644d4b546fae (1.157.2)  /event_auth event-in-room check
+#        GHSA-r66v-qhwx-8rg4  83672faf9c641cb7a03b78d0af36a9327b90d1a0 (1.157.2)  /timestamp_to_event host-in-room check
+#   0003 GHSA-95fh-hv8c-chvq  c3adee3509d7b6a8d22ec1f5bd5dab7b154bbc93 (1.157.2)  no remote 401/M_UNKNOWN_TOKEN relayed
+#   0004 GHSA-fp53-rw9v-hcf9  44216bf2b68b3099020a13d58cbcf8a420b0c0dc (1.157.2)  push rule count/size limits
+#   0005 GHSA-8q93-326v-3m7g  0eefdbcb9535d6595ca2b419217404acf57623ac (1.152.1)  WorkerLock retry interval capped at 60 s
+#   0006 not upstream (upstream 1.157.2 through develop lack it): the size limit of 0004, on the actions of built-in rules too
+#   0007 not upstream (no version has it): a per-user rate limit on push rule writes (burst 100, then 0.2 a second)
+# (GHSA-rgv2-84w7-5j9p, the to-device sender check, is patch_todevice_spoof.py.)
+d2c630b020059496ddaede899cf10106581250c637e300e4474c392b1fabe884 0001-ghsa-6wjm-multipart-case.patch
+2fa85f4f249826be1ac917d3bf24a3032c7e7b1007d6e6ebf928a5429eaa6b5c 0002-ghsa-27p5-qcjr-r66v-federation-room-checks.patch
+29e3b91eebf42502a250429325b84628646f7b27d20d3817bbf1554ddb93947a 0003-ghsa-95fh-no-relayed-401.patch
+583a68220d543b3d98fdaf0ce19036cdc8a169daec544a33a89157ce7f948b95 0004-ghsa-fp53-push-rule-limits.patch
+dead44f3c157d39884bf145553de3512714bb1c9a60e6041ef05dce7ad90ab1d 0005-ghsa-8q93-workerlock-cap.patch
+ea3016c05b0151fdecd2cdb1b55a17818e82639763c35f8fde993f2f99071e63 0006-tinhat-builtin-push-rule-action-size.patch
+c07c3dd4803f8733e2ac9ad80a60d58a497895f250dcdd2338aee118e968f7c6 0007-tinhat-push-rule-write-rate.patch

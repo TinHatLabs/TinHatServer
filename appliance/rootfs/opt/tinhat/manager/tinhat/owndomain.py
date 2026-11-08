@@ -128,6 +128,34 @@ def trusted_proxies(new: list[str], own: list[str]) -> list[str]:
     return (list(new) if new else list(HOME_RANGES)) + [a for a in own if ":" not in a]
 
 
+def home_collapse(st: dict, peer: str, via: str, own: list[str]) -> str | None:
+    """0.3.15: the address every home-network caller looks like, or None. Behind the owner's reverse proxy with NO proxy
+    named, Caddy trusts every home-network address and reads X-Forwarded-For strictly from the right; a caller at home
+    is trusted too, so Caddy falls back to the address that connected: the proxy. Everyone at home then shares the
+    proxy's address (one sign-in limit for all of them, the proxy's address under Devices). Recognised here when this
+    request came THROUGH a proxy (`via`: the X-Forwarded-For it arrived with, Caddy's X-Tinhat-Via; a browser that
+    connects straight to the port sends none) from a home-network `peer` — this machine's own addresses and loopback
+    included: a proxy on this same machine collapses its callers the same way, and naming it fixes it the same way."""
+    if not state.behind_proxy(st) or proxies(st) or not (via or "").strip() or not peer:
+        return None
+    if not proxy_covers(list(HOME_RANGES) + [a for a in own if ":" not in a], peer):
+        return None
+    return peer
+
+
+def autoname_candidate(st: dict, peer: str, via: str, own: list[str], proto: str = "") -> str | None:
+    """The proxy to name by itself: only on a server set up (or restored) with 0.3.15+ in proxy mode and nothing named
+    since (state proxy_autoname, set by setup's finish), on the owner's own dashboard visit through the proxy. An
+    existing server is never changed by itself (another device at home may connect to the port directly): it shows
+    the dashboard's offer instead. Only from a visit that also arrived saying it was HTTPS (`proto`: the
+    X-Forwarded-Proto it came with: the owner's proxy terminates HTTPS and says so; a browser at home sending an
+    X-Forwarded-For of its own straight to the port doesn't). Residual (said in the dashboard): a proxy with more than one
+    address gets the one this visit came through; the owner adds the others."""
+    if not st.get("proxy_autoname") or (proto or "").strip().lower() != "https":
+        return None
+    return home_collapse(st, peer, via, own)
+
+
 def proxy_save_problem(new: list[str], peer: str, own: list[str]) -> str | None:
     """Why the dashboard mustn't save `new` as the proxy list, or None. `peer`: the address the saving request came
     through (Caddy's X-Tinhat-Peer); `own`: this machine's addresses (always let in). Checked against what the proxy port

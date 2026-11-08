@@ -23,7 +23,7 @@ const micPerm = { can_publish: true, can_publish_sources: ["MICROPHONE"] };
 const camPerm = { can_publish: true, can_publish_sources: ["CAMERA"] };
 const attrs = (mode, gen = "1", person = ALICE) => ({ "tinhat.person": person, "tinhat.pad": "phone", "tinhat.mode": mode, "tinhat.gen": gen });
 
-function setup({ lk = true, padState } = {}) {
+function setup({ lk = true, padState, rotated } = {}) {
     const s = {
         local: { at: ALICE, ab: BOB },
         rooms: { [ROOM]: [ALICE, BOB] },
@@ -85,7 +85,7 @@ function setup({ lk = true, padState } = {}) {
         hs, adminToken: "admintoken", serverName: SN, lkJwtUrl: "http://127.0.0.1:8070", fetchImpl, now: clock(1000),
         log: (l) => logs.push(l), enabled: () => false /* the owner's switch off: the Pad route still checks */,
         lkKey: lk ? KEY : "", lkSecret: lk ? SECRET : "", lkApiUrl: "http://127.0.0.1:7880", sfuUrl: "wss://home.test/livekit/sfu",
-        wallNow: () => wall, sweep: false, padState: padState || createPadState(),
+        wallNow: () => wall, sweep: false, padState: padState || createPadState(), rotated,
     });
     async function post(body, { handler = "pad", method = "POST", ip = "192.0.2.10" } = {}) {
         const res = { statusCode: 200, headers: {}, body: undefined };
@@ -204,12 +204,12 @@ test("B07 the Watch route retires the device's Pad Mic session too (Mic -> Watch
     assert.deepEqual(verify(w.body.jwt).attributes, { "tinhat.watch": "1", "tinhat.person": ALICE, "tinhat.pad": "phone", "tinhat.mode": "watch" }, "no tinhat.gen on Watch tokens");
 });
 
-test("B08 a person a moderator muted gets no Mic token; Camera still works; a computer's restricted permission alone no longer infers a mute (r2 P2 #5)", async () => {
+test("B08 a person a moderator muted gets no Mic token and no Camera token (round 3 PAD-2); a computer's restricted permission alone no longer infers a mute (r2 P2 #5)", async () => {
     const ps = createPadState();
     const t = setup({ padState: ps });
     ps.setMuted(ROOM, ALICE, BOB);
     assert.equal((await t.post(ask())).body.reason, "server-muted");
-    assert.equal((await t.post(ask({ mode: "camera" }))).statusCode, 200, "a call mute leaves the camera on: Camera mode is within it");
+    assert.equal((await t.post(ask({ mode: "camera" }))).body.reason, "server-muted", "a Camera session could carry a voice under another label: refused too");
     ps.clearMuted(ROOM, ALICE);
     assert.equal((await t.post(ask({ device_id: "P2" }))).statusCode, 200);
     // (an API restart keeps the mute: padstate.mjs persists it — R1-2) a restricted computer with no mute on record
@@ -840,4 +840,68 @@ test("PAD1-9 (cost guard) thousands of records in one room are judged in one pas
     const t0 = performance.now();
     assert.equal((await t.post(ask())).body.reason, "server-muted");
     assert.ok(performance.now() - t0 < 1500, `took ${Math.round(performance.now() - t0)} ms`);
+});
+
+// ---- round 3 security review, PAD-2 (server half): no Pad Camera token while the person is muted -----------------------
+
+test("PAD2-1 a mute recorded only in the room refuses a Camera token too; an unmute lets it through", async () => {
+    const ps = createPadState();
+    const t = setup({ padState: ps });
+    t.s.state[ROOM] = [
+        { type: "m.room.power_levels", state_key: "", sender: BOB, content: { users: { [BOB]: 100 }, users_default: 0 } },
+        { type: "dev.tinhat.call.moderation", state_key: ALICE.slice(1), sender: BOB, content: { muted: true }, origin_server_ts: 1 },
+    ];
+    const r = await t.post(ask({ mode: "camera" }));
+    assert.deepEqual([r.statusCode, r.body.reason], [403, "server-muted"]);
+    assert.ok(!t.logs.some((l) => /pad camera token minted/.test(l)), "nothing was signed");
+    ps.setMuted(ROOM, ALICE, BOB);
+    ps.clearMuted(ROOM, ALICE);  // an explicit unmute through the API, newer than the record
+    assert.equal((await t.post(ask({ mode: "camera" }))).statusCode, 200);
+});
+
+test("PAD2-2 a mute set while a Camera request waits on the call server refuses it (the last check before signing)", async () => {
+    const ps = createPadState();
+    const t = setup({ padState: ps });
+    let n = 0;
+    t.s.onList = () => { if (++n === 2) ps.setMuted(ROOM, ALICE, BOB); };
+    const r = await t.post(ask({ mode: "camera" }));
+    assert.deepEqual([r.statusCode, r.body.reason], [403, "server-muted"]);
+});
+
+// ---- round 3 security review, PAD-3: nothing is attributed to a person before the key pair has been replaced ----------
+
+test("PAD3-1 not rotated yet: Pad Mic and Camera are refused (503 not-rotated), nothing is signed", async () => {
+    const t = setup({ rotated: false });
+    for (const mode of ["mic", "camera"]) {
+        const r = await t.post(ask({ mode }));
+        assert.deepEqual([r.statusCode, r.body.reason], [503, "not-rotated"], mode);
+    }
+    assert.ok(!t.logs.some((l) => /token minted/.test(l)));
+    assert.equal((await setup({}).post(ask())).statusCode, 200, "rotated (the default here): minted");
+});
+
+test("PAD3-2 not rotated yet: a Watch token carries the watch mark alone (as before 0.3.13), no person / Pad attributes", async () => {
+    const t = setup({ rotated: false });
+    const w = await t.post({ room: ROOM, openid_token: ask().openid_token, device_id: "PHONE" }, { handler: "watch" });
+    assert.equal(w.statusCode, 200, JSON.stringify(w.body));
+    assert.deepEqual(verify(w.body.jwt).attributes, { "tinhat.watch": "1" });
+    const w2 = await setup({}).post({ room: ROOM, openid_token: ask().openid_token, device_id: "PHONE" }, { handler: "watch" });
+    assert.equal(verify(w2.body.jwt).attributes["tinhat.person"], ALICE, "rotated: the person attributes");
+});
+
+test("PAD3-3 not rotated yet: a normal token is re-minted without tinhat.person (and lk-jwt's tinhat.* still dropped)", async () => {
+    const { remint, signLk } = await import("../calltoken.mjs");
+    const lk = JSON.stringify({ url: "wss://x", jwt: signLk({ iss: KEY, sub: `${ALICE}:DESK`, attributes: { "tinhat.person": BOB, keep: "1" },
+        video: { room: ROOM, roomJoin: true, canPublish: true, canSubscribe: true } }, SECRET) });
+    const attrs = (t) => JSON.parse(Buffer.from(JSON.parse(t).jwt.split(".")[1], "base64url")).attributes;
+    assert.deepEqual({ ...attrs(remint(lk, SECRET, ALICE, null, { person: false })) }, { keep: "1" });
+    assert.deepEqual({ ...attrs(remint(lk, SECRET, ALICE)) }, { keep: "1", "tinhat.person": ALICE });
+});
+
+test("PAD3-4 the API reads LK_ROTATED as the manager writes it: on a Tin Hat Server only an exact 1 counts", async () => {
+    const { rotatedFromEnv } = await import("../calltoken.mjs");
+    const box = (v) => rotatedFromEnv({ TINHAT_BOX: "1", ...(v === undefined ? {} : { LK_ROTATED: v }) });
+    assert.deepEqual([box("1"), box(" 1 "), box("0"), box(""), box(undefined), box("yes"), box("true"), box("10")], [true, true, false, false, false, false, false, false]);
+    const other = (v) => rotatedFromEnv(v === undefined ? {} : { LK_ROTATED: v });
+    assert.deepEqual([other(undefined), other("1"), other("0")], [true, true, false], "a standalone API: only an explicit 0");
 });

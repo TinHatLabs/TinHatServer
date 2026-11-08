@@ -15,6 +15,11 @@ With it, Synapse itself enforces, whatever an app or a copied token tries:
 The API publishes three small, non-secret files into /var/lib/tinhat/api/public (mounted read-only here): the guest
 accounts, the names it is about to register, and the Guests room's id. They are re-read when they change.
 
+Device ids (security review round 3, ID-2): a sign-in that names its own device id as a number of 1-5 digits
+(`8448`) is refused. A call identity is `<user id>:<device id>`, so `@a:h` with device `8448` would read like the
+bare id of `@a:h:8448` (a user on a server with a port). No app makes such ids; the Tin Hat API refuses them for call
+sign-ins too (identity.mjs DEVICE_RE).
+
 The owner: nobody may deactivate the server owner's account or the box's own system account (`@tinhat-system:…`),
 from any app, with a password or through the admin API (Synapse answers 403 M_FORBIDDEN "Deactivation of this user is
 forbidden"). Deleting the owner would leave the server without anyone who can sign in to its dashboard; the apps
@@ -35,6 +40,7 @@ fail, the event passes (it protects other people's rooms from old apps; it must 
 import json
 import logging
 import os
+import re
 import time
 
 from synapse.api.errors import Codes
@@ -46,6 +52,7 @@ logger = logging.getLogger(__name__)
 PREFIX = "guest-"
 SYSTEM_LOCALPART = "tinhat-system"  # config.SYSTEM_LOCALPART
 ALLOW_FOR_S = 120  # a name in guest-allow.json may be registered for this long after it was written
+PORT_SHAPED_DEVICE = re.compile(r"[0-9]{1,5}")  # identity.mjs DEVICE_RE: never such a device id (fullmatch)
 
 
 class _File:
@@ -209,6 +216,7 @@ class GuestRules(_ForeignRooms):
             user_may_invite=self.user_may_invite,
             user_may_create_room=self.user_may_create_room,
             check_registration_for_spam=self.check_registration_for_spam,
+            check_login_for_spam=self.check_login_for_spam,
         )
 
     @staticmethod
@@ -270,6 +278,13 @@ class GuestRules(_ForeignRooms):
             return RegistrationBehaviour.ALLOW
         logger.info("tinhat_rules: %r is a guest name; only the Tin Hat API registers those", username)
         return RegistrationBehaviour.DENY
+
+    async def check_login_for_spam(self, user_id, device_id, initial_display_name, request_info, auth_provider_id=None):
+        if isinstance(device_id, str) and PORT_SHAPED_DEVICE.fullmatch(device_id):
+            logger.info("tinhat_rules: refused a sign-in of %s with the device id %r (a number reads like a port)",
+                        user_id, device_id)
+            return Codes.FORBIDDEN, {}
+        return NOT_SPAM
 
     # ---- the owner ---------------------------------------------------------------------------------------------------
     def is_protected(self, user_id: str) -> bool:

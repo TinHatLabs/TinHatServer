@@ -94,7 +94,12 @@ def proxy_addresses(args: list[str], st: dict | None = None, apply=None) -> int:
             print(f"Note: {', '.join(outside)} isn't a home-network address; a proxy connecting from there will be "
                   f"refused. Name it with --set instead.")
     elif not args:
-        print(", ".join(named) if named else "any home-network address (none named)")
+        if named:
+            print(", ".join(named))
+        else:
+            print("any home-network address (none named)\n"
+                  "Callers at home then all look like your proxy (one shared sign-in limit). Name it:\n"
+                  "  tinhat proxy-addresses --set ADDRESS   (the address your proxy connects from)")
         return 0
     else:
         print("usage: tinhat proxy-addresses [--set ADDR[,ADDR...] | --clear]")

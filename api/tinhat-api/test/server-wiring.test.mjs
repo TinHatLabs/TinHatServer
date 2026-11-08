@@ -8,7 +8,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, symlinkSync, rmSync, existsSync, openSync, truncateSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, copyFileSync, symlinkSync, rmSync, existsSync, openSync, truncateSync, statSync } from "node:fs";
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -25,6 +25,9 @@ const free = () => new Promise((resolve) => { const s = createServer(); s.listen
 const M = "https://www.myinstants.com/media/sounds";
 const VODS_SECRET = "vods-secret-for-the-wiring-test";
 let T, api, hs, base, log;
+// RECORDER-5: one room with an old, a recent and a live recording; who is a member since when, the room's history rule
+const VOD_ROOM = "!vodroom:example.org", VOD_DIR = "_vodroom_example.org";
+const VOD = { hv: "joined", members: {} };
 
 const STUB = String.raw`import json, os, sys, time
 url, out = sys.argv[1], sys.argv[2]
@@ -67,12 +70,27 @@ before(async () => {
     symlinkSync(dirname(expressDir), join(app, "node_modules"));
     writeFileSync(join(T, "preload.mjs"), PRELOAD);
     writeFileSync(join(T, "vods", "room1", "s1", "track.mka"), Buffer.alloc(100_000, 7));
+    for (const [id, start, end] of [["old", 1_000, 2_000], ["recent", Date.now() - 60_000, Date.now() - 30_000], ["live", Date.now() - 10_000, null]]) {
+        mkdirSync(join(T, "vods", VOD_DIR, id), { recursive: true });
+        writeFileSync(join(T, "vods", VOD_DIR, id, "session.json"), JSON.stringify({ room: VOD_ROOM, start_ms: start, ...(end ? { end_ms: end } : {}) }));
+    }
     writeFileSync(join(conf, "vods.secret"), VODS_SECRET);
     log = join(T, "stub.log");
     writeFileSync(log, "");
     hs = createServer((req, res) => {
         const who = { "Bearer good": "@alice:example.org", "Bearer good2": "@bob:example.org", "Bearer guest": "@guest-1:example.org",
-            "Bearer good3": "@carol:example.org", "Bearer good4": "@dave:example.org" }[req.headers.authorization];
+            "Bearer good3": "@carol:example.org", "Bearer good4": "@dave:example.org", "Bearer good5": "@erin:example.org",
+            "Bearer good6": "@frank:example.org", "Bearer good7": "@gina:example.org", "Bearer good8": "@hal:example.org",
+            "Bearer good9": "@ivy:example.org" }[req.headers.authorization];
+        const vm = /^\/_matrix\/client\/v3\/rooms\/([^/]+)\/state\/(m\.room\.member|m\.room\.history_visibility)\/([^?]*)$/.exec(req.url);
+        if (vm && who && decodeURIComponent(vm[1]) === VOD_ROOM) {  // RECORDER-5: the caller's membership + the room's history
+            const send = (code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+            if (vm[2] === "m.room.history_visibility") return VOD.hv ? send(200, { history_visibility: VOD.hv }) : send(404, { errcode: "M_NOT_FOUND" });
+            const m = VOD.members[decodeURIComponent(vm[3])];
+            if (!m || decodeURIComponent(vm[3]) !== who) return send(403, { errcode: "M_FORBIDDEN" });
+            const content = { membership: m.membership };
+            return send(200, content);
+        }
         if (req.url === "/_matrix/federation/v1/openid/userinfo?access_token=oid-good") {  // calltoken.mjs: a sign-in from here
             res.writeHead(200, { "content-type": "application/json" });
             return res.end(JSON.stringify({ sub: "@alice:example.org" }));
@@ -284,11 +302,11 @@ test("abuse reports have their own quota: a day of bug reports doesn't stop a re
     for (let i = 0; i < 25; i++) if ((await as({ type: "bug", title: `b${i}` })).status === 200) bug++;
     assert.equal(bug, 20);
     assert.equal((await as({ type: "bug", title: "one more" })).status, 429);
-    assert.equal((await as({ type: "bug", title: "big", pad: "x".repeat(40_000) })).status, 413, "bug quota spent: 16 KB at most");
+    assert.equal((await as({ type: "bug", title: "big", pad: "x".repeat(40_000) })).status, 413, "bug quota spent: 16 KB at most (a try too)");
     assert.equal((await as({ ...ABUSE, reported_user: "junk" })).status, 400, "a refused try counts too");
     let abuse = 0;
     for (let i = 0; i < 55; i++) if ((await as({ ...ABUSE, extra: undefined })).status === 200) abuse++;
-    assert.equal(abuse, 49, "50 tries a day");
+    assert.equal(abuse, 48, "50 tries a day (two were refused ones)");
     assert.equal((await as(ABUSE)).status, 429);
 });
 
@@ -304,4 +322,151 @@ test("call sign-ins: own body reader (not the shared parser), room check before 
     assert.equal((await post("/calltoken/get_token", sign("!room:example.org"))).status, 400, "/get_token: the MSC4195 shape only");
     assert.equal((await post("/calltoken/healthz", {})).status, 404);
     assert.equal((await post("/calltoken", {})).status, 404);
+});
+
+test("a hostile problem report (deep nesting, growth on write, junk) is refused and the API stays up", { skip }, async () => {
+    const raw = (body, token = "good5") => fetch(`${base}/reports`, { method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-forwarded-for": "198.51.100.210" }, body });
+    const deep = "[".repeat(400_000) + "]".repeat(400_000);  // 800 KB, parses fine, can't be serialised recursively
+    const r = await raw(deep);
+    assert.equal(r.status, 400);
+    assert.match((await r.json()).error, /nested too deeply/);
+    assert.equal((await fetch(`${base}/health`)).status, 200, "the API is still running");
+    // a body whose stored form would be ~4x what arrived: refused on its written size
+    assert.equal((await raw("[" + Array(60_000).fill("1e20").join(",") + "]")).status, 413);
+    // a moderately nested body is stored compact: no larger than what arrived
+    const wide = "[".repeat(30) + Array(5000).fill("0").join(",") + "]".repeat(30);
+    const ok = await raw(wide);
+    assert.equal(ok.status, 200);
+    const { id } = await ok.json();
+    const stored = readFileSync(join(T, "conf", "reports", `${id}.json`), "utf8");
+    assert.ok(stored.length < wide.length + 200, `stored ${stored.length} bytes for ${wide.length}`);
+    assert.equal(JSON.parse(stored).user, "@erin:example.org");
+    assert.equal((await fetch(`${base}/health`)).status, 200);
+});
+
+test("refused report bodies count toward the day's quota; the quota is written down for the next start", { skip }, async () => {
+    const raw = (body) => fetch(`${base}/reports`, { method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer good6", "x-forwarded-for": "198.51.100.211" }, body });
+    let refused = 0;
+    for (let i = 0; i < 20; i++) if ((await raw("{not json")).status === 400) refused++;
+    assert.equal(refused, 20);
+    assert.equal((await raw(JSON.stringify({ type: "bug", title: "real" }))).status, 429, "the 20 refused bodies spent the day");
+    const q = JSON.parse(readFileSync(join(T, "conf", "report-quotas.json"), "utf8"));
+    assert.equal(q.reports["@frank:example.org"].length, 20);
+});
+
+test("a log named like an abuse report still counts toward the 200 MB cap (only reports/ holds abuse reports)", { skip }, async () => {
+    const dir = join(T, "conf", "reports");
+    mkdirSync(dir, { recursive: true });
+    const filler = join(dir, "0000-filler.json");
+    writeFileSync(filler, "");
+    // what earlier tests stored counts too: leave 2000 bytes of room in all
+    let used = 0;
+    for (const d of ["reports", "logs"]) {
+        try { for (const f of readdirSync(join(T, "conf", d))) if (!(d === "reports" && f.endsWith("-abuse.json"))) used += statSync(join(T, "conf", d, f)).size; } catch { /* none */ }
+    }
+    truncateSync(filler, 200 * 1024 * 1024 - used - 2000);  // sparse: counts by size, takes no disk
+    try {
+        const up = (name, n) => fetch(`${base}/logs/upload?name=${name}`, { method: "POST",
+            headers: { authorization: "Bearer good7", "x-forwarded-for": "198.51.100.212" }, body: Buffer.alloc(n, 65) });
+        assert.equal((await up("x-abuse.json", 1500)).status, 200, "fits");
+        assert.equal((await up("y-abuse.json", 1500)).status, 507, "the first one counted, so this one doesn't fit");
+    } finally { rmSync(filler); }
+});
+
+test("at most two report bodies of one person are read at a time (each is held until complete, before any quota)", { skip }, async () => {
+    const { request } = await import("node:http");
+    const port = Number(new URL(base).port);
+    const open = () => new Promise((resolve) => {
+        const req = request({ host: "127.0.0.1", port, path: "/reports", method: "POST", headers: { authorization: "Bearer good8",
+            "content-type": "application/json", "content-length": "100000", "x-forwarded-for": "198.51.100.213" } });
+        req.on("error", () => {});
+        req.write("{\"title\":\"");  // and never finishes
+        setTimeout(() => resolve(req), 300);
+    });
+    const a = await open(), b = await open();
+    const third = await fetch(`${base}/reports`, { method: "POST", headers: { authorization: "Bearer good8", "content-type": "application/json",
+        "x-forwarded-for": "198.51.100.213" }, body: JSON.stringify({ type: "bug", title: "t" }) });
+    assert.equal(third.status, 429);
+    assert.match((await third.json()).error, /Busy/);
+    a.destroy(); b.destroy();
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal((await fetch(`${base}/reports`, { method: "POST", headers: { authorization: "Bearer good8", "content-type": "application/json",
+        "x-forwarded-for": "198.51.100.213" }, body: JSON.stringify({ type: "bug", title: "t" }) })).status, 200, "slots freed when they went away");
+});
+
+test("tries are counted before anything is read: at most 100 an hour per person, whatever becomes of them", { skip }, async () => {
+    // the abuse quota spent while the bug quota is open: each abuse try is read and parsed, then refused for the day
+    // without spending anything else — the hourly try limit is what stops that work
+    const post = (body) => fetch(`${base}/reports`, { method: "POST", headers: { authorization: "Bearer good9", "content-type": "application/json",
+        "x-forwarded-for": "198.51.100.214" }, body: JSON.stringify(body) });
+    let n = 0, refused = null;
+    for (let i = 0; i < 120 && refused === null; i++) {
+        const r = await post({ ...ABUSE, extra: undefined });
+        n++;
+        if (r.status === 429 && /for now/.test((await r.json()).error)) refused = n;
+    }
+    assert.equal(refused, 101, "the 101st try in the hour is refused before anything is read");
+});
+
+test("an oversized log is dropped as it drains: its slot is free again once answered", { skip }, async () => {
+    const { request } = await import("node:http");
+    const port = Number(new URL(base).port);
+    const r = await new Promise((resolve) => {
+        const req = request({ host: "127.0.0.1", port, path: "/logs/upload?name=big", method: "POST", headers: { authorization: "Bearer good5",
+            "x-forwarded-for": "198.51.100.215", "transfer-encoding": "chunked" } }, resolve);
+        req.on("error", () => {});
+        req.write(Buffer.alloc(13 * 1024 * 1024, 66));  // over 12 MB, and never ended
+    });
+    assert.equal(r.statusCode, 413);
+    r.resume();
+    await new Promise((res) => setTimeout(res, 200));
+    for (let i = 0; i < 2; i++) {
+        const ok = await fetch(`${base}/logs/upload?name=small`, { method: "POST", headers: { authorization: "Bearer good5", "x-forwarded-for": "198.51.100.215" }, body: "x" });
+        assert.notEqual(ok.status, 429, "no slot is still held by the oversized one");
+    }
+});
+
+test("a log sent in many tiny pieces is held as one buffer and stored whole", { skip }, async () => {
+    const { request } = await import("node:http");
+    const port = Number(new URL(base).port);
+    const r = await new Promise((resolve) => {
+        const req = request({ host: "127.0.0.1", port, path: "/logs/upload?name=tiny", method: "POST", headers: { authorization: "Bearer good5",
+            "x-forwarded-for": "198.51.100.216", "transfer-encoding": "chunked" } }, resolve);
+        req.on("error", () => {});
+        for (let i = 0; i < 3000; i++) req.write(String.fromCharCode(97 + (i % 26)));
+        req.end();
+    });
+    assert.equal(r.statusCode, 200);
+    const { id } = await new Promise((res) => { let b = ""; r.on("data", (c) => { b += c; }); r.on("end", () => res(JSON.parse(b))); });
+    const got = readFileSync(join(T, "conf", "logs", id), "utf8");
+    assert.equal(got.length, 3000);
+    assert.equal(got.slice(0, 27), "abcdefghijklmnopqrstuvwxyza");
+});
+
+test("Memories follow the room's history (no admin token here: no join time is known, so only what is live, unless shared)", { skip }, async () => {
+    const list = async (token) => {
+        const r = await get(`/vods/sessions?room=${encodeURIComponent(VOD_ROOM)}`, { token, from: "198.51.100.220" });
+        return r.status === 200 ? (await r.json()).sessions.map((x) => x.id).sort() : r.status;
+    };
+    VOD.members = { "@alice:example.org": { membership: "join", ts: 500 }, "@bob:example.org": { membership: "join", ts: Date.now() - 45_000 },
+        "@guest-1:example.org": { membership: "join", ts: Date.now() - 45_000 }, "@carol:example.org": { membership: "leave", ts: 1 } };
+    VOD.hv = "joined";
+    assert.deepEqual(await list("good2"), ["live"], "joined-only history and no join time: only the live one");
+    assert.equal(await list("good3"), 403, "not joined");
+    VOD.hv = "shared";
+    assert.deepEqual(await list("good2"), ["live", "old", "recent"], "shared history: every member sees every recording");
+    assert.deepEqual(await list("guest"), ["live"], "a guest always gets the join rule");
+    VOD.hv = null;  // no history_visibility event: the spec's default is shared
+    assert.deepEqual(await list("good2"), ["live", "old", "recent"]);
+});
+
+test("Memories files: a query Express turns into an object or array is refused and the API stays up", { skip }, async () => {
+    const p = "room1/s1/track.mka";
+    for (const q of ["exp[toString]=x&sig=00", "exp=1&exp=2&sig=00", "exp=99999999999999&sig[a]=1"]) {
+        assert.equal((await get(`/vods/file/${p}?${q}`)).status, 400, q);
+        assert.equal((await get(`/vods/thumb/${p}?${q}&t[x]=1`)).status, 400, q);
+    }
+    assert.equal((await fetch(`${base}/health`)).status, 200);
 });

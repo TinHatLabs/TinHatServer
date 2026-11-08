@@ -8,7 +8,9 @@ updater that runs this update must have kept a safety copy of the API's own copy
 updater.py STATE_ITEMS since 0.3.12) — the old pair in secrets.json, livekit/ and compose.env always is. An older
 updater's copy lacks those two files: its rollback would bring secrets.json, LiveKit and lk-jwt back to the old pair while
 the API container kept the new one. Then nothing is replaced now (it happens on the next update, made by this release's
-updater), and the person tiles / Pad chip stay off until it has (apiconf.features).
+updater), and the person tiles / Pad chip stay off until it has: the features don't offer them (apiconf.features), and
+the API (LK_ROTATED=0 in its environment) adds no `tinhat.person` to any token, gives Watch only the watch mark and
+refuses Pad Mic / Camera.
 New servers (secrets made by this release) never had an older credential: they count as replaced."""
 import logging
 import secrets as _secrets

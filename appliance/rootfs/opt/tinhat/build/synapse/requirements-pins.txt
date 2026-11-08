@@ -1,0 +1,8 @@
+# Installed over the base image's pillow 12.0.0 / msgpack 1.1.2 by the Dockerfile (pip --require-hashes --no-deps
+# --only-binary). One hash per processor: the CPython 3.13 manylinux wheels for x86_64 and aarch64, from PyPI.
+pillow==13.0.0 \
+    --hash=sha256:5f56499c1a74d2b862beb0c33b8016f99d095858455df9d21583bbbc1c15b582 \
+    --hash=sha256:19b66ca0a4d25cc0200b381ce824c7ea090db61427315e73cfb05dbf1b35c369
+msgpack==1.2.4 \
+    --hash=sha256:7fabd415c41e62006c6641fcdf5b3e866f581c4e11c58328c0d0f69584b9577d \
+    --hash=sha256:e9c5ba0f053a7e98f013f083c9d1b2dffb26cad8c897c533d8286e44ed24c669

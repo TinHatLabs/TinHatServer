@@ -29,7 +29,8 @@
 #                         server can't fetch an image from GitHub at all). Only when api/ and build/caddy didn't change:
 #                         the API image is checked against this tree's api/ (build/api-image-check.py) and refused when
 #                         its code differs.
-#                         REUSE_IMAGES="caddy" (or "api"): reuse only those, build the rest (default: "api caddy").
+#                         REUSE_IMAGES="caddy" (or "api", "synapse"): reuse only those, build the rest (default: all
+#                         three; a release from before tinhat/synapse has no synapse tarball: REUSE_IMAGES="api caddy").
 set -euo pipefail
 HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
 web_run() { (cd "$WEB_DIR" && "$@"); }  # runs a command in the Tin Hat Web checkout; build.local.conf may replace it
@@ -166,8 +167,8 @@ PY
     mkdir -p "$P/reuse"
     local name f sfx=""
     [ "$ARCH" = arm64 ] && sfx="-arm64"
-    for name in ${REUSE_IMAGES:-api caddy}; do
-      case "$name" in api|caddy) ;; *) echo "REUSE_IMAGES: '$name' isn't one of our images (api, caddy)" >&2; exit 1 ;; esac
+    for name in ${REUSE_IMAGES:-api caddy synapse}; do
+      case "$name" in api|caddy|synapse) ;; *) echo "REUSE_IMAGES: '$name' isn't one of our images (api, caddy, synapse)" >&2; exit 1 ;; esac
       f=$(find "$REUSE_IMAGES_FROM" -maxdepth 1 -regextype posix-extended -regex ".*/tinhat-$name-[0-9a-f]{12}$sfx\.tar\.gz" -print)
       [ -n "$f" ] && [ "$(printf '%s\n' "$f" | wc -l)" = 1 ] || { echo "REUSE_IMAGES_FROM: not exactly one tinhat-$name-<id>$sfx.tar.gz in $REUSE_IMAGES_FROM" >&2; exit 1; }
       # never reuse an API image whose code differs from this tree (review of 116d103, #4): it would ship the old API

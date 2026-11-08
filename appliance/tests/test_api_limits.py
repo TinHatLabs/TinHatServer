@@ -170,5 +170,20 @@ class Console(unittest.TestCase):
         self.assertIn("(0 = none)", said)
 
 
+
+class KeyPairReplaced(unittest.TestCase):
+    """Security review round 3, PAD-3: the API learns whether the call-server key pair was replaced (lkrotate.py), so it
+    attributes no token to a person before then (the features alone only hid it in the apps)."""
+
+    def test_lk_rotated_follows_the_secrets(self):
+        self.assertEqual(env_of(apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1"))["LK_ROTATED"], "0")
+        rot = {**SECRETS, "livekit_rotated": "0.3.13"}
+        self.assertEqual(env_of(apiconf.env_text("crew.tinhat.me", rot, "198.18.16.1"))["LK_ROTATED"], "1")
+
+    def test_an_owner_limit_cant_claim_it(self):
+        env = env_of(apiconf.env_text("crew.tinhat.me", SECRETS, "198.18.16.1", owner_limits={"LK_ROTATED": "1"}))
+        self.assertEqual(env["LK_ROTATED"], "0")
+
+
 if __name__ == "__main__":
     unittest.main()
