@@ -14,7 +14,7 @@ import { RoomStateEvent } from "matrix-js-sdk";
 import { getPref, getPrefRaw, onPrefChange } from "@/core/prefs";
 import { UNFOCUSED_SAVER_PREF, unfocusedSaverOn } from "@/core/lowgpu";
 import { getFormFactor, onFormFactorChange } from "@/core/device";
-import { canSendState, getCryptoStatus, getState, getStateAll, peekClient, onClientChanged, recordEnabled, useSessionStore } from "@/core/matrix";
+import { canSendState, getCryptoStatus, getStateAll, peekClient, onClientChanged, recordEnabled, useSessionStore } from "@/core/matrix";
 import { isRecorder } from "@/core/server";
 import { useCallStore, roomCall } from "@/features/calls";
 import { targetsIn, usePadDevices } from "@/features/pad/runtime";
@@ -29,10 +29,12 @@ import { useGames } from "@/features/calendar/gamesStore";
 import { useSoundboard, useWatchParty, isSoundboardOpen, onSoundboardOpenChange } from "@/features/media";
 import { PERSONAL_TYPE, ROOM_TYPE, readSound } from "@/features/media/soundboard/data";
 import { useChatStore } from "@/features/chat/store";
+import { onFetchedPinDeleted, shownPinIds } from "@/features/chat/pinstate";
 import { useRightPanelStore } from "@/features/spaces/panelState";
 import { overlayAvailable } from "@/features/settings/overlay";
 import { BUILTINS } from "@/theme/engine";
 import { libraryNow, loadLibrary } from "@/ui/themeLibrary";
+import { afterStart } from "@/core/afterstart";
 import { currentTheme, subscribeTheme } from "@/ui/themes";
 import { getThemeState, subscribeThemeState } from "@/ui/themeStore";
 import { buttonIslands } from "@/actions/layoutStore";
@@ -105,7 +107,7 @@ function roomValues(id: string, row: RoomRow | undefined, full: boolean): Record
     v["room.canChangeName"] = canSendState(id, "m.room.name");
     v["room.canChangeTopic"] = canSendState(id, "m.room.topic");
     v["room.recordOn"] = !!recordEnabled(id);
-    const pinned = (getState(id, "m.room.pinned_events") as { pinned?: unknown[] } | undefined)?.pinned ?? [];
+    const pinned = shownPinIds(id); // QA W1: a deleted message is not a pin (the composer's 📌 N reads the same)
     v["room.hasPinned"] = pinned.length > 0;
     v["room.pinnedCount"] = String(pinned.length);
   }
@@ -393,15 +395,16 @@ export function installProviders(): void {
   };
   const prefSubs = PREFS.map((k) => (cb: () => void) => onPrefChange(k, cb));
   registerSnapshotProvider("calls", callPart, both([useCallStore.subscribe, useCallUi.subscribe, useSoundboard.subscribe, onFormFactorChange, onSoundboardOpenChange as never, ...prefSubs]));
-  registerSnapshotProvider("nav", navPart, both([useNavStore.subscribe, useChatStore.subscribe, useCallStore.subscribe, useSessionStore.subscribe, useUpdate.subscribe, useRightPanelStore.subscribe, usePadDevices.subscribe, onNativeCall, onPadTargetsAging, onFormFactorChange, onRoomState, ...prefSubs]));
+  registerSnapshotProvider("nav", navPart, both([useNavStore.subscribe, useChatStore.subscribe, useCallStore.subscribe, useSessionStore.subscribe, useUpdate.subscribe, useRightPanelStore.subscribe, usePadDevices.subscribe, onNativeCall, onPadTargetsAging, onFormFactorChange, onRoomState, onFetchedPinDeleted, ...prefSubs]));
   registerSnapshotProvider("prefs", prefsPart, both(prefSubs));
   registerSnapshotProvider("presence", presencePart, both([usePresenceStore.subscribe, usePushStore.subscribe]));
   registerSnapshotProvider("calendar", calendarPart, both([useCal.subscribe, useGames.subscribe, useWatchParty.subscribe]));
   registerSnapshotProvider("themes", themePart, both([subscribeTheme, subscribeThemeState]));
   registerSnapshotProvider("layout", layoutPart, both([subscribeRendered, useEdit.subscribe, useDrawerRun.subscribe]));
   registerSnapshotProvider("sounds", soundPart, both([useSoundboard.subscribe, useChatStore.subscribe, onRoomState]));
-  // the library is fetched once; the themes provider re-reads it when it lands
-  void loadLibrary().then(() => snapshotChanged()).catch(() => {});
+  // the library is fetched once; the themes provider re-reads it when it lands. After the start, not during it (web-perf:
+  // 457 KB, nothing on the first screen reads it; the theme store fetches it at once when the chosen theme needs it)
+  afterStart(() => void loadLibrary().then(() => snapshotChanged()).catch(() => {}));
 }
 
 export type { JObj };

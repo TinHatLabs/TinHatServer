@@ -13,6 +13,7 @@ import { Button, Slider, ToolButton } from "@/ui";
 import { disablePush, enablePush, sendTest, setQuiet, usePushStore } from "@/features/push";
 import { BLOCKED_LINE, ON_LINE, QUIET_CAPTION, STUCK_LINE } from "@/features/push/ThisDevice";
 import { hasNativeCap, inPhoneApp, inTinHatApp, nativeNotifications, NOTIFY_CHANGE_MS, NOTIFY_READ_MS, phoneNotifyText, type PhoneNotifyAnswer } from "@/features/native";
+import { nativePushHint, phoneNoSwitchLine } from "@/features/native";
 import { notificationPermission, requestNotificationPermission, useNotificationPermission } from "../notify";
 import { ComboRow, Hint, NoteRow, Row, Section, SwitchRow } from "../rows";
 import p from "./panes.module.css";
@@ -62,7 +63,7 @@ export function NotificationsPane() {
           <PhoneNotificationsSection />
         ) : (
           <Section title="Notifications">
-            <NoteRow>Phone notifications come with the app's push update. Sounds still play while Tin Hat is open.</NoteRow>
+            <NoteRow>{phoneNoSwitchLine(nativePushHint())}</NoteRow>
           </Section>
         )
       ) : (

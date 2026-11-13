@@ -57,6 +57,10 @@ export interface Note {
   onClick?: () => void;
   /** a message / invite the gateway also pushes: skipped while pushCoversNow() (A5.4) */
   pushCovered?: boolean;
+  /** docs/NOTIF-ACTIONS.md: buttons (worker path only; the classic Notification has none) */
+  actions?: Array<{ action: string; title: string }>;
+  /** the event the note shows (Mark as read targets it) */
+  event?: string;
 }
 
 const appIcon = () => `${import.meta.env.BASE_URL}appicon/tinhat-192.png`;
@@ -82,8 +86,9 @@ export function showNote(n: Note): boolean {
       tag: n.tag,
       silent: n.silent ?? true,
       requireInteraction: n.requireInteraction,
-      data: { room: n.room ?? "", note: n.onClick ? id : "", user: getSession().userId ?? "" },
+      data: { room: n.room ?? "", note: n.onClick ? id : "", user: getSession().userId ?? "", event: n.event ?? "" },
     };
+    if (n.actions?.length) (opts as { actions?: unknown }).actions = n.actions;
     r.showNotification(n.title, opts).then(
       () => {
         if (n.timeoutMs && n.tag) window.setTimeout(() => void closeNotes(n.tag!, id), n.timeoutMs);
@@ -166,6 +171,44 @@ export async function closeAllNotes(): Promise<void> {
 
 let pendingRoom: { room: string; user: string } | null = null;
 
+// docs/NOTIF-ACTIONS.md: Reply / Mark as read from a notification. features/push installs the handlers (the page
+// sends; the worker never does). They run once signed in and synced, and only for the account they were posted for.
+export interface NoteActions {
+  markRead(room: string, event: string): void;
+  compose(room: string): void;
+}
+let noteActions: NoteActions | null = null;
+export function setNoteActions(a: NoteActions | null): void {
+  noteActions = a;
+}
+type QueuedAction = { kind: "read" | "compose"; room: string; event: string; user: string };
+let queued: QueuedAction[] = [];
+const recent = new Map<string, number>();
+
+function runAction(q: QueuedAction): void {
+  const s = getSession();
+  if (s.state !== "ready" || !s.userId) {
+    queued = [...queued.filter((x) => !(x.kind === q.kind && x.room === q.room)), q].slice(-10);
+    return;
+  }
+  // these actions need their account named (unlike a plain click): none, or another one = nothing happens
+  if (!q.user || q.user !== s.userId) {
+    log.info("a notification action without this account — not run here");
+    return;
+  }
+  if (q.kind === "compose") {
+    noteActions?.compose(q.room);
+    return;
+  }
+  // a repeat of the same (room, event) within a minute is dropped
+  const k = `${q.room} ${q.event}`;
+  const now = Date.now();
+  for (const [x, t] of recent) if (now - t > 60_000) recent.delete(x);
+  if (recent.has(k)) return;
+  recent.set(k, now);
+  noteActions?.markRead(q.room, q.event);
+}
+
 function openWhenReady(room: string, user: string): void {
   const s = getSession();
   if (s.state === "ready" && s.userId) {
@@ -183,16 +226,29 @@ bus.on("sessionReady", ({ userId }) => {
   const p = pendingRoom;
   pendingRoom = null;
   if (p && (!p.user || p.user === userId)) openRoom(p.room);
+  const q = queued;
+  queued = [];
+  for (const a of q) runAction(a);
 });
 bus.on("loggedOut", () => {
   pendingRoom = null;
+  queued = []; // a signed-out account's actions never run
+  recent.clear();
 });
 
 if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
-    const d = e.data as { type?: unknown; room?: unknown; note?: unknown; user?: unknown } | null;
+    const d = e.data as { type?: unknown; room?: unknown; note?: unknown; user?: unknown; event?: unknown } | null;
     if (!d || typeof d !== "object") return;
     const user = typeof d.user === "string" ? d.user : "";
+    // docs/NOTIF-ACTIONS.md: only from this origin's service worker
+    if (d.type === "tinhat-mark-read" || d.type === "tinhat-compose") {
+      const fromWorker = typeof ServiceWorker !== "undefined" && e.source instanceof ServiceWorker && (!e.origin || e.origin === location.origin);
+      if (!fromWorker || typeof d.room !== "string" || !d.room.startsWith("!")) return;
+      if (d.type === "tinhat-compose") runAction({ kind: "compose", room: d.room, event: "", user });
+      else if (typeof d.event === "string" && d.event.startsWith("$")) runAction({ kind: "read", room: d.room, event: d.event, user });
+      return;
+    }
     if (d.type === "tinhat-open-room" && typeof d.room === "string" && d.room.startsWith("!")) openWhenReady(d.room, user);
     else if (d.type === "tinhat-note-click" && typeof d.note === "string") {
       const run = clicks.get(d.note);

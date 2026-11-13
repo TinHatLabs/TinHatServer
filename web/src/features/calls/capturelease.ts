@@ -7,7 +7,7 @@
 // with the desktop's tinhat_streamer::capture_lease (same runner rules).
 
 // (PAD-PHONE Step B) pad-mic / pad-camera: the phone's own capture in its Pad Mic / Camera episode — admitted ONLY then
-export type LeaseKind = "mic" | "meter" | "camera" | "screen" | "share-audio" | "music" | "sameroom" | "conntest" | "settings-meter" | "output-tap" | "pad-mic" | "pad-camera";
+export type LeaseKind = "mic" | "meter" | "camera" | "screen" | "share-audio" | "music" | "sameroom" | "conntest" | "settings-meter" | "output-tap" | "pad-mic" | "pad-camera" | "voice-note";
 
 export class Lease {
   private stops: Array<() => void> = [];

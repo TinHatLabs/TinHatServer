@@ -152,12 +152,12 @@ export function namesOf(ids: ServiceId[]): string {
 const plural = (ids: ServiceId[]) => ids.length > 1 || ids[0] === "calls" || ids[0] === "tinhat";
 
 const NOTE_DOWN: Readonly<Record<ServiceId, string>> = {
-  chat: "Chat isn't reachable from here. If friends can chat, it's your connection.",
-  calls: "Calls aren't reachable from here. If friends can call, it's your connection.",
-  media: "Pictures and files aren't loading from here. If friends can see them, it's your connection.",
-  tinhat: "The extras (sounds, GIFs, Memories) aren't reachable from here. If they work for friends, it's your connection.",
+  chat: "Chat isn't reachable from here. If other people can chat, it's your connection.",
+  calls: "Calls aren't reachable from here. If other people can call, it's your connection.",
+  media: "Pictures and files aren't loading from here. If other people can see them, it's your connection.",
+  tinhat: "The extras (sounds, GIFs, Memories) aren't reachable from here. If they work for other people, it's your connection.",
 };
-const NOTE_STUCK = "New messages aren't arriving here. If friends can chat, it's your connection.";
+const NOTE_STUCK = "New messages aren't arriving here. If other people can chat, it's your connection.";
 const NOTE_ALL = "The server isn't reachable from here. If other websites work, the server itself may be down.";
 const NOTE_SLOW = "Your connection to the server is slow right now, so calls may stutter.";
 
@@ -180,7 +180,7 @@ export function checkOf(input: CheckInput): Check {
       else if (x.cause === "stuck") note = NOTE_STUCK;
       else note = NOTE_DOWN[x.id as ServiceId];
     } else if (red.every((x) => x.cause === "error")) note = `${namesOf(redIds)} are having problems on the server's side. It's not just you.`;
-    else note = `${namesOf(redIds)} aren't reachable from here. If they work for friends, it's your connection.`;
+    else note = `${namesOf(redIds)} aren't reachable from here. If they work for other people, it's your connection.`;
   } else if (ping.ms === null) {
     verdict = { tone: "ok", text: "Unsteady connection" };
   } else if (ping.band === "poor") {

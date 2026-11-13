@@ -1,4 +1,4 @@
-// clocks/Clocks.tsx — Friends' clocks (contract WIDGETS.md §15, WIDGETS-UI.md §15; widgets W1, 2026-09-28): the local
+// clocks/Clocks.tsx — People's clocks (contract WIDGETS.md §15, WIDGETS-UI.md §15; widgets W1, 2026-09-28): the local
 // time of everyone who shares a room with you and shares their time zone (REACH A7: opt-out, on by default), sorted west
 // to east, your own row highlighted, a sun by day and a moon at night (22:00–07:00). Header (M / L): the spread — your
 // zone, then the furthest one ("PT · ET +3 h"). S / collapsed: faces and times on one line, one group per zone. L adds

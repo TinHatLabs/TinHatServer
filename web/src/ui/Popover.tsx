@@ -3,12 +3,14 @@
 // `plain` drops it for the app's custom popovers (StreamPopover, Soundboard, CallOptions … draw
 // their own rounded panels). Escape / a press outside close it (closePolicy), `modal` dims and
 // blocks the window. On phones it presents as a bottom sheet with a grab handle.
-import { useRef, useState, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, useLayoutEffect, type CSSProperties, type ReactNode } from "react";
 import { OverlayPortal, placePopup, rectOf, usePopupStack, type Placement, type Rect } from "./overlay";
 import { useIsMobile } from "./formFactor";
 import { BACK_LEVEL_POPUP, useBackToClose } from "./backStack";
 import { cx } from "./hooks";
 import s from "./Popover.module.css";
+import { focusInto, lastInputWasKeyboard, useFocusReturn } from "./focus";
+import { trapTab } from "./Dialog";
 
 export interface PopoverProps {
   open: boolean;
@@ -96,6 +98,15 @@ function DesktopPopover({
       window.removeEventListener("resize", place);
     };
   }, [anchor, placement, align, gap, margins, flip, offset]);
+  // keyboard (a11y pass; Qt's Popup takes the focus and keeps Tab inside): once placed (a hidden popup can't take focus),
+  // focus goes in — to its first control when it was opened from the keyboard, else to the popup itself (no ring) —
+  // unless something inside already took it (a picker's search field); it goes back when the popup closes
+  const shown = pos !== null;
+  useEffect(() => {
+    const el = ref.current;
+    if (shown && el) focusInto(el, lastInputWasKeyboard());
+  }, [shown]);
+  useFocusReturn(ref);
   return (
     <OverlayPortal>
       {modal && <div className={s.dim} />}
@@ -103,6 +114,8 @@ function DesktopPopover({
         ref={ref}
         role={role}
         aria-label={aria["aria-label"]}
+        tabIndex={-1}
+        onKeyDown={(e) => trapTab(e, ref.current)}
         className={cx(s.pop, !plain && s.basic, className)}
         style={{ left: pos?.x ?? 0, top: pos?.y ?? 0, visibility: pos ? "visible" : "hidden", padding, ...style }}
       >
@@ -116,10 +129,17 @@ function PopoverSheet({ onClose, closeOnOutside = true, title, children, classNa
   const ref = useRef<HTMLDivElement>(null);
   usePopupStack(true, ref, { onEscape: onClose, onOutside: closeOnOutside ? onClose : undefined });
   useBackToClose(true, onClose, BACK_LEVEL_POPUP); // phones: back closes the sheet (shared back stack)
+  // a screen reader (VoiceOver / TalkBack) or a keyboard lands in the sheet and goes back when it closes (a11y pass);
+  // opened by touch the sheet itself takes the focus (no on-screen keyboard pops up for a field the user didn't tap)
+  useEffect(() => {
+    const el = ref.current;
+    if (el) focusInto(el, lastInputWasKeyboard()); // a hardware keyboard: its first control, like the desktop popover
+  }, []);
+  useFocusReturn(ref);
   return (
     <OverlayPortal>
       <div className={s.sheetDim} />
-      <div ref={ref} role={role} aria-label={aria["aria-label"] ?? title} className={cx(s.sheet, className)}>
+      <div ref={ref} role={role} aria-label={aria["aria-label"] ?? title} tabIndex={-1} onKeyDown={(e) => trapTab(e, ref.current)} className={cx(s.sheet, className)}>
         <div className={s.grab} />
         {title && <div className={s.sheetTitle}>{title}</div>}
         <div className={s.sheetBody}>{children}</div>

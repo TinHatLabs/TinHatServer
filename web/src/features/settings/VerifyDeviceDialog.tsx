@@ -26,6 +26,8 @@ import {
   restoreFromSecurityKey,
   SAS_INCOMING_TITLE,
   SAS_START_BUTTON,
+  SAS_VERIFIER_DONE_NOTE,
+  sasDoneCloses,
   setUpRecovery,
   startDeviceVerification,
   startOver,
@@ -127,8 +129,16 @@ export function VerifyDeviceHost() {
   useEffect(() => {
     if (v.sasState !== prevState.current) {
       if (v.sasState === "done") {
-        toast("Emoji matched — finishing up…", { timeoutMs: 3000 });
-        vset({ armed: true });
+        if (sasDoneCloses(v.sasState, v.sasIncoming)) {
+          // D3 (QA 12.1.11): verifying ANOTHER device is over — the finished sheet stayed open, and the next click
+          // (Join in the call banner) only closed it. It closes (no cancel) and the note becomes the toast. Desktop:
+          // VerifyDeviceDialog.qml onSasStateChanged + Main.qml's toast.
+          if (ui.open) close(false);
+          toast(SAS_VERIFIER_DONE_NOTE, { timeoutMs: 4000 });
+        } else {
+          toast("Emoji matched — finishing up…", { timeoutMs: 3000 });
+          vset({ armed: true });
+        }
       }
       if (v.sasState === "waiting" || v.sasState === "emoji") vset({ armed: true });
       prevState.current = v.sasState;

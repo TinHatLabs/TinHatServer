@@ -27,6 +27,9 @@ import { EmojiPicker } from "./EmojiPicker";
 import { useConvToast } from "./convToast";
 import { GifPicker } from "./GifPicker";
 import { PinnedButton, PinnedPopover, usePinnedIds } from "./PinnedPopover";
+import { MicButton, VoicePill, VoiceRow } from "./voicenote/VoiceRecorder";
+import { leaveVoiceView } from "./voicenote/store";
+import { useVoiceDraft } from "./voicenote/wire";
 import s from "./Composer.module.css";
 
 export interface ComposerHandle {
@@ -116,6 +119,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const rowCtx = useMemo(() => ({ room: roomId }), [roomId]);
   const startRow = useRow("composer", "start", { form: "desktop", context: rowCtx });
   const endRow = useRow("composer", "end", { form: p.mobile ? "phone" : "desktop", context: rowCtx });
+  // voice notes (docs/VOICE-NOTES.md): while the room has a voice draft the recorder row replaces the box's content
+  const voice = useVoiceDraft(roomId);
+  // Escape in review sets the draft aside (kept, shown as a pill above the box) and gives the text field back, focused;
+  // the pill (or Ctrl/⌘+Enter on it) brings the review row back
+  const [voiceAside, setVoiceAside] = useState(false);
+  const reviewing = voice?.state === "review";
+  useEffect(() => {
+    if (!reviewing) setVoiceAside(false);
+  }, [reviewing, voice?.id]);
+  const showVoiceRow = !!voice && !(voiceAside && reviewing);
 
   // per-room memory: synced (debounced) while mounted, flushed on unmount and when the page goes away
   const live = useRef({ text, target, staged });
@@ -155,6 +168,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (p.floating) live.current.staged.forEach((f) => f.url && URL.revokeObjectURL(f.url));
       useChatStore.getState().remember(roomId, snapshot());
       stopTyping();
+      leaveVoiceView(roomId); // a room switch stops a recording into review (the draft waits in this room's composer)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [roomId],
@@ -449,8 +463,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       case "room.pinned.open":
         node = <PinnedButton roomId={roomId} onJump={p.onJump} />;
         break;
-      case "composer.send":
-        return p.mobile ? (
+      case "composer.send": {
+        const sendNode = p.mobile ? (
           <GlowButton
             key={key}
             className={s.sendRound}
@@ -474,6 +488,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             onClick={send}
           />
         );
+        // an empty composer offers the mic instead (not while editing); where voice notes can't be recorded: Send as before
+        // (a voice draft set aside: Send stays — the mic would start a second draft in this room)
+        return !canSend && target?.kind !== "edit" && !voice ? <MicButton key={key} roomId={roomId} mobile={p.mobile} className={s.tb} fallback={sendNode} /> : sendNode;
+      }
       default:
         return <RowButton key={key} row={row} item={it} handlers={rowHandlers} className={s.tb} />;
     }
@@ -495,6 +513,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           </div>
         )}
       </div>
+      {voice && !showVoiceRow && <VoicePill roomId={roomId} onOpen={() => setVoiceAside(false)} />}
       {staged.length > 0 && (
         <div className={s.staged}>
           {staged.map((f) => (
@@ -510,6 +529,18 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         </div>
       )}
       <div className={cx(s.box, focused && s.boxFocus, (target || staged.length > 0) && s.boxTopGap)} data-composer-focus={focused ? "" : undefined} data-composer>
+        {showVoiceRow ? (
+          <VoiceRow
+            roomId={roomId}
+            mobile={p.mobile}
+            narrow={p.narrow}
+            onEscape={() => {
+              setVoiceAside(true);
+              window.setTimeout(focus, 0);
+            }}
+          />
+        ) : (
+        <>
         {p.mobile ? (
           <ToolButton ref={plusBtn} iconName="list-add-symbolic" tip="Add to your message" className={s.tb} onMouseDown={(e) => e.preventDefault()} onClick={() => setPlusOpen((o) => !o)} />
         ) : (
@@ -583,6 +614,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             {shownItems(endRow).map(({ item: it, i }) => composerItem(endRow, it, i))}
           </EditableRow>
         </div>
+        </>
+        )}
       </div>
       <EmojiPicker open={emojiOpen} onClose={() => (setEmojiOpen(false), setPickAnchor(null), focus())} anchor={pickAnchor ?? emojiBtn.current} stayOpen onPick={(e) => insert(e)} />
       {p.mobile && (

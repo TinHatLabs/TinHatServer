@@ -88,6 +88,7 @@ import { av1Probe, av1Watch } from "./av1";
 import { shareFit, SHARE_MAX_DIM } from "./shareFit";
 import { companions, foldCompanions } from "./companions";
 import { setCallAudioSession } from "@/core/sounds";
+import { releaseMicForCall } from "@/core/micyield";
 import type { Stamp } from "./envclock";
 // Tin Hat apps (bridge 2): the phone's native device does the call — Join goes to the app, never this engine
 import { joinNatively, nativeDeviceId, nativeShareOn, nativeShareStart, nativeShareStop, pageOwnsMembership } from "@/features/native";
@@ -3065,6 +3066,8 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null, watc
   try {
     if (!me || !dev) throw new Error("not signed in");
     if (!isE2EESupported()) throw new Error("this browser can't encrypt calls (end-to-end encryption is not supported here)");
+    // one owner of the microphone (docs/VOICE-NOTES.md §2): a voice note being recorded stops into review first (≤ 2 s)
+    await releaseMicForCall(2000);
     if (!(await takeCallLock(dev, holdsTabLock(), roomId))) {
       if (stale(gen)) return;
       joinTarget = null;

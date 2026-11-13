@@ -109,6 +109,18 @@
 .flashing > .wash::before {
   display: none;
 }
+/* the message the keyboard is on (a11y pass; ConversationView onLogKey): the active-row wash, held while focused —
+   the desktop paints the same wash on its keyboard row (ChatBubble.qml kbCurrent) */
+.line:focus {
+  outline: none;
+}
+.line:focus-visible > .wash {
+  opacity: 1;
+  background: var(--th-timeline-row-bg-active);
+}
+.line:focus-visible > .wash::before {
+  display: none;
+}
 
 .gutter {
   position: relative;
@@ -659,6 +671,21 @@
 .posterRow .fileMeta {
   color: var(--th-bubble-video-meta-fg);
 }
+/* "Can't play this video here — save it to watch it." wraps; the card grows past its 96 px when the words need it
+   (a narrow card, a large font): the row is laid out in the flow then, never cut off */
+.posterRow .fileMeta[data-cant-play] {
+  white-space: normal;
+}
+.videoCard[data-failed] {
+  min-height: 96px;
+  display: flex;
+}
+.videoCard[data-failed] .posterRow {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  margin: 10px;
+}
 .fileCard {
   box-sizing: border-box;
   max-width: 100%;
@@ -690,6 +717,10 @@
 .audioSlider {
   flex: 1 1 auto;
   min-width: 40px;
+}
+/* the time never gives way to the slider (a phone's bubble cut it to "0:00 / 0:…") */
+.audioTime {
+  flex: none;
 }
 .audioTime,
 .audioName {

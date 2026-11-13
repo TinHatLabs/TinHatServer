@@ -19,6 +19,7 @@ import { setActionKeyHook, setDefaultLiveCheck } from "@/core/shortcuts";
 import { installProviders } from "./providers";
 import { installHandlers } from "./exec";
 import { getFormFactor } from "@/core/device";
+import { setRow } from "@/actions/layoutStore";
 
 /**
  * A person's own keys (ACTIONS.md §8.7): the page's one keydown listener asks here first. A key given to an action in
@@ -57,6 +58,10 @@ export const feature: FeatureModule = {
     installHandlers();
     installProviders();
     installKeys();
+    // lab gates only (dev builds or __TW_DEBUG__, like window.__twCall): set a stored button row (null = the default) —
+    // review round 4 UI-1, the assembly's real-input push-to-talk gate
+    const w = typeof window !== "undefined" ? (window as unknown as { __TW_DEBUG__?: boolean; __twActions?: unknown }) : null;
+    if (w && (import.meta.env.DEV || w.__TW_DEBUG__)) w.__twActions = { setRow };
     // Settings → Shortcuts (after Overlay, before the operators' Invites)
     // not on a phone: key bindings need a keyboard (a 7,700-pt list there: iPhone/iPad sweep, 2026-10-25)
     r.settingsPanes.add({ id: "shortcuts", title: "Shortcuts", icon: "input-keyboard-symbolic", order: 85, component: ShortcutsPane, visible: () => getFormFactor() !== "mobile" });

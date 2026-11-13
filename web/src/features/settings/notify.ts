@@ -28,6 +28,7 @@ import { bus, openRoom } from "@/core/bus";
 import { createLogger } from "@/core/log";
 import { parseHash } from "@/app/router";
 import { pushCovers, stepRoom, type Mode, type RoomRule, type RoomSeen } from "./notifyrules";
+import { webActions } from "@/features/push/notifactions";
 
 const log = createLogger("notify");
 
@@ -80,6 +81,8 @@ export interface DesktopNote {
   onClick?: () => void;
   /** a message the gateway also pushes: left to the push while the page is hidden (A5.4) */
   pushCovered?: boolean;
+  /** docs/NOTIF-ACTIONS.md: the event the note shows → Reply / Mark as read buttons */
+  event?: string;
 }
 
 /** Post one browser notification. Returns false when the browser can't / won't. REACH §3.2: through the push
@@ -87,7 +90,8 @@ export interface DesktopNote {
  *  app has only that path) — core/notes.ts picks. Sounds stay ours (snd.*): silent. */
 export function notifyDesktop(n: DesktopNote): boolean {
   if (notificationPermission() !== "granted") return false;
-  const ok = showNote({ title: n.title, body: n.body, icon: n.icon, tag: n.tag, silent: true, requireInteraction: n.requireInteraction, timeoutMs: n.timeoutMs, room: n.room, onClick: n.onClick, pushCovered: n.pushCovered });
+  const actions = n.room && n.event !== undefined ? webActions(n.event) : undefined;
+  const ok = showNote({ title: n.title, body: n.body, icon: n.icon, tag: n.tag, silent: true, requireInteraction: n.requireInteraction, timeoutMs: n.timeoutMs, room: n.room, onClick: n.onClick, pushCovered: n.pushCovered, actions, event: n.event });
   if (!ok) log.debug("Notification failed");
   return ok;
 }
@@ -173,24 +177,26 @@ function directIds(c: MatrixClient): Set<string> {
 
 // ---- toast content ---------------------------------------------------------------------------
 
-function latestBody(room: Room): { sender: string; text: string } | null {
+function latestBody(room: Room): { sender: string; text: string; eventId: string } | null {
   const evs = room.getLiveTimeline().getEvents();
   for (let i = evs.length - 1; i >= 0 && i >= evs.length - 30; i--) {
     const ev: MatrixEvent = evs[i];
     const t = ev.getType();
     if (t !== "m.room.message" && t !== "m.sticker" && t !== "m.room.encrypted") continue;
     const body = ev.getContent()?.body;
-    if (typeof body === "string" && body.trim()) return { sender: ev.getSender() ?? "", text: body.trim() };
+    if (typeof body === "string" && body.trim()) return { sender: ev.getSender() ?? "", text: body.trim(), eventId: ev.getId() ?? "" };
   }
   return null;
 }
 
-export function toastBody(room: Room, isDm: boolean, rise: number): { body: string; sender: string } {
+export function toastBody(room: Room, isDm: boolean, rise: number): { body: string; sender: string; eventId: string } {
   const last = latestBody(room);
   let body = "";
   let sender = "";
+  let eventId = "";
   if (last) {
     sender = last.sender;
+    eventId = last.eventId;
     let text = last.text.replace(/\s+/g, " ");
     if ([...text].length > 160) text = [...text].slice(0, 160).join("") + "…";
     if (!isDm) {
@@ -202,7 +208,7 @@ export function toastBody(room: Room, isDm: boolean, rise: number): { body: stri
   } else {
     body = rise > 1 ? `${rise} new messages` : "New message";
   }
-  return { body, sender };
+  return { body, sender, eventId };
 }
 
 // Avatars as object URLs for the classic `new Notification` path only (the worker path can't use a page blob: URL —
@@ -310,7 +316,7 @@ export function scanOnce(c: MatrixClient, now = Date.now()): string[] {
     const gen = engineGen;
     const user = getSession().userId ?? "";
     for (const f of own) {
-      const { body, sender } = toastBody(f.room, f.isDm, f.rise);
+      const { body, sender, eventId } = toastBody(f.room, f.isDm, f.rise);
       const roomId = f.room.roomId;
       const title = f.room.name || "Tin Hat";
       // A5.4: no timed close — a room's notification stays until the room is read
@@ -322,7 +328,7 @@ export function scanOnce(c: MatrixClient, now = Date.now()): string[] {
         if (!room || room.getMyMembership() !== "join" || countFor(c, room, directIds(c)) === 0 || isAttended(roomId)) return;
         const covered = pushWillCover(c, room, f.isDm, f.highlightRose);
         if (covered && pushCoversNow()) return;
-        notifyDesktop({ title, body, icon, tag: `room:${roomId}`, room: roomId, pushCovered: covered });
+        notifyDesktop({ title, body, icon, tag: `room:${roomId}`, room: roomId, pushCovered: covered, event: eventId });
       });
     }
   }

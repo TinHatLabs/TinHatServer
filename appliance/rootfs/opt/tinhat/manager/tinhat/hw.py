@@ -307,7 +307,7 @@ def advise(p: dict, bench: dict | None = None, net: dict | None = None) -> dict:
                   "Very slow: expect lag with more than a handful of people.") if single is not None
          else "Not measured."},
         {"id": "memory", "label": "Memory", "level": mem_l, "value": f"{ram:.1f} GB",
-         "text": "Kept to this much on Windows, so your games keep theirs. Enough for a group of friends." if capped
+         "text": "Kept to this much on Windows, so your games keep theirs. Enough for a group of people." if capped
          else "Plenty." if mem_l == "good" else "Enough for a small group." if mem_l == "warn"
          else "Too little: Tin Hat Server needs at least 2 GB."},
         {"id": "disk", "label": "Storage", "level": disk_l,
@@ -328,7 +328,7 @@ def advise(p: dict, bench: dict | None = None, net: dict | None = None) -> dict:
         {"id": "internet", "label": "Internet", "level": "good" if online else "info",
          "value": "Connected" if online else "Not connected",
          "text": "The server can reach the internet." if online
-         else "Friends anywhere, updates and link previews need it. A server for your home works without it."},
+         else "People anywhere, updates and link previews need it. A server for your home works without it."},
     ]
 
     # ---- capacity: people chatting, people on camera together ------------------------------------------------
@@ -378,7 +378,7 @@ def advise(p: dict, bench: dict | None = None, net: dict | None = None) -> dict:
          "reason": (f"{_people(call_people, 40).capitalize()} people on camera at once"
                     + (f", or a screen share to {_people(share_viewers, 50)} {'person' if share_viewers == 1 else 'people'}"
                        if down is not None and share_viewers >= 1 else "")
-                    + (". Measured from this device; " + ("plenty for a family or friend group." if calls_l == "good"
+                    + (". Measured from this device; " + ("plenty for a family or a group." if calls_l == "good"
                        else "fine for a few people." if calls_l == "warn" else "too slow for camera calls.")
                        if down is not None else " (the network wasn't measured).")),
          "control": {"type": "toggle", "value": calls_l != "bad", "recommended": calls_l != "bad"}},
@@ -395,7 +395,7 @@ def advise(p: dict, bench: dict | None = None, net: dict | None = None) -> dict:
                      "options": [{"value": v, "label": f"{v} MB" if v < 1000 else f"{v // 1000} GB"} for v in UPLOAD_CHOICES]}},
         {"id": "directory", "name": "Find people by name", "level": "yours",
          "what": "Anyone on your server can search for everyone else on it when starting a chat.",
-         "reason": "Usual for a server shared by friends or family. Turn off if people should only find those they share a room with.",
+         "reason": "Usual for a server shared by family or a group. Turn off if people should only find those they share a room with.",
          "control": {"type": "toggle", "value": True, "recommended": True}},
         {"id": "watch", "name": "Watch together", "level": "good" if online else "warn",
          "what": "Media Party: everyone in a room watches the same video in sync.",

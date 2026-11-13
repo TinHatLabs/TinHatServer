@@ -31,6 +31,7 @@ import { BACK_LEVEL_POPUP, useBackToClose } from "./backStack";
 import { cx } from "./hooks";
 import { holdTextSelection } from "./touchPress";
 import s from "./Menu.module.css";
+import { useFocusReturn } from "./focus";
 
 export type MenuAnchor = HTMLElement | Rect | { x: number; y: number } | null | undefined;
 
@@ -121,10 +122,14 @@ function DesktopMenu({ open, onClose, anchor, placement, offset, modal, width = 
     inside: () => [anchor instanceof HTMLElement ? anchor : null],
   });
 
-  // focus the menu so the keyboard works (Qt gives the menu focus)
+  // focus the menu so the keyboard works (Qt gives the menu focus). Not on mount: the menu is still
+  // `visibility: hidden` until it is placed, and a hidden element can't take focus — the keyboard then stayed on the
+  // button that opened it (a11y pass). Focus goes back to that button when the menu closes.
+  const shown = pos !== null;
   useEffect(() => {
-    ref.current?.focus({ preventScroll: true });
-  }, []);
+    if (shown) ref.current?.focus({ preventScroll: true });
+  }, [shown]);
+  useFocusReturn(ref);
 
   const ctx: MenuCtx = {
     close: closeAll,
@@ -186,6 +191,8 @@ function DesktopMenu({ open, onClose, anchor, placement, offset, modal, width = 
         ref={ref}
         role="menu"
         tabIndex={-1}
+        // the highlighted row is the one a screen reader reads (the menu keeps the focus; rows are not focused)
+        aria-activedescendant={highlight ?? undefined}
         className={cx(s.menu, className)}
         // D2: sized to the content with the Basic 200 px as the minimum (the rig's fixed 200 px clipped
         // "Tuck nav into corner (OLED)", "Record calls here (Memories)…" and the volume menu's rows)
@@ -235,6 +242,7 @@ export function MenuItem({ text, icon, onTriggered, disabled, checkable, checked
   return (
     <div
       role={checkable ? "menuitemcheckbox" : "menuitem"}
+      id={id}
       aria-checked={checkable ? !!checked : undefined}
       aria-disabled={disabled || undefined}
       data-menuitem={id}
@@ -362,6 +370,7 @@ export function SubMenu({ title, icon, children, disabled, width }: { title: str
       <div
         ref={ref}
         role="menuitem"
+        id={id}
         aria-haspopup="menu"
         aria-expanded={open}
         data-menuitem={id}

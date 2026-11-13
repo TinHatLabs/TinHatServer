@@ -76,6 +76,19 @@ export function setPickHost(fn: PickHost | null): void {
 
 /** Present + run (see the file comment). Never throws. */
 export async function runAction(id: string, inv: Invocation): Promise<RunResult> {
+  // a hold's RELEASE always runs (review round 4, UI-1 r2): it can only end what its press began, so an action that
+  // went unavailable, dimmed or would ask to confirm meanwhile must never keep it (push to talk: the mic) open
+  if (inv.hold === "up" && actionById(id)?.hold === true) {
+    const fn = inv.handler ?? handlers.get(id);
+    if (!fn) return "unhandled";
+    try {
+      await fn({ ...inv, id, subject: null, params: {} });
+      return "ran";
+    } catch (e) {
+      console.error(`[actions] ${id} release failed`, e);
+      return "failed";
+    }
+  }
   const p = present({
     app: "web",
     action: id,

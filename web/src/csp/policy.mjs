@@ -10,7 +10,7 @@
 export const DIRECTIVES = [
   ["default-src", ["'self'"], "anything not listed below: this origin only (manifest, prefetch, …)"],
   ["script-src", ["'self'", "'wasm-unsafe-eval'"],
-    "the bundle, src/boot.js, the AudioWorklets (tap.worklet.js, rnnoise) — all files of this origin, no inline script, no eval; " +
+    "the bundle, src/boot.js, the AudioWorklets (tap.worklet.js, the voice-note capture worklet, rnnoise) — all files of this origin, no inline script, no eval; " +
     "'wasm-unsafe-eval' compiles WebAssembly only: the Rust crypto (matrix-sdk-crypto-wasm) and the rnnoise noise suppressor"],
   ["style-src", ["'self'", "'unsafe-inline'"],
     "the bundle's CSS + index.html's <style> (the static start card); 'unsafe-inline' for style attributes and <style> " +

@@ -113,17 +113,17 @@ const INFO = {
     title: "Your server's name",
     body: [
       "Home network: devices on your network find the server as name.local. Nothing is opened to the internet, and each device trusts the server's own certificate once.",
-      "Friends anywhere: the server gets name.tinhat.me with a real certificate, so no device needs a trust step. It opens three ports on your router and checks from outside. While names are new, you need a server code from Tin Hat.",
+      "People anywhere: the server gets name.tinhat.me with a real certificate, so no device needs a trust step. It opens three ports on your router and checks from outside. While names are new, you need a server code from Tin Hat.",
       "My own domain (advanced): the server lives at a domain you own, like chat.example.com, and nothing depends on tinhat.me. You paste an API token from your DNS provider so the server can get its certificate, or send the domain to it from your own reverse proxy.",
-      "The name can't change later: it's part of every account, like @alex:crew.tinhat.me. Friends only ever type the first part (crew), or the whole domain for your own.",
+      "The name can't change later: it's part of every account, like @alex:crew.tinhat.me. People only ever type the first part (crew), or the whole domain for your own.",
     ],
     tech: [
       "Home network: mDNS announces name.local, the way printers show up; the server is its own certificate authority.",
-      "Friends anywhere: the Tin Hat names service points name.tinhat.me at your server's public address and keeps it current. Let's Encrypt issues the certificate through a DNS check that only your server can pass, so no port needs to be open for it.",
+      "People anywhere: the Tin Hat names service points name.tinhat.me at your server's public address and keeps it current. Let's Encrypt issues the certificate through a DNS check that only your server can pass, so no port needs to be open for it.",
       "Ports: TCP 443 (the app and chat), TCP 7881 and UDP 7882 (calls). The server asks your router to open them (UPnP or NAT-PMP).",
       "Own domain behind your own reverse proxy: your proxy keeps port 443 and its certificate and sends the domain to this server's port 8080 (home-network addresses only); the server opens only the call ports on your router.",
       "Own domain: the certificate comes from Let's Encrypt by a DNS check through your provider's API (Cloudflare, Porkbun, deSEC or DuckDNS). With Cloudflare the server also keeps the domain's address record pointing at this server; with the others that stays your job (at home, your router's dynamic DNS can do it). The token is kept on your server only, and goes in its backups.",
-      "Behind carrier NAT (5G home internet, Starlink), no port can be opened. Setup then offers the Tin Hat relay: your server keeps a connection open to it and friends reach the server through it. The certificate and its key stay on your server, so the relay can't read what passes through.",
+      "Behind carrier NAT (5G home internet, Starlink), no port can be opened. Setup then offers the Tin Hat relay: your server keeps a connection open to it and people reach the server through it. The certificate and its key stay on your server, so the relay can't read what passes through.",
     ],
   },
   account: {
@@ -140,7 +140,7 @@ const INFO = {
   review: {
     title: "What installing does",
     body: [
-      "Installing takes about a minute for a home server, and usually 1–3 minutes for friends anywhere (it also gets a certificate, opens ports on your router and checks from outside). The server starts its parts one at a time and checks each one works before moving on.",
+      "Installing takes about a minute for a home server, and usually 1–3 minutes for people anywhere (it also gets a certificate, opens ports on your router and checks from outside). The server starts its parts one at a time and checks each one works before moving on.",
       "If something fails, it says what went wrong and offers Try again, which picks up where it stopped.",
     ],
     tech: [], // filled with the install steps below
@@ -162,7 +162,7 @@ INFO.doneDomain = {
   title: "Why there's no certificate step",
   body: [
     "Your server has a real certificate from Let's Encrypt for your own domain, so every phone and computer trusts it already.",
-    "The outside check is the same thing a friend's device does: it connects to your server's public address on each port.",
+    "The outside check is the same thing someone's device does: it connects to your server's public address on each port.",
   ],
   tech: [
     "The certificate renews by itself every couple of months, by the same DNS check through your provider's API.",
@@ -180,7 +180,7 @@ INFO.doneProxy = {
   tech: [
     "Port 8080 only answers home-network addresses. It takes the visitor's address from your proxy's X-Forwarded-For header.",
     "This server's own services reach it over its own certificate on its own loopback address, never through your proxy.",
-    "The outside check connects to your server's public address on each port the way a friend's device would, with your domain's name, so it goes through your proxy too.",
+    "The outside check connects to your server's public address on each port the way someone's device would, with your domain's name, so it goes through your proxy too.",
   ],
 };
 
@@ -188,7 +188,7 @@ INFO.doneAnywhere = {
   title: "Why there's no certificate step",
   body: [
     "From anywhere, your server has a real certificate from Let's Encrypt, the same kind websites use, so every phone and computer trusts it already.",
-    "The outside check is the same thing a friend's device does: it connects to your server's public address on each port.",
+    "The outside check is the same thing someone's device does: it connects to your server's public address on each port.",
   ],
   tech: [
     "The certificate renews by itself every couple of months, through the Tin Hat names service's DNS check.",
@@ -197,10 +197,10 @@ INFO.doneAnywhere = {
 };
 
 INFO.doneRelay = {
-  title: "How friends reach your server",
+  title: "How people reach your server",
   body: [
-    "Your server keeps a connection open to the Tin Hat relay, and friends outside reach it through the relay, so nothing has to be opened on your router.",
-    "Your server has a real certificate from Let's Encrypt and keeps its key, so the relay passes everything on without being able to read it: messages, calls and passwords stay between your friends' devices and your server.",
+    "Your server keeps a connection open to the Tin Hat relay, and people outside reach it through the relay, so nothing has to be opened on your router.",
+    "Your server has a real certificate from Let's Encrypt and keeps its key, so the relay passes everything on without being able to read it: messages, calls and passwords stay between people's devices and your server.",
   ],
   tech: [
     "The connection is a WireGuard tunnel your server opens itself; it survives your provider's carrier NAT because the server keeps it busy every 25 seconds.",
@@ -213,12 +213,12 @@ const STEP_INFO = {
   dns: "Checks your domain with your DNS provider. With Cloudflare, the server points it at its own public address itself; with the others, it checks the address is already right and tells you if not.",
   name: "Reserves your name with the Tin Hat names service (a few seconds of number crunching proves this is a real new server), and points it at your server's public address.",
   ports: "Asks your router to open TCP 443, TCP 7881 and UDP 7882 for this server (UPnP or NAT-PMP), and notices if your internet provider or a second router is in the way. Behind carrier NAT it offers the Tin Hat relay instead.",
-  outside: "The names service connects back from outside on each port, the way a friend's device would. Calls pause for a few seconds during the check.",
+  outside: "The names service connects back from outside on each port, the way someone's device would. Calls pause for a few seconds during the check.",
   prepare: "Writes the settings for every part, and makes the server's own secrets: its database password, call keys and the chat server's signing key.",
   database: "Starts PostgreSQL, the database that keeps every account, room and message.",
   chat: "Starts Synapse, the chat server. Its first start builds the database tables, which is the longest step.",
   accounts: "Creates your admin account, a hidden system account the dashboard uses, and the General room new people join.",
-  secure: "Turns on HTTPS. Home network: the server becomes its own certificate authority and signs a certificate for its name. Friends anywhere: Let's Encrypt issues a real certificate. Either way it then tests a real secure connection end to end.",
+  secure: "Turns on HTTPS. Home network: the server becomes its own certificate authority and signs a certificate for its name. People anywhere: Let's Encrypt issues a real certificate. Either way it then tests a real secure connection end to end.",
   calls: "Starts the call service (LiveKit) and the small service that signs people into calls, then checks both answer.",
   finish: "Saves the setup, deletes the setup code and renames the server to its new name.",
   restore: "Reads the backup with your backup password and puts the server's settings, identity and people's files back.",
@@ -619,9 +619,9 @@ function viewConnect() {
   const lan = h("button.choice", { type: "button", role: "radio", "aria-checked": String(answers.mode === "lan"), onclick: () => pick("lan") },
     h("div.t", "People in my home"),
     h("div.d", "Everyone connects on your home network (your Wi-Fi). Nothing is opened to the internet. Each device trusts the server once."));
-  const wanNote = h("div.d", "Friends connect from their own homes. Your server gets a real address and certificate, and opens three ports on your router. Needs a server code while names are new.");
+  const wanNote = h("div.d", "People connect from their own homes. Your server gets a real address and certificate, and opens three ports on your router. Needs a server code while names are new.");
   const wan = h("button.choice", { type: "button", role: "radio", "aria-checked": String(answers.mode === "anywhere"), disabled: true, onclick: () => pick("anywhere") },
-    h("div.t", "Friends anywhere", h("span.chip.muted", "checking…")), wanNote);
+    h("div.t", "People anywhere", h("span.chip.muted", "checking…")), wanNote);
   const own = h("button.choice", { type: "button", role: "radio", "aria-checked": String(answers.mode === "domain"), onclick: () => pick("domain") },
     h("div.t", "My own domain", h("span.chip.muted", "Advanced")),
     h("div.d", "For people who own a domain (with DNS at Cloudflare, Porkbun, deSEC or DuckDNS), or who already run a reverse proxy. Your server is at an address like chat.example.com and nothing depends on tinhat.me."));
@@ -661,7 +661,7 @@ function viewConnect() {
   const updateHelp = () => {
     const n = nameIn.value.trim().toLowerCase() || "name";
     help.textContent = answers.mode === "anywhere"
-      ? `Your server will be at ${n}.${zone}; friends just type “${n}”. Addresses look like @alex:${n}.${zone}. The name can't be changed, but the server can move to a domain of your own later.`
+      ? `Your server will be at ${n}.${zone}; people just type “${n}”. Addresses look like @alex:${n}.${zone}. The name can't be changed, but the server can move to a domain of your own later.`
       : `Your server will be at ${n}.local and people's addresses will look like @alex:${n}.local. The name can't be changed, but the server can move to a domain of your own later.`;
   };
   const schedule = () => {
@@ -733,7 +733,7 @@ function viewConnect() {
         if (!/^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(d))
           return showError(err, "Type the full address for your server, like chat.example.com.");
         if (d.endsWith(".local") || d === zone || d.endsWith(`.${zone}`))
-          return showError(err, `Use a domain you own. For a name under ${zone}, choose Friends anywhere.`);
+          return showError(err, `Use a domain you own. For a name under ${zone}, choose People anywhere.`);
         if (provSel.value === "duckdns" && !d.endsWith(".duckdns.org"))
           return showError(err, "With DuckDNS, the address is one of yours under duckdns.org, like crew.duckdns.org.");
         const pv = OWN_PROVIDERS[provSel.value];
@@ -877,7 +877,7 @@ function viewReview() {
   const sn = serverName();
   const rows = [
     ["Server address", sn],
-    ["Who connects", answers.mode === "anywhere" ? `Friends anywhere (they type “${answers.name}”)` : answers.mode === "domain" ? (!answers.domain ? "Friends anywhere, at your own domain (as set up before)" : answers.domain.provider === "proxy" ? "Friends anywhere, at your own domain, through your own reverse proxy" : `Friends anywhere, at your own domain (${OWN_PROVIDERS[answers.domain.provider].label})`) : "People on this home network"],
+    ["Who connects", answers.mode === "anywhere" ? `People anywhere (they type “${answers.name}”)` : answers.mode === "domain" ? (!answers.domain ? "People anywhere, at your own domain (as set up before)" : answers.domain.provider === "proxy" ? "People anywhere, at your own domain, through your own reverse proxy" : `People anywhere, at your own domain (${OWN_PROVIDERS[answers.domain.provider].label})`) : "People on this home network"],
     ["Admin account", `${answers.admin.displayName} (@${answers.admin.username}:${sn})`],
     ...(ownerOutside() ? [["Dashboard opens from", accessWords(answers.dashboardAccess)]] : []),
     ...featureSummary(),
@@ -1279,8 +1279,8 @@ function viewDone(lost) {
         openApp.el),
       h("div.card.stack",
         h("h2", "Invite your people"),
-        h("p", "Your group's Tin Hat is at ", h("b.mono", `https://${sn}`), " on your home network: anyone there opens it in a browser, on a computer or a phone, with nothing to install, or uses the Tin Hat app. Tell your friends."),
-        h("p.muted", "The dashboard makes invite codes. Each friend opens the server's address on your network, trusts it once, and creates an account with their code."),
+        h("p", "Your group's Tin Hat is at ", h("b.mono", `https://${sn}`), " on your home network: anyone there opens it in a browser, on a computer or a phone, with nothing to install, or uses the Tin Hat app. Tell people."),
+        h("p.muted", "The dashboard makes invite codes. Each person opens the server's address on your network, trusts it once, and creates an account with their code."),
         h("div.row.wrap", h("a.btn.ghost", { href: `https://${sn}/admin/` }, "Open the dashboard"), h("span.small.muted.mono", `https://${sn}/admin`)))),
     h("p.small.muted", ip ? `If ${sn} doesn't open on a device, use the address ${ip} for the certificate, and check the device is on the same network.` : ""));
   show(null, INFO.done, card);
@@ -1341,13 +1341,13 @@ async function viewDoneAnywhere() {
     hero.replaceChildren(
       h(`div.badge${good ? "" : ".warn"}`, { html: good ? ICON.bigcheck : ICON.bigwarn }),
       h("h1", good ? "Your server is ready" : "Your server is set up"),
-      h("p.lede", good ? `${at} Friends ${own ? "" : "just "}type “${short}”.`
-        : level === "warn" ? `${at} Friends outside can chat; one router setting is left before their calls connect (below).`
+      h("p.lede", good ? `${at} People ${own ? "" : "just "}type “${short}”.`
+        : level === "warn" ? `${at} People outside can chat; one router setting is left before their calls connect (below).`
           : viaProxy() ? `It's ready for your reverse proxy at ${sn}. One thing is left: send the domain to this server (below).`
-            : `${at} One thing is left: friends outside can't reach it yet (below).`));
+            : `${at} One thing is left: people outside can't reach it yet (below).`));
   };
   setHero(net && net.summary ? net.summary.level : status && status.reach && !status.reach.ok ? "bad" : null);
-  const reachCard = h("div.card.stack", h("h2", "Friends outside"), h("div.row", h("span.spin"), h("span.muted", "Loading the check's results…")));
+  const reachCard = h("div.card.stack", h("h2", "People outside"), h("div.row", h("span.spin"), h("span.muted", "Loading the check's results…")));
   const relayErr = h("div.error.hidden");
   const relayBtn = status && status.setupSession ? h("button.btn.cta", { type: "button" }, "Use the Tin Hat relay") : null;
   if (relayBtn) {
@@ -1372,7 +1372,7 @@ async function viewDoneAnywhere() {
     if (!cgnat && n.summary.level === "good") return null;
     return h("div.stack-sm",
       h("div.k", cgnat ? "Use the Tin Hat relay instead" : "Can't change your router's settings?"),
-      h("p.muted", (cgnat ? "No router setting can open your home to friends outside. " : "")
+      h("p.muted", (cgnat ? "No router setting can open your home to people outside. " : "")
         + "The Tin Hat relay can carry their traffic: your server keeps a connection open to it, and keeps its own certificate, so the relay passes everything on without being able to read it."),
       h("div.row.wrap", relayBtn), relayErr);
   };
@@ -1389,7 +1389,7 @@ async function viewDoneAnywhere() {
     const chip = h(`span.chip.${sm.level === "good" ? "good" : sm.level === "warn" ? "warn" : "bad"}`, h("span.dot"),
       sm.level === "good" ? "Reachable" : sm.level === "warn" ? "Partly reachable" : "Not reachable yet");
     const viaRelay = n.relay && n.relay.on;
-    reachCard.replaceChildren(...[h("h2", "Friends outside"),
+    reachCard.replaceChildren(...[h("h2", "People outside"),
       h("div.row.wrap", chip, viaRelay ? h("span.chip.accent", `Through the Tin Hat relay (${n.relay.relayAddress})`) : null),
       h("p", sm.headline), ...(sm.lines || []).map((l) => h("p.muted", l)),
       relayOffer(n),
@@ -1464,8 +1464,8 @@ async function viewDoneAnywhere() {
     reachCard,
     h("div.card.stack",
       h("h2", "Invite your people"),
-      h("p", "Your group's Tin Hat is at ", h("b.mono", `https://${sn}`), `: anyone opens it in a browser, on a computer or a phone, with nothing to install (typing just ${sn} also works in browsers that try https first), or uses the Tin Hat app with “${short}” as the server. Tell your friends.`),
-      h("p.muted", `The dashboard makes invite links. Friends open the link, or type “${short}” in the Tin Hat app, and create an account with the code.`),
+      h("p", "Your group's Tin Hat is at ", h("b.mono", `https://${sn}`), `: anyone opens it in a browser, on a computer or a phone, with nothing to install (typing just ${sn} also works in browsers that try https first), or uses the Tin Hat app with “${short}” as the server. Tell people.`),
+      h("p.muted", `The dashboard makes invite links. People open the link, or type “${short}” in the Tin Hat app, and create an account with the code.`),
       h("div.row.wrap", h("a.btn.ghost", { href: `https://${sn}/admin/` }, "Open the dashboard"), h("span.small.muted.mono", `https://${sn}/admin`))));
   const card = h("div.stack-lg", ...(hop ? [hop] : []), hero, numbered);
   show(null, net && net.relay && net.relay.on ? INFO.doneRelay : viaProxy() ? INFO.doneProxy : own ? INFO.doneDomain : INFO.doneAnywhere, card);

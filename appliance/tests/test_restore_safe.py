@@ -224,6 +224,11 @@ class Wiring(unittest.TestCase):
         web = (PKG / "web.py").read_text()
         self.assertNotRegex(install, r"PASSWORD '\{")
         self.assertIn("restoresafe.strip_specials, files)", install)
+        # the Test restore too, before it reads the dump, the metadata or the signing key (review 0.3.16)
+        bk = (PKG / "backup.py").read_text()
+        test_restore = bk[bk.index("async def test_restore"):]
+        self.assertIn("restoresafe.strip_specials, work)", test_restore)
+        self.assertLess(test_restore.index("restoresafe.strip_specials, work)"), test_restore.index('rglob("signing.key")'))
         self.assertIn("restoresafe.check_secrets(", install)
         self.assertIn('stdin=restoresafe.alter_role_sql().encode()', install)
         self.assertIn("shutil.copytree(src, dst, symlinks=True)", install)

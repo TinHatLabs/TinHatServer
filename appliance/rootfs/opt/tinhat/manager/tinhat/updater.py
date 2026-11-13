@@ -9,13 +9,16 @@ it installs. Order, so that a failure at any point leaves a working server:
   5. health check (database, chat, calls, web, the manager answering with the new version), up to 10 minutes;
   6. healthy → done (the last two safety copies are kept); not → everything from the snapshot goes back, the database included.
 """
+import errno
 import fcntl
 import json
+import os
 import platform
 import re
 import shutil
 import socket
 import ssl
+import stat
 import subprocess
 import sys
 import time
@@ -40,6 +43,293 @@ STATE_ITEMS = ["state.json", "secrets.json", "compose.env", "environment.json", 
                "synapse/homeserver.yaml", "synapse/log.config", "livekit", "wellknown", "ca",
                "api/env", "api/livekit.secret"]
 HEALTH_WAIT = 600
+
+# ---- the Pad state across a rollback (0.3.16; docs/RELEASING.md, Pad state) ------------------------------------------
+# api/pad/state.json is the API's Pad state (generations, Watch identities, person mutes; api/tinhat-api/padstate.mjs).
+# The API reads it FAIL CLOSED: a file it can't read refuses every Pad token and drops the person mutes back to the
+# room's own record. It is NOT a STATE_ITEM (restore_files would put back the pre-update copy and undo every mute made
+# while the update ran; assembly-047 review). Instead:
+#   - the snapshot keeps ONE copy of the file (one read, never following a link: the API only ever replaces it by
+#     rename, so the copy is whole) and then pad/guard.json = the format THIS release's API reads (PAD_READER);
+#   - a rollback stops the failed release's API first and checks it is stopped (nothing may write the file after the
+#     decision; an API that won't stop leaves the file as it is), then judges the live file with this release's own
+#     rules (pad_problem: padstate.mjs's rules; shared vectors api/tinhat-api/test/vectors/padstate-load.json):
+#       K (keep)    the live file is one this release reads → it stays as it is (mutes made during the update stay);
+#       R (replace) it isn't (a later release's format, damage, a link) → the snapshot's copy is written to a fresh
+#                   file first, then the live one is moved aside as state.json.from-<version>-<time>[-n] (kept for the
+#                   owner, never deleted) and the copy renamed in. No copy (none before the update): no file is left.
+#                   The copy can't be prepared → nothing is changed (the API keeps failing closed, never "empty").
+#   Every step works inside the pad folder through its own descriptor (no path the API could swap for a link).
+# A later release that changes the format (v != 2) writes it only when the update's runner made such a guard
+# (pad_guarded): a runner from 0.3.14 or older has no Pad rollback step at all.
+PAD_FILE = "api/pad/state.json"
+PAD_READER = 2
+_PAD_KEY3 = re.compile(r"[^\n]+\n[^\n]+\n[^\n]+")
+_PAD_KEY2 = re.compile(r"[^\n]+\n[^\n]+")
+_PAD_GEN = re.compile(r"[0-9]{1,16}")
+_SAFE_INT = 2**53 - 1
+
+
+def _pad_num(v) -> bool:
+    """JavaScript's Number.isSafeInteger(v) && v >= 0 for a JSON value (1e3 and 2.0 are integers there; true isn't)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    if isinstance(v, float) and (v != v or v in (float("inf"), float("-inf")) or not v.is_integer()):
+        return False
+    return 0 <= v <= _SAFE_INT
+
+
+def pad_problem(raw: bytes) -> str | None:
+    """None when padstate.mjs (format PAD_READER) loads this file; otherwise why it wouldn't (it would fail closed).
+    Numbers are read as JavaScript reads them (doubles: no digit limit, 2**53 + 1 rounds). One known difference: a
+    file nested thousands of levels deep (nothing the API writes) counts as unreadable here — the safe side (R)."""
+    def no_constants(name):  # JSON.parse has no NaN / Infinity
+        raise ValueError(f"not JSON ({name})")
+    try:
+        j = json.loads(raw.decode("utf-8", errors="replace"), parse_constant=no_constants, parse_int=float)
+    except ValueError as e:
+        return f"not JSON ({str(e)[:80]})"
+    except RecursionError:
+        return "not JSON (nested too deep)"
+    if not isinstance(j, dict) or isinstance(j.get("v"), bool) or j.get("v") != PAD_READER:
+        return f"not a v{PAD_READER} Pad state"
+
+    def load(o, key, ok) -> bool:
+        return isinstance(o, dict) and all(isinstance(k, str) and key.fullmatch(k) and ok(v) for k, v in o.items())
+
+    def gen_ok(v) -> bool:
+        g = v.get("gen") if isinstance(v, dict) else None
+        return isinstance(g, str) and bool(_PAD_GEN.fullmatch(g)) and int(g) <= _SAFE_INT and _pad_num(v.get("at"))
+    checks = (("gens", _PAD_KEY3, gen_ok),
+              ("watch", _PAD_KEY3, lambda v: isinstance(v, dict) and isinstance(v.get("id"), str) and _pad_num(v.get("at"))),
+              ("muted", _PAD_KEY2, lambda v: isinstance(v, dict) and isinstance(v.get("by"), str) and _pad_num(v.get("at"))),
+              ("unmuted", _PAD_KEY2, _pad_num),
+              ("issued", _PAD_KEY3, _pad_num))
+    for name, key, ok in checks:
+        if not load(j.get(name), key, ok):
+            return f"bad {name}"
+    if not _pad_num(j.get("last")):
+        return "bad last"
+    return None
+
+
+def _pad_dir_fd(create: bool = False, state: Path | None = None) -> int | None:
+    """A descriptor of the pad folder (api/pad), opened without following a link at either step; None: none there."""
+    api = (state or STATE) / "api"
+    if create:
+        api.mkdir(parents=True, exist_ok=True)
+    try:
+        afd = os.open(api, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    try:
+        if create:
+            try:
+                os.mkdir("pad", 0o700, dir_fd=afd)
+                os.fsync(afd)  # the new folder's own entry is durable too (review round 3)
+            except FileExistsError:
+                pass
+        try:
+            return os.open("pad", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=afd)
+        except FileNotFoundError:
+            return None
+    finally:
+        os.close(afd)
+
+
+class NotPlain(OSError):
+    """A link, a folder or a special file where a plain file should be."""
+
+
+def _read_nofollow(name: str, dfd: int) -> bytes | None:
+    """The bytes of a regular file `name` in the folder dfd; None: not there. A link or anything else: NotPlain. A
+    failed read (EIO, EACCES, …) is an OSError of its own: never taken for "not there"."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dfd)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            raise NotPlain(f"{name} is a link") from None
+        raise
+    try:  # checked on the descriptor first: Python's fdopen refuses a folder with its own error (review 0.3.16)
+        mode = os.fstat(fd).st_mode
+    except BaseException:
+        os.close(fd)
+        raise
+    if not stat.S_ISREG(mode):
+        os.close(fd)
+        raise NotPlain(f"{name} isn't a regular file")
+    with os.fdopen(fd, "rb") as f:
+        return f.read()
+
+
+def _write_durable(path: Path, data: bytes) -> None:
+    with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def pad_snapshot(snap: Path) -> None:
+    """The Pad state's safety copy, durable, and only then the guard (which format the release being left reads). A
+    file that can't be READ stops the snapshot (OSError: the update then doesn't start), so "no file before" is never a
+    guess."""
+    d = snap / "pad"
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        dfd = _pad_dir_fd()
+    except OSError as e:  # api/ or api/pad is a link or not a folder: no copy, and no guard (the file is left alone)
+        if e.errno not in (errno.ELOOP, errno.ENOTDIR):
+            raise
+        return
+    try:
+        raw = _read_nofollow("state.json", dfd) if dfd is not None else None
+    except NotPlain:
+        raw = None  # (a link or a special file where the state should be: nothing to keep)
+    finally:
+        if dfd is not None:
+            os.close(dfd)
+    if raw is not None:
+        _write_durable(d / "state.json", raw)
+    _write_durable(d / "guard.json.tmp", (json.dumps({"reader": PAD_READER, "had_file": raw is not None}) + "\n").encode())
+    os.replace(d / "guard.json.tmp", d / "guard.json")
+    _fsync_dir(d)
+    _fsync_dir(snap)
+
+
+def pad_rollback(snap: Path, ver: str) -> str:
+    """After the failed release's API has stopped: K (keep the live file) or R (the snapshot's copy back; the live one
+    kept aside). Returns what happened, for the update log."""
+    d = snap / "pad"
+    try:
+        guard = json.loads((d / "guard.json").read_text())
+    except (OSError, ValueError):
+        return "no Pad safety copy (made before 0.3.16): the Pad state is left as it is"
+    saved = None
+    if guard.get("had_file"):
+        try:
+            saved = (d / "state.json").read_bytes()
+        except OSError:
+            return "the Pad safety copy is missing: the Pad state is left as it is"
+    try:
+        dfd = _pad_dir_fd(create=saved is not None)
+    except OSError as e:
+        return f"the Pad folder isn't a plain folder ({e}): the Pad state is left as it is"
+    if dfd is None:
+        return "no Pad state before or after the update"
+    try:
+        try:
+            raw = _read_nofollow("state.json", dfd)
+            why = None if raw is None else pad_problem(raw)
+            present = raw is not None
+        except NotPlain as e:  # a link, a folder, a special file (a failed read raises: the file is left alone)
+            why, present = f"not a plain file ({e})", True
+        if present and why is None:
+            return "Pad state kept as it is (this version reads it)"
+        tmp = None
+        if saved is not None:  # the replacement first: a fresh file, exclusively created, durable
+            tmp = f".state.json.rollback-{os.getpid()}-{os.urandom(4).hex()}"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(saved)
+                    f.flush()
+                    os.fsync(f.fileno())
+            except BaseException:
+                os.unlink(tmp, dir_fd=dfd)
+                raise
+        kept = ""
+        if present:  # kept aside under a name of its own; the live name stays until the copy replaces it in one step
+            base = f"state.json.from-{re.sub(r'[^A-Za-z0-9._-]', '_', ver)[:40]}-{int(time.time())}"
+            aside, n = base, 1
+            while True:
+                try:
+                    os.stat(aside, dir_fd=dfd, follow_symlinks=False)
+                except FileNotFoundError:
+                    break
+                n += 1
+                aside = f"{base}-{n}"
+            linked = False
+            if tmp is not None:
+                # a hard link keeps the live name until the copy replaces it in one step; a folder (or anything else
+                # that can't be linked) is renamed aside instead: the name is empty only until the rename below
+                # (review 0.3.16: a folder left by the failed release would otherwise stay, and every Pad token with it)
+                try:
+                    os.link("state.json", aside, src_dir_fd=dfd, dst_dir_fd=dfd, follow_symlinks=False)
+                    linked = True
+                except OSError:
+                    pass
+            if not linked:
+                try:
+                    os.rename("state.json", aside, src_dir_fd=dfd, dst_dir_fd=dfd)
+                except OSError:
+                    if tmp is not None:
+                        os.unlink(tmp, dir_fd=dfd)
+                    raise
+            kept = f"; the file that was there is kept as {aside}"
+        if tmp is not None:
+            try:  # atomic: the old file or the copy, never none
+                os.rename(tmp, "state.json", src_dir_fd=dfd, dst_dir_fd=dfd)
+            except OSError:
+                os.unlink(tmp, dir_fd=dfd)
+                raise
+        os.fsync(dfd)
+        if tmp is not None:
+            return f"Pad state ({why or 'missing'}) replaced by the copy from before the update{kept}"
+        return f"Pad state ({why or 'missing'}): there was none before the update, so none is left{kept}"
+    finally:
+        os.close(dfd)
+
+
+def pad_guarded(snapshots: Path, reader: int = PAD_READER) -> bool:
+    """For a later release that changes the Pad state's format: True when the running update's safety copy (the newest
+    snapshot) was made by a runner with the Pad rollback step for a release that reads `reader` — only then may the new
+    release write a format that release can't read (that runner's rollback then puts the old file back)."""
+    try:
+        snaps = sorted((p for p in snapshots.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime)
+        g = json.loads((snaps[-1] / "pad" / "guard.json").read_text()) if snaps else {}
+    except (OSError, ValueError, IndexError):
+        return False
+    return isinstance(g, dict) and g.get("reader") == reader
+
+
+def _api_states() -> list[str] | None:
+    """The states of the API's containers (empty: none), or None when docker compose couldn't tell."""
+    try:
+        r = sh(*COMPOSE, "ps", "-a", "--format", "json", "api", timeout=60)
+    except subprocess.SubprocessError:
+        return None
+    if r.returncode != 0:
+        return None
+    text = (r.stdout or b"").decode(errors="replace").strip()
+    try:  # (compose prints one JSON object per line; older versions one array)
+        items = json.loads(text) if text.startswith("[") else [json.loads(x) for x in text.splitlines() if x.strip()]
+    except ValueError:
+        return None
+    return [str(i.get("State", "")).lower() for i in items if isinstance(i, dict)]
+
+
+def stop_api() -> bool:
+    """Stop the API container and make sure it is stopped — not running, restarting or paused (a failed release's API
+    must not write its state after the rollback has judged it). False: it may still run (or this couldn't tell)."""
+    for how in ("stop", "kill"):
+        try:
+            sh(*COMPOSE, how, "api", timeout=180)
+        except subprocess.SubprocessError:
+            pass
+        states = _api_states()
+        if states is not None and all(st in ("exited", "dead", "created") for st in states):
+            return True
+    return False
 
 
 class SystemdManager:
@@ -242,6 +532,7 @@ def snapshot(snap: Path) -> None:
             dst = snap / "state" / item
             dst.parent.mkdir(parents=True, exist_ok=True)
             (shutil.copytree if src.is_dir() else shutil.copy2)(src, dst)
+    pad_snapshot(snap)
     for f in ("compose.yaml", "images.lock", "VERSION"):
         if (OPT / f).exists():
             shutil.copy2(OPT / f, snap / f)
@@ -420,6 +711,14 @@ def rollback(snap: Path, ver: str, frm: str, why: str) -> int:
                                                           f"going back to {frm}.")
     say(f"rolling back to {frm}: {why}")
     MANAGER.stop()
+    # the failed release's API stops before its Pad state is judged: nothing may write the file after the decision
+    try:
+        if stop_api():
+            say("  " + pad_rollback(snap, ver))
+        else:
+            say("  the failed version's API didn't stop: the Pad state is left as it is")
+    except Exception as e:  # noqa: BLE001 — never stops the rollback; the API reads what is there (fail closed)
+        say(f"  the Pad state couldn't be checked: {e!r}")
     restore_files(snap)
     retag(snap / "images.lock")
     db_ok = restore_db(snap)

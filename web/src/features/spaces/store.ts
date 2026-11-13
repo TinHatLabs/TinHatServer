@@ -38,6 +38,7 @@ import { rl } from "./ratelimit";
 import { isRoomId } from "@/app/router";
 import { shareLinkNow } from "@/core/server";
 import { goneText } from "./leftWords";
+import { dmTarget, serverOf } from "@/features/nav/dmTarget";
 
 const log = createLogger("spaces");
 
@@ -732,8 +733,9 @@ async function doApplyJoinRule(sid: string, rule: string): Promise<string> {
 async function doInvite(sid: string, mxidIn: string): Promise<string> {
   const c = await Ctx.load(sid);
   c.need("invite", "invite people");
-  const mxid = mxidIn.trim();
-  if (!isUserId(mxid)) throw `${mxidIn} doesn't look like a user id`;
+  // a plain username means your own server (dmTarget, every picker since feat/people-search)
+  const mxid = isUserId(mxidIn.trim()) ? mxidIn.trim() : (dmTarget(mxidIn, serverOf(c.client.getUserId())) ?? mxidIn.trim());
+  if (!isUserId(mxid)) throw `${mxidIn} isn't a username or an address like @name:their.server`;
   const cur = membershipOf(c.space, mxid);
   const nm = () => memberName(c.space, mxid);
   if (cur === "join") throw `${nm()} is already a member`;

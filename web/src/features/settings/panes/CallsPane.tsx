@@ -133,7 +133,7 @@ export function CallsPane() {
           id="calls.push-to-talk"
           label="Push to talk"
           // one text node, like 10.8's static text
-          description={`Hold ${pttKeys()[0] ?? "Ctrl"} to speak while Tin Hat is the focused tab. Browsers can't do push to talk while you're in a game.`}
+          description={`Hold ${pttKeys()[0] ?? "Ctrl"} to speak while Tin Hat is the focused tab. Browsers can't do push to talk while you're in a game. Ctrl, Alt or Shift on their own don't work while you're typing a message; pick another key to talk while typing.`}
           checked={ptt}
           onToggled={applyPushToTalk}
         />}

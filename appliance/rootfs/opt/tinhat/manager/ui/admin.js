@@ -144,7 +144,7 @@ function whereCard(o) {
       h("p", h("a.mono", { href: `${url}/` }, url), home
         ? " on your home network: each device there trusts the server once, then opens it in a browser, on a computer or a phone, or uses the Tin Hat app."
         : `: anyone opens it in a browser, on a computer or a phone, with nothing to install (typing just ${web} also works in browsers that try https first), or uses the Tin Hat app with “${short}” as the server.`),
-      h("p.small.muted", "Tell your friends. To create an account they need an invite code: Invite someone gives them a link that fills it in.")),
+      h("p.small.muted", "Tell people. To create an account they need an invite code: Invite someone gives them a link that fills it in.")),
     h("div.row.wrap", h("button.btn.ghost.small", { type: "button", onclick: () => copy(url, "Address") }, "Copy the address")));
 }
 
@@ -412,7 +412,7 @@ function gameServersCard(el) {
     card.replaceChildren(
       h("div.row.between", h("h3", "Game servers"),
         h("div.row", h("button.btn.ghost.small", { type: "button", onclick: step1 }, "Change"), h("button.btn.ghost.small", { type: "button", onclick: removeIt }, "Remove"))),
-      h("div.list", d.servers.map((s) => h("div.item", h("div.grow", h("div.k", s.label || s.game), h("div.s", `${d.kinds[s.kind] || s.kind}${s.outside ? " · friends outside can join" : " · home network only"}`))))),
+      h("div.list", d.servers.map((s) => h("div.item", h("div.grow", h("div.k", s.label || s.game), h("div.s", `${d.kinds[s.kind] || s.kind}${s.outside ? " · people outside can join" : " · home network only"}`))))),
       h("p.small.muted", `Players join at ${d.joinHost}. Shown to the members of ${spaceName(d.space)}. Panel: ${d.url}.`));
   };
   const removeIt = async (ev) => {
@@ -470,7 +470,7 @@ function gameServersCard(el) {
       const info = h("input", { type: "text", value: old.info || "", placeholder: "a line for players (optional)", maxlength: "280", "aria-label": "Note" });
       return { s, on, game, kind, pw, out, info,
         el: h("div.item", on, h("div.grow.stack-sm", h("div.k", s.name, h("span.small.muted", s.missing ? " · this key doesn't see it (still listed until you untick it)" : s.egg ? ` · ${s.egg}` : "")),
-          h("div.row.wrap", game, kind, pw), info, h("label.small", out, " Friends outside the home can join (its port is forwarded)"))) };
+          h("div.row.wrap", game, kind, pw), info, h("label.small", out, " People outside the home can join (its port is forwarded)"))) };
     });
     const join = h("input", { type: "text", value: d.joinHost || "", placeholder: "games.example.com", spellcheck: "false" });
     const listed = (d.spaces || []).some((sp) => sp.id === d.space);
@@ -626,7 +626,7 @@ async function tabInvites(el) {
       result.replaceChildren(h("div.stack",
         h("div.codebox", h("div.grow", h("div.small.muted", "New invite code"), h("div.code", { "data-code": code }, code)),
           h("button.btn.ghost.small", { onclick: () => copy(code, "Code") }, "Copy code")),
-        h("div.note.stack-sm", h("div.small.muted", "Send this to your friend:"), h("div", { "data-share": "" }, ...shareText(code, sn, web).split("\n").flatMap((l, i) => (i ? [h("br"), l] : [l])))),
+        h("div.note.stack-sm", h("div.small.muted", "Send this to them:"), h("div", { "data-share": "" }, ...shareText(code, sn, web).split("\n").flatMap((l, i) => (i ? [h("br"), l] : [l])))),
         h("div.row.wrap", h("button.btn.ghost.small", { onclick: () => copy(shareText(code, sn, web), "Invitation") }, "Copy invitation"))));
       await drawList();
     } catch (ex) {
@@ -673,7 +673,7 @@ async function tabInvites(el) {
   el.replaceChildren(h("div.stack",
     data.adminHasAppDevice === false ? h("div.note.stack-sm",
       h("b", "Open Tin Hat yourself first."),
-      h("span", " Messages are encrypted for the devices that exist when they're sent, so anything your friends write before you've ever signed in to Tin Hat can't be read by you later."),
+      h("span", " Messages are encrypted for the devices that exist when they're sent, so anything people write before you've ever signed in to Tin Hat can't be read by you later."),
       h("div.row", h("a.btn.ghost.small", { href: `https://${web || sn}/` }, "Open Tin Hat"))) : null,
     h("div.card.stack-lg",
       h("div.stack-sm", h("h2", "Invite someone"), h("p.muted", "An invite code lets one person (or a few) create an account on this server."),
@@ -851,9 +851,9 @@ function relayCard(n, el) {
     });
     return h("div.card.stack",
       h("h2", cgnat ? "Use the Tin Hat relay" : "Can't change your router's settings?"),
-      h("p", cgnat ? "Your internet provider doesn't allow incoming connections, so no router setting can let friends in. The Tin Hat relay can."
-        : "The Tin Hat relay lets friends in without opening any ports on your router."),
-      h("p.muted", "Your server keeps a connection open to the relay, and friends reach your server through it. Your server keeps its own certificate, so the relay passes everything on without being able to read it. People at home still connect straight to the server for calls."),
+      h("p", cgnat ? "Your internet provider doesn't allow incoming connections, so no router setting can let people in. The Tin Hat relay can."
+        : "The Tin Hat relay lets people in without opening any ports on your router."),
+      h("p.muted", "Your server keeps a connection open to the relay, and people reach your server through it. Your server keeps its own certificate, so the relay passes everything on without being able to read it. People at home still connect straight to the server for calls."),
       h("div.row.wrap", go), err);
   }
   const used = r.usedBytes || 0;
@@ -865,8 +865,8 @@ function relayCard(n, el) {
   const off = h("button.btn.ghost", { type: "button" }, "Turn off the relay");
   const cgnatHere = p.kind === "cgnat";
   const offWhat = h("div.note.hidden", cgnatHere
-    ? "Without the relay, friends outside can't reach your server. Your internet provider doesn't allow incoming connections, so this dashboard won't open by its name either, not even at home. To turn the relay back on later, open "
-    : "Without the relay, friends outside reach your server only once your router's ports are free for it (Network tab, Router). If this dashboard doesn't open by its name afterwards, open ",
+    ? "Without the relay, people outside can't reach your server. Your internet provider doesn't allow incoming connections, so this dashboard won't open by its name either, not even at home. To turn the relay back on later, open "
+    : "Without the relay, people outside reach your server only once your router's ports are free for it (Network tab, Router). If this dashboard doesn't open by its name afterwards, open ",
     h("span.mono", `http://${(n.serverName || "").split(".")[0]}.local`), " on your home network and sign in there.");
   off.addEventListener("click", async () => {
     if (off.dataset.sure !== "1") { off.dataset.sure = "1"; off.textContent = "Yes, turn it off"; offWhat.classList.remove("hidden"); return; }
@@ -881,10 +881,10 @@ function relayCard(n, el) {
   return h("div.card.stack",
     h("div.row.wrap.between", h("h2", "Tin Hat relay"), h(`span.chip.${lvl}`, h("span.dot"), label)),
     h("p", "Reachable through the Tin Hat relay."),
-    h("p.muted", (cgnatHere ? "Your internet provider doesn't allow incoming connections, so friends outside reach your server through the relay. "
-      : "Friends outside reach your server through the relay. ") + "It passes their traffic on without being able to read it: your server's certificate and its key never leave this server."),
+    h("p.muted", (cgnatHere ? "Your internet provider doesn't allow incoming connections, so people outside reach your server through the relay. "
+      : "People outside reach your server through the relay. ") + "It passes their traffic on without being able to read it: your server's certificate and its key never leave this server."),
     h("dl.kv",
-      h("dt", "Friends connect to"), h("dd.mono", r.relayAddress || "—"),
+      h("dt", "People connect to"), h("dd.mono", r.relayAddress || "—"),
       h("dt", "Calls through the relay"), h("dd.mono", r.port ? `TCP + UDP ${r.port}` : "—"),
       h("dt", "Tunnel"), h("dd", tunnel),
       h("dt", "This month"), h("dd", quota ? `${traffic(used)} of ${traffic(quota)}` : used ? traffic(used) : "—"),
@@ -1039,7 +1039,7 @@ async function tabNetwork(el, quiet) {
       : m.taken ? [optional ? "muted" : "warn", m.holder ? `Sent to ${m.holder}` : "Used by another device"]
       : [optional ? "muted" : "warn", optional ? "Not opened automatically (optional)" : (m.why || "Not opened")];
     return h("div.item", h("div.grow", h("div.k", `${m.proto} ${m.port}`),
-      h("div.s", m.port === 443 ? "the app, chat and call sign-in" : optional ? "friends typing just the name"
+      h("div.s", m.port === 443 ? "the app, chat and call sign-in" : optional ? "people typing just the name"
         : m.proto === "UDP" ? "calls (sound and video)" : "calls, when UDP is blocked")),
       h(`span.chip.${cls}`, h("span.dot"), text));
   });
@@ -1056,20 +1056,20 @@ async function tabNetwork(el, quiet) {
   const notices = (n.notices || []).map((x) => h(`div.note${x.level === "error" ? ".bad" : ""}`, x.text));
   if (n.names && n.names.unreachable_since && n.names.status !== "moved") {
     notices.unshift(h("div.note", `This server hasn't reached the Tin Hat names service since ${dateText(n.names.unreachable_since * 1000)}: ` +
-      "either this home's internet connection is down, or the names service is. Friends keep reaching the server at its " +
-      "current address; if your home's address changes before the names service answers again, friends outside can't " +
+      "either this home's internet connection is down, or the names service is. People keep reaching the server at its " +
+      "current address; if your home's address changes before the names service answers again, people outside can't " +
       "find the server until it does. It keeps trying every ten minutes."));
   }
   if (n.names && n.names.status === "moved") {
     notices.unshift(h("div.note.bad", "This server's name moved to another computer: it was restored there from a backup. " +
-      "Chat and calls stopped here, and this computer let go of your router's ports, so friends reach the other one. " +
+      "Chat and calls stopped here, and this computer let go of your router's ports, so people reach the other one. " +
       "When the other one works, switch this one off."));
   }
   el.replaceChildren(h("div.stack",
     notices.length ? h("div.card.stack", h("h2", "From the Tin Hat names service"), ...notices,
       h("div.row.end", h("button.btn.ghost", { onclick: async () => { await api("/admin/api/network/notices-seen", { json: {} }); tabNetwork(el, true); } }, "Dismiss"))) : null,
     h("div.card.stack",
-      h("div.row.wrap.between", h("h2", "Friends outside"), h(`span.chip.${level}`, h("span.dot"), level === "good" ? "Reachable" : level === "warn" ? "Partly" : "Not reachable")),
+      h("div.row.wrap.between", h("h2", "People outside"), h(`span.chip.${level}`, h("span.dot"), level === "good" ? "Reachable" : level === "warn" ? "Partly" : "Not reachable")),
       h("p", sm.headline || "Not checked yet."),
       ...(sm.lines || []).map((l) => h("p.muted", l)),
       (sm.fix || []).length ? h("div.stack-sm", h("div.k", "In your router's settings (often its phone app):"), h("ul.fix", sm.fix.map((f) => h("li", f)))) : null,
@@ -1086,8 +1086,8 @@ async function tabNetwork(el, quiet) {
         h("h3", "Address"),
         h("dl.kv",
           h("dt", "Server"), h("dd.mono", n.serverName),
-          h("dt", "Friends type"), h("dd.mono", typedName(n.serverName, me && me.zone)),
-          relayed ? h("dt", "Friends connect to") : h("dt", "Public address"),
+          h("dt", "People type"), h("dd.mono", typedName(n.serverName, me && me.zone)),
+          relayed ? h("dt", "People connect to") : h("dt", "Public address"),
           h("dd.mono", relayed ? `${n.relay.relayAddress} (the relay)` : (n.names && n.names.ip4) || (n.domain && n.domain.home) || r.public_ip || p.public_ip || "—"),
           relayed ? h("dt", "Your home's public address") : null, relayed ? h("dd.mono", r.public_ip || p.public_ip || "—") : null,
           n.domain ? null : h("dt", "Name status"), n.domain ? null : h("dd", (n.names && n.names.status === "active") ? "active" : ((n.names && n.names.status) || "—")),
@@ -1098,7 +1098,7 @@ async function tabNetwork(el, quiet) {
         h("dl.kv",
           h("dt", "Router"), h("dd", p.kind === "direct" ? "none" : p.router ? ([p.router.maker, p.router.model].filter(Boolean).join(" ") || p.router.name) : relayed ? "not asked (the relay needs nothing from it)" : "didn't answer"),
           p.gateway ? h("dt", "Its settings") : null, p.gateway ? h("dd.mono", `http://${p.gateway}`) : null,
-          h("dt", "Its ports"), h("dd", relayed ? "none needed: the relay carries friends' traffic" : p.kind === "direct" ? "none needed: this server has its own public address"
+          h("dt", "Its ports"), h("dd", relayed ? "none needed: the relay carries people's traffic" : p.kind === "direct" ? "none needed: this server has its own public address"
             : auto ? (byHand ? `opened automatically (${auto}) where the router allowed it; the others were reachable at the last check` : `opened automatically (${auto})`) : "set by hand in the router")),
         portRows.length ? h("div.list", portRows) : null)),
     outRows.length ? h("div.card.flat.stack-sm", h("h3", "Last check from outside"), h("div.list", outRows)) : null,
@@ -1123,7 +1123,7 @@ function domainCard(n) {
       ? h("p.small.muted", d.keepsAddress ? `This server keeps it pointing at your home through ${d.label} (it checks every ten minutes).`
         : "It points at your home. If your home's address changes, change the record too; your router's dynamic DNS can do that for you.")
       : d.keepsAddress ? h("div.note", `This server points it at your home through ${d.label} within ten minutes; DNS answers can take a few more minutes to change.`)
-        : h("div.note.bad", `${where}, point ${n.serverName} at ${home} (an A record). Until then friends' devices look for the server at the old address.`));
+        : h("div.note.bad", `${where}, point ${n.serverName} at ${home} (an A record). Until then people's devices look for the server at the old address.`));
 }
 
 // ---- connections to other Tin Hat servers (federation by consent) -------------------------------------------------
@@ -1179,7 +1179,7 @@ function connectionsCard(netEl) {
       h("label.field.inline", h("span", "Their server's name"), srv), h("label.field.inline", h("span", "Their connection code"), code), go));
     card.replaceChildren(...[
       h("h2", "Other Tin Hat servers"),
-      h("p.muted", "Connect with a friend's Tin Hat server so people on both can message each other, share rooms and call. Both owners agree, and either can disconnect at any time. Your own rooms, like General, stay on this server."),
+      h("p.muted", "Connect with someone else's Tin Hat server so people on both can message each other, share rooms and call. Both owners agree, and either can disconnect at any time. Your own rooms, like General, stay on this server."),
       !publicMode(c.mode) ? h("p.muted", "Connections need a server that's reachable from anywhere.") : null,
       c.applying ? h("div.note", "Restarting the chat server to apply a change… (a few seconds)") : null,
       list.length ? h("div.list", list) : h("p.small.muted", "Not connected to any other server."),
@@ -1221,7 +1221,7 @@ function connectionsCard(netEl) {
       h("p.small.muted", "The part after the colon in people's Matrix IDs: for @sam:example.org, type example.org."));
     other.replaceChildren(...[
       h("h2", "Other Matrix servers"),
-      h("p.muted", "Tin Hat speaks Matrix, so people here can also talk with people on a Matrix server that isn't Tin Hat, like a friend's own server. Those servers don't use connection codes: allow one by its name. People on it can then message people here and share rooms with them, end-to-end encrypted as usual. Your own rooms, like General, stay on this server."),
+      h("p.muted", "Tin Hat speaks Matrix, so people here can also talk with people on a Matrix server that isn't Tin Hat, like someone's own server. Those servers don't use connection codes: allow one by its name. People on it can then message people here and share rooms with them, end-to-end encrypted as usual. Your own rooms, like General, stay on this server."),
       !publicMode(c.mode) ? h("p.muted", "Other servers need this one to be reachable from anywhere.") : null,
       c.applying ? h("div.note", "Restarting the chat server to apply a change… (a few seconds)") : null,
       rows.length ? h("div.list", rows) : h("p.small.muted", "No Matrix servers allowed."),

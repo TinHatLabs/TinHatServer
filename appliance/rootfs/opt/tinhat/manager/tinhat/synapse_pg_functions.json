@@ -1,0 +1,23 @@
+{
+ "_about": "The PL/pgSQL functions Synapse's PostgreSQL schema has (pg_dump's text, byte for byte) and its triggers (each definition byte for byte, its table included): a backup's database may hold these and no other function or trigger (dbcheck.py). Read from a Synapse 1.14x database on PostgreSQL 17. On a Synapse bump: `python3 -m tinhat.dbcheck reference <a fresh server's pg_dump -Fc>` and compare; older backups keep these definitions (Synapse never rewrites them), so only add.",
+ "functions": {
+  "check_event_stream_ordering()": "CREATE FUNCTION public.check_event_stream_ordering() RETURNS trigger\n    LANGUAGE plpgsql\n    AS $$\n            BEGIN\n                IF EXISTS (\n                    SELECT 1 FROM events\n                    WHERE events.event_id = NEW.event_id\n                       AND events.stream_ordering != NEW.event_stream_ordering\n                ) THEN\n                    RAISE EXCEPTION 'Incorrect event_stream_ordering';\n                END IF;\n                RETURN NEW;\n            END;\n            $$;\n",
+  "check_partial_state_events()": "CREATE FUNCTION public.check_partial_state_events() RETURNS trigger\n    LANGUAGE plpgsql\n    AS $$\n            BEGIN\n                IF EXISTS (\n                    SELECT 1 FROM events\n                    WHERE events.event_id = NEW.event_id\n                       AND events.room_id != NEW.room_id\n                ) THEN\n                    RAISE EXCEPTION 'Incorrect room_id in partial_state_events';\n                END IF;\n                RETURN NEW;\n            END;\n            $$;\n",
+  "delete_read_write_lock_parent()": "CREATE FUNCTION public.delete_read_write_lock_parent() RETURNS trigger\n    LANGUAGE plpgsql\n    AS $$\nDECLARE\n    new_token TEXT;\n    mode_row_token TEXT;\nBEGIN\n    -- Only update the token in `_mode` if its our token. This prevents\n    -- deadlocks.\n    --\n    -- We shove the token into `mode_row_token`, as otherwise postgres complains\n    -- we're not using the returned data.\n    SELECT token INTO mode_row_token FROM worker_read_write_locks_mode\n        WHERE\n            lock_name = OLD.lock_name\n            AND lock_key = OLD.lock_key\n            AND token = OLD.token\n        FOR UPDATE;\n\n    IF NOT FOUND THEN\n        RETURN NEW;\n    END IF;\n\n    SELECT token INTO new_token FROM worker_read_write_locks\n        WHERE\n            lock_name = OLD.lock_name\n            AND lock_key = OLD.lock_key\n        LIMIT 1 FOR UPDATE SKIP LOCKED;\n\n    IF NOT FOUND THEN\n        DELETE FROM worker_read_write_locks_mode\n            WHERE lock_name = OLD.lock_name AND lock_key = OLD.lock_key AND token = OLD.token;\n    ELSE\n        UPDATE worker_read_write_locks_mode\n            SET token = new_token\n            WHERE lock_name = OLD.lock_name AND lock_key = OLD.lock_key;\n    END IF;\n\n    RETURN NEW;\nEND\n$$;\n",
+  "upsert_read_write_lock_parent()": "CREATE FUNCTION public.upsert_read_write_lock_parent() RETURNS trigger\n    LANGUAGE plpgsql\n    AS $$\nBEGIN\n    INSERT INTO worker_read_write_locks_mode (lock_name, lock_key, write_lock, token)\n        VALUES (NEW.lock_name, NEW.lock_key, NEW.write_lock, NEW.token)\n        ON CONFLICT (lock_name, lock_key)\n        DO UPDATE SET write_lock = NEW.write_lock\n            WHERE OLD.write_lock != NEW.write_lock;\n    RETURN NEW;\nEND\n$$;\n"
+ },
+ "triggers": {
+  "check_event_stream_ordering": "check_event_stream_ordering",
+  "check_partial_state_events": "check_partial_state_events",
+  "delete_read_write_lock_parent_trigger": "delete_read_write_lock_parent",
+  "upsert_read_write_lock_parent_trigger": "upsert_read_write_lock_parent"
+ },
+ "trigger_defs": [
+  "CREATE TRIGGER check_event_stream_ordering BEFORE INSERT OR UPDATE ON public.current_state_events FOR EACH ROW EXECUTE FUNCTION public.check_event_stream_ordering();\n",
+  "CREATE TRIGGER check_event_stream_ordering BEFORE INSERT OR UPDATE ON public.local_current_membership FOR EACH ROW EXECUTE FUNCTION public.check_event_stream_ordering();\n",
+  "CREATE TRIGGER check_event_stream_ordering BEFORE INSERT OR UPDATE ON public.room_memberships FOR EACH ROW EXECUTE FUNCTION public.check_event_stream_ordering();\n",
+  "CREATE TRIGGER check_partial_state_events BEFORE INSERT OR UPDATE ON public.partial_state_events FOR EACH ROW EXECUTE FUNCTION public.check_partial_state_events();\n",
+  "CREATE TRIGGER delete_read_write_lock_parent_trigger AFTER DELETE ON public.worker_read_write_locks FOR EACH ROW EXECUTE FUNCTION public.delete_read_write_lock_parent();\n",
+  "CREATE TRIGGER upsert_read_write_lock_parent_trigger BEFORE INSERT ON public.worker_read_write_locks FOR EACH ROW EXECUTE FUNCTION public.upsert_read_write_lock_parent();\n"
+ ]
+}

@@ -119,3 +119,9 @@
   align-items: center;
   gap: 4px;
 }
+
+/* the add-people picker's dialogs: hints wrap at the picker's width (400 px, the native's) instead of widening the dialog */
+.peopleHint {
+  width: 400px;
+  max-width: 100%;
+}

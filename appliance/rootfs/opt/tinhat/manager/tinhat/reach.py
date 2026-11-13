@@ -283,14 +283,14 @@ def family_lines(o: dict) -> list[str]:
     v4, v6 = f.get("ipv4") or {}, f.get("ipv6") or {}
     if o.get("only_ipv6"):
         return ["The check over IPv4 didn't get through (this server may have no IPv4 connection to the outside); "
-                "over IPv6 friends can reach it. Friends whose internet has no IPv6 may not be able to connect."]
+                "over IPv6 people can reach it. People whose internet has no IPv6 may not be able to connect."]
     if v4.get("ok") and v6 and not v6.get("offline") and not v6.get("ok"):
-        return [f"Over IPv6 ({v6.get('ip') or 'its IPv6 address'}) HTTPS isn't reachable from outside; friends connect "
+        return [f"Over IPv6 ({v6.get('ip') or 'its IPv6 address'}) HTTPS isn't reachable from outside; people connect "
                 "over IPv4 instead (a firewall rule for IPv6 would let them use it)."]
     https4 = ((v4.get("results") or {}).get("tls443") or {}).get("ok")
     https6 = ((v6.get("results") or {}).get("tls443") or {}).get("ok")
     if https6 and not https4 and not v4.get("offline"):
-        return ["Over IPv6 friends can reach this server's HTTPS; over IPv4 they can't yet (below)."]
+        return ["Over IPv6 people can reach this server's HTTPS; over IPv4 they can't yet (below)."]
     return []
 
 
@@ -309,10 +309,10 @@ def summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = N
         out = {**out, "lines": list(out.get("lines") or []) + extra}
     o = outside or {}
     if o.get("only_ipv6") and out.get("level") == "good":
-        out = {**out, "level": "warn", "headline": "Friends with IPv6 can reach your server; friends without it can't yet."}
+        out = {**out, "level": "warn", "headline": "People with IPv6 can reach your server; people without it can't yet."}
     v6 = (o.get("families") or {}).get("ipv6") or {}
     if (ports_rep or {}).get("kind") == "cgnat" and ((v6.get("results") or {}).get("tls443") or {}).get("ok"):
-        out = {**out, "level": "warn", "headline": "Over IPv4 your provider blocks incoming connections; friends with "
+        out = {**out, "level": "warn", "headline": "Over IPv4 your provider blocks incoming connections; people with "
                                                    "IPv6 can still reach your server."}
     return out
 
@@ -329,7 +329,7 @@ def _summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = 
         from . import relay
         return relay.summary(o)
     if o.get("ok"):
-        return {"level": "good", "headline": "Friends outside can reach this server.", "lines": [], "fix": []}
+        return {"level": "good", "headline": "People outside can reach this server.", "lines": [], "fix": []}
     if kind == "cgnat":
         return {"level": "bad", "headline": "Your internet provider doesn't allow incoming connections.",
                 "lines": ["It shares one public address between many homes (\"carrier NAT\"). T-Mobile and Verizon 5G "
@@ -346,8 +346,8 @@ def _summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = 
                          "hosting provider's firewall, or the machine's own). Let these ports in there.")
         level = "warn" if (res.get("tls443") or {}).get("ok") else "bad"
         return {"level": level, "lines": lines, "fix": [],
-                "headline": "Friends outside can chat, but calls from outside may not connect." if level == "warn"
-                else "Friends outside can't reach your server yet."}
+                "headline": "People outside can chat, but calls from outside may not connect." if level == "warn"
+                else "People outside can't reach your server yet."}
     cert = (res.get("tls443") or {}).get("why") == "certificate"
     if cert:
         lines.append("Your server's certificate isn't valid yet. It renews by itself; check again in a few minutes.")
@@ -421,6 +421,6 @@ def _summary(ports_rep: dict | None, outside: dict | None, proxy: dict | None = 
         if name or where:
             lines.append("Your router: " + ", ".join(x for x in (name, where) if x) + ".")
     level = "warn" if (res.get("tls443") or {}).get("ok") else "bad"
-    head = ("Friends outside can chat, but calls from outside may not connect." if level == "warn"
-            else "Friends outside can't reach this server yet.")
+    head = ("People outside can chat, but calls from outside may not connect." if level == "warn"
+            else "People outside can't reach this server yet.")
     return {"level": level, "headline": head, "lines": lines, "fix": fix}

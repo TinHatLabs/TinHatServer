@@ -13,6 +13,7 @@ import { onClientChanged, peekClient } from "./client";
 import { bearerAllowed } from "@/core/bearer";
 import { createLogger } from "@/core/log";
 import { blobType, inertBlob } from "@/core/mediatype";
+import { encryptedNowSync, roomEncryptedForUpload } from "./uploadCrypto";
 
 const log = createLogger("media");
 
@@ -376,10 +377,13 @@ async function probe(blob: Blob, mime: string): Promise<Partial<MediaInfo>> {
  * Upload a file (encrypting it first for E2EE rooms) and build the m.room.message content,
  * matching the native send_attachment: body = file name, info = {mimetype, size, w/h for images
  * (+ video), duration for audio/video}.
+ * `room` (security review round 4, VN-1 class): the room the file goes to — its encryption is decided HERE, after the
+ * probe: the room state OR the crypto store (uploadCrypto.ts; unsure = throws, nothing is uploaded), then a last
+ * synchronous read in the same tick as a plaintext request starts. `encrypt: true` always encrypts.
  */
 export async function uploadFile(
   file: File | Blob,
-  opts: { encrypt: boolean; name?: string; mimetype?: string; onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal },
+  opts: { encrypt: boolean; room?: string; name?: string; mimetype?: string; onProgress?: (loaded: number, total: number) => void; signal?: AbortSignal },
 ): Promise<UploadedMedia> {
   const client = peekClient();
   if (!client) throw new Error("Not signed in");
@@ -393,7 +397,9 @@ export async function uploadFile(
   }
   let body: Blob = file;
   let encFile: Omit<EncryptedFile, "url"> | undefined;
-  if (opts.encrypt) {
+  let encrypt = opts.encrypt;
+  if (!encrypt && opts.room !== undefined) encrypt = (await roomEncryptedForUpload(client, opts.room)) || encryptedNowSync(client, opts.room);
+  if (encrypt) {
     const enc = await encryptAttachment(await file.arrayBuffer());
     body = new Blob([enc.data], { type: "application/octet-stream" });
     encFile = enc.file;
@@ -401,9 +407,9 @@ export async function uploadFile(
   const abortController = new AbortController();
   opts.signal?.addEventListener("abort", () => abortController.abort());
   const res = await client.uploadContent(body, {
-    name: opts.encrypt ? undefined : name,
-    type: opts.encrypt ? "application/octet-stream" : mimetype,
-    includeFilename: !opts.encrypt,
+    name: encrypt ? undefined : name,
+    type: encrypt ? "application/octet-stream" : mimetype,
+    includeFilename: !encrypt,
     abortController,
     progressHandler: (p) => opts.onProgress?.(p.loaded, p.total),
   });

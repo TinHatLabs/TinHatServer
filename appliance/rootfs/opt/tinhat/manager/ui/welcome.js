@@ -21,7 +21,7 @@ function relayHome(st) {
       try {
         const n = await api("/admin/home/relay", { json: { username: user.value.trim(), password: pw.value } });
         form.replaceChildren(h("span.chip.good", h("span.dot"), "Reachable through the Tin Hat relay"),
-          h("p.muted", (n.summary && n.summary.headline) || "Friends outside can reach this server again."));
+          h("p.muted", (n.summary && n.summary.headline) || "People outside can reach this server again."));
       } catch (ex) {
         go.disabled = false;
         go.textContent = "Turn on the Tin Hat relay";
@@ -32,9 +32,9 @@ function relayHome(st) {
     },
   }, h("label.field", h("span", "Admin username"), user), h("label.field", h("span", "Password"), pw), err, h("div.row.wrap", go));
   return h("div.card.stack",
-    h("h2", "Friends outside can't reach this server"),
-    h("p.muted", r.cgnat ? "This home's internet provider doesn't allow incoming connections, so friends outside, and this server's own address, only work through the Tin Hat relay. It's off."
-      : "Friends outside this home can't reach this server. The Tin Hat relay can carry their traffic without opening any ports on the router."),
+    h("h2", "People outside can't reach this server"),
+    h("p.muted", r.cgnat ? "This home's internet provider doesn't allow incoming connections, so people outside, and this server's own address, only work through the Tin Hat relay. It's off."
+      : "People outside this home can't reach this server. The Tin Hat relay can carry their traffic without opening any ports on the router."),
     h("p.small.muted", "Running this server? Sign in with its admin account to turn the relay on. The relay passes traffic on without being able to read it."),
     form);
 }
@@ -67,8 +67,8 @@ async function main() {
     const here = h("div.row", h("span.spin"), h("span.muted", `Checking this device can open ${sn}…`));
     const relayCard = relayHome(st);
     const outside = st.reach && st.reach.at && !relayCard ? h("p.small.muted", st.reach.ok
-      ? `Friends outside this home can reach it (checked ${ago(st.reach.at * 1000)}).`
-      : `Friends outside this home can't reach it yet (checked ${ago(st.reach.at * 1000)}). The server keeps trying by itself; its owner can see why in the dashboard's Network tab, or on the setup page right after setup.`) : null;
+      ? `People outside this home can reach it (checked ${ago(st.reach.at * 1000)}).`
+      : `People outside this home can't reach it yet (checked ${ago(st.reach.at * 1000)}). The server keeps trying by itself; its owner can see why in the dashboard's Network tab, or on the setup page right after setup.`) : null;
     app.replaceChildren(h("div.stack-lg",
       h("div.stack-sm", h("h1", `Welcome to ${st.mode === "domain" ? sn : short}`), h("p.lede", "This is a Tin Hat server — private chat, voice and video for the people on it.")),
       h("div.card.stack",

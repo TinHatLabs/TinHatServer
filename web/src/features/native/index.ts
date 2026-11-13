@@ -21,6 +21,8 @@
 //   (on "loggedOut" by the person) tinhatNative.signedOut({userId}): the app signs its native device out too
 //   appRings() / ringInApp(…) / onRingAnswer(cb)   "rings": the app rings while the page is hidden; a ring answered on
 //                                 the phone → `tinhatnative:call {action: "answer", roomId}` (rings.ts, callwatch.ts)
+//   nativePushHint() / phoneNoSwitchLine(hint)   info.push ("no-play-services": an Android phone without Google Play
+//                                 services): Settings → Notifications' line when the app offers no switch (pushHint.ts)
 //   installTrustBridge()          "trust": cross-sign the device the app set up (pending → check → sign → result;
 //                                 trust.ts + trustGlue.ts, docs/TRUST.md); trustLookupFor() = the Devices "Trust…" sheet
 import { bus } from "@/core/bus";
@@ -38,6 +40,7 @@ export { installWebCallBridge, type WebCallSnapshot } from "./webCall";
 export { installScreenShareBridge, nativeShareOn, nativeShareStart, nativeShareStop } from "./screenShare";
 export { trustLookupFor } from "./trustGlue";
 export { appRings, onRingAnswer, parseRingAnswer, ringInApp } from "./rings";
+export { nativePushHint, phoneNoSwitchLine, type PushHint } from "./pushHint";
 export { DEVICES_FALLBACK, fallbackOffersTrust, fingerprintText, isNativePhoneDevice, trustDevice, trustDoneText, trustResultText, TRUST_WORDS, WAIT_MS, type TrustResult } from "./trust";
 
 // A sign-out the person chose ends the phone's native device of that account too (its calls and notifications);

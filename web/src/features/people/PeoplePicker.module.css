@@ -1,0 +1,139 @@
+/* PeoplePicker.module.css — the add-people picker (the desktop's PeoplePicker.qml). Rows = the space invite
+   popover's results (28 px avatar, 43.2 px rows, radius sm, the invite* colours); a section title above each group. */
+.col {
+  /* the native's PeoplePicker width (gridUnit 22); phones: the sheet's width */
+  width: 400px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 72px;
+  max-height: 300px;
+}
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  padding: 0 8px;
+  text-align: center;
+  color: var(--th-invite-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.section {
+  padding: 6px 4px 2px;
+  color: var(--th-invite-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  font-weight: 700;
+}
+.row {
+  min-height: 43.2px;
+  border-radius: var(--th-radius-sm);
+  cursor: pointer;
+  transition: background-color var(--th-dur) linear;
+}
+.sel {
+  background: var(--th-invite-result-bg-hover);
+}
+.off {
+  cursor: default;
+}
+.inner {
+  min-height: 43.2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+}
+.withNote {
+  /* a row with a wrapped note: the picture beside its first line, not centred under the text */
+  align-items: flex-start;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* the name elides, the server never does: a long display name can't push the outsider's server out of sight */
+.nameLine {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+.name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.server {
+  flex: none;
+  font-weight: 400;
+  color: var(--th-invite-hint-fg);
+}
+.sub {
+  color: var(--th-invite-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.note {
+  color: var(--th-invite-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+  white-space: normal;
+}
+.tag {
+  flex: none;
+  color: var(--th-invite-hint-fg);
+  font-style: italic;
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.anyway {
+  flex: none;
+  padding: 0 6px;
+  color: var(--th-button-ghost-fg);
+  font-weight: 600;
+}
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 4px;
+  color: var(--th-invite-hint-fg);
+  font-size: var(--th-font-size-small);
+  line-height: var(--th-line-small);
+}
+.mineLabel {
+  flex: none;
+}
+.mine {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* phones: rows and the copy button are thumb targets */
+:root[data-ff="mobile"] .row,
+:root[data-ff="mobile"] .inner {
+  min-height: 48px;
+}

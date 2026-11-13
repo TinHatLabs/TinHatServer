@@ -60,6 +60,15 @@ export function sasCancelText(code?: string | null): string {
   }
 }
 
+/**
+ * QA 12.1.11 D11 — the incoming request's note naming the device asking (its display name, else its id; known before
+ * Accept), so an unexpected request can be declined. Blank = the unnamed note. Desktop: sas_policy::incoming_note.
+ */
+export function sasIncomingNote(peer: string): string {
+  const p = peer.trim();
+  return p ? `${p} is asking to verify. Accept to compare emoji.` : "Another device is asking to verify. Accept to compare emoji.";
+}
+
 /** S2 — the waiting note once a QR-capable peer is ready (we do not start on our own). */
 export function sasWaitNote(peer: string): string {
   return `${peer} is ready. On it, choose "Verify by emoji" — in the old Element app, tap "Can't scan?". Or start from here.`;
@@ -79,6 +88,16 @@ export const SAS_VERIFIER_DONE_NOTE = "Verified. Your other device can read your
 export const SAS_INCOMING_TITLE = "Verify the other device";
 /** The no-sas outcome (unchanged wording, bridge.rs drive_verification Ok(None)). */
 export const SAS_NO_SAS_NOTE = "The other device did not offer emoji verification.";
+
+/**
+ * D3 (QA 12.1.11) — does the verify sheet close by itself at this state? Only on the verifier side (`incoming`) at
+ * "done": that side receives no keys, so nothing is left to happen there. Left open it stayed modal, and the next click
+ * elsewhere (Join in the call banner) only closed it. The requester's sheet closes when its keys arrive; "cancelled"
+ * keeps its note and Try again. Desktop: sas_policy::done_closes (same vectors).
+ */
+export function sasDoneCloses(sasState: string, incoming: boolean): boolean {
+  return incoming && sasState === "done";
+}
 
 // ---- F1 — the first device of a brand-new account (docs/VERIFY-SAS.md "First device", 2026-09-29) ----------------
 // Desktop mirror: sas_policy.rs first_device_setup / FIRST_DEVICE_*.

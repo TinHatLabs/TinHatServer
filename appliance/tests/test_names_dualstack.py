@@ -363,7 +363,7 @@ class ReachPerFamily(unittest.TestCase):
         sm = reach.summary({"kind": "direct"}, out)
         self.assertEqual(sm["level"], "warn")
         self.assertIn("without it can't", sm["headline"])
-        self.assertTrue(any("over IPv6 friends can reach it" in x for x in sm["lines"]), sm["lines"])
+        self.assertTrue(any("over IPv6 people can reach it" in x for x in sm["lines"]), sm["lines"])
 
     def test_ipv4_https_fine_but_a_call_port_blocked_is_not_called_an_https_failure(self):
         reach, nm = _reach()

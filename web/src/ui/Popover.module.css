@@ -29,6 +29,7 @@
   right: 0;
   bottom: var(--th-vv-bottom);
   z-index: var(--th-z-popup);
+  outline: none; /* the sheet takes the focus when it opens (a11y pass): the sheet itself draws no ring */
   max-height: 90vh;
   display: flex;
   flex-direction: column;

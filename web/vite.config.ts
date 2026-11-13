@@ -68,6 +68,35 @@ function cspMarker(): Plugin {
   };
 }
 
+// Start-up preloads (web-perf 2026-11-07, share claude/tinhat-web/WEB-PERF-20261107.md). Without them the encryption
+// engine's three files (the rust-crypto chunk, the sync-store worker and the 7.8 MB crypto WebAssembly, ~2 MB
+// compressed) are asked for only after the whole app script has downloaded AND run: on a phone over a slow link the line
+// then sits idle for the ~2 s the script takes to run, and the WebAssembly alone takes ~10 s after that. Preloading them
+// from index.html makes them share the line from the first moment. Each <link> matches the request the app makes later
+// (fetch() of the .wasm = mode cors + same-origin credentials = `as="fetch" crossorigin`; the chunk = modulepreload; the
+// worker script is fetched into the HTTP cache — immutable — that the Worker then reads), so nothing is fetched twice.
+function startPreloads(): Plugin {
+  return {
+    name: "tinhat-start-preloads",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(_html, ctx) {
+        const out = Object.values(ctx.bundle ?? {});
+        const wasm = out.find((o) => o.type === "asset" && /(^|\/)matrix_sdk_crypto_wasm_bg-[^/]*\.wasm$/.test(o.fileName));
+        const crypto = out.find((o) => o.type === "chunk" && o.isDynamicEntry && /[\\/]matrix-js-sdk[\\/]lib[\\/]rust-crypto[\\/]index\.js$/.test(o.facadeModuleId ?? ""));
+        const worker = out.find((o) => o.type === "asset" && /(^|\/)sync\.worker-[^/]*\.js$/.test(o.fileName));
+        if (!wasm || !crypto || !worker) throw new Error("start preloads: the crypto WebAssembly, the rust-crypto chunk or the sync worker is missing from the bundle");
+        return [
+          { tag: "link", attrs: { rel: "modulepreload", crossorigin: true, href: `./${crypto.fileName}` }, injectTo: "head" },
+          { tag: "link", attrs: { rel: "preload", as: "fetch", crossorigin: true, href: `./${worker.fileName}` }, injectTo: "head" },
+          { tag: "link", attrs: { rel: "preload", as: "fetch", crossorigin: true, href: `./${wasm.fileName}` }, injectTo: "head" },
+        ];
+      },
+    },
+  };
+}
+
 export default defineConfig(({ command }) => {
   if (command === "serve" && !API) {
     throw new Error(
@@ -79,7 +108,7 @@ export default defineConfig(({ command }) => {
   const proxy = { "/api": to, "/_matrix": to, "/.well-known/matrix": to, "/livekit": { ...to, ws: true } };
   return {
     base: "./",
-    plugins: [react(), bootScript(), cspMarker()],
+    plugins: [react(), bootScript(), cspMarker(), startPreloads()],
     resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
     optimizeDeps: {
       // The Rust crypto WASM loads itself via new URL("…wasm", import.meta.url): never pre-bundle it.
@@ -92,11 +121,25 @@ export default defineConfig(({ command }) => {
         "matrix-js-sdk/lib/indexeddb-worker.js",
       ],
     },
-    worker: { format: "es" as const },
+    worker: {
+      format: "es" as const,
+      // The sync-store worker needs only the SDK's IndexedDB backend, but sync-accumulator.js imports one constant from
+      // models/event.js, and the SDK doesn't declare itself free of side effects: without this the worker carried the
+      // whole SDK (client, WebRTC calls, MatrixRTC, sliding sync… 706 KB, 212 KB compressed, fetched on every cold
+      // start). Inside worker bundles only, the SDK's modules count as side-effect free, so the worker keeps exactly
+      // the code it runs (web-perf 2026-11-07).
+      rolldownOptions: { treeshake: { moduleSideEffects: (id: string) => !/[\\/]matrix-js-sdk[\\/]lib[\\/]/.test(id) } },
+    },
     build: {
       target: "es2022",
       sourcemap: true,
       chunkSizeWarningLimit: 4096,
+      // Everything the start runs (the entry's whole static import graph, rolldown's "$initial" tag) stays ONE chunk +
+      // ONE stylesheet, as before the lazy parts existed: left to itself rolldown cut the start into ~40 shared chunks
+      // and ~10 stylesheets, and on a phone's slow link the render-blocking CSS then shares the line with all of them
+      // (the "Starting up" card painted ~1 s later). Only the lazy parts (ui/lazy.tsx) and the existing dynamic
+      // imports are separate files (web-perf 2026-11-07).
+      rolldownOptions: { output: { codeSplitting: { groups: [{ name: "app", tags: ["$initial" as const] }] } } },
       // a script or WebAssembly asset imported with ?url (the AudioWorklets, the noise suppressor) is ALWAYS a file: Vite
       // inlines small assets as data: URLs, which the app's CSP (script-src 'self') refuses — the 3 KB level-tap worklet
       // was one (security review 2026-10-26, M3). Other small assets keep the default rule.

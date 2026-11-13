@@ -2,6 +2,7 @@
 from other servers, with quotas that survive a restart (docs/NETWORK-RULES.md). Runs without Synapse: its few imports
 are stood in for, and the store / account data are small fakes."""
 import asyncio
+from collections.abc import Mapping
 import json
 import os
 import sys
@@ -856,6 +857,140 @@ class ReviewRound4ON1(Base):
         r.db.outcome = broken
         self.arrive(r, e)
         self.assertEqual(self.rm.calls, [], "the accepted invite stays")
+
+
+class _Frozen(Mapping):
+    """A mapping that isn't a dict: what Synapse's frozen account data is (immutabledict)."""
+    def __init__(self, d):
+        self.d = d
+
+    def __getitem__(self, k):
+        return self.d[k]
+
+    def __iter__(self):
+        return iter(self.d)
+
+    def __len__(self):
+        return len(self.d)
+
+
+class FrozenAccountData(unittest.TestCase):
+    """A stored rule whose extra key holds an object reads the same through Synapse's frozen dicts as from JSON."""
+
+    def test_a_nested_extra_object_keeps_the_rule(self):
+        doc = _Frozen({"v": 1, "remote": "anyone", "extra": _Frozen({"a": _Frozen({"b": (1, "x")})})})
+        self.assertEqual(tinhat_network.parse_rule(doc), "anyone")
+
+    def test_a_plain_nested_extra_object_keeps_the_rule(self):
+        self.assertEqual(tinhat_network.parse_rule({"v": 1, "remote": "anyone", "extra": {"a": 1}}), "anyone")
+
+    def test_a_non_finite_number_inside_a_frozen_object_is_still_nobody(self):
+        doc = _Frozen({"v": 1, "remote": "anyone", "extra": _Frozen({"a": (1.0, _Frozen({"b": float("inf")}))})})
+        self.assertEqual(tinhat_network.parse_rule(doc), "nobody")
+
+    def test_a_too_deep_frozen_object_is_still_nobody(self):
+        deep = 1
+        for _ in range(40):
+            deep = _Frozen({"a": deep})
+        self.assertEqual(tinhat_network.parse_rule(_Frozen({"v": 1, "remote": "anyone", "extra": deep})), "nobody")
+
+    def test_something_else_inside_is_still_nobody(self):
+        self.assertEqual(tinhat_network.parse_rule({"v": 1, "remote": "anyone", "extra": object()}), "nobody")
+
+
+class TransientOutcomeLookup(ReviewRound4ON1):
+    """A failed outcome lookup is retried, so a transient database error doesn't skip that one invite for good."""
+
+    def deliver(self, r, e):
+        """The invite arrives; the retry is only queued (the test decides when it runs)."""
+        state = {("m.room.member", k[1]): v for k, v in self.api.members.items() if k[0] == e.room_id}
+        run(r.on_new_event(e, state))
+
+    def drain_all(self):
+        while self.api.background:
+            self.api.drain()
+
+    def fails(self, r, times):
+        real, left = r.db.outcome, [times]
+
+        def flaky(eid):
+            if left[0] > 0:
+                left[0] -= 1
+                raise tinhat_network.sqlite3.OperationalError("database is locked")
+            return real(eid)
+        r.db.outcome = flaky
+
+    def test_a_refused_invite_is_declined_after_a_transient_failure(self):
+        r = self.make()
+        self.rule(ME, "nobody")
+        self.fails(r, 2)
+        self.deliver(r, self.redacted("$red"))
+        self.drain_all()
+        self.assertEqual(len(self.rm.calls), 1, "declined once the database answered")
+        self.assertEqual(self.api.slept[:2], [5, 30])
+
+    def test_an_accepted_invite_is_never_undone_by_a_transient_failure(self):
+        r = self.make()
+        self.rule(ME, "anyone")
+        e = self.redacted("$fine", sender=FRIEND, room="!p:friend.example")
+        self.assertIsNone(reason(run(r.check_event_for_spam(e))))
+        self.rule(ME, "nobody")
+        self.fails(r, 1)
+        self.deliver(r, e)
+        self.drain_all()
+        self.assertEqual(self.rm.calls + self.api.memberships, [], "the recorded decision stands")
+
+    def test_it_gives_up_when_the_database_stays_down(self):
+        r = self.make()
+        self.rule(ME, "nobody")
+        self.fails(r, 99)
+        self.deliver(r, self.redacted("$red"))
+        self.drain_all()
+        self.assertEqual(self.rm.calls + self.api.memberships, [], "not decided without knowing the outcome")
+        self.assertEqual(self.api.slept, list(tinhat_network.LOOKUP_RETRY_S))
+
+    def test_a_join_during_the_wait_is_never_left(self):
+        r = self.make()
+        self.rule(ME, "nobody")
+        e = self.redacted("$red")
+        self.fails(r, 1)
+        self.deliver(r, e)
+        self.assertEqual(self.rm.calls, [], "only queued so far")
+        self.api.members[(self.ROOM, ME)] = types.SimpleNamespace(event_id="$join", content={"membership": "join"})
+        self.drain_all()
+        self.assertEqual(self.rm.calls, [], "the join stays a join")
+
+    def test_an_invite_answered_during_the_wait_is_not_decided(self):
+        """A delayed decision would write its pending row over a newer invite's (review): nothing decided, no row."""
+        r = self.make()
+        self.rule(ME, "anyone")
+        e = self.redacted("$red", sender=FRIEND, room="!p:friend.example")
+        self.fails(r, 1)
+        self.deliver(r, e)
+        self.api.members[("!p:friend.example", ME)] = types.SimpleNamespace(event_id="$leave", content={"membership": "leave"})
+        decided = []
+        real = r.decide
+
+        async def spy(ev):
+            decided.append(ev)
+            return await real(ev)
+        r.decide = spy
+        self.drain_all()
+        self.assertEqual(decided, [], "answered meanwhile: no decision, no pending row")
+        self.assertEqual(r.db.db.execute("SELECT COUNT(*) FROM pending").fetchone()[0], 0)
+
+    def test_a_failure_in_the_retry_is_contained(self):
+        r = self.make()
+        self.rule(ME, "nobody")
+        e = self.redacted("$red")
+        self.fails(r, 1)
+        self.deliver(r, e)
+
+        async def boom(*_):
+            raise RuntimeError("boom")
+        r.decide = boom
+        self.drain_all()  # must not raise out of the background job
+        self.assertEqual(self.rm.calls, [])
 
 
 class HostOf(unittest.TestCase):

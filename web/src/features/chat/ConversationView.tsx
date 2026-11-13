@@ -25,7 +25,7 @@ import { HAS_CHAT_SAMPLES, sampleEvents } from "./lib/samples";
 import { dayLabel, sameDay } from "./lib/format";
 import { useRoomTimeline } from "./useRoomTimeline";
 import { registerView, useChatStore } from "./store";
-import { canPin, copyText, deleteLocal, redactMessage, retryLocal, saveMedia, sendReceipt, setPinned, toggleReaction } from "./actions";
+import { canPin, copyText, deleteLocal, redactMessage, retryLocal, markReadPosition, saveMedia, setPinned, toggleReaction } from "./actions";
 import { shareLinkNow } from "@/core/server";
 import s from "./Conversation.module.css";
 
@@ -167,7 +167,7 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     for (let i = evs.length - 1; i >= 0; i--) {
       const id = evs[i].getId();
       if (id && !id.startsWith("~")) {
-        sendReceipt(roomId, evs[i]);
+        markReadPosition(roomId, evs[i]);
         return;
       }
     }
@@ -722,6 +722,30 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
   const [reactRect, setReactRect] = useState<Rect | null>(null);
   const msgMenuItems = useRegistry("messageMenu");
 
+  const onLogKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const box = e.currentTarget;
+    const t = e.target as HTMLElement;
+    const line = t.matches("[data-msg-line]") ? t : null;
+    if (t !== box && !line) return; // keys inside a message's own controls are theirs
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation(); // the list consumed it: no window-level Escape (back to the bottom, close a pane) as well
+      composer.current?.focus();
+      return;
+    }
+    const lines = [...box.querySelectorAll<HTMLElement>("[data-msg-line]")];
+    if (!lines.length) return;
+    const i = line ? lines.indexOf(line) : -1;
+    const last = lines.length - 1;
+    const to =
+      e.key === "ArrowUp" ? (i < 0 ? last : Math.max(0, i - 1)) : e.key === "ArrowDown" ? (i < 0 ? last : Math.min(last, i + 1)) : e.key === "Home" ? 0 : e.key === "End" ? last : -1;
+    if (to < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    lines[to].focus({ preventScroll: true });
+    lines[to].scrollIntoView({ block: "nearest" });
+  };
   const handlers: BubbleHandlers = useMemo(
     () => ({
       onReact: (row, key) => void toggleReaction(roomId, row, key),
@@ -773,7 +797,19 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
             stopAnim();
           }}
         >
-          <div ref={content} className={s.content} role="log" aria-label="Messages" aria-relevant="additions">
+          <div
+            ref={content}
+            className={s.content}
+            role="log"
+            aria-label="Messages"
+            aria-relevant="additions"
+            // keyboard (a11y pass; the desktop's message list does the same): the list is a Tab stop of its own (links and
+            // controls inside messages keep theirs); ↑/↓ walk the messages (↑ from the list = the newest), Home/End the
+            // ends, Enter / Menu key / Shift+F10 on a message opens its action menu (ChatBubble), Escape goes back to the
+            // composer
+            tabIndex={0}
+            onKeyDown={onLogKey}
+          >
             {!tl.canBack && tl.known && rows.length > 0 && <div className={s.startHeader}>This is the start of the conversation</div>}
             {rows.map((row, i) => {
               const prev = i > 0 ? rows[i - 1] : null;

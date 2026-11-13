@@ -3,11 +3,13 @@
 // at the top of the room list "You're in <room>'s call on <device> · Pad · Join". Greyed with its one line when it can't
 // work: "Verify this device to use Pad." (→ Devices & security), "Verify <device> to use Pad.", "Update Tin Hat on
 // <device> to use Pad." (no `pad1` cap: an older Tin Hat, another client, or Pad turned off there).
+import { useEffect, useState } from "react";
 import { openRoom, openSettings, startCall, toast } from "@/core/bus";
 import { useRoomName } from "@/core/matrix";
 import { Button, GlowButton, cx, useIsMobile } from "@/ui";
 import { whyText, type PadTarget } from "@/features/calls/pad/rules";
 import { deviceName, openPad, useDeviceName, useMyCallsElsewhere, usePadDevices } from "./runtime";
+import { keptPick, nextCall, shownCall } from "./order";
 import s from "./Entry.module.css";
 
 /** The first ready target, else the first one (its `why` greys the button). */
@@ -76,11 +78,19 @@ export function PadReasonLine({ targets }: { targets: PadTarget[] }) {
   return <div className={s.reason}>{reason}</div>;
 }
 
-/** The bar at the top of the room list: "You're in <room>'s call on <device> · Pad · Join" (the newest such call). */
+/** The bar at the top of the room list: "You're in <room>'s call on <device> · Pad · Join" — a call the Pad can drive
+ *  first, then the newest (order.ts). With more than one such call, "1/2" steps to the next one (QA 12.1.11 D2: the bar
+ *  used to show only the newest, so a call on a device the Pad can't drive hid the one it can). */
 export function PadRoomListBar() {
   const calls = useMyCallsElsewhere();
   const mobile = useIsMobile();
-  const first = calls[0];
+  const [picked, setPicked] = useState("");
+  const rooms = calls.map((c) => c.room);
+  const roomsKey = rooms.join("\n");
+  // a picked call that ended is forgotten: a later call in that room never takes the bar back by itself
+  useEffect(() => setPicked((p) => keptPick(roomsKey ? roomsKey.split("\n") : [], p)), [roomsKey]);
+  const at = shownCall(rooms, picked);
+  const first = calls[at];
   const t = first ? pickTarget(first.targets) : null;
   const roomName = useRoomName(first?.room ?? null);
   const dev = useDeviceName(t?.device ?? "");
@@ -91,6 +101,17 @@ export function PadRoomListBar() {
         You're in <b>{roomName || "a room"}</b>'s call on <b>{dev}</b>
       </button>
       <div className={s.barButtons}>
+        {calls.length > 1 && (
+          <Button
+            text={`${at + 1}/${calls.length}`}
+            icon="go-next-symbolic"
+            tip={`You're in ${calls.length} calls on your other devices — show the next one`}
+            aria-label={`Show your next call (${at + 1} of ${calls.length})`}
+            className={cx(s.padBtn, s.compact)}
+            data-testid="pad-bar-next"
+            onClick={() => setPicked(nextCall(rooms, first.room))}
+          />
+        )}
         <PadButton roomId={first.room} targets={first.targets} compact />
         <GlowButton text="Join" onClick={() => startCall(first.room)} />
       </div>

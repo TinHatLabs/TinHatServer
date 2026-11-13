@@ -21,6 +21,8 @@ export interface ShellState {
   /** 10.8: the nav column's drawer — "navcol", or "emergency" in the emergency arrangement (LAYOUT.md §7.12; the
    *  shell reads it from the last solve) */
   drawerId?: string;
+  /** two-pane band (docs/TWO-PANE.md): the view's size overrides from twoPaneSizes(), absent outside the band */
+  sizes?: Record<string, { fixed: number }>;
 }
 
 export type DockView = {
@@ -30,6 +32,8 @@ export type DockView = {
   maximized: "call" | null;
   forceCollapse: string[];
   drawer: { open: string | null };
+  /** LAYOUT.md §6.1 `sizes`: present only in the two-pane band (twoPaneSizes) */
+  sizes?: Record<string, { fixed: number }>;
 };
 
 export function dockView(s: ShellState): DockView {
@@ -41,7 +45,50 @@ export function dockView(s: ShellState): DockView {
     maximized: call && s.fill ? "call" : null,
     forceCollapse: s.corner ? ["navcol"] : [],
     drawer: { open: s.drawerShown ? (s.drawerId ?? "navcol") : null },
+    ...(s.sizes ? { sizes: s.sizes } : {}),
   };
+}
+
+// ---- the two-pane band (docs/TWO-PANE.md; the desktop's Main.qml twoPaneSizes, same numbers) ------------------------
+// Tablets, a foldable's inner screen, small windows: a dock host narrower than TWO_PANE_BELOW layout units is two panes,
+// the list (rail + rooms) and the room; the room info panel already overlays there (Classic's collapse step). The list
+// gives the room more width: the rooms column is drawn at TWO_PANE_ROOMS_W instead of its stored width, as a device-local
+// view override (LAYOUT.md §6.2 — never saved, never synced). Only a docked fixed column wider than that is narrowed (a
+// column you made narrower yourself stays as it is); never in edit mode (it edits the stored sizes).
+export const TWO_PANE_BELOW = 1024;
+export const TWO_PANE_ROOMS_W = 248;
+const TWO_PANE_COL = "roomscol";
+
+/** sc(): a layout length at the UI scale (LAYOUT.md §7.2: fdiv(v × unitPm, 1000)). */
+const scaled = (v: number, unitPm: number) => Math.floor((v * unitPm) / 1000);
+
+/** Is a dock host of this width (layout px) in the two-pane band. */
+export function inTwoPane(hostW: number, unitPm = 1000): boolean {
+  return hostW > 0 && hostW < scaled(TWO_PANE_BELOW, unitPm);
+}
+
+type Node = { t?: unknown; id?: unknown; size?: unknown; c?: unknown };
+function findNode(n: unknown, id: string, depth = 0): Node | null {
+  if (!n || typeof n !== "object" || depth > 32) return null;
+  const o = n as Node;
+  if (o.id === id && (o.t === "col" || o.t === "row")) return o;
+  if (Array.isArray(o.c)) for (const k of o.c) {
+    const hit = findNode(k, id, depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** The view's `sizes` for the two-pane band, or undefined (outside the band, edit mode, no such column, a column
+ *  already at or under the two-pane width, a column whose width is not fixed). */
+export function twoPaneSizes(form: unknown, hostW: number, editing: boolean, unitPm = 1000): Record<string, { fixed: number }> | undefined {
+  if (editing || !inTwoPane(hostW, unitPm)) return undefined;
+  const root = form && typeof form === "object" ? (form as { root?: unknown }).root : undefined;
+  const col = findNode(root, TWO_PANE_COL);
+  const size = col?.size as { fixed?: unknown } | undefined;
+  const fixed = size && typeof size.fixed === "number" ? size.fixed : null;
+  if (fixed === null || fixed <= TWO_PANE_ROOMS_W) return undefined;
+  return { [TWO_PANE_COL]: { fixed: TWO_PANE_ROOMS_W } };
 }
 
 /** The main column's height — the call stage's page (its seam share, its caps): the host minus the theme's margins. */

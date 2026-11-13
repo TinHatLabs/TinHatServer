@@ -265,7 +265,7 @@ function backupsCard() {
         h("ol.small",
           h("li", "Right before you move, make a fresh copy, so nothing written since the last backup gets left behind: ", busy ? null : fresh, " (or Back up now, if you'll move the USB drive)."),
           h("li", "On the new computer's setup page, choose Restore from a backup: the downloaded copy, or the USB drive plugged into it."),
-          h("li", "Switch this computer off when the new one says so. Friends sign in as before, with their own passwords. Your admin password is the one this server has when you make the copy."))));
+          h("li", "Switch this computer off when the new one says so. People sign in as before, with their own passwords. Your admin password is the one this server has when you make the copy."))));
     }
     card.replaceChildren(...parts);
     if (busy) poll();
@@ -399,7 +399,7 @@ function moveCard() {
     h("ul.small",
       h("li", "Chat pauses while the server moves: a few minutes, longer with a long history. A copy of everything is made first; if something goes wrong before people can use the new address, the server goes back to how it was, under its old name. After that, this card says what to fix."),
       h("li", `Everyone is signed out. They sign in at ${r.to} with the same username and password, then unlock with their Security Key, and their messages are back. Without the Security Key, older encrypted messages can't be read (new ones work).`),
-      h("li", "The move gives everyone a new encryption identity under the same Security Key, so friends who had verified each other do it once more."),
+      h("li", "The move gives everyone a new encryption identity under the same Security Key, so people who had verified each other do it once more."),
       h("li", r.provider === "proxy"
         ? `Apps that still use ${r.from} reach this server only while something sends ${r.from} here; everyone is told to sign in at ${r.to}.`
         : `${r.from} keeps answering for a while: apps that still use it reach this server and are told the new address.`)),
@@ -439,7 +439,7 @@ function moveCard() {
 
   function friendsNote(to) {
     const text = `Our Tin Hat server moved to ${to}. Open Tin Hat and sign in at ${to} with the same username and password, then unlock with your Security Key: your messages come back.`;
-    return h("div.stack-sm", h("div.k", "Tell your friends"), h("p.small", text),
+    return h("div.stack-sm", h("div.k", "Tell people"), h("p.small", text),
       h("div.row.wrap", h("button.btn.ghost.small", { type: "button", onclick: () => copy(text, "Message") }, "Copy the message")));
   }
 
@@ -475,14 +475,14 @@ function moveCard() {
       }
       if (d.relay) {
         parts.push(h("p.small.muted", "Your server can move to a domain you own, with everyone's accounts, rooms and messages."),
-          h("div.note", "This server is reached through the Tin Hat relay, which carries tinhat.me names only. Your own domain needs your router to let friends reach this server directly (ports 443, 7881 and 7882), or your own reverse proxy in front of it. The Network tab shows what your router allows."));
+          h("div.note", "This server is reached through the Tin Hat relay, which carries tinhat.me names only. Your own domain needs your router to let people reach this server directly (ports 443, 7881 and 7882), or your own reverse proxy in front of it. The Network tab shows what your router allows."));
       } else {
         const start = h("button.btn.ghost.small", { type: "button", onclick: () => { open = true; render(d); } },
           p.status === "done" || d.mode === "domain" ? "Move to another domain…" : "Move to your own domain…");
         parts.push(h("p.small.muted", d.mode === "domain"
           ? "Move this server to another domain you own, with everyone's accounts, rooms and messages."
           : `Move this server from ${d.server_name} to a domain you own (like chat.example.com), with everyone's accounts, rooms and messages. ` +
-            (d.mode === "anywhere" ? "Nothing then depends on tinhat.me." : "Friends can then reach it from anywhere.")),
+            (d.mode === "anywhere" ? "Nothing then depends on tinhat.me." : "People can then reach it from anywhere.")),
         h("div.row.wrap", start));
       }
       const held = (d.former || []).filter((f) => !f.released);

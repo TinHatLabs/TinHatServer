@@ -25,27 +25,36 @@ import type { FeatureModule } from "@/core/registry";
 import { bus, openWindow } from "@/core/bus";
 import { getFormFactor } from "@/core/device";
 import { getCryptoStatus, useVerificationStore } from "@/core/matrix";
-import { SettingsWindow } from "./SettingsWindow";
 import { PANE_IDS, SETTINGS_WINDOW, openSettingsAt } from "./store";
-import { ProfilePane, resetProfileDrafts } from "./panes/ProfilePane";
-import { AppearancePane } from "./panes/AppearancePane";
-import { AudioPane } from "./panes/AudioPane";
-import { CallsPane } from "./panes/CallsPane";
-import { NotificationsPane } from "./panes/NotificationsPane";
-import { SecurityPane } from "./panes/SecurityPane";
-import { AboutPane } from "./panes/AboutPane";
-import { PrivacyPane } from "./panes/PrivacyPane";
-import { OverlayPane } from "./panes/OverlayPane";
-import { InvitesPane } from "./panes/InvitesPane";
 import { VerifyDeviceHost, resetVerifyDialog } from "./VerifyDeviceDialog";
 import { OverlayBoundary } from "@/ui";
+import { lazyPart } from "@/ui/lazy";
 import { SettingsSheets } from "./sheets";
-import { IconGallery } from "./IconGallery";
+import { SettingsWindow } from "./SettingsWindow";
+
+// web-perf 2026-11-07: the Settings panes and the icon gallery are their own chunks (ui/lazy.tsx), fetched at the first
+// idle moment after sign-in — not part of the start. The window itself stays in the start chunk: on a phone it draws its
+// own header (phoneHeader: false), so it must be able to show its back button even if a pane's chunk can't be fetched.
+let profileMod: typeof import("./panes/ProfilePane") | null = null;
+const ProfilePane = lazyPart("ProfilePane", () => import("./panes/ProfilePane").then((m) => ((profileMod = m), m.ProfilePane)));
+const AppearancePane = lazyPart("AppearancePane", () => import("./panes/AppearancePane").then((m) => m.AppearancePane));
+const AudioPane = lazyPart("AudioPane", () => import("./panes/AudioPane").then((m) => m.AudioPane));
+const CallsPane = lazyPart("CallsPane", () => import("./panes/CallsPane").then((m) => m.CallsPane));
+const NotificationsPane = lazyPart("NotificationsPane", () => import("./panes/NotificationsPane").then((m) => m.NotificationsPane));
+const SecurityPane = lazyPart("SecurityPane", () => import("./panes/SecurityPane").then((m) => m.SecurityPane));
+const AboutPane = lazyPart("AboutPane", () => import("./panes/AboutPane").then((m) => m.AboutPane));
+const PrivacyPane = lazyPart("PrivacyPane", () => import("./panes/PrivacyPane").then((m) => m.PrivacyPane));
+const OverlayPane = lazyPart("OverlayPane", () => import("./panes/OverlayPane").then((m) => m.OverlayPane));
+const InvitesPane = lazyPart("InvitesPane", () => import("./panes/InvitesPane").then((m) => m.InvitesPane));
+const IconGallery = lazyPart("IconGallery", () => import("./IconGallery").then((m) => m.IconGallery));
+/** Sign-out: drop the unsaved Profile drafts (they live in the Profile pane's chunk; not loaded yet = no drafts). */
+const resetProfileDrafts = () => profileMod?.resetProfileDrafts();
 import { startNotifyEngine } from "./notify";
 import { ensureQuietRules } from "./quietrules";
 import { probeOperator, resetInvites, useInvites } from "./invites";
 import { resetProfile } from "./profile";
 import { shipPreviousLog, startLogPersistence, wipeLogStore } from "./logs";
+import { startMemLog } from "@/core/memlog";
 import { installThemeSync } from "./themeSync";
 import { ThemeEditorHost } from "./themes/editor/ThemeEditor";
 import { cancel as closeThemeEditor } from "./themes/editor/editorStore";
@@ -213,6 +222,8 @@ export const feature: FeatureModule = {
         void shipPreviousLog();
       },
     });
+    // 12.1.12: the [mem] line every 60 s, like the desktop (core/memlog.ts; Chromium only, WEB-EXCEPTIONS.md)
+    r.onReady.add({ id: "settings-memlog", order: 45, run: () => startMemLog() });
     r.onReady.add({ id: "settings-dev", order: 60, run: () => devHooks() });
 
     bus.on("loggedOut", () => {

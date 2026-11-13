@@ -133,7 +133,7 @@ async function homeReach(sn, slot, tries = 4) {
     }
   }
   slot.replaceChildren(h("span.chip.warn", h("span.dot"), "This device can't open it from here"),
-    h("span.muted", " Either friends outside can't reach the server yet (see below), or your router doesn't loop traffic back into the home (\"NAT loopback\" or \"hairpin\"; turn it on in the router's settings). A phone on mobile data shows which."));
+    h("span.muted", " Either people outside can't reach the server yet (see below), or your router doesn't loop traffic back into the home (\"NAT loopback\" or \"hairpin\"; turn it on in the router's settings). A phone on mobile data shows which."));
   let n = 0;
   slot._later = setInterval(async () => {
     if (!slot.isConnected || ++n > 10) return clearInterval(slot._later);

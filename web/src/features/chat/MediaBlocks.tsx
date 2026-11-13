@@ -86,18 +86,28 @@ export function ImageBlock({ m, maxW, mine, onOpen }: { m: MediaRef; maxW: numbe
   );
 }
 
+/** A video this browser can't decode (an iPhone's HEVC .MOV where there is no HEVC decoder): the card says so and
+ *  keeps Save (the desktop's ChatBubble.qml says the same words). */
+export const VIDEO_CANT_PLAY = "Can't play this video here — save it to watch it.";
+
 export function VideoCard({ m, maxW }: { m: MediaRef; maxW: number }) {
-  const [state, setState] = useState<"poster" | "loading" | "playing">("poster");
+  const [state, setState] = useState<"poster" | "loading" | "playing" | "failed">("poster");
   const [url, setUrl] = useState<string | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(m.w && m.h ? { w: m.w, h: m.h } : null);
   const vref = useRef<HTMLVideoElement>(null);
   const alive = useRef(true);
-  useEffect(
-    () => () => {
+  // set on every mount: a remount (StrictMode's effect replay) used to leave it false, so Play hung on "Downloading…"
+  useEffect(() => {
+    alive.current = true;
+    return () => {
       alive.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
+  // the browser can't decode it: back to the card, with the reason and Save (never a dead black box)
+  const cantPlay = () => {
+    setState("failed");
+    setUrl(null);
+  };
   useEffect(() => () => {
     if (url && !m.localUrl) URL.revokeObjectURL(url);
   }, [url, m.localUrl]);
@@ -114,9 +124,10 @@ export function VideoCard({ m, maxW }: { m: MediaRef; maxW: number }) {
       setState("poster");
     }
   };
-  const meta = state === "loading" ? "Downloading…" : [fmtSize(m.size), m.duration ? fmtDuration(m.duration) : ""].filter(Boolean).join("  ·  ");
+  const meta = state === "loading" ? "Downloading…" : state === "failed" ? VIDEO_CANT_PLAY : [fmtSize(m.size), m.duration ? fmtDuration(m.duration) : ""].filter(Boolean).join("  ·  ");
   return (
-    <div className={s.videoCard} style={{ width: w, height: h }}>
+    // aria-live: "Downloading…" and the can't-play line are announced (the card stays mounted through every state)
+    <div className={s.videoCard} style={{ width: w, height: state === "failed" ? undefined : h }} data-failed={state === "failed" ? "" : undefined} aria-live="polite">
       {state === "playing" && url ? (
         <video
           ref={vref}
@@ -124,7 +135,13 @@ export function VideoCard({ m, maxW }: { m: MediaRef; maxW: number }) {
           src={url}
           autoPlay
           playsInline
-          onLoadedMetadata={(e) => setDims({ w: e.currentTarget.videoWidth || 16, h: e.currentTarget.videoHeight || 9 })}
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget;
+            // no picture: the video track's codec isn't decodable here (Chromium drops it and plays the sound only)
+            if (!v.videoWidth || !v.videoHeight) return cantPlay();
+            setDims({ w: v.videoWidth, h: v.videoHeight });
+          }}
+          onError={cantPlay}
           onClick={(e) => {
             e.stopPropagation();
             const v = e.currentTarget;
@@ -137,9 +154,13 @@ export function VideoCard({ m, maxW }: { m: MediaRef; maxW: number }) {
           <Icon name="video-x-generic" size={32} color="var(--th-bubble-video-icon)" />
           <div className={s.fileCol}>
             <span className={s.fileName}>{elideMiddle(m.name, 60)}</span>
-            {meta && <span className={s.fileMeta}>{meta}</span>}
+            {meta && (
+              <span className={s.fileMeta} data-cant-play={state === "failed" ? "" : undefined}>
+                {meta}
+              </span>
+            )}
           </div>
-          <ToolButton iconName="media-playback-start" tip="Play here" disabled={state === "loading"} onClick={(e) => (e.stopPropagation(), void play())} />
+          {state !== "failed" && <ToolButton iconName="media-playback-start" tip="Play here" disabled={state === "loading"} onClick={(e) => (e.stopPropagation(), void play())} />}
           <ToolButton iconName="document-save-symbolic" tip="Save as…" onClick={(e) => (e.stopPropagation(), void saveMedia(m))} />
         </div>
       )}
@@ -230,7 +251,9 @@ export function AudioPlayer({ m, maxW, mine }: { m: MediaRef; maxW: number; mine
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
           onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)}
-          onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && setDur(e.currentTarget.duration)}
+          // the file's own length wins once known; a 0 / unknown one (an Ogg voice note in Chromium) keeps the event's (desktop: duration > 0)
+          onLoadedMetadata={(e) => Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0 && setDur(e.currentTarget.duration)}
+          onDurationChange={(e) => Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0 && setDur(e.currentTarget.duration)}
         />
       )}
     </div>

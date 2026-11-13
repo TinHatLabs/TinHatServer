@@ -29,6 +29,10 @@ const DEBUG =
   (typeof location !== "undefined" && /twdebug/.test(location.hash));
 
 const SCRUB: Array<[RegExp, string]> = [
+  // a list of 16+ small decimal numbers ("[12,34,…]", "[12, 34, …]", trailing comma, cut off before the "]", or
+  // spread over several lines): how key bytes print (JSON of a byte array; the desktop's libwebrtc key derivation).
+  // Same rule as the desktop's diagnostics::redact.
+  [/(?:\[\s*)?\b\d{1,3}\b(?:\s*,\s*\d{1,3}\b){15,}(?:\s*,)?(?:\s*\])?/g, "[<redacted>]"],
   [/(access_token|refresh_token|accessToken|refreshToken|password|new_password|token|client_secret|key)(["']?\s*[:=]\s*["']?)[^"'\s&,}]+/gi, "$1$2<redacted>"],
   [/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer <redacted>"],
   [/syt_[A-Za-z0-9_]+/g, "syt_<redacted>"],

@@ -19,6 +19,7 @@ import { defineWidget, type PartProps, type WidgetCtx } from "../impl";
 import { useRisingEdge } from "../motion";
 import { nameNow, usePerson, useRoomLabel } from "../names";
 import { NO_HISTORY, retryHistory, useCallHistory, type HistoryView } from "./historyCache";
+import { lastCallRoomText } from "./lastRoom";
 import { friendsByCalls } from "./order";
 import s from "./CallStats.module.css";
 
@@ -426,8 +427,7 @@ function LastCall({ h, now, ctx }: { h: NonNullable<History["last"]>; now: numbe
           ))}
         </span>
         <span className={s.lastText}>
-          {namesLine(ids, h.room)} · {fmtDur(h.myMs)}
-          {room ? ` · ${room}` : ""}
+          {namesLine(ids, h.room)} · {fmtDur(h.myMs)} · {lastCallRoomText(room, h.room)}
         </span>
       </div>
     </>

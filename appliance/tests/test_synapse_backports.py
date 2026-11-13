@@ -39,6 +39,13 @@ GUARD = [f"{GUARD_MODULE}.BuiltInRuleActions.test_one_byte_over_the_limit_is_ref
          f"{GUARD_MODULE}.BuiltInRuleActions.test_oversized_action_on_a_built_in_rule_is_refused",
          f"{GUARD_MODULE}.BuiltInRuleActions.test_a_refusal_keeps_the_existing_override"]
 RATE_MODULE = "tests.rest.client.test_tinhat_push_rule_ratelimit"
+MENTIONS_MODULE = "tests.rest.client.test_tinhat_frozen_mentions"
+MENTIONS = [f"{MENTIONS_MODULE}.FrozenMentions.{t}" for t in ("test_empty_mentions", "test_room_mention", "test_user_ids")]
+# 0009, ours: pass on stock 1.145 without a module (pydantic answered 400) and with one, fail with upstream's 0008 alone
+MENTIONS_ERRORS = [f"{MENTIONS_MODULE}.{c}.{m}" for c in ("FrozenMentions", "WithoutAModule")
+                   for m in ("test_a_non_string_user_id_stays_refused", "test_user_ids_as_a_string_stays_refused")]
+# upstream's own test: stock raises out of it (a trial ERROR, not a FAIL); MENTIONS is the failing-first proof
+UPSTREAM_MENTIONS = "tests.events.test_validator.EventValidatorTestCase.test_validate_new_with_mentions_succeeds_even_when_frozen"
 RATE = [f"{RATE_MODULE}.PushRuleWriteRate.{t}" for t in (
     "test_rapid_writes_are_refused_and_store_nothing", "test_custom_rules_and_deletes_count_too",
     "test_one_user_is_not_slowed_by_another", "test_writes_work_again_after_the_wait",
@@ -61,6 +68,7 @@ REGRESSION = {
     "GHSA-rgv2-84w7-5j9p": ["tests.rest.client.test_sendtodevice.SendToDeviceTestCase.test_remote_spoofed_sender"],
     "built-in rule actions (0006, ours)": GUARD,
     "push rule write rate (0007, ours)": RATE,
+    "frozen m.mentions (0008, d8b4ffdf2)": MENTIONS,
 }
 # the classes those live in (their other tests must pass on both: only the regression tests may differ)
 CLASSES = ["tests.http.test_site.SynapseRequestTestCase",
@@ -69,17 +77,21 @@ CLASSES = ["tests.http.test_site.SynapseRequestTestCase",
            "tests.federation.test_federation_server.TimestampToEventTests",
            "tests.rest.client.test_rooms.CreateRoomRemoteInviteTestCase",
            "tests.rest.client.test_push_rule_attrs", "tests.handlers.test_worker_lock",
-           "tests.handlers.test_tinhat_workerlock_cap", "tests.rest.client.test_sendtodevice", GUARD_MODULE, RATE_MODULE]
+           "tests.handlers.test_tinhat_workerlock_cap", "tests.rest.client.test_sendtodevice", GUARD_MODULE, RATE_MODULE,
+           "tests.events.test_validator", MENTIONS_MODULE]
 # every module the series touches, and the media code Pillow 13 runs under (TINHAT_TEST_SYNAPSE_FULL=1)
 SUITES = ["tests.http.test_site", "tests.federation", "tests.handlers.test_federation", "tests.handlers.test_room_policy",
           "tests.handlers.test_worker_lock", "tests.handlers.test_tinhat_workerlock_cap",
           "tests.storage.test_event_federation", "tests.rest.client.test_rooms", "tests.rest.client.test_push_rule_attrs",
           "tests.rest.client.test_sendtodevice", "tests.push", "tests.config", "tests.replication", "tests.api",
-          "tests.media", "tests.rest.media", "tests.rest.client.test_media", GUARD_MODULE, RATE_MODULE]
+          "tests.media", "tests.rest.media", "tests.rest.client.test_media", GUARD_MODULE, RATE_MODULE,
+          "tests.events", "tests.rest.client.test_third_party_rules", MENTIONS_MODULE]
 
 
 # push_rule.py after upstream's 0004, without our 0006
 UPSTREAM_PUSH_RULE = "f4779493cb9025168d6fde8f6ed0d97fa59b3d0b4a59ef681543a63affe40942"
+# events/validator.py after upstream's 0008, without our 0009
+UPSTREAM_VALIDATOR = "96fadaf02d93908ccc7aa790de589c7ef1a7ba9cb75a1250be49dbf6aa13cace"
 
 
 def sha(b: bytes) -> str:
@@ -120,7 +132,7 @@ class Pins(unittest.TestCase):
         names = [n for _, n in manifest(SRC_SERIES, "SERIES")]
         self.assertEqual(sha((SRC_SERIES / "0004-ghsa-fp53-push-rule-limits.patch").read_bytes()),
                          "583a68220d543b3d98fdaf0ce19036cdc8a169daec544a33a89157ce7f948b95")
-        self.assertEqual(names[-2:], ["0006-tinhat-builtin-push-rule-action-size.patch", "0007-tinhat-push-rule-write-rate.patch"])
+        self.assertEqual(names[5:7], ["0006-tinhat-builtin-push-rule-action-size.patch", "0007-tinhat-push-rule-write-rate.patch"])
 
     def test_the_series_never_touches_tests_or_docs_in_the_image(self):
         for _, _, p in manifest(SRC_SERIES, "FILES"):
@@ -142,11 +154,12 @@ class Pins(unittest.TestCase):
         for name, (_, hashes) in pins.items():
             self.assertEqual(len(set(hashes)), 2, f"{name}: one wheel per processor (x86_64, aarch64)")
 
-    def test_compose_and_provision_name_th2(self):
+    def test_compose_and_provision_name_th3(self):
         compose = (HERE / "rootfs" / "opt" / "tinhat" / "compose.yaml").read_text()
-        self.assertIn("image: tinhat/synapse:v1.145.0-th2\n", compose)
+        self.assertIn("image: tinhat/synapse:v1.145.0-th3\n", compose)
         prov = (HERE / "provision.sh").read_text()
         self.assertNotIn("v1.145.0-th1", prov + compose)
+        self.assertNotIn("v1.145.0-th2", prov + compose)
         self.assertIn("check_backports.py", prov)
         self.assertIn("check_todevice_fix.py", prov)
 
@@ -298,7 +311,12 @@ class RealSynapse(unittest.TestCase):
         cls.series["norate"] = without("series-norate", "0007-tinhat-push-rule-write-rate.patch")
         files = cls.series["norate"] / "FILES"
         files.write_text("".join(ln + "\n" for ln in files.read_text().splitlines() if not ln.endswith(" rest/client/push_rule.py")))
-        for kind in ("stock", "noguard", "norate", "patched"):
+        # th3 without 0009: events/validator.py pinned at upstream's 0008 result
+        cls.series["no0009"] = without("series-no0009", "0009-tinhat-mentions-validator-errors.patch")
+        files = cls.series["no0009"] / "FILES"
+        ours = next(a for _, a, p in manifest(SRC_SERIES, "FILES") if p == "events/validator.py")
+        files.write_text(files.read_text().replace(ours, UPSTREAM_VALIDATOR))
+        for kind in ("stock", "noguard", "norate", "no0009", "patched"):
             d = cls.base / kind
             d.mkdir()
             shutil.copytree(cls.installed, d / "synapse", ignore=shutil.ignore_patterns("__pycache__"))
@@ -307,6 +325,7 @@ class RealSynapse(unittest.TestCase):
             shutil.copy(TEST_SERIES / "test_tinhat_workerlock_cap.py", d / "tests" / "handlers" / "test_tinhat_workerlock_cap.py")
             shutil.copy(TEST_SERIES / "test_tinhat_builtin_rule_actions.py", d / "tests" / "rest" / "client" / "test_tinhat_builtin_rule_actions.py")
             shutil.copy(TEST_SERIES / "test_tinhat_push_rule_ratelimit.py", d / "tests" / "rest" / "client" / "test_tinhat_push_rule_ratelimit.py")
+            shutil.copy(TEST_SERIES / "test_tinhat_frozen_mentions.py", d / "tests" / "rest" / "client" / "test_tinhat_frozen_mentions.py")
             if kind != "stock":  # exactly the Dockerfile's two steps
                 assert todevice.main(["x", str(d / "synapse" / "handlers" / "devicemessage.py")]) == 0
                 assert ab.main(["x", str(d / "synapse"), str(cls.series[kind])]) == 0
@@ -346,7 +365,7 @@ class RealSynapse(unittest.TestCase):
         r, failed, errors, passed = self.trial("stock", CLASSES)
         print("STOCK FAILED", sorted(failed))
         # assertion failures only: a test that errors out (a missing helper, a broken setup) proves nothing
-        self.assertEqual(errors, set(), r.stdout[-4000:])
+        self.assertEqual(errors, {UPSTREAM_MENTIONS}, r.stdout[-4000:])
         self.assertEqual(failed, want, r.stdout[-4000:])
         self.assertTrue(passed, "the rest of those classes ran and passed")
 
@@ -356,6 +375,12 @@ class RealSynapse(unittest.TestCase):
         self.assertEqual((failed, errors), (set(GUARD), set()), r.stdout[-4000:])
         self.assertEqual(len(passed), 4, r.stdout[-2000:])
 
+    def test_without_0009_only_the_malformed_mentions_fail(self):
+        """th3 without 0009: a bad user_ids is a 500 or accepted; every good m.mentions still works."""
+        r, failed, errors, passed = self.trial("no0009", [MENTIONS_MODULE, "tests.events.test_validator"])
+        self.assertEqual((failed, errors), (set(MENTIONS_ERRORS), set()), r.stdout[-4000:])
+        self.assertTrue({UPSTREAM_MENTIONS, *MENTIONS} <= passed, r.stdout[-2000:])
+
     def test_without_our_rate_limit_only_its_refusals_fail(self):
         """th2 without 0007: rapid writes all land; a sign-in rewrite, a person at a normal pace and reads work."""
         r, failed, errors, passed = self.trial("norate", [RATE_MODULE])
@@ -363,7 +388,7 @@ class RealSynapse(unittest.TestCase):
         self.assertEqual(len(passed), 3, r.stdout[-2000:])
 
     def test_patched_passes_them(self):
-        want = {t for ts in REGRESSION.values() for t in ts}
+        want = {t for ts in REGRESSION.values() for t in ts} | {UPSTREAM_MENTIONS}
         r, failed, errors, passed = self.trial("patched", CLASSES)
         self.assertEqual(failed | errors, set(), r.stdout[-4000:])
         self.assertTrue(want <= passed, sorted(want - passed))

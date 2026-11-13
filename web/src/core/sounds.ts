@@ -7,6 +7,7 @@
 //   startRing() / stopRing()                     // incoming call (pref snd.ring + snd.ring.variant)
 //   previewSound("notify-3")                     // Settings previews; clicking the playing one stops it
 //   setCallAudioSession(true|false)              // REACH §4: "auto" right before a call, "ambient" after
+//   setRecordingAudioSession(true|false)         // voice notes: "play-and-record" while recording (a call wins)
 //   playClip(url | blob, {channel, maxMs, onEnded}) → ClipHandle   // A5.8: join-sound previews, the profile
 //                                                // card's join sound, the soundboard's local playback
 //   setUiSink(deviceId)                          // the calls engine: local sounds play where the call plays
@@ -96,11 +97,13 @@ function audioSession(): AudioSessionLike | null {
 }
 
 let callSession = false;
+/** voice notes (docs/VOICE-NOTES.md §4): "play-and-record" while a voice note records — never over a call's "auto" */
+let recordSession = false;
 
 function applySession(): void {
   const as = audioSession();
   if (!as) return;
-  const want: SessionType = callSession ? "auto" : "ambient";
+  const want: SessionType = callSession ? "auto" : recordSession ? "play-and-record" : "ambient";
   try {
     if (as.type !== want) as.type = want;
   } catch (e) {
@@ -111,6 +114,13 @@ function applySession(): void {
 /** The calls engine: true right before a call joins (inside the click), false once the call is fully over. */
 export function setCallAudioSession(active: boolean): void {
   callSession = active;
+  applySession();
+}
+
+/** The voice-note recorder: true while it records. Off puts "ambient" back only when no call is active (the call's
+ *  "auto" wins either way: a late cleanup never demotes a call). */
+export function setRecordingAudioSession(active: boolean): void {
+  recordSession = active;
   applySession();
 }
 

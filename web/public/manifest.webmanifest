@@ -1,7 +1,7 @@
 {
   "name": "Tin Hat",
   "short_name": "Tin Hat",
-  "description": "Tin Hat — chat, voice and video with your friends, in your browser.",
+  "description": "Tin Hat — chat, voice and video with the people you know, in your browser.",
   "id": "./",
   "start_url": "./",
   "scope": "./",

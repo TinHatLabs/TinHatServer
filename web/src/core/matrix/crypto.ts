@@ -38,6 +38,7 @@ import {
   SAS_NO_SAS_NOTE,
   SAS_VERIFIER_DONE_NOTE,
   sasCancelText,
+  sasIncomingNote,
   sasStartPolicy,
   sasWaitNote,
   type SasStart,
@@ -573,7 +574,7 @@ async function peerName(client: MatrixClient, deviceId: string | undefined): Pro
   try {
     const me = client.getSafeUserId();
     const map = await client.getCrypto()!.getUserDeviceInfo([me]);
-    return map.get(me)?.get(deviceId)?.displayName || deviceId;
+    return map.get(me)?.get(deviceId)?.displayName?.trim() || deviceId; // a blank name = its id (= the desktop)
   } catch {
     return deviceId;
   }
@@ -935,7 +936,13 @@ function drive(client: MatrixClient, req: VerificationRequest) {
     }
     switch (phaseOf(req)) {
       case VerificationPhase.Requested:
-        if (!req.initiatedByMe) vstate("waiting", "Another device is asking to verify. Accept to compare emoji.");
+        if (!req.initiatedByMe) {
+          vstate("waiting", sasIncomingNote(""));
+          // QA 12.1.11 D11: then name the device asking (its device list entry; known before Accept)
+          void peerName(client, req.otherDeviceId).then((p) => {
+            if (active.req === req && phaseOf(req) === VerificationPhase.Requested && p) vset({ sasPeer: p, sasNote: sasIncomingNote(p) });
+          });
+        }
         break;
       case VerificationPhase.Ready:
         if (!readyHandled) {

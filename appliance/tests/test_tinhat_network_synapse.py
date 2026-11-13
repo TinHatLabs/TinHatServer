@@ -123,6 +123,18 @@ class RedactedInvite(unittest.FederatingHomeserverTestCase):
         stored = self.get_success(self.store.get_event(eid, allow_rejected=True))
         self.assertTrue(stored.internal_metadata.is_soft_failed(), "soft-failed by check_event_for_spam")
 
+    def test_a_frozen_nested_extra_keeps_the_rule(self):
+        import collections.abc
+        import tinhat_network
+        api = self.hs.get_module_api()
+        user = self.register_user("frozen", "pass")
+        self.get_success(self.store.add_account_data_for_user(user, tinhat_network.RULE_TYPE,
+                                                              {"v": 1, "remote": "anyone", "extra": {"a": {"b": [1]}}}))
+        got = self.get_success(api.account_data_manager.get_global(user, tinhat_network.RULE_TYPE))
+        self.assertIsInstance(got["extra"], collections.abc.Mapping)
+        self.assertNotIsInstance(got["extra"], dict)  # the point of this test: Synapse froze it
+        self.assertEqual(tinhat_network.parse_rule(got), "anyone")
+
     def test_control_an_allowed_redacted_invite_stays(self):
         """Not over-blocking: rule "anyone" keeps the (redacted) invite."""
         me = self.local("me", "anyone")
@@ -172,16 +184,19 @@ class InRealSynapse(unittest.TestCase):
 
     def test_the_trial_run_is_clean_when_every_case_passes(self):
         names = ("test_a_redacted_invite_is_declined", "test_control_a_whole_invite_is_soft_failed",
-                 "test_control_an_allowed_redacted_invite_stays")
+                 "test_control_an_allowed_redacted_invite_stays", "test_a_frozen_nested_extra_keeps_the_rule")
         if all(self.result(n) == "OK" for n in names):
             self.assertEqual(self.run_.returncode, 0, self.out[-3000:])
-            self.assertIn("PASSED (successes=3)", self.out)
+            self.assertIn("PASSED (successes=4)", self.out)
 
     def test_redacted_invite_declined(self):
         self.assertEqual(self.result("test_a_redacted_invite_is_declined"), "OK")
 
     def test_control_whole_invite_soft_failed(self):
         self.assertEqual(self.result("test_control_a_whole_invite_is_soft_failed"), "OK")
+
+    def test_frozen_nested_extra_keeps_the_rule(self):
+        self.assertEqual(self.result("test_a_frozen_nested_extra_keeps_the_rule"), "OK")
 
     def test_control_allowed_redacted_invite_stays(self):
         self.assertEqual(self.result("test_control_an_allowed_redacted_invite_stays"), "OK")

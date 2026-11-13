@@ -4,7 +4,7 @@
 #   - backports/ (apply_backports.py, the list in backports/SERIES): GHSA-6wjm, -27p5, -qcjr, -r66v, -95fh, -fp53
 #     (1.157.2) and GHSA-8q93 (1.152.1), upstream's own changes, plus 0006, our size limit on the actions of built-in
 #     push rules (upstream's GHSA-fp53 fix leaves them out), and 0007, our per-user rate limit on push rule writes;
-#     every file pinned before and after;
+#     0008, upstream's fix for m.mentions on a frozen event (1.154.0); every file pinned before and after;
 #   - requirements-pins.txt: Pillow 13.0.0 and msgpack 1.2.4 (what upstream moved to in 1.163.2 / 1.164.1), by hash.
 # Upgrading Synapse to 1.164.1 or later replaces this image with the stock one again (the patches refuse any other code),
 # unless upstream still lacks 0006's or 0007's limit: see docs/SYNAPSE-PATCHES.md.

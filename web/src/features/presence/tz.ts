@@ -1,5 +1,5 @@
 // tz.ts — REACH A7 (2026-09-28: "You can have timezone not be secret. It can be opt out."): the time zone
-// Friends' clocks shows, in the global account data `dev.tinhat.presence_tz` = {share, tz, auto, v: 1}.
+// People's clocks shows, in the global account data `dev.tinhat.presence_tz` = {share, tz, auto, v: 1}.
 //
 //   Opt-OUT, unlike presence: a device that finds the key absent (after the first NETWORK sync, never from a cached
 //   copy) writes {share: true, tz: <this device's IANA zone>, auto: true, v: 1} itself.

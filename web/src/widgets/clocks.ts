@@ -1,4 +1,4 @@
-// clocks.ts — Friends' clocks' rules (contract WIDGETS.md §15, vectors testvectors/widgets/clocks/*): the rows (who,
+// clocks.ts — People's clocks' rules (contract WIDGETS.md §15, vectors testvectors/widgets/clocks/*): the rows (who,
 // in which order, whose row is yours, day or night, another day), the header's spread ("PT · ET +3 h"), the zone
 // labels, and the automatic time-zone writes (opt-out since 2026-09-28: sharing starts ON). Pure: the apps turn
 // an IANA zone into its current UTC offset with their own time-zone data (web Intl, desktop QTimeZone) and format a

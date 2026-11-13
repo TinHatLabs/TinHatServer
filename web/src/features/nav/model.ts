@@ -21,6 +21,7 @@ import { inviterServerHere, onClientChanged, peekClient, pickVia, serverPart } f
 import { getPref, onPrefChange, setPref } from "@/core/prefs";
 import { EMPTY_DM_STRIP, dmStrip, type DmStrip, type DmStripRoom } from "./dmstrip";
 import { adjustedUnread } from "./rollup";
+import { appBadgeCount, globalBadge } from "./badge";
 import { rosterCounts } from "@/features/calls/callrules";
 import { callerMembership, onMemberProbe } from "@/features/calls/memberprobe";
 
@@ -625,21 +626,15 @@ export function buildNav(c: MatrixClient, activeKey: string): NavSnapshot {
 
   // per-room facts + rows. A5.3: every rollup sums what the rows show (settings-adjusted, spaces skipped)
   const rowsById = new Map<string, RoomRow>();
-  let total = 0;
-  let unreadRooms = 0;
   const facts = joined.map((r) => {
     const row = rowFor(c, r, "join", dms, rules, now);
     rowsById.set(r.roomId, row);
     const adj = row.isSpace ? 0 : row.unread;
-    total += adj;
-    if (adj > 0) unreadRooms++;
     return { id: r.roomId, isSpace: row.isSpace, parented: parented.has(r.roomId), dm: row.dm, favourite: row.favourite, adj, hl: !row.isSpace && !row.muted && row.highlight };
   });
   const invRows = invited.map((r) => rowFor(c, r, "invite", dms, rules, now));
   // A5.1: a pending DM invite counts 1 on People (and in the global badge / app badge, A5.10)
   const dmInvites = invRows.filter((r) => r.dm && !r.isSpace).length;
-  total += dmInvites;
-  unreadRooms += dmInvites;
 
   const spaces: SpaceEntry[] = [];
   for (const m of META_SPACES) {
@@ -718,6 +713,9 @@ export function buildNav(c: MatrixClient, activeKey: string): NavSnapshot {
 
   // global list (bridge.rs rooms_json order ≈ sort_rooms)
   const globalRooms = sortRooms([...facts.filter((f) => !f.isSpace).map((f) => rowsById.get(f.id)!), ...invRows.filter((r) => !r.isSpace)]);
+  // A5.10: the app badge, the same rule as the push worker's set and the desktop's taskbar / dock badge (badge.ts)
+  const unreadRooms = appBadgeCount(globalRooms);
+  // the corner / global badge over the same rows (badge.ts globalBadge = the desktop's app_badge::global_badge)
 
   // REACH §1: the DM strip over ALL joined + invited rooms, whatever space is active
   const stripRooms: DmStripRoom[] = [];
@@ -737,7 +735,7 @@ export function buildNav(c: MatrixClient, activeKey: string): NavSnapshot {
     rooms: sortRooms(rows),
     globalRooms,
     activeLabel,
-    globalBadge: total === 0 ? "" : total > 99 ? "99+" : String(total),
+    globalBadge: globalBadge(globalRooms),
     roomSpace,
     invitedSpaceKeys: invitedSpaces.map((s) => s.key),
     dmStrip: dmStrip(stripRooms),

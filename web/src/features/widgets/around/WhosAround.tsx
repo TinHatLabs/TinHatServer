@@ -308,7 +308,7 @@ function Body({ model: m, ctx }: PartProps<AroundModel>) {
       {g.total === 0 && (
         <div className={s.empty}>
           <span>Nobody's around right now</span>
-          <span className={s.emptyHint}>Friends who share their status show up here.</span>
+          <span className={s.emptyHint}>People who share their status show up here.</span>
         </div>
       )}
       {g.playing.length > 0 && (

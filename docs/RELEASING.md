@@ -94,6 +94,24 @@ refused, and the newest *signed* version among the sources wins.
    for a release with a new image while 0.3.0/0.3.1 servers may be out there (above).
 5. The download page (tinhat.dev) follows: its version chips and "What's new" read the release; check the copy too.
 
+### The Pad state's format (`api/pad/state.json`, since 0.3.16)
+The API reads this file **fail closed** (a file it can't load refuses every Pad token), so a release that changes its
+format must still roll back cleanly:
+- `v` is the format a reader must understand (`2` since 0.3.14). Additive changes (a new top-level key, a new field in
+  an entry) keep `v: 2`: older readers ignore them, and drop new top-level keys on their next write, so a newer
+  release treats a missing key of its own as empty.
+- A new `v` is written only when the update's runner can roll it back: `updater.pad_guarded(snapshots)` is true when
+  the newest snapshot has `pad/guard.json` (0.3.16+ runners). From an older runner, the new release keeps writing
+  `v: 2` for that update and migrates on the next one.
+- What the runner does: the snapshot keeps one copy of the file + the guard; a rollback stops the failed release's API
+  first, then keeps the live file when its own API loads it (**K**: mutes made during the update stay) or moves it
+  aside as `state.json.from-<version>-<time>` and puts the copy back (**R**: a format it can't read, or damage).
+- The load rules exist in the API (`padstate.mjs`) and the manager (`updater.pad_problem`); both run
+  `api/tinhat-api/test/vectors/padstate-load.json`. Change both, or a test fails.
+- Owner backups carry the file; a restore takes it only when this release's API loads it (else it is left out with a
+  log line: no person mutes, instead of every Pad token refused). A release with a new `v` keeps reading `v: 2` for
+  restores of older backups.
+
 ## aiohttp and its wheels
 The manager, the names service and the relay run on a pinned aiohttp (Debian 13's python3-aiohttp has advisories
 Debian won't fix: M15), not on the operating system's, which stays installed as the fallback.

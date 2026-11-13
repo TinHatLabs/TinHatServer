@@ -2,6 +2,7 @@
 // cleanup (CUI-14), volume re-apply after join (CUI-165), push-to-talk key (CUI-155), quit confirm
 // (CUI-163), "pulled you aside" toast (CUI-164), the phone's minimised call pill, and the devices
 // menu opened from outside the call bar (header gear → bus "openCallDevicesMenu").
+import { chordEndsHold, pressStartsHold, pttTextFocus } from "../calls/pttChord";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { useBus, type BusEvents } from "@/core/bus";
@@ -81,20 +82,29 @@ export function CallEffects() {
   // focus; auto-repeat ignored
   useEffect(() => {
     if (!inCall || !pushToTalk) return;
-    let held = false;
+    // the same key rules as the engine's listener (calls/pttChord.ts)
+    let held: string | null = null;
     const down = (e: KeyboardEvent) => {
-      if (!isPtt(e) || e.repeat || held) return;
-      held = true;
-      act("pttHold")(true);
+      const ptt = isPtt(e);
+      if (ptt && !e.repeat && held === null) {
+        const name = eventKeyName(e) ?? "";
+        if (pressStartsHold(name, pttTextFocus())) {
+          held = name;
+          act("pttHold")(true);
+        }
+      } else if (chordEndsHold(held, ptt, e.repeat)) {
+        held = null;
+        act("pttHold")(false);
+      }
     };
     const up = (e: KeyboardEvent) => {
-      if (!isPtt(e) || !held) return;
-      held = false;
+      if (!isPtt(e) || held === null) return;
+      held = null;
       act("pttHold")(false);
     };
     const blur = () => {
-      if (held) {
-        held = false;
+      if (held !== null) {
+        held = null;
         act("pttHold")(false);
       }
     };

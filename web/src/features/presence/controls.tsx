@@ -27,12 +27,12 @@ import s from "./presence.module.css";
 export const PROMISE = [
   "Off by default. While it's off, Tin Hat shares no status about you with anyone.",
   "On: people who share a room with you see Online, Away or In a call. Never a last-seen time, never what you're doing.",
-  "Off again: the server stops sharing it at once, and it leaves friends' screens within about 20 seconds. Nothing is kept.",
+  "Off again: the server stops sharing it at once, and it leaves other people's screens within about 20 seconds. Nothing is kept.",
 ] as const;
 export const SMALL_PRINT = "Messages, typing and read receipts are separate and work as before. Other Matrix apps you use may report your status on their own.";
 export const POPOVER_OFF = "Off — nobody sees your status.";
 export const POPOVER_ON = "On — people you share a room with see Online, Away or In a call.";
-export const QUESTION = "Let friends see when you're online? Only Online, Away or In a call — you can turn it off any time.";
+export const QUESTION = "Let others see when you're online? Only Online, Away or In a call — you can turn it off any time.";
 
 // ---- the switch -----------------------------------------------------------------------------------------------
 
@@ -92,7 +92,7 @@ export function YourStatusSection() {
 // ---- Settings → Privacy "Time zone" (REACH A7) -------------------------------------------------------------------
 
 export const TZ_SWITCH = "Share my time zone";
-export const TZ_HINT = "Friends see your local time in Friends' clocks.";
+export const TZ_HINT = "Others see your local time in People's clocks.";
 
 export function TimeZoneSection() {
   const t = useTzStore();
@@ -293,7 +293,7 @@ export function StatusPicker() {
       <ConfirmDialog
         open={!!pending}
         onClose={() => setPending(null)}
-        dialogTitle="Show your status to friends?"
+        dialogTitle="Share your status with people?"
         message="This turns on sharing."
         confirmText="Turn on"
         onCancelled={() => setPending(null)}

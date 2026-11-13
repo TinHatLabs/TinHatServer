@@ -46,7 +46,7 @@ export interface PresenceRow {
 export interface PresenceStore {
   /** GET /api/presence: mxid → row (absent = no dot) */
   users: Record<string, PresenceRow>;
-  /** REACH A7: mxid → IANA zone (GET ?tz=1, only while a Friends' clocks widget wants it) */
+  /** REACH A7: mxid → IANA zone (GET ?tz=1, only while a People's clocks widget wants it) */
   zones: Record<string, string>;
   /** last successful read (ms) */
   okAt: number;
@@ -310,10 +310,10 @@ function armExpiry(r: Reader): void {
   }, MAP_KEEP_MS + 50);
 }
 
-// ---- A7: who wants the zones (a shown Friends' clocks widget) ---------------------------------------------------------
+// ---- A7: who wants the zones (a shown People's clocks widget) ---------------------------------------------------------
 
 let zonesWanted = 0;
-/** A Friends' clocks widget is shown: the reader asks for the zones (`?tz=1`) until the returned release is called. */
+/** A People's clocks widget is shown: the reader asks for the zones (`?tz=1`) until the returned release is called. */
 export function wantZones(): () => void {
   zonesWanted++;
   if (zonesWanted === 1) void readNow();

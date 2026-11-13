@@ -50,7 +50,7 @@ import { createFedResolver } from "./fedresolve.mjs";
 import { DEVICE_RE, MXID_RE, parseIdentity, portShapedConnection } from "./identity.mjs";
 import { createPadState, padKey } from "./padstate.mjs";
 import { enumIs, isAudioTrack, isNormalMuteRestriction, mayPublishMic, normalMutePermission } from "./callmute.mjs";
-import { callModerationRoles, decideCallModeration } from "./moderation.mjs";
+import { callModerationRoles, decideCallModeration, plessCreator } from "./moderation.mjs";
 
 export const CALLTOKEN = Object.freeze({
     MAX_BODY: 16 * 1024,
@@ -66,6 +66,19 @@ export const CALLTOKEN = Object.freeze({
     PAD_TTL_S: 300,             // a Pad Mic / Camera token: 5 minutes to join (LiveKit refreshes a live connection's token)
     PAD_PER_ACCOUNT: 6,         // Pad connections (Watch + Mic + Camera, live or a token handed out) of one account in one call
     MUTE_SWEEP_MS: 10_000,      // the person-mute enforcement in rooms with a mute in force (arrivals)
+    PER_USER_PER_MIN: 240,      // token requests per account, every route and address (one account spread over many
+                                // addresses; PER_CLIENT_PER_MIN covers one address): 429 for that account, never the room
+    LOOKUPS_PER_SIGNIN_MIN: 60, // Synapse lookups for one sign-in (the Pad / Watch routes look up every time), counted
+                                // BEFORE the shared budget: one account's spam is a 429 for it, never everyone's
+    // PAD-5's flood bound for mute records (launch-gate 2026-11-12): who may mute is worked out from the room's parent
+    // links (space states + link history read from the homeserver). Kept per room, keyed by the room's parent-link,
+    // power-level and create event ids: reused for ROLE_FRESH_MS; space states and history reads are kept as long.
+    // Each room may make ROLE_READS_PER_WINDOW homeserver reads per ROLE_WINDOW_MS; past that, the room's last good
+    // roles for the SAME key serve up to ROLE_STALE_MS old. Only a cold, changed or expired room fails closed then.
+    ROLE_FRESH_MS: 10_000,
+    ROLE_STALE_MS: 60_000,
+    ROLE_WINDOW_MS: 60_000,
+    ROLE_READS_PER_WINDOW: 600, // ~4 worst-case decisions (32 space states + 128 history reads each)
 });
 
 /** The LiveKit identity of a Watch connection (Pad Watch, WATCH-LEASE/DESIGN.md §1.3): `<mxid>:<device>~watch`. Not `#`:
@@ -455,8 +468,17 @@ export function createCallToken(deps) {
     // no token carries the person attributes and Pad Mic / Camera is refused (security review round 3, PAD-3)
     const rotated = deps.rotated !== false;
     const perClient = new RateLimit(CALLTOKEN.PER_CLIENT_PER_MIN, 60_000, now);
+    const perUser = new RateLimit(CALLTOKEN.PER_USER_PER_MIN, 60_000, now);
+    /** The per-account limit (PAD-5 flood ruling): true = a 429 was sent (to this account only). */
+    const userLimited = (res, user) => {
+        if (perUser.hit(user)) return false;
+        res.set("Retry-After", String(perUser.retryAfter(user)));
+        send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins for this account, try again shortly" });
+        return true;
+    };
     const lookupsClient = new RateLimit(CALLTOKEN.LOOKUPS_PER_CLIENT_MIN, 60_000, now);
     const lookupsGlobal = new RateLimit(CALLTOKEN.LOOKUPS_GLOBAL_MIN, 60_000, now);
+    const lookupsSignin = new RateLimit(CALLTOKEN.LOOKUPS_PER_SIGNIN_MIN, 60_000, now);
     const users = new Map();     // sha256(access token) -> {user|null, exp}
     const inflight = new Map();  // "u:"+key | "r:"+room -> Promise
 
@@ -481,7 +503,7 @@ export function createCallToken(deps) {
         // fresh (the Watch route, which signs by itself: no second check by lk-jwt; Astra design round 2 #2): Synapse is
         // asked now, never a cached answer whose life the caller's expires_in set
         return once(`${fresh ? "f" : "u"}:${key}`, async () => {
-            if (!lookupsClient.hit(ip) || !lookupsGlobal.hit("all")) throw new Error("busy");
+            if (!lookupsSignin.hit(key) || !lookupsClient.hit(ip) || !lookupsGlobal.hit("all")) throw new Error("busy");
             const r = await hs.get(`/_matrix/federation/v1/openid/userinfo?access_token=${encodeURIComponent(o.access_token)}`);
             if (r.ok && typeof r.body?.sub === "string" && serverOf(r.body.sub) === serverName) {
                 const life = o.expires_in > 0 ? Math.min(CALLTOKEN.USER_TTL_MS, o.expires_in * 1000) : CALLTOKEN.USER_TTL_MS;
@@ -505,7 +527,7 @@ export function createCallToken(deps) {
         const hit = users.get(key);
         if (hit && hit.exp > now()) return hit.user;
         return once(`u:${key}`, async () => {
-            if (!lookupsClient.hit(ip) || !lookupsGlobal.hit("all")) throw new Error("busy");
+            if (!lookupsSignin.hit(key) || !lookupsClient.hit(ip) || !lookupsGlobal.hit("all")) throw new Error("busy");
             const r = await federation.userinfo(o.matrix_server_name, o.access_token);
             const user = r && serverOf(r.sub) === o.matrix_server_name ? r.sub : null;
             const life = user ? (o.expires_in > 0 ? Math.min(CALLTOKEN.USER_TTL_MS, o.expires_in * 1000) : CALLTOKEN.USER_TTL_MS) : CALLTOKEN.BAD_TTL_MS;
@@ -606,6 +628,7 @@ export function createCallToken(deps) {
                 if (on && !local && !ROOM_ID_RE.test(room)) { log("[calltoken] refused: not a room id (remote caller)"); return refuse(res, "not-member"); }
                 user = local ? await localUser(o, ip) : await remoteUser(o, ip);
                 if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
+                if (on && userLimited(res, user)) return undefined;
                 // MSC4195: the member it claims to be must be the caller (lk-jwt's own rule for /get_token)
                 if (r.msc4195 && r.claimed_user_id !== user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
                 if (on && !(local && isOwnConnTestRoom(room, user))) {  // (the connection test's scratch room: this caller's own)
@@ -868,6 +891,71 @@ export function createCallToken(deps) {
      *  moderate_calls permission and a HIGHER rank, never above the room's power levels): anyone can write the state
      *  event from any Matrix client, so its sender is held to the same rule as the API route. Throws when the room (or a
      *  space that governs it) can't be read. */
+    const linkEvents = new Map();  // parent-link history events by id (immutable), for roomMuteSet's readEvent
+    // PAD-5 flood bound (CALLTOKEN.ROLE_*): kept reads and the per-room budget
+    const spaceStates = new Map();  // space id -> {v, exp}: a governing space's state
+    const linkClient = new Map();   // "room event" -> {v, exp}: a link history event in client form (shows a redaction)
+    const roleMemo = new Map();     // room -> {fp, roles, at}: the roles last worked out, and the room state's key
+    const roleReads = new Map();    // room -> {start, n}: homeserver reads for its parent links in the current window
+    const roleStats = { fresh: 0, cached: 0, stale: 0, refused: 0, reads: 0 };  // (tests, the gate's numbers)
+    // a kept read: {v, at (when it was read), exp}; `track` (one per roomMuteSet) remembers the oldest read a
+    // computation used, so its roles are kept only ROLE_FRESH_MS from THAT read, not from when they were worked out
+    // (Astra 0.3.16 r2: kept space state + freshly kept roles could add up to ~20 s)
+    const kept = (map, k, track) => {
+        const e = map.get(k);
+        if (!e) return undefined;
+        if (e.exp <= now()) { map.delete(k); return undefined; }
+        if (track) track.oldest = Math.min(track.oldest, e.at);
+        return e.v;
+    };
+    const keep = (map, k, v) => { const at = now(); map.set(k, { v, at, exp: at + CALLTOKEN.ROLE_FRESH_MS }); trim(map); return v; };
+    // (a redaction keeps the event id: the content and the redaction are part of the key; Astra 0.3.16 area 4)
+    const roleKey = (st) => JSON.stringify(st.filter((e) => e?.type === "m.space.parent"
+        || ((e?.type === "m.room.power_levels" || e?.type === "m.room.create") && e?.state_key === ""))
+        .map((e) => JSON.stringify([e.type, e.state_key, e.event_id ?? null, e.sender, e.content ?? null,
+            e.unsigned?.replaces_state ?? null, e.unsigned?.redacted_because?.event_id ?? (e.unsigned?.redacted_because ? 1 : null)]))
+        .sort());
+    /** One homeserver read for a room's parent links (a space state or a history event), charged to its budget. */
+    const noteRead = (room) => { roleWindow(room).n += 1; roleStats.reads += 1; };
+    function roleWindow(room) {
+        let w = roleReads.get(room);
+        if (!w || now() - w.start >= CALLTOKEN.ROLE_WINDOW_MS) {
+            w = { start: now(), n: 0 };
+            roleReads.set(room, w);
+            trim(roleReads);
+        }
+        return w;
+    }
+    /** callModerationRoles under the flood bound. A room with more parent links than anyone can judge: [] (its power
+     *  levels decide). Throws like callModerationRoles (an unreadable space or history), and when the room's read
+     *  budget is spent with no good roles for this room state younger than ROLE_STALE_MS (fail closed). */
+    async function governingRoles(room, st, readSpace, readEvent, track) {
+        const fp = roleKey(st), memo = roleMemo.get(room), age = memo ? now() - memo.at : Infinity;
+        if (memo && memo.fp === fp && age < CALLTOKEN.ROLE_FRESH_MS) { roleStats.cached += 1; return memo.roles; }
+        const w = roleWindow(room);
+        if (w.n >= CALLTOKEN.ROLE_READS_PER_WINDOW) {
+            if (memo && memo.fp === fp && age <= CALLTOKEN.ROLE_STALE_MS) { roleStats.stale += 1; return memo.roles; }
+            roleStats.refused += 1;
+            throw new Error("this room's parent links were read too often: try again shortly");
+        }
+        // one computation per room state at a time: requests arriving meanwhile share it (Astra 0.3.16 r2: ten joins
+        // into a cold room each started its own)
+        return once(`roles\0${room}\0${sha(fp)}`, async () => {
+            roleStats.fresh += 1;
+            track.oldest = Math.min(track.oldest, now());
+            let roles;
+            try { roles = await callModerationRoles(room, st, readSpace, readEvent); } catch (e) {
+                if (e?.status !== 403) throw e;
+                // more parent links than anyone can judge: the room's own power levels decide (an owner's mute still
+                // counts, a lower moderator's about the owner still doesn't)
+                log("[calltoken] a room links to too many spaces: its mute records are judged by its power levels");
+                roles = [];
+            }
+            roleMemo.set(room, { fp, roles, at: Math.min(now(), track.oldest) });
+            trim(roleMemo);
+            return roles;
+        });
+    }
     async function roomMuteSet(room) {
         const out = new Set();
         if (!ROOM_ID_RE.test(room)) return out; // the connection test's scratch room: no Matrix room, no records
@@ -877,6 +965,7 @@ export function createCallToken(deps) {
         if (!r.ok || !Array.isArray(r.body?.state)) throw new Error(`room state said ${r.status}`);
         const st = r.body.state;
         const spaces = new Map();  // a governing space's state, read at most once per call
+        const track = { oldest: Infinity };  // the oldest kept read this call's roles were worked out from
         let roles;                 // the governing spaces' roles (callModerationRoles), worked out once, when needed
         // indexed once per read (a room may hold many records): the members, and the only two events the rank rule reads
         const members = new Map();
@@ -884,21 +973,43 @@ export function createCallToken(deps) {
         const rankState = st.filter((e) => (e?.type === "m.room.create" || e?.type === "m.room.power_levels") && e?.state_key === "");
         const readSpace = async (id) => {
             if (spaces.has(id)) return spaces.get(id);
+            const k = kept(spaceStates, id, track);
+            if (k !== undefined) { spaces.set(id, k); return k; }
+            noteRead(room);
             const sr = await hs.get(`/_synapse/admin/v1/rooms/${encodeURIComponent(id)}/state`, adminToken);
             const v = sr.status === 404 ? null : (sr.ok && Array.isArray(sr.body?.state) ? sr.body.state : undefined);
             if (v === undefined) throw new Error(`space state said ${sr.status}`);
             spaces.set(id, v);
+            keep(spaceStates, id, v);
             return v;
+        };
+        // a parent link's earlier events (moderation.mjs PAD-5: who set a link is read from its history); null = unknown.
+        // "raw" (fetch_event: unredacted, with hashes) never changes: kept across reads (bounded); "client" (the room's
+        // event context: shows a redaction) is read fresh with the room's state.
+        const readEvent = async (id, form) => {
+            if (form === "raw" && linkEvents.has(id)) return linkEvents.get(id);
+            const ck = `${room} ${id}`;
+            if (form !== "raw") { const k = kept(linkClient, ck, track); if (k !== undefined) return k; }
+            noteRead(room);
+            const er = await hs.get(form === "raw" ? `/_synapse/admin/v1/fetch_event/${encodeURIComponent(id)}`
+                : `/_synapse/admin/v1/rooms/${encodeURIComponent(room)}/context/${encodeURIComponent(id)}?limit=0`, adminToken);
+            if (er.status === 404) return form === "raw" ? null : keep(linkClient, ck, null);
+            if (!er.ok || !er.body?.event || typeof er.body.event !== "object") throw new Error(`event said ${er.status}`);
+            if (form === "raw") {
+                if (linkEvents.size >= 4096) linkEvents.delete(linkEvents.keys().next().value);
+                linkEvents.set(id, er.body.event);
+                return er.body.event;
+            }
+            return keep(linkClient, ck, er.body.event);
         };
         const creators = creatorsOf(st);
         const plEv = st.find((e) => e?.type === "m.room.power_levels" && e?.state_key === "");
         const pl = plEv?.content || {};
         const need = Number(pl.events?.["dev.tinhat.call.moderation"] ?? pl.state_default ?? 50) || 0;
-        const create = st.find((e) => e?.type === "m.room.create" && e?.state_key === "");
         const users = pl.users || {};
         const levelOf = (u) => {
             if (creators.has(u)) return Infinity;
-            if (!plEv) return u === create?.sender ? 100 : 0; // no power levels: the creator has 100
+            if (!plEv) return u === plessCreator(rankState) ? 100 : 0; // no power levels: the creator has 100 (v1-10: its creator field)
             return Object.prototype.hasOwnProperty.call(users, u) ? Number(users[u]) || 0 : Number(pl.users_default ?? 0) || 0;
         };
         for (const ev of st) {
@@ -911,15 +1022,7 @@ export function createCallToken(deps) {
             const sm = members.get(ev.sender);
             const ms = sm?.content?.membership;
             if (ms === "ban" || (ms === "leave" && sm.sender !== ev.sender)) continue;
-            if (roles === undefined) {
-                try { roles = await callModerationRoles(room, st, readSpace); } catch (e) {
-                    if (e?.status !== 403) throw e;
-                    // more parent links than anyone can judge: the room's own power levels decide (an owner's mute still
-                    // counts, a lower moderator's about the owner still doesn't)
-                    log("[calltoken] a room links to too many spaces: its mute records are judged by its power levels");
-                    roles = [];
-                }
-            }
+            if (roles === undefined) roles = await governingRoles(room, st, readSpace, readEvent, track);
             if (decideCallModeration(rankState, roles, ev.sender, who).allowed) out.add(who);
         }
         return out;
@@ -992,6 +1095,7 @@ export function createCallToken(deps) {
             try {
                 user = await localUser(o, ip, true);
                 if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
+                if (userLimited(res, user)) return undefined;
                 if (!ROOM_ID_RE.test(room)) return no("not-member", "not a room id");
                 if (!(await isMember(room, (set) => set.has(user)))) return no("not-member", "not a joined member");
                 const d = await hs.get(`/_synapse/admin/v2/users/${encodeURIComponent(user)}/devices/${encodeURIComponent(device)}`, adminToken);
@@ -1064,6 +1168,7 @@ export function createCallToken(deps) {
             try {
                 user = await localUser(o, ip, true);
                 if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
+                if (userLimited(res, user)) return undefined;
                 if (!ROOM_ID_RE.test(room)) return no("not-member", "not a room id");
                 if (!(await isMember(room, (set) => set.has(user)))) return no("not-member", "not a joined member");
                 const d = await hs.get(`/_synapse/admin/v2/users/${encodeURIComponent(user)}/devices/${encodeURIComponent(device)}`, adminToken);
@@ -1121,6 +1226,7 @@ export function createCallToken(deps) {
         watchHandler,
         padHandler,
         padState,
+        _roleStats: roleStats,
         sweep,
         notFound: (_req, res) => send(res, 404, { errcode: "M_NOT_FOUND", error: "not found" }),
         _users: users,

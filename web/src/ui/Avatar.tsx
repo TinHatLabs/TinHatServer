@@ -12,6 +12,7 @@
 // alternative (A2.14); `presenceLeft` = bottom-left (the DM strip, where the badge owns bottom-right).
 import { useMemo, useState, type CSSProperties } from "react";
 import { useMxcUrl } from "@/core/matrix";
+import { avatarSource } from "./avatarSource";
 import { qtDarker, qtHsla, qtLighter } from "./color";
 import { Icon } from "./Icon";
 import { hash31 } from "./themes";
@@ -23,7 +24,7 @@ export interface AvatarProps {
   /** stable identity for the hue (mxid / room id / participant); default = name */
   seed?: string;
   size?: number;
-  /** mxc:// or http(s)/blob:/data: URL */
+  /** mxc:// (through your server) or a local blob:/data: URL; any other URL is not loaded */
   imageSource?: string | null;
   showDot?: boolean;
   dotColor?: string;
@@ -86,9 +87,10 @@ export function Avatar({
     return { top: qtLighter(base, 1.35), bottom: qtDarker(base, 1.18) };
   }, [key]);
   const decodePx = Math.min(512, 64 * Math.ceil(Math.max(1, size * 2) / 64));
-  const isMxc = !!imageSource && imageSource.startsWith("mxc://");
-  const mxcUrl = useMxcUrl(isMxc ? imageSource : null, { width: decodePx, height: decodePx, method: "crop" });
-  const url = isMxc ? mxcUrl : imageSource || undefined;
+  // mxc:// through your server, blob:/data: as they are; never an http(s) URL from someone's profile (avatarSource.ts)
+  const src = avatarSource(imageSource);
+  const mxcUrl = useMxcUrl(src.kind === "mxc" ? src.url : null, { width: decodePx, height: decodePx, method: "crop" });
+  const url = src.kind === "mxc" ? mxcUrl : src.kind === "inline" ? src.url : undefined;
   const [failed, setFailed] = useState<string | null>(null);
   const showImg = !!url && failed !== url;
   const r = radius ?? size / 2;

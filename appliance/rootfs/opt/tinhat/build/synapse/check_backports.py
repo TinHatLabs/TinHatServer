@@ -1,11 +1,11 @@
 """Run by provision.sh inside the built (or reused) Synapse image (python - < this file): exits 1 unless the image
 carries every fix of build/synapse/backports/ (GHSA-6wjm, -27p5, -qcjr, -r66v, -95fh, -fp53, -8q93, our size limit
-on the actions of built-in push rules and our rate limit on push rule writes) and
+on the actions of built-in push rules, our rate limit on push rule writes, frozen m.mentions and its error answers) and
 the pinned Pillow / msgpack. The patched files must hash to the series' results (the same table as backports/FILES;
 test_synapse_backports.py keeps the two equal), and each one's default .pyc must be a checked-hash cache of exactly
 that source: this Python's magic number, the source's hash, and code equal to the source compiled here (a header
 alone proves nothing about the code behind it). A few fixes are also checked by behaviour: a remote 401 / M_UNKNOWN_TOKEN is no longer relayed as such, the push rule limits exist with
-upstream's defaults, the WorkerLock retry interval has its ceiling."""
+upstream's defaults, the WorkerLock retry interval has its ceiling, a frozen m.mentions validates."""
 import ast
 import hashlib
 import importlib.metadata
@@ -20,6 +20,7 @@ PATCHED = {
     "config/_util.py": "da8f079374b1acf25a0d7d8fc844282fab88659d61c337c984bca1380e3a6319",
     "config/homeserver.py": "76909ef35415322df47e9bfdc2f785c081ee63a6294368cce7cf2563de24bcd3",
     "config/push_rules.py": "20f83715f58802517e41f87e0e1aa5b1d8d403d63516b53bfbf010e92346985a",
+    "events/validator.py": "350d2e4e7dc461be455295159b337cb4e06233d640f7f8ac94144bdf82246ef4",
     "federation/federation_server.py": "6d9cb4e02d75fd3c44bc4aa9079b0179104b5bd25896a715a1b95630349c5a4c",
     "handlers/federation.py": "6e01123f44196d9582ca2470f65f40010b470d08e44336292d6dcbf86db21f1d",
     "handlers/worker_lock.py": "e1384fc2f85f1104ab5b8d99a23866826e21410bd3195f8ab578401138ac77ea",
@@ -116,8 +117,12 @@ def main() -> int:
     if PIL.__version__ != PINS["pillow"] or ".".join(map(str, msgpack.version)) != PINS["msgpack"]:
         problems.append(f"loaded pillow {PIL.__version__} / msgpack {msgpack.version}")
     if not problems:
+        import jsonschema
+        from immutabledict import immutabledict
+
         from synapse.api.errors import Codes, HttpResponseException
         from synapse.config.push_rules import PushRulesConfig  # noqa: F401  (GHSA-fp53's config section)
+        from synapse.events.validator import MENTIONS_SCHEMA, MENTIONS_VALIDATOR, _validation_error_to_api_error
         from synapse.handlers import worker_lock
         from synapse.rest.client.push_rule import _PUSH_RULE_WRITE_LIMIT as w
 
@@ -129,6 +134,17 @@ def main() -> int:
             problems.append(f"push rule write limit {w.per_second}/s burst {w.burst_count}")
         if worker_lock.WORKER_LOCK_MAX_RETRY_INTERVAL.as_secs() != 60:
             problems.append("WorkerLock retry interval without its 60 s ceiling")
+        try:
+            jsonschema.validate(immutabledict({"user_ids": ("@a:b",), "room": False}), MENTIONS_SCHEMA, cls=MENTIONS_VALIDATOR)
+        except jsonschema.ValidationError:
+            problems.append("a frozen m.mentions is refused")
+        for bad in ({"user_ids": "@a:b"}, {"user_ids": (1,)}):
+            try:
+                jsonschema.validate(immutabledict(bad), MENTIONS_SCHEMA, cls=MENTIONS_VALIDATOR)
+                problems.append(f"a bad m.mentions is accepted: {bad}")
+            except jsonschema.ValidationError as e:
+                if _validation_error_to_api_error(e).code != 400:
+                    problems.append(f"a bad m.mentions isn't a 400: {bad}")
     if problems:
         print("synapse image without the backports: " + "; ".join(problems), file=sys.stderr)
         return 1

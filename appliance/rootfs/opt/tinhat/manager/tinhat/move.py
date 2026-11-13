@@ -249,7 +249,7 @@ class Mover:
                             "The move checks that it does before anything changes, and stops if it doesn't.")
             if not points:
                 warnings.append(f"{own['domain']} isn't in public DNS yet: point it at your reverse proxy (an A record) "
-                                "before you move, or friends outside won't find the server.")
+                                "before you move, or people outside won't find the server.")
             elif ip and ip not in points:
                 warnings.append(f"In public DNS {own['domain']} points to {', '.join(points)}, not this server ({ip}). "
                                 "Fine if your reverse proxy runs elsewhere (a rented server); if it runs at home, point "
@@ -263,9 +263,9 @@ class Mover:
                                 f"sent to this server. {old} keeps working only if your proxy sends it here too.")
         elif ip and ip not in points and not keeps:
             warnings.append(f"{own['domain']} doesn't point to this server ({ip}) yet: point it there (an A record) "
-                            f"in your {label} settings before you move, or friends won't find the server.")
+                            f"in your {label} settings before you move, or people won't find the server.")
         if st.get("mode", "lan") == "lan":
-            warnings.append("This server was set up for your home network only. With its own domain friends can "
+            warnings.append("This server was set up for your home network only. With its own domain people can "
                             "reach it from anywhere: the server asks your router to open the ports it needs and "
                             "checks from outside at the end, as setup does.")
         return {"ok": True, "from": old, "to": own["domain"], "provider": own["provider"], "label": label,
@@ -960,7 +960,7 @@ def _in_the_way(st: dict, own: dict, old: str) -> str | None:
                 "your reverse proxy: choose My own reverse proxy.")
     if relay.on():
         return ("This server is reached through the Tin Hat relay, which carries tinhat.me names only. Your own domain "
-                "needs your router to let friends reach this server directly (ports 443, 7881 and 7882). The "
+                "needs your router to let people reach this server directly (ports 443, 7881 and 7882). The "
                 "dashboard's Network tab shows what your router allows.")
     if st.get("federation"):
         return ("This server talks to other servers (Network: Other Tin Hat servers, Other Matrix servers). Rooms from "

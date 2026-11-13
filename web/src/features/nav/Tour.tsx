@@ -24,7 +24,7 @@ const CARDS: Array<[string, string, string]> = [
     "Find your way around",
     'A persistent Discord-style Spaces sidebar — or tuck it into a corner dock to spare an OLED panel (toggle in ☰ → "Tuck nav into corner"). Drag the space bubbles to reorder them however you like.',
   ],
-  ["preferences-desktop-color", "Make it yours", "Two hand-tuned themes — OLED and Goose — all under ☰ → Theme. The chrome recolors to match, instantly."],
+  ["preferences-desktop-color", "Make it yours", "Hundreds of themes, from OLED black to Goose — pick one under ☰ → Theme, or make your own in Settings → Appearance. The chrome recolors to match, instantly."],
   [
     "call-start-symbolic",
     "Hop into a call",
@@ -44,7 +44,7 @@ const CARDS: Array<[string, string, string]> = [
     "applications-games-symbolic",
     "Game on",
     // selfhost/firstrun: the ☰ menu has no "Help & tour" since 11.2 (menu clean-up) — the tour lives in Settings
-    'Set what you\'re playing and a "looking to play" status so friends know you\'re up for a game. That\'s the tour — you\'re all set! Take it again any time from Settings → About & help.',
+    'Set what you\'re playing and a "looking to play" status so people know you\'re up for a game. That\'s the tour — you\'re all set! Take it again any time from Settings → About & help.',
   ],
 ];
 

@@ -8,10 +8,11 @@ import { EventType, Preset, type ICreateRoomOpts, type MatrixClient } from "matr
 import { SERVER_LABEL } from "@/core/bearer";
 import { toast } from "@/core/bus";
 import { childViaFor, ensureWritable, getClient, getSession, getState, inviterServerHere, peekClient, pickVia, provisionNewRoom, sendState } from "@/core/matrix";
+import { sendReadMarkers } from "@/core/matrix/receipts";
 import { setRecordCall } from "@/features/media";
 import { invalidateHierarchy, noteLeft, notePendingChild, userDefinedMode, readSpaceOrder, refreshNow, scheduleRefresh, useNavStore, type NotifyMode } from "./model";
 import { openRoomId } from "./open";
-import { serverOf as serverPartOf } from "./dmTarget";
+import { dmTarget, serverOf as serverPartOf } from "./dmTarget";
 import { newRoomInitialState } from "./newRoom";
 import { linkTarget } from "./joinLink";
 import { shareLinkNow } from "@/core/server";
@@ -94,7 +95,8 @@ export async function markRoomRead(roomId: string): Promise<void> {
   const eid = await newestEventId(c, roomId);
   if (!eid) return;
   try {
-    await c.setRoomReadMarkersHttpRequest(roomId, eid, eid);
+    // m.fully_read + m.read only in a room of my own server, else m.read.private (core/matrix/receipts.ts)
+    await sendReadMarkers(roomId, eid);
   } catch {
     /* best effort (native ignores failures) */
   }
@@ -320,11 +322,20 @@ export async function leaveRoom(roomId: string): Promise<boolean> {
   }
 }
 
+/** A typed person → their user id: a plain username means your own server (the New DM rule, dmTarget; 2026-11-12
+ *  feat/people-search: every picker), a full address is kept as typed (lower-cased), else null. */
+export function personTarget(raw: string): string | null {
+  // a full user id is kept exactly as given (a picked row's id; historical ids may have capitals); only typed text is
+  // read by the dmTarget rule
+  const t = raw.trim();
+  return isUserId(t) ? t : dmTarget(raw, serverPartOf(getSession().userId));
+}
+
 export async function inviteToRoom(roomId: string, mxidRaw: string): Promise<void> {
-  const mxid = mxidRaw.trim();
+  const mxid = personTarget(mxidRaw) ?? mxidRaw.trim();
   const c = getClient();
   if (!isUserId(mxid)) {
-    status(`${mxid} doesn't look like a user id`);
+    status(`${mxid} isn't a username or an address like @name:their.server`);
     return;
   }
   if (!c.getRoom(roomId)) {
@@ -404,7 +415,7 @@ export async function findDm(mxid: string): Promise<string | null> {
 }
 
 export async function createDm(mxidRaw: string): Promise<string | null> {
-  const mxid = mxidRaw.trim();
+  const mxid = personTarget(mxidRaw) ?? mxidRaw.trim();
   if (!isUserId(mxid)) {
     status("That doesn't look like a user id");
     return null;

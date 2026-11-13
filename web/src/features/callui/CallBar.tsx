@@ -1,12 +1,12 @@
 // CallBar.tsx — the control bar (Main.qml:7311-7890): 64 px pill of CallButtons + the registered
 // r.callBarItems ("controls" slot) merged by native order, the "You're muted" bubble, and the
 // popovers/menus that rise from it.
-import { cloneElement, isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRegistry, type CallBarItemContribution } from "@/core/registry";
 import { toast, useBus } from "@/core/bus";
 import { getPref } from "@/core/prefs";
 import { peekClient, useRoomState } from "@/core/matrix";
-import { Button, Icon, ToolButton, useTip } from "@/ui";
+import { Button, CheckMenuItem, Icon, Menu, MenuItem, ToolButton, useTip } from "@/ui";
 import { playMutedCue } from "@/core/sounds";
 import { CallButton } from "./CallButton";
 import { act, getC, localpartOf, tileMxid, ui, useC, useCallUi } from "./store";
@@ -19,6 +19,8 @@ import { callRowSnapshot } from "@/actions/decisions";
 import { useActionsSnapshot } from "@/actions/snapshot";
 import { Dim, EditableRow, RowButton, bespokeOk, runRowItem, shownItems, useRow, type RowState } from "@/actions/ui/rowHost";
 import { nativeShareOn } from "@/features/native";
+import { useIsTouch } from "@/core/device";
+import { BAR_CELL, BAR_SEP, MIN_SCALE_MOUSE, MIN_SCALE_TOUCH, barFit, foldKeeps } from "./barfit";
 import s from "./CallBar.module.css";
 import { pttKeys } from "@/actions/shortcutsStore";
 
@@ -86,10 +88,19 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
   const healthRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<HTMLDivElement>(null);
 
-  // row width → scale to fit (≥ 0.7)
+  // row width → scale to fit (≥ 0.7; 0.85 on a touch screen), and when even that is too wide the last buttons before
+  // Leave move into a More menu (barfit.ts, docs/TWO-PANE.md §3 — the desktop's CallBarFit.js)
   const wrapRef = useRef<HTMLDivElement>(null);
   const rowRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
+  const [fold, setFold] = useState(0);
+  const foldRef = useRef(0);
+  const [moreAnchor, setMoreAnchor] = useState<HTMLElement | null>(null);
+  const touch = useIsTouch();
+  // the movable cells in row order ({key, sep}) and the widths they had when last drawn (astra: measured, not 54 each)
+  const foldKeysRef = useRef<{ key: string; sep: boolean }[]>([]);
+  const widthsRef = useRef(new Map<string, number>());
+  const fitRef = useRef<() => void>(() => {});
   useEffect(() => {
     const wrap = wrapRef.current,
       row = rowRef.current;
@@ -97,14 +108,44 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
     const fit = () => {
       const implicitW = row.scrollWidth + 16;
       const pw = wrap.clientWidth;
-      setScale(Math.max(0.7, Math.min(1, (pw - 8) / implicitW)));
+      const k0 = foldRef.current;
+      // measure what is drawn: each movable cell (+ the row's 4 px gap, + its divider) and the More cell
+      const gap = 4;
+      for (const el of row.querySelectorAll<HTMLElement>("[data-fold-key]")) {
+        const key = el.dataset.foldKey!;
+        const sep = row.querySelector<HTMLElement>(`[data-fold-sep="${CSS.escape(key)}"]`);
+        widthsRef.current.set(key, el.offsetWidth + gap + (sep ? sep.offsetWidth + gap : 0));
+      }
+      const moreEl = row.querySelector<HTMLElement>("[data-fold-more]");
+      const more = moreEl ? moreEl.offsetWidth + gap : BAR_CELL;
+      const keys = foldKeysRef.current;
+      const widths = keys.map(({ key, sep }) => widthsRef.current.get(key) ?? BAR_CELL + (sep ? BAR_SEP : 0));
+      // the natural width with nothing moved: what is drawn + the moved cells − the More cell
+      let fullW = implicitW;
+      if (k0 > 0) {
+        for (let j = Math.max(0, widths.length - k0); j < widths.length; j++) fullW += widths[j];
+        fullW -= more;
+      }
+      const r = mobile
+        ? { fold: 0, scale: Math.max(MIN_SCALE_MOUSE, Math.min(1, (pw - 8) / implicitW)) }
+        : barFit({ fullW, availW: pw - 8, minScale: touch ? MIN_SCALE_TOUCH : MIN_SCALE_MOUSE, widths, more, fold0: k0 });
+      if (r.fold !== k0) {
+        foldRef.current = r.fold;
+        setFold(r.fold); // the layout effect below fits again once the new row is committed
+        return;
+      }
+      setScale(r.scale);
     };
+    fitRef.current = fit;
     const ro = new ResizeObserver(fit);
     ro.observe(wrap);
     ro.observe(row);
     fit();
-    return () => ro.disconnect();
-  }, []);
+    return () => {
+      ro.disconnect();
+      fitRef.current = () => {};
+    };
+  }, [mobile, touch]);
 
   useMutedTalkBubble();
 
@@ -370,17 +411,77 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
         </div>,
       );
   };
-  for (const { item: it, i } of shownItems(row)) {
+  // the More menu (barfit.ts): the last `fold` shown items other than Mute and Leave, in row order
+  const rowShown = shownItems(row);
+  const foldable = rowShown.filter(({ item }) => !foldKeeps(item, FOLD_KEEP));
+  // the same key the cells carry (data-fold-key = the cell's React key `${action}:${index}`)
+  foldKeysRef.current = foldable.map(({ item, i }) => ({ key: `${item.a}:${i}`, sep: item.sepBefore }));
+  const folded = fold > 0 ? foldable.slice(Math.max(0, foldable.length - fold)) : [];
+  const foldedSet = new Set(folded.map(({ i }) => i));
+  const moreCell = folded.length ? (
+    <div key="more" className={s.cell} data-fold-more="">
+      <CallButton data-id="more" icon="view-more-symbolic" tip="More call buttons" active={!!moreAnchor} onClick={(el) => setMoreAnchor(moreAnchor ? null : el)} />
+    </div>
+  ) : null;
+  const rowKey = `${fold}|${rowShown.map(({ item, i }) => `${i}:${item.a}:${item.sepBefore ? 1 : 0}`).join(",")}`;
+  useLayoutEffect(() => fitRef.current(), [rowKey]);
+  const moreShown = folded.length > 0;
+  // More went away (the column grew) while its menu was open: forget the anchor, or the menu would come back on its own
+  useEffect(() => {
+    if (!moreShown && moreAnchor) setMoreAnchor(null);
+  }, [moreShown, moreAnchor]);
+  // the keyboard goes into the More menu once it is placed (ui/Menu focuses it while it is still hidden, which the
+  // browser ignores — reported; the other call-bar menus have the same gap), and back to More when it closes. Only THIS
+  // menu (its marker), and only while the focus is still on More or nowhere (a click elsewhere in between wins).
+  useEffect(() => {
+    if (!moreAnchor) return;
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => {
+      r2 = requestAnimationFrame(() => {
+        const m = document.querySelector<HTMLElement>("[data-callbar-more-menu]")?.closest<HTMLElement>('[role="menu"]');
+        const a = document.activeElement;
+        const free = !a || a === document.body || moreAnchor.contains(a);
+        if (m && free && !m.contains(a)) m.focus({ preventScroll: true });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(r1);
+      cancelAnimationFrame(r2);
+    };
+  }, [moreAnchor]);
+  const closeMore = () => {
+    const el = moreAnchor;
+    const m = document.querySelector("[data-callbar-more-menu]")?.closest('[role="menu"]');
+    const hadFocus = !!m && m.contains(document.activeElement);
+    setMoreAnchor(null);
+    const btn = el ? (el.matches("button") ? el : el.querySelector("button")) : null;
+    if (hadFocus && btn?.isConnected) btn.focus({ preventScroll: true });
+  };
+  // More sits before the first kept item (Mute, Leave) after a moved one — the default row's Leave —, else at the end
+  // (the desktop's RowModel.moreCol, the same rule)
+  let morePlaced = false;
+  let movedSeen = false;
+  for (const { item: it, i } of rowShown) {
     const k = `${it.a}:${i}`;
+    if (foldedSet.has(i)) {
+      movedSeen = true;
+      continue;
+    }
     if (it.a === "call.leave" || it.sepBefore) placeLeftovers();
-    if (it.sepBefore) cells.push(<div key={`sep:${k}`} className={s.sep} />);
+    if (moreCell && !morePlaced && movedSeen && FOLD_KEEP.includes(it.a)) {
+      morePlaced = true;
+      cells.push(moreCell);
+    }
+    const movable = !foldKeeps(it, FOLD_KEEP);
+    if (it.sepBefore) cells.push(<div key={`sep:${k}`} className={s.sep} data-fold-sep={movable ? k : undefined} />);
     cells.push(
-      <div key={k} className={s.cell}>
+      <div key={k} className={s.cell} data-fold-key={movable ? k : undefined}>
         {callBarItem(row, it, nodes)}
       </div>,
     );
   }
   placeLeftovers();
+  if (moreCell && !morePlaced) cells.push(moreCell);
   // 11.0.2 (2026-09-28): the bar's own pin — "Keep call buttons visible" (call.bar.pin.toggle, the same preference
   // as Settings → Calls). Not a row item: after the row, behind its own divider, in every stored row; small, so it never
   // reads like a call control. Tooltip = the action's short faces; pressed = pinned. (Main.qml: CallIsland's callBarPin.)
@@ -418,6 +519,26 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
       <HealthPopup open={healthOpen} onClose={() => setHealthOpen(false)} anchor={healthRef.current} />
       <GamePopup open={gameOpen} onClose={() => setGameOpen(false)} anchor={gameRef.current} roomId={roomId} />
       <DevicesMenu anchor={devAnchor} onClose={() => setDevAnchor(null)} roomId={roomId} />
+      {moreAnchor && folded.length > 0 && (
+        <Menu open onClose={closeMore} anchor={moreAnchor} placement="above" width={240}>
+          <span data-callbar-more-menu="" hidden />
+          {folded.map(({ item: it, i }) => {
+            // a hold item never folds (foldKeeps); if one ever got here it stays inert — a click is a press with no release
+            const run = () => {
+              const el = moreAnchor;
+              setMoreAnchor(null);
+              if (!it.hold) runRowItem(row, it, el);
+            };
+            const text = it.label || it.tip || it.a;
+            const icon = it.icon ?? it.targetIcon ?? undefined;
+            return it.active === null ? (
+              <MenuItem key={`${it.a}:${i}`} text={text} icon={icon} danger={it.danger} disabled={it.state === "dimmed" || it.hold} onTriggered={run} />
+            ) : (
+              <CheckMenuItem key={`${it.a}:${i}`} text={text} icon={icon} checked={it.active === true} disabled={it.state === "dimmed" || it.hold} onTriggered={run} />
+            );
+          })}
+        </Menu>
+      )}
     </div>
   );
 }
@@ -443,6 +564,8 @@ const CALLBAR_HOSTS: Readonly<Record<string, readonly string[]>> = {
   "call.devices.open": ["gear"],
   "call.leave": ["hangup"],
 };
+/** the call bar's items that never move into More (barfit.ts foldKeeps adds every hold item; the desktop's brow.keep) */
+const FOLD_KEEP: readonly string[] = ["call.mic.toggle", "call.leave"];
 const MAPPED_KEYS: ReadonlySet<string> = new Set(Object.values(CALLBAR_HOSTS).flat());
 /** elements that draw their own unavailable state (Leave's "Hanging up…") — never dimmed twice */
 const CALLBAR_SELF_DIM: ReadonlySet<string> = new Set(["call.leave"]);

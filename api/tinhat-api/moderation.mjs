@@ -25,6 +25,11 @@
 //     "a space run by the room" = among its JOINED members with authority there is someone with the room's authority.
 //   - Every m.space.parent event of the room counts, whatever its content now: clearing a link only replaces its
 //     content, the event stays.
+//   - Who set a link is read from its HISTORY, not only its current event (PAD-5, 0.3.16): a link the room's authority
+//     set stays theirs until the room's authority changes it again. Someone below it re-sending the link unchanged (or
+//     clearing it, or changing its `via`) makes them the current event's sender, but the latest event in the link's
+//     history (unsigned.replaces_state, read back through the admin API) sent by the room's authority still decides.
+//     A history that can't be read, or is longer than MAX_LINK_HISTORY, refuses (502) like an unreadable space.
 //     - set by the room's authority: a link binds; an emptied one is a real unlink;
 //     - set by anyone else, and only for a space run by the room: a link binds when the space lists the room too
 //       (m.space.child with a `via`, or emptied by someone without authority in the space); an emptied link STILL binds
@@ -36,6 +41,7 @@
 //
 // LiveKit facts this relies on (verified 2026-09-17 against lk-jwt-service logs): the LiveKit
 // room name is the Matrix room id, and a participant identity is `<mxid>:<DEVICE_ID>`.
+import { createHash } from "node:crypto";
 import { isConnectionOf, parseIdentity } from "./identity.mjs";
 import { createPadState } from "./padstate.mjs";
 import { isAudioTrack, isNormalMuteRestriction, normalMutePermission, padMicPermission } from "./callmute.mjs";
@@ -60,6 +66,8 @@ export function permBool(cur, snake, camel) {
 
 const ACTIONS = new Set(["mute", "unmute", "disconnect"]);
 const MAX_PARENT_LINKS = 32;
+const MAX_LINK_HISTORY = 64;   // earlier events of one parent link read back (PAD-5); the owner re-setting it resets this
+const MAX_HISTORY_READS = 128; // history reads for one decision, all of a room's links together (PAD-5)
 
 // Everything but the microphone (and the "unknown"-source soundboard/music tracks, which are
 // deliberately NOT listed: a server-muted person is silent, full stop — same as Discord).
@@ -89,8 +97,24 @@ function creatorsOf(state) {
     return out;
 }
 
+/** Room v1–11 WITHOUT an m.room.power_levels event: the spec's fallback gives the room's creator power level 100 and
+ *  everyone else 0 (v1–10 name the creator in the create event's `creator`, v11 dropped it for the event's sender).
+ *  The creator's mxid, or null (a v12+ room, a room with power levels, no create event). Before 0.3.16 the helper read
+ *  such a room as "everyone at 0", so its creator could moderate nobody, and their mute records counted for nothing. */
+export function plessCreator(state) {
+    if (state.some((e) => e.type === "m.room.power_levels" && e.state_key === "")) return null;
+    const c = state.find((e) => e.type === "m.room.create" && e.state_key === "");
+    if (!c || creatorsOf(state).size) return null;
+    const v = String(c.content?.room_version ?? "1");
+    const named = v !== "11" && typeof c.content?.creator === "string" ? c.content.creator : null;
+    const who = named ?? (typeof c.sender === "string" ? c.sender : null);
+    return who || null;
+}
+
 function powerLevel(state, mxid) {
     if (creatorsOf(state).has(mxid)) return Infinity;
+    const pless = plessCreator(state);
+    if (pless !== null) return mxid === pless ? 100 : 0;
     const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
     const users = pl.users || {};
     const v = Object.prototype.hasOwnProperty.call(users, mxid) ? users[mxid] : (pl.users_default ?? 0);
@@ -116,7 +140,8 @@ function authorities(state, joinedOnly) {
     const need = stateLevel(state, "m.room.power_levels");
     const pl = state.find((e) => e.type === "m.room.power_levels" && e.state_key === "")?.content || {};
     const out = new Set();
-    for (const u of [...creatorsOf(state), ...Object.keys(pl.users || {})]) {
+    const pless = plessCreator(state);
+    for (const u of [...creatorsOf(state), ...(pless ? [pless] : []), ...Object.keys(pl.users || {})]) {
         if (powerLevel(state, u) < need) continue;
         if (joinedOnly && membership(state, u) !== "join") continue;
         out.add(u);
@@ -124,12 +149,96 @@ function authorities(state, joinedOnly) {
     return out;
 }
 
+/** Unicode code point order (what Matrix canonical JSON sorts keys by; JS's default sort is UTF-16 code units). */
+function byCodePoint(a, b) {
+    const A = Array.from(a), B = Array.from(b);
+    for (let i = 0; i < Math.min(A.length, B.length); i++) {
+        const d = A[i].codePointAt(0) - B[i].codePointAt(0);
+        if (d) return d;
+    }
+    return A.length - B.length;
+}
+
+/** Matrix canonical JSON (keys in code point order, no whitespace, UTF-8): what an event's content hash is taken over. */
+export function canonicalJson(v) {
+    if (v === null || typeof v !== "object") return JSON.stringify(v);
+    if (Array.isArray(v)) return "[" + v.map(canonicalJson).join(",") + "]";
+    return "{" + Object.keys(v).sort(byCodePoint).map((k) => JSON.stringify(k) + ":" + canonicalJson(v[k])).join(",") + "}";
+}
+
+/** Is this event (the admin fetch_event's raw form) the one its sender sent: its content hash (hashes.sha256, over the
+ *  event without unsigned/signatures/hashes; room v1/v2 keep event_id in it) still matches? False when the homeserver
+ *  holds a pruned copy (a redaction's content removal after the retention period; a copy that arrived over federation
+ *  with a bad hash), which reads as `{}` with no marker. */
+export function contentIntact(e, roomVersion) {
+    const want = e?.hashes?.sha256;
+    if (typeof want !== "string" || !e || typeof e !== "object") return false;
+    const d = { ...e };
+    for (const k of ["unsigned", "signatures", "hashes", "age_ts", "outlier", "destinations"]) delete d[k];
+    if (!(roomVersion === "1" || roomVersion === "2")) delete d.event_id;
+    return createHash("sha256").update(canonicalJson(d), "utf8").digest("base64").replace(/=+$/, "") === want;
+}
+
+/** How a parent link counts (PAD-5): {byAuthority, linked}. Only events the room's authority sent (or redacted) decide:
+ *  - the current event sent by the room's authority: its content (as sent) decides;
+ *  - otherwise its history is read back (unsigned.replaces_state) to the latest event the room's authority acted on:
+ *    an event they sent that linked the space binds as theirs whatever lower senders did after it (re-sends, clears,
+ *    via edits, redactions); an event they sent that unlinked, or redacted (theirs or anyone's), is their unlink, and the
+ *    lower senders' current content is judged by the rule for them; no such event: the rule for them, too.
+ *  "As sent": a lower sender's redaction of an authority event changes nothing (the original content is read back), and
+ *  an authority event that reads as "no link" is an unlink only when its content hash proves that's what was sent.
+ *  `readEvent(id, form)`: "client" = the event as clients see it now (a redaction says so: unsigned.redacted_because),
+ *  "raw" = as the homeserver holds it, unredacted, with its hashes; null = unknown. Throws (-> 502, never a fall-back)
+ *  when the history can't be read, is too long (or the decision's read budget is spent), or a content is gone. */
+async function linkAuthority(roomId, link, state, roomAuthority, readEvent, budget) {
+    const hasAuthority = (e) => typeof e?.sender === "string" && powerLevel(state, e.sender) >= roomAuthority;
+    const viaOf = (e) => (Array.isArray(e?.content?.via) ? e.content.via : []);
+    const create = state.find((e) => e.type === "m.room.create" && e.state_key === "");
+    const version = String(create?.content?.room_version ?? "1");
+    const get = async (id, form) => {
+        if (typeof readEvent !== "function") throw new Error("a parent link's history can't be read here");
+        if (typeof id !== "string" || !id) throw new Error("a parent link event has no id");
+        if (budget && --budget.left < 0) throw new Error("too many parent-link history reads for one decision");
+        const e = await readEvent(id, form);                     // throws -> 502
+        if (!e || e.type !== "m.space.parent" || e.state_key !== link.state_key || (e.room_id !== undefined && e.room_id !== roomId)
+            || (e.event_id !== undefined && e.event_id !== id)) {
+            throw new Error("a parent link's earlier event couldn't be read");
+        }
+        return e;
+    };
+    // whether an event the room's authority sent (client form) links the space as they left it
+    const authorityLinked = async (e) => {
+        const rb = e?.unsigned?.redacted_because;
+        if (rb && hasAuthority(rb)) return false;                // they (or a peer) redacted it: unlinked
+        if (!rb && viaOf(e).length > 0) return true;             // a via can't come from pruning
+        const raw = await get(e.event_id, "raw");                // as sent: unredacted, with its hash
+        if (viaOf(raw).length > 0) return true;
+        if (!contentIntact(raw, version)) throw new Error("a parent link's content is gone (pruned)");
+        return false;
+    };
+    const redactedByAuthority = (e) => !!e?.unsigned?.redacted_because && hasAuthority(e.unsigned.redacted_because);
+    if (hasAuthority(link)) return { byAuthority: true, linked: await authorityLinked(link) };
+    if (redactedByAuthority(link)) return { byAuthority: true, linked: false };   // the room's authority removed it
+    // a lower sender's own redaction is a clear like any other (the rule for them already fails closed on clears)
+    const lower = { byAuthority: false, linked: viaOf(link).length > 0 };
+    let ev = link;
+    for (let hops = 0; ; hops++) {
+        const prev = ev?.unsigned?.replaces_state;
+        if (typeof prev !== "string" || !prev) return lower;      // the link's first event: nobody with authority set it
+        if (hops >= MAX_LINK_HISTORY) throw new Error("a parent link's history is too long to tell who set it");
+        const before = await get(prev, "client");
+        if (hasAuthority(before)) return (await authorityLinked(before)) ? { byAuthority: true, linked: true } : lower;
+        if (redactedByAuthority(before)) return lower;            // the room's authority removed this edit: their unlink
+        ev = before;
+    }
+}
+
 /**
  * The spaces whose roles govern this room: [{id, state}] (see the rule at the top). `readState(roomId)` reads another
  * room's state (null = not on this server). Throws when a space the room names can't be read (the caller answers 502:
  * an established binding never fails open).
  */
-async function governingSpaces(roomId, state, readState) {
+async function governingSpaces(roomId, state, readState, readEvent) {
     const links = state.filter((e) => e.type === "m.space.parent" && typeof e.state_key === "string" && e.state_key !== roomId
         && ROOM_ID_RE.test(e.state_key));                        // a key that can't be a room is no space
     if (!links.length) return [];
@@ -138,9 +247,9 @@ async function governingSpaces(roomId, state, readState) {
     const roomAuthority = stateLevel(state, "m.room.power_levels");
     const roomRunners = authorities(state, false);
     const out = [];
+    const budget = { left: MAX_HISTORY_READS };
     for (const link of links) {
-        const linked = Array.isArray(link.content?.via) && link.content.via.length > 0;
-        const byAuthority = typeof link.sender === "string" && powerLevel(state, link.sender) >= roomAuthority;
+        const { byAuthority, linked } = await linkAuthority(roomId, link, state, roomAuthority, readEvent, budget);  // throws -> 502
         if (byAuthority && !linked) continue;                    // the room's own authority unlinked it
         const ps = await readState(link.state_key);              // throws -> 502
         if (!ps) continue;                                       // not on this server: nothing to read roles from
@@ -193,14 +302,14 @@ function rolesOf(state) {
  * records (dev.tinhat.call.moderation written as raw state), so a record counts only when its sender could have muted
  * that person here. Throws like governingSpaces (status 403: too many parent links; else the spaces couldn't be read).
  */
-export async function callModerationDecision(roomId, state, me, targetMxid, readState) {
-    return decideCallModeration(state, await callModerationRoles(roomId, state, readState), me, targetMxid);
+export async function callModerationDecision(roomId, state, me, targetMxid, readState, readEvent) {
+    return decideCallModeration(state, await callModerationRoles(roomId, state, readState, readEvent), me, targetMxid);
 }
 
 /** The roles of every governing space that has them set up (the part of the rule that doesn't depend on who asks):
  *  worked out once per room, then decideCallModeration for each pair. Throws like governingSpaces. */
-export async function callModerationRoles(roomId, state, readState) {
-    const governing = await governingSpaces(roomId, state, readState);
+export async function callModerationRoles(roomId, state, readState, readEvent) {
+    const governing = await governingSpaces(roomId, state, readState, readEvent);
     return governing.map((g) => rolesOf(g.state)).filter((r) => r.active);
 }
 
@@ -270,6 +379,29 @@ export function installModeration(app, deps) {
     }
 
     /** All state events of a room via the admin API (cached 10 s). null = room unknown. */
+    /** A parent link's earlier event via the admin API (PAD-5), for one room: "raw" = fetch_event (unredacted, with
+     *  hashes; never changes: kept, bounded), "client" = the room's event context (a redaction shows; kept 10 s like
+     *  the room state). null = unknown to the homeserver. */
+    const rawEvents = new Map();
+    const clientEvents = new Ttl(10_000);
+    const eventReader = (roomId) => async (eventId, form) => {
+        if (form === "raw") {
+            if (rawEvents.has(eventId)) return rawEvents.get(eventId);
+            const r = await synapse(`/_synapse/admin/v1/fetch_event/${encodeURIComponent(eventId)}`, {}, adminToken);
+            if (r.status === 404) return null;
+            if (!r.ok || !r.body?.event || typeof r.body.event !== "object") throw new Error(`event said ${r.status}`);
+            if (rawEvents.size >= 4096) rawEvents.delete(rawEvents.keys().next().value);
+            rawEvents.set(eventId, r.body.event);
+            return r.body.event;
+        }
+        const key = `${roomId} ${eventId}`, hit = clientEvents.get(key);
+        if (hit !== undefined) return hit;
+        const r = await synapse(`/_synapse/admin/v1/rooms/${encodeURIComponent(roomId)}/context/${encodeURIComponent(eventId)}?limit=0`, {}, adminToken);
+        if (r.status === 404) return clientEvents.set(key, null);
+        if (!r.ok || !r.body?.event || typeof r.body.event !== "object") throw new Error(`event context said ${r.status}`);
+        return clientEvents.set(key, r.body.event);
+    };
+
     async function roomState(roomId) {
         const hit = stateCache.get(roomId);
         if (hit !== undefined) return hit;
@@ -362,7 +494,7 @@ export function installModeration(app, deps) {
 
         // Authorise: roles from every governing space whose roles are set up (all must allow), power levels otherwise.
         let decision;
-        try { decision = await callModerationDecision(roomId, state, me, targetMxid, roomState); } catch (e) {
+        try { decision = await callModerationDecision(roomId, state, me, targetMxid, roomState, eventReader(roomId)); } catch (e) {
             if (e.status === 403) { line(403, e.message); return res.status(403).json({ error: "This room links to too many spaces to tell who may moderate its calls" }); }
             line(502, `space: ${e.message}`); return res.status(502).json({ error: "Couldn't read the room's space from the homeserver" });
         }

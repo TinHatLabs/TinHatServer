@@ -7,6 +7,7 @@
 //   #/user/<@mxid>             a profile                    #/__gallery[/section]  the UI gallery
 // Navigations push history entries, so the phone back button / edge swipe walks back (mobile stack).
 import { useSyncExternalStore } from "react";
+import { wasOwnPop } from "../ui/backStack"; // (relative: the unit tests load this file in Node)
 
 export type Route =
   | { name: "home" }
@@ -154,6 +155,39 @@ export function goBack(fallback: Route = { name: "home" }): void {
   const depth = ((history.state as { thDepth?: number } | null)?.thDepth ?? 0) as number;
   if (depth > 0) history.back();
   else navigate(fallback, { replace: true });
+}
+
+/** A room link that came from OUTSIDE the app's own navigate(): the phone app loading `…/#/room/!id` into the open page
+ *  (a notification tap), a typed address, a plain link. Seen as a hash change or a popstate that lands on a history
+ *  entry carrying none of the app's own state (a browser-initiated load makes such an entry — Chromium, the Android web
+ *  view, also for the URL that is already open; every entry the app writes carries `thDepth` / `twSheetDepth`), and
+ *  that isn't the phone back stack's own history.back(). Not the Navigation API: WebKit marks the page's own pushState
+ *  as user-initiated there. cb(the room id or alias); it may run twice for one link (hashchange + popstate) — callers
+ *  are idempotent. Returns the unsubscribe. */
+export function onOutsideRoomLink(cb: (target: string) => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  let active = true; // a callback still queued when the caller unsubscribes never runs
+  const unmarked = () => {
+    const st = history.state as Record<string, unknown> | null;
+    return !st || typeof st !== "object" || (!("thDepth" in st) && !("twSheetDepth" in st));
+  };
+  const check = (e: Event) => {
+    if (!unmarked()) return;
+    const hash = location.hash;
+    // after every popstate listener has run: the back stack has then marked its own pop
+    window.setTimeout(() => {
+      if (!active || wasOwnPop(e) || location.hash !== hash) return;
+      const r = parseHash(hash);
+      if (r.name === "room") cb(r.target);
+    }, 0);
+  };
+  window.addEventListener("hashchange", check);
+  window.addEventListener("popstate", check);
+  return () => {
+    active = false;
+    window.removeEventListener("hashchange", check);
+    window.removeEventListener("popstate", check);
+  };
 }
 
 export function roomHash(roomIdOrAlias: string, eventId?: string): string {

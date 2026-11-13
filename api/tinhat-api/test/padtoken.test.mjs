@@ -48,6 +48,11 @@ function setup({ lk = true, padState, rotated } = {}) {
                 return { ok: true, status: 200, body: { members: s.rooms[room] } };
             }
             if ((m = /^\/_synapse\/admin\/v1\/rooms\/([^/]+)\/state$/.exec(path))) { if (s.stateFail) return { ok: false, status: s.stateFail, body: {} }; return { ok: true, status: 200, body: { state: s.state[decodeURIComponent(m[1])] || [] } }; }
+            if ((m = /^\/_synapse\/admin\/v1\/fetch_event\/([^/]+)$/.exec(path))
+                || (m = /^\/_synapse\/admin\/v1\/rooms\/[^/]+\/context\/([^/?]+)\?limit=0$/.exec(path))) {
+                const e = (s.events || {})[decodeURIComponent(m[1])];
+                return e ? { ok: true, status: 200, body: { event: e } } : { ok: false, status: 404, body: {} };
+            }
             if ((m = /^\/_synapse\/admin\/v2\/users\/([^/]+)\/devices\/([^/]+)$/.exec(path))) {
                 const u = decodeURIComponent(m[1]), d = decodeURIComponent(m[2]);
                 return (s.devices[u] || []).includes(d) ? { ok: true, status: 200, body: { device_id: d, user_id: u } } : { ok: false, status: 404, body: {} };
@@ -81,8 +86,9 @@ function setup({ lk = true, padState, rotated } = {}) {
         return new Response(JSON.stringify({ participants: s.sfu[body.room] }), { status: 200 });
     }
     const wall = 1_800_000_000_000;
+    const now = clock(1000);
     const ct = createCallToken({
-        hs, adminToken: "admintoken", serverName: SN, lkJwtUrl: "http://127.0.0.1:8070", fetchImpl, now: clock(1000),
+        hs, adminToken: "admintoken", serverName: SN, lkJwtUrl: "http://127.0.0.1:8070", fetchImpl, now,
         log: (l) => logs.push(l), enabled: () => false /* the owner's switch off: the Pad route still checks */,
         lkKey: lk ? KEY : "", lkSecret: lk ? SECRET : "", lkApiUrl: "http://127.0.0.1:7880", sfuUrl: "wss://home.test/livekit/sfu",
         wallNow: () => wall, sweep: false, padState: padState || createPadState(), rotated,
@@ -96,7 +102,7 @@ function setup({ lk = true, padState, rotated } = {}) {
         await (handler === "pad" ? ct.padHandler() : ct.watchHandler())(fakeReq({ method, headers: { "x-forwarded-for": ip }, body }), res);
         return res;
     }
-    return { s, post, lkCalls, logs, wall, ct };
+    return { s, post, lkCalls, logs, wall, ct, now };
 }
 const ask = (over = {}) => ({ room: ROOM, openid_token: { access_token: "at", token_type: "Bearer", matrix_server_name: SN, expires_in: 3600 }, device_id: "PHONE", mode: "mic", ...over });
 function verify(jwt) {
@@ -780,9 +786,12 @@ test("PAD1-4 a space with roles governs: a record by someone without moderate_ca
     t.s.state[ROOM] = [plOf({ [BOB]: 100, [CAROL]: 50 }), parent, muteRec(CAROL)];
     t.s.state[SPACE] = spaceState([], 60, 10);
     assert.equal((await t.post(ask())).statusCode, 200, "no moderate_calls in the space: the record doesn't count");
+    // (the space's roles are kept up to CALLTOKEN.ROLE_FRESH_MS: PAD-5's flood bound, 0.3.16)
     t.s.state[SPACE] = spaceState(["moderate_calls"], 60, 70);
+    t.now.advance(CALLTOKEN.ROLE_FRESH_MS);
     assert.equal((await t.post(ask({ device_id: "P2" }))).statusCode, 200, "ranked below the target: doesn't count");
     t.s.state[SPACE] = spaceState(["moderate_calls"], 60, 10);
+    t.now.advance(CALLTOKEN.ROLE_FRESH_MS);
     assert.equal((await t.post(ask({ device_id: "P3" }))).body.reason, "server-muted", "allowed by the space's roles: counts");
 });
 
@@ -795,6 +804,49 @@ test("PAD1-5 the sweep doesn't apply a lower moderator's record to the owner's c
     t.s.state[ROOM] = [plOf({ [ALICE]: 0, [CAROL]: 50 }), muteRec(CAROL)];
     await t.ct.sweep();
     assert.ok(t.lkCalls.some((c) => c.method === "MutePublishedTrack" && c.body.identity === `${ALICE}:DESK`), "a member below is muted by it");
+});
+
+test("PAD1-7 a room v1-11 with NO power_levels (0.3.16): the creator's record mutes a member; a member's record mutes nobody", async () => {
+    const t = setup();
+    // v10 names the creator in `creator` (Synapse reads that field, not the sender); v11 has the sender only
+    const v10 = { type: "m.room.create", state_key: "", sender: CAROL, content: { room_version: "10", creator: CAROL } };
+    const v11 = { type: "m.room.create", state_key: "", sender: CAROL, content: { room_version: "11" } };
+    t.s.state[ROOM] = [v10, muteRec(CAROL)];
+    assert.equal((await t.post(ask())).body.reason, "server-muted", "v10: the creator (100) over a member (0): counts");
+    t.s.state[ROOM] = [v11, muteRec(CAROL)];
+    assert.equal((await t.post(ask({ device_id: "P2" }))).body.reason, "server-muted", "v11: the creator (the sender) counts");
+    t.s.state[ROOM] = [v11, muteRec(BOB)];
+    assert.equal((await t.post(ask({ device_id: "P3" }))).statusCode, 200, "a member's (0) record about a member: nothing");
+    const v10named = { type: "m.room.create", state_key: "", sender: CAROL, content: { room_version: "10", creator: BOB } };
+    t.s.state[ROOM] = [v10named, muteRec(CAROL)];
+    assert.equal((await t.post(ask({ device_id: "P4" }))).statusCode, 200, "v10: the creator field decides, not the sender");
+});
+
+test("PAD5-R a lower moderator re-sending the owner's parent link doesn't free their mute record from that space's roles", async () => {
+    const t = setup();
+    const SPACE = `!other-space:${SN}`, OTHER = `@other:${SN}`;
+    const link = (sender, id, replaces) => ({ type: "m.space.parent", state_key: SPACE, sender, content: { via: [SN] }, event_id: id,
+        room_id: ROOM, ...(replaces ? { unsigned: { replaces_state: replaces } } : {}) });
+    const role = (id, rank, permissions) => ({ type: "dev.tinhat.role", state_key: id, sender: OTHER, content: { name: id, rank, permissions } });
+    // a space run by someone else (OTHER): CAROL holds a role there WITHOUT moderate_calls
+    t.s.state[SPACE] = [
+        { type: "m.room.power_levels", state_key: "", sender: OTHER, content: { users: { [OTHER]: 100 }, users_default: 0 } },
+        { type: "m.room.member", state_key: OTHER, sender: OTHER, content: { membership: "join" } },
+        { type: "m.space.child", state_key: ROOM, sender: OTHER, content: { via: [SN] } },
+        role("everyone", 0, []), role("helper", 60, []),
+        { type: "dev.tinhat.member_roles", state_key: CAROL.slice(1), sender: OTHER, content: { roles: ["helper"] } },
+    ];
+    // the owner (100) alone may change the power levels, so CAROL (50, may send m.space.parent) is below the room's authority
+    const roomPl = plOf({ [BOB]: 100, [CAROL]: 50 }, { events: { "m.room.power_levels": 100 } });
+    t.s.events = { "$bob-link": link(BOB, "$bob-link") };
+    t.s.state[ROOM] = [roomPl, link(BOB, "$bob-link"), muteRec(CAROL)];
+    assert.equal((await t.post(ask())).statusCode, 200, "the owner's link: the space governs, CAROL's record doesn't count");
+    t.s.state[ROOM] = [roomPl, link(CAROL, "$carol-resend", "$bob-link"), muteRec(CAROL)];
+    assert.equal((await t.post(ask({ device_id: "P2" }))).statusCode, 200, "CAROL re-sent it: still the owner's binding");
+    // control: a link CAROL set herself from the start (no history) is judged by the rule for her (this space isn't run
+    // by the room, so the room's power levels decide and her record about a member below counts)
+    t.s.state[ROOM] = [roomPl, link(CAROL, "$carol-own"), muteRec(CAROL)];
+    assert.equal((await t.post(ask({ device_id: "P3" }))).body.reason, "server-muted");
 });
 
 test("PAD1-6 too many parent links: the room's power levels decide (the owner's mute still counts, a lower moderator's about the owner doesn't)", async () => {
@@ -904,4 +956,147 @@ test("PAD3-4 the API reads LK_ROTATED as the manager writes it: on a Tin Hat Ser
     assert.deepEqual([box("1"), box(" 1 "), box("0"), box(""), box(undefined), box("yes"), box("true"), box("10")], [true, true, false, false, false, false, false, false]);
     const other = (v) => rotatedFromEnv(v === undefined ? {} : { LK_ROTATED: v });
     assert.deepEqual([other(undefined), other("1"), other("0")], [true, true, false], "a standalone API: only an explicit 0");
+});
+
+// ---- PAD-5 flood bound (launch-gate 2026-11-12): token spam never fails the room closed ------------------------------
+// A room CAROL (50) has linked to 32 spaces, each link re-sent 4 times (one decision = the most it may read). Her mute
+// record about ALICE counts by the room's power levels (none of those spaces has roles). MAL, a member, spams tokens.
+function floodRoom(t) {
+    const roomPl = plOf({ [BOB]: 100, [CAROL]: 50 }, { events: { "m.room.power_levels": 100 } });
+    const events = {}, links = [];
+    for (let i = 0; i < 32; i++) {
+        const space = `!flood${i}:${SN}`;
+        let prev = null;
+        for (let k = 0; k < 4; k++) {
+            const id = `$f${i}-${k}`;
+            events[id] = { type: "m.space.parent", state_key: space, sender: CAROL, content: { via: [SN] }, event_id: id, room_id: ROOM,
+                ...(prev ? { unsigned: { replaces_state: prev } } : {}) };
+            prev = id;
+        }
+        links.push(events[prev]);
+        t.s.state[space] = [plOf({ [BOB]: 100 })];
+    }
+    t.s.events = events;
+    t.s.state[ROOM] = [roomPl, ...links, muteRec(CAROL)];
+    const MAL = `@mal:${SN}`;
+    t.s.local.mt = MAL;
+    t.s.rooms[ROOM].push(MAL);
+    t.s.devices[MAL] = ["MPHONE"];
+    // count every homeserver read of the flood's spaces and link history
+    const n = { reads: 0 };
+    const st = t.s.state, ev = t.s.events;
+    t.s.state = new Proxy(st, { get(o, k) { if (typeof k === "string" && k.startsWith("!flood")) n.reads++; return o[k]; } });
+    t.s.events = new Proxy(ev, { get(o, k) { if (typeof k === "string" && k.startsWith("$f")) n.reads++; return o[k]; } });
+    return { n, roomPl, links, st, ev };
+}
+const asMal = () => ask({ openid_token: { access_token: "mt", token_type: "Bearer", matrix_server_name: SN, expires_in: 3600 }, device_id: "MPHONE" });
+const asBob = () => ask({ openid_token: { access_token: "ab", token_type: "Bearer", matrix_server_name: SN, expires_in: 3600 }, device_id: "BPHONE" });
+
+test("PAD5-F1 one member's token spam: a 429 for them, never the room (ALICE's mute and BOB's join stay right; reads bounded)", async () => {
+    const t = setup();
+    const { n } = floodRoom(t);
+    assert.equal((await t.post(ask())).body.reason, "server-muted", "CAROL (50) over ALICE (0): the room's power levels");
+    const one = n.reads;
+    let mal429 = 0, mal = 0, alice = 0, bob = 0;
+    // 50 s: MAL every 0.1 s, each from another /64 (only the per-account limit can stop him); ALICE every 2.5 s (a
+    // phone rejoining often); BOB joins 4 times
+    for (let i = 1; i <= 500; i++) {
+        t.now.advance(100);
+        const r = await t.post(asMal(), { ip: `2001:db8:${i.toString(16)}::66` });
+        mal += 1;
+        if (r.statusCode === 429) mal429 += 1;
+        else assert.notEqual(r.statusCode, 502, `MAL's own request ${i} failed closed`);
+        if (i % 25 === 0) {
+            const a = await t.post(ask());
+            alice += 1;
+            assert.equal(a.body?.reason, "server-muted", `ALICE at ${i / 10} s: ${a.statusCode} ${JSON.stringify(a.body)}`);
+        }
+        if (i % 125 === 0) {
+            const b = await t.post(asBob(), { ip: "192.0.2.20" });
+            bob += 1;
+            assert.equal(b.statusCode, 200, `BOB's join at ${i / 10} s: ${b.statusCode} ${JSON.stringify(b.body)}`);
+        }
+    }
+    assert.ok(mal429 > 0, "MAL is limited (per account)");
+    const st = t.ct._roleStats;
+    console.log(`# PAD5-F1 numbers: one decision = ${one} reads; 50 s of spam (${mal} MAL, ${alice} ALICE, ${bob} BOB requests; ` +
+        `MAL 429 x${mal429}) = ${n.reads} reads in all (without the bound: ~${one} per request = ${one * (mal - mal429 + alice + bob + 1)}); ` +
+        `roles fresh ${st?.fresh}, cached ${st?.cached}, stale ${st?.stale}, refused ${st?.refused}`);
+    assert.ok(n.reads <= (CALLTOKEN.ROLE_READS_PER_WINDOW ?? 600) + one, `${n.reads} reads in under a minute`);
+});
+
+test("PAD5-F2 changes take effect: a new parent link at once; a role change inside the space within the 10 s window", async () => {
+    const t = setup();
+    const SPACE = `!owned:${SN}`;
+    const { roomPl, links, st, ev } = floodRoom(t);
+    assert.equal((await t.post(ask())).body.reason, "server-muted");
+    // BOB (the room's authority) links a NEW space in place of CAROL's link 0: that space now governs, and CAROL holds a
+    // role there WITHOUT moderate_calls
+    const space = (perms) => [plOf({ [BOB]: 100 }), { type: "m.room.member", state_key: BOB, sender: BOB, content: { membership: "join" } },
+        { type: "m.space.child", state_key: ROOM, sender: BOB, content: { via: [SN] } },
+        { type: "dev.tinhat.role", state_key: "everyone", sender: BOB, content: { name: "everyone", rank: 0, permissions: [] } },
+        { type: "dev.tinhat.role", state_key: "helper", sender: BOB, content: { name: "helper", rank: 60, permissions: perms } },
+        { type: "dev.tinhat.member_roles", state_key: CAROL.slice(1), sender: BOB, content: { roles: ["helper"] } }];
+    st[SPACE] = space([]);
+    ev["$owned"] = { type: "m.space.parent", state_key: SPACE, sender: BOB, content: { via: [SN] }, event_id: "$owned", room_id: ROOM };
+    st[ROOM] = [roomPl, ev["$owned"], ...links.slice(1), muteRec(CAROL)];
+    t.now.advance(1_000);
+    const r2 = await t.post(ask({ device_id: "P2" }));
+    assert.equal(r2.statusCode, 200, `the new link counts at once: CAROL can't moderate calls there (${JSON.stringify(r2.body)})`);
+    // inside the space, BOB gives CAROL's role moderate_calls: not part of the room's state, so within the window
+    st[SPACE] = space(["moderate_calls"]);
+    t.now.advance(1_000);
+    assert.equal((await t.post(ask({ device_id: "P3" }))).statusCode, 200, "the space's change is not seen yet (kept up to 10 s)");
+    t.now.advance(CALLTOKEN.ROLE_FRESH_MS ?? 10_000);
+    assert.equal((await t.post(ask({ device_id: "P4" }))).body.reason, "server-muted", "after the window: CAROL's record counts again");
+});
+
+test("PAD5-F3 a redacted parent link isn't answered from the kept roles (Astra 0.3.16 area 4: same event id, new content)", async () => {
+    const t = setup();
+    const { roomPl, links, st } = floodRoom(t);
+    assert.equal((await t.post(ask())).body.reason, "server-muted");
+    const fresh = t.ct._roleStats.fresh;
+    // the owner redacts link 0: the room state keeps the event id, with no content and redacted_because
+    const red = { ...links[0], content: {}, unsigned: { ...links[0].unsigned, redacted_because: { event_id: "$red0", sender: BOB } } };
+    st[ROOM] = [roomPl, red, ...links.slice(1), muteRec(CAROL)];
+    t.now.advance(1_000);
+    await t.post(ask({ device_id: "P2" }));
+    assert.ok(t.ct._roleStats.fresh > fresh, "worked out again, not taken from the kept roles");
+});
+
+test("PAD5-F4 joins arriving together into a cold room share one computation (Astra 0.3.16 r2)", async () => {
+    const t = setup();
+    const { n } = floodRoom(t);
+    // six different people (one person's requests already wait for each other under their own lock)
+    const people = Array.from({ length: 6 }, (_, i) => `@p${i}:${SN}`);
+    people.forEach((u, i) => { t.s.local[`tk${i}`] = u; t.s.rooms[ROOM].push(u); t.s.devices[u] = [`D${i}`]; });
+    const answers = await Promise.all(people.map((u, i) => t.post(ask({ device_id: `D${i}`,
+        openid_token: { access_token: `tk${i}`, token_type: "Bearer", matrix_server_name: SN, expires_in: 3600 } }), { ip: `192.0.2.${100 + i}` })));
+    for (const a of answers) assert.notEqual(a.statusCode, 502, JSON.stringify(a.body));
+    assert.equal(t.ct._roleStats.fresh, 1, `one computation for 6 joins at once (fresh ${t.ct._roleStats.fresh})`);
+    assert.ok(n.reads <= 32 + 128, `${n.reads} reads`);
+});
+
+test("PAD5-F5 roles worked out from a kept space state expire 10 s after THAT read, not 10 s after they were worked out", async () => {
+    const t = setup();
+    const SPACE = `!shared:${SN}`, ROOM2 = `!call2:${SN}`;
+    const space = (perms) => [plOf({ [BOB]: 100 }), { type: "m.room.member", state_key: BOB, sender: BOB, content: { membership: "join" } },
+        { type: "m.space.child", state_key: ROOM, sender: BOB, content: { via: [SN] } },
+        { type: "m.space.child", state_key: ROOM2, sender: BOB, content: { via: [SN] } },
+        { type: "dev.tinhat.role", state_key: "everyone", sender: BOB, content: { name: "everyone", rank: 0, permissions: [] } },
+        { type: "dev.tinhat.role", state_key: "helper", sender: BOB, content: { name: "helper", rank: 60, permissions: perms } },
+        { type: "dev.tinhat.member_roles", state_key: CAROL.slice(1), sender: BOB, content: { roles: ["helper"] } }];
+    const link = (r) => ({ type: "m.space.parent", state_key: SPACE, sender: BOB, content: { via: [SN] }, event_id: `$l-${r}`, room_id: r });
+    const pl = plOf({ [BOB]: 100, [CAROL]: 50 }, { events: { "m.room.power_levels": 100 } });
+    t.s.rooms[ROOM2] = [ALICE, BOB];
+    t.s.sfu[ROOM2] = [];
+    t.s.state[SPACE] = space([]);
+    t.s.state[ROOM] = [pl, link(ROOM), muteRec(CAROL)];
+    t.s.state[ROOM2] = [pl, link(ROOM2), muteRec(CAROL)];
+    assert.equal((await t.post(ask())).statusCode, 200, "room 1 reads the space at t=0: CAROL can't moderate there");
+    t.s.state[SPACE] = space(["moderate_calls"]);  // changed at once in the space
+    t.now.advance(9_000);
+    assert.equal((await t.post(ask({ room: ROOM2, device_id: "P2" }))).statusCode, 200, "room 2 at t=9 s: from the kept space state");
+    t.now.advance(1_500);  // t=10.5 s: 10 s after the space was read, but only 1.5 s after room 2's roles were worked out
+    assert.equal((await t.post(ask({ room: ROOM2, device_id: "P3" }))).body?.reason, "server-muted", "room 2 sees the change 10 s after the read");
 });

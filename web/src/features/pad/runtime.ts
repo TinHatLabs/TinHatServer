@@ -779,7 +779,8 @@ export interface CallElsewhere {
   targets: PadTarget[];
 }
 
-/** React: the calls (in my joined rooms) that one of my OTHER devices is in and this device isn't — newest first. */
+/** React: the calls (in my joined rooms) that one of my OTHER devices is in and this device isn't — a call the Pad can
+ *  drive first, then newest first (order.ts). */
 export function useMyCallsElsewhere(): CallElsewhere[] {
   const rev = useMembershipRev(null);
   const trustKey = useTrustInputs();
@@ -794,7 +795,7 @@ export function useMyCallsElsewhere(): CallElsewhere[] {
       const t = targetsIn(r.roomId);
       if (t.length) out.push({ room: r.roomId, targets: t });
     }
-    // newest first, ties by room id (order.ts = the desktop's pad_engine::calls_newest_first)
+    // ready first, then newest, ties by room id (order.ts = the desktop's pad_engine::calls_newest_first)
     const sorted = callsNewestFirst(out);
     setList((cur) => (JSON.stringify(cur) === JSON.stringify(sorted) ? cur : sorted));
   }, [rev, trustKey, myCall]);

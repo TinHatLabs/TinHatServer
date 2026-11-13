@@ -61,7 +61,7 @@ import { WindowHost } from "./WindowHost";
 import { goBack, navigate, roomHash, useRoute } from "./router";
 import { DockHost, type HostSize, type IslandDef, type SolveInputs } from "./dock/DockHost";
 import { EditLayer, EditToolbar, IslandPlaceholder, islandText, openEdit, doneEdit, cancelEdit, resetOnThisDevice, useEdit, useRendered, useTabs, setTab, useDrawerRun, closeIslandDrawer, drawerForm, drawerCatchZ } from "@/features/editmode";
-import { dockView, islandMeta, mainColumnH } from "./dock/shellView";
+import { dockView, islandMeta, mainColumnH, twoPaneSizes } from "./dock/shellView";
 import { contentInset } from "./dock/frame";
 import { useBackDispatch } from "./dock/dispatch";
 import s from "./Shell.module.css";
@@ -233,12 +233,17 @@ function DesktopShell({ roomId, eventId, always }: { roomId: string | null; even
   // drawer sizes: the schema's shapeDefaults)
   // edit mode (EDITMODE-UI §2): every placed island is present — a room, the call and the panel as if open (placeholders
   // where the real content is absent), the nav column's drawer open — and nothing is maximised
+  // the two-pane band (docs/TWO-PANE.md): tablets / a foldable / a small window get a narrower list — a view override,
+  // keyed by its canonical text so a new form object with the same column re-solves nothing
+  const twoPane = twoPaneSizes(form, hostW > 0 ? hostW : window.innerWidth, editing);
+  const twoPaneKey = twoPane ? JSON.stringify(twoPane) : "";
   const view = useMemo(() => {
+    const sizes = twoPaneKey ? (JSON.parse(twoPaneKey) as Record<string, { fixed: number }>) : undefined;
     const v = editing
       ? dockView({ roomOpen: true, callShown: true, panelOpen: true, fill: false, corner, drawerShown: true, drawerId: navDrawerId })
-      : dockView({ roomOpen, callShown, panelOpen, fill, corner, drawerShown, drawerId: navDrawerId });
+      : dockView({ roomOpen, callShown, panelOpen, fill, corner, drawerShown, drawerId: navDrawerId, sizes });
     return Object.keys(tabs).length ? { ...v, active: tabs } : v;
-  }, [editing, roomOpen, callShown, panelOpen, fill, corner, drawerShown, navDrawerId, tabs]);
+  }, [editing, roomOpen, callShown, panelOpen, fill, corner, drawerShown, navDrawerId, tabs, twoPaneKey]);
   const gap = flat ? 0 : shape.gap;
   const margin = flat ? 0 : shape.margin;
   const radius = flat ? 0 : shape.radius;

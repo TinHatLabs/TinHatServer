@@ -204,8 +204,11 @@ export const HANDLERS: Record<string, Handler> = {
     else closeOverlayWindow();
   },
   "call.pin.clear": () => useCallUi.getState().set({ pinned: null }),
-  // a hold action: the button's press and release (ActionButton) — never from the palette
-  "call.pushToTalk.hold": (ctx) => c().pttHold(ctx.hold !== "up"),
+  // a hold action: the button's press and release (ActionButton) — never from the palette. Only an explicit "down"
+  // opens the mic; a run without a press/release (a menu row, a click) does nothing (review round 4, UI-1)
+  "call.pushToTalk.hold": (ctx) => {
+    if (ctx.hold === "down" || ctx.hold === "up") c().pttHold(ctx.hold === "down");
+  },
   "call.pushToTalk.toggle": () => c().applyPushToTalk(!c().pushToTalk),
   "call.screenShare.toggle": () => (c().sharing ? c().stopScreen() : nativeShareOn() ? c().shareScreen() : useCallUi.getState().set({ streamPop: true, optsFace: null })),
   "call.share.panel": () => {
@@ -374,7 +377,7 @@ export const HANDLERS: Record<string, Handler> = {
   "push.enable": () => void (usePushStore.getState().phase === "on" ? disablePush() : enablePush()),
   "status.clear": () => void setMyStatus(null),
   "status.open": (ctx) => surface("status", ctx),
-  // the table asked "Show your status to friends?" when sharing is off: turn it on, then set the status
+  // the table asked "Share your status with people?" when sharing is off: turn it on, then set the status
   "status.set": async (ctx) => {
     const id = param(ctx, "status");
     if (!id) return;

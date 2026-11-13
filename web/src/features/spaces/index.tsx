@@ -19,10 +19,13 @@
 import type { FeatureModule } from "@/core/registry";
 import { bus } from "@/core/bus";
 import { peekClient } from "@/core/matrix";
+import { getFormFactor } from "@/core/device";
+import { onOutsideRoomLink } from "@/app/router";
 import { useMemberRoleImpl, type RoleTag } from "./roles";
 import { closeRightPanel, openRightPanel, toggleRightPanel } from "./panelState";
 import { installSpaceSettingsBus, openSpaceSettingsIntent, SPACE_SETTINGS_WINDOW } from "./intents";
-import { SpaceSettingsWindow, spaceSettingsTitle } from "./SpaceSettingsWindow";
+import { spaceSettingsTitle } from "./spaceSettingsTitle";
+import { lazyPart } from "@/ui/lazy";
 import { ProfileFlyout } from "./ProfileFlyout";
 import { ConfirmHost } from "./confirmHost";
 import { registerMemberMenu } from "./memberMenu";
@@ -84,6 +87,9 @@ export function useMemberRole(roomId: string | null | undefined, userId: string 
   return useMemberRoleImpl(roomId, userId);
 }
 
+// web-perf 2026-11-07: the Space settings window is its own chunk (ui/lazy.tsx), fetched after the start
+const SpaceSettingsWindow = lazyPart("SpaceSettingsWindow", () => import("./SpaceSettingsWindow").then((m) => m.SpaceSettingsWindow));
+
 export const feature: FeatureModule = {
   id: "spaces",
   setup(r) {
@@ -123,6 +129,14 @@ export const feature: FeatureModule = {
       else openRightPanel(tab === "info" ? "info" : tab === "members" ? "members" : undefined);
     });
     bus.on("closeRightPanel", () => closeRightPanel());
+    // phones: the panel is a full-screen sheet over its room, so a room opened while it is up (a notification tap: the
+    // push worker's click → openRoom, the phone app's #/room/… link → onOutsideRoomLink) shows that room's conversation
+    // (desktop + tablets keep the docked/overlay panel as it is)
+    const roomUp = () => {
+      if (getFormFactor() === "mobile") closeRightPanel();
+    };
+    bus.on("openRoom", roomUp);
+    onOutsideRoomLink(roomUp);
     // dev-only: the Invites pane in a window, for looking at it without an operator account (D18)
     if (import.meta.env.DEV)
       r.windows.add({ id: "spaces-invites-preview", order: 99, title: "Invites (preview)", component: InvitesPane, defaultSize: { width: 720, height: 560 } });

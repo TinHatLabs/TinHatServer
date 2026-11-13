@@ -51,9 +51,9 @@ def text() -> str:
             f"  Dashboard:    https://{name}/admin",
         ]
         if st.get("mode") == "anywhere":
-            lines += [f"  Friends type: {name.split('.')[0]}"]
+            lines += [f"  People type: {name.split('.')[0]}"]
         elif st.get("mode") == "domain":
-            lines += [f"  Friends type: {name}"]
+            lines += [f"  People type: {name}"]
         else:
             lines += [f"  New devices:  http://{name}  (trust the server, then open Tin Hat)"]
         if addrs:

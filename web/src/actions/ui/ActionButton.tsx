@@ -8,10 +8,11 @@
 // glyph's active pose (today's tool rows), "checked" also fills the button (your own button islands, where a toggle
 // must read as on/off). A danger action's glyph and label are red; a primary action is the CTA (GlowButton).
 // Colours only from theme tokens; nothing animates at rest (hover / press transitions are the house buttons').
-import { forwardRef, type CSSProperties, type MouseEvent, type PointerEvent as RPointerEvent } from "react";
+import { forwardRef, useEffect, useRef, type CSSProperties, type MouseEvent, type PointerEvent as RPointerEvent } from "react";
 import { Avatar, GlowButton, HeaderIconButton, Icon, ToolButton, cx, useIsMobile } from "@/ui";
 import type { ItemOut } from "../evaluate";
 import type { Look, Scale } from "../table";
+import { HoldLatch, holdTargetGone } from "./holdLatch";
 import s from "./ActionButton.module.css";
 
 export interface ActionButtonProps {
@@ -51,18 +52,48 @@ export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(fun
     if (editing || dimmed || item.hold) return;
     onRun?.(e.currentTarget, e);
   };
-  // a hold action runs on the press and again on the release (or when the pointer leaves / is cancelled)
-  const holdHandlers =
-    item.hold && !editing && !dimmed && onHold
-      ? {
-          onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
-            e.currentTarget.setPointerCapture?.(e.pointerId);
-            onHold(e.currentTarget, true);
-          },
-          onPointerUp: (e: RPointerEvent<HTMLButtonElement>) => onHold(e.currentTarget, false),
-          onPointerCancel: (e: RPointerEvent<HTMLButtonElement>) => onHold(e.currentTarget, false),
-        }
-      : {};
+  // a hold action runs on the press and again on the release (or when the pointer leaves / is cancelled). The latch
+  // (holdLatch.ts, review round 4 UI-1 r2) keeps the press's own release and runs it exactly once — also when the
+  // button unmounts, re-renders elsewhere, dims, leaves edit mode's reach or stops being a hold mid-hold: a held push
+  // to talk can never be left open by the UI changing under the finger.
+  const latch = useRef<HoldLatch | null>(null);
+  if (!latch.current) latch.current = new HoldLatch();
+  const holdable = !!item.hold && !editing && !dimmed && !!onHold;
+  useEffect(() => {
+    // (a fresh latch after a StrictMode / remount cleanup disposed the old one)
+    const l = latch.current && !latch.current.disposed ? latch.current : new HoldLatch();
+    latch.current = l;
+    return () => l.end("unmount");
+  }, []);
+  useEffect(() => {
+    if (!holdable) latch.current?.end("disable");
+  }, [holdable]);
+  const holdHandlers = item.hold
+    ? {
+        onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
+          const l = latch.current;
+          if (!holdable || !onHold || !l || l.held || l.disposed) return;
+          const el = e.currentTarget;
+          const fire = onHold;
+          el.setPointerCapture?.(e.pointerId);
+          // hidden by CSS (the button or an ancestor) neither unmounts nor reliably ends the pointer: looked at while held
+          const watch = window.setInterval(() => {
+            if (holdTargetGone(el)) l.end("hide");
+          }, 200);
+          l.press(
+            () => fire(el, true),
+            () => {
+              window.clearInterval(watch);
+              fire(el, false);
+            },
+            e.pointerId,
+          );
+        },
+        onPointerUp: (e: RPointerEvent<HTMLButtonElement>) => latch.current?.endBy(e.pointerId, "up"),
+        onPointerCancel: (e: RPointerEvent<HTMLButtonElement>) => latch.current?.endBy(e.pointerId, "cancel"),
+        onLostPointerCapture: (e: RPointerEvent<HTMLButtonElement>) => latch.current?.endBy(e.pointerId, "lostcapture"),
+      }
+    : {};
   const common = {
     "data-action": item.a,
     "data-state": item.state,

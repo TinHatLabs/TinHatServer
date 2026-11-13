@@ -18,6 +18,7 @@ import { getFormFactor } from "@/core/device";
 import { PAD_CAP } from "./pad/rules";
 import { padAllowed } from "./pad/prefs";
 import { useCallStore } from "./store";
+import { afterStart } from "@/core/afterstart";
 
 const log = createLogger("av1");
 
@@ -281,6 +282,7 @@ if (typeof window !== "undefined") {
   // test hook, same gate as window.__twCall
   if (import.meta.env.DEV || w.__TW_DEBUG__)
     w.__twAv1 = { state: av1State, probe: av1Probe, setEnabled: (on: boolean) => setPref(AV1_PREF, on) };
-  // start the probe early so the first join never waits for it
-  void av1Probe();
+  // start the probe early so the first join never waits for it — once the start is done (web-perf: the probe's worker
+  // is a 107 KB download + compile; a join before then awaits the same memoised probe)
+  afterStart(() => void av1Probe());
 }

@@ -1,0 +1,154 @@
+/* VoiceRecorder.module.css — the composer's voice-note row (docs/VOICE-NOTES.md §2). It sits inside the composer box
+   (Composer.module.css .box), in the same 40 px button row; phones: 44 px targets filling the composer width. Colours
+   only through the theme's variables (src/theme/MIGRATING.md): the composer's own tokens; the recording dot and the
+   "time left" warning use the state roles until the contract has composer.voice.* tokens (notes for the contract owner). */
+.row {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  transition: opacity var(--th-dur);
+}
+.line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.dim {
+  opacity: 0.6;
+}
+.tb {
+  flex: none;
+}
+.mic {
+  flex: none;
+}
+.micOff {
+  opacity: 0.45;
+  cursor: default;
+}
+.micMobile {
+  width: 44px;
+  height: 44px;
+}
+.dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 5px;
+  margin: 0 6px 0 8px;
+  background: var(--th-state-danger);
+}
+.time {
+  flex: none;
+  min-width: 38px;
+  font-size: var(--th-font-size);
+  font-variant-numeric: tabular-nums;
+  color: var(--th-composer-fg);
+  padding: 0 4px;
+}
+.warn {
+  color: var(--th-state-warning);
+}
+.waiting {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--th-font-size);
+  color: var(--th-composer-placeholder);
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.strip,
+.wave {
+  flex: 1 1 auto;
+  min-width: 40px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1px;
+  padding: 0 6px;
+  overflow: hidden;
+}
+.wave {
+  cursor: pointer;
+  border-radius: 6px;
+  outline: none;
+  touch-action: none;
+}
+.wave:focus-visible {
+  box-shadow: 0 0 0 1px var(--th-composer-border-focus);
+}
+.bar,
+.wbar {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 5px;
+  border-radius: 1px;
+  background: var(--th-composer-placeholder);
+}
+.played {
+  background: var(--th-composer-fg);
+}
+.send {
+  margin: 0 0 0 2px;
+}
+.sendRound {
+  --th-radius: 22px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0 !important;
+  border-radius: 22px !important;
+  justify-content: center;
+  margin: 0 0 0 2px;
+}
+.msg {
+  font-size: var(--th-font-size);
+  color: var(--th-composer-placeholder);
+  padding: 2px 8px 2px 84px;
+}
+.err {
+  color: var(--th-state-danger);
+}
+.rowMobile .tb {
+  width: 44px;
+  height: 44px;
+}
+.rowMobile .msg {
+  padding-left: 8px;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.pillRow {
+  display: flex;
+  margin: 4px 4px 0;
+}
+.pill {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 15px;
+  cursor: pointer;
+  font-size: var(--th-font-size);
+  color: var(--th-composer-staged-fg);
+  background: var(--th-composer-staged-bg);
+  border: 1px solid var(--th-composer-staged-border);
+}
+.pill:focus-visible {
+  border-color: var(--th-composer-border-focus);
+}

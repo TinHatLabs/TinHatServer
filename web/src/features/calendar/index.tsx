@@ -15,8 +15,7 @@
 // useCalendarEvent, the pure games model (model/games.ts).
 import type { FeatureModule } from "@/core/registry";
 import { getFormFactor } from "@/core/device";
-import { CalendarWindow } from "./ui/CalendarWindow";
-import { GameReelWindow } from "./ui/GameReelWindow";
+import { lazyPart } from "@/ui/lazy";
 import { CalendarButton, GameReelButton, NextUpChip } from "./ui/HeaderActions";
 import { CalendarCard, hasCardMarker } from "./ui/CalendarCard";
 import { CalendarRoot } from "./CalendarRoot";
@@ -33,6 +32,10 @@ export { CATALOG_BASE } from "./gamesStore";
 export { CalendarCard } from "./ui/CalendarCard";
 export { setPresent as setReelPresence } from "./gamesStore";
 export { myCredit } from "./gamesStore"; // widgets W2: Game night shows your Reel credit
+
+// web-perf 2026-11-07: the two windows are their own chunks (ui/lazy.tsx), fetched after the start
+const CalendarWindow = lazyPart("CalendarWindow", () => import("./ui/CalendarWindow").then((m) => m.CalendarWindow));
+const GameReelWindow = lazyPart("GameReelWindow", () => import("./ui/GameReelWindow").then((m) => m.GameReelWindow));
 
 export const feature: FeatureModule = {
   id: "calendar",

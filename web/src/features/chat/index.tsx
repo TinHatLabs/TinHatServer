@@ -25,6 +25,7 @@ import { CallHeaderButton, InfoHeaderButton } from "./RoomPage";
 import { Lightbox } from "./Lightbox";
 import { LinkConfirm } from "./linkconfirm";
 import { closeFloatingChat, getView, mainView, openFloatingChat, restoreChatMemory, useChatStore } from "./store";
+import { installVoiceHook, wireVoice } from "./voicenote/wire";
 
 export type { RoomPageProps } from "./types";
 export { RoomPage, RoomHeaderBar, HeaderIsland, TimelineIsland } from "./RoomPage";
@@ -91,12 +92,14 @@ export const feature: FeatureModule = {
     bus.on("jumpToEvent", ({ roomId, eventId }) => jumpTo(roomId, eventId));
     bus.on("openThread", ({ roomId, eventId }) => jumpTo(roomId, eventId));
     bus.on("stageFiles", ({ files }) => stageFiles(files));
+    wireVoice(); // voice notes (docs/VOICE-NOTES.md): the draft store ↔ recorder, upload, send, call join, sign-out
     // dev/QA hooks (tools/chat-shots.mjs)
     const w = window as unknown as Record<string, unknown>;
     if (import.meta.env.DEV || w.__TW_DEBUG__) {
       w.__tw_stage = (files: File[]) => stageFiles(files);
       w.__tw_openFloating = (id: string) => openFloatingChat(id);
       w.__tw_closeFloating = (id: string) => closeFloatingChat(id);
+      installVoiceHook(); // window.__twVoice (voicenote/wire.ts)
     }
   },
 };

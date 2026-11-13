@@ -9,6 +9,11 @@
 //   notificationclick  close it; focus a Tin Hat window inside this worker's scope and postMessage
 //                      {type: "tinhat-open-room", room, user} (or "tinhat-note-click" for the page's own notes);
 //                      no window → open one at <scope>#/room/<id>
+//   actions            docs/NOTIF-ACTIONS.md: a message notification carries Reply (→ {type: "tinhat-compose",
+//                      room, user}: the room with the composer focused) and, when it knows its event, Mark as read
+//                      (→ {type: "tinhat-mark-read", room, event, user} to a Tin Hat window WITHOUT focusing it).
+//                      With no window, one is opened and gets the same message. This worker never sends anything to
+//                      the server and holds no token: the page does it (the session and the crypto store live there).
 // Paths come from self.registration.scope (files in public/ get no BASE_URL): / live, /next/ staging.
 "use strict";
 
@@ -41,6 +46,17 @@ function parsePayload(data) {
     unread: Number.isInteger(p.unread) && p.unread >= 0 ? p.unread : null,
     user: typeof p.user === "string" && /^@[^\s:]+:\S+$/.test(p.user) ? p.user : "",
   };
+}
+
+/** docs/NOTIF-ACTIONS.md — the same list as src/features/push/notifactions.ts webActions() (its unit test reads this
+ *  file): Reply, then Mark as read when the event id is usable ('$' + 1..254 more bytes, no control/space). */
+function eventUsable(e) {
+  return typeof e === "string" && e.startsWith("$") && new TextEncoder().encode(e).length >= 2 && new TextEncoder().encode(e).length <= 255 && !/[\s\u0000-\u001f\u007f-\u009f\u0085\u2028\u2029\ufeff]/u.test(e);
+}
+function messageActions(event) {
+  const a = [{ action: "reply", title: "Reply" }];
+  if (eventUsable(event)) a.push({ action: "read", title: "Mark as read" });
+  return a;
 }
 
 /** event.waitUntil(p) — an untrusted (synthetic) event throws there; the work still runs. */
@@ -124,6 +140,8 @@ self.addEventListener("push", (event) => {
           icon: ICON,
           badge: ICON,
           data: { room: n.room, event: n.event, kind: n.kind, user: n.user, push: true },
+          // docs/NOTIF-ACTIONS.md: Reply / Mark as read on a room message (an invite keeps none)
+          actions: n.room && n.kind === "message" ? messageActions(n.event) : [],
         })
         .catch(() =>
           // an option this browser rejects must not cost the notification
@@ -149,6 +167,33 @@ self.addEventListener("notificationclick", (event) => {
   const room = typeof d.room === "string" && d.room.startsWith("!") ? d.room : "";
   const note = typeof d.note === "string" ? d.note : "";
   const user = typeof d.user === "string" ? d.user : "";
+  const action = typeof event.action === "string" ? event.action : "";
+  // docs/NOTIF-ACTIONS.md: the buttons. The page does the work; Mark as read leaves the window where it is.
+  if (room && (action === "read" || action === "reply")) {
+    const msg = action === "read" ? { type: "tinhat-mark-read", room, event: eventUsable(d.event) ? d.event : "", user } : { type: "tinhat-compose", room, user };
+    keep(
+      event,
+      (async () => {
+        if (action === "read" && !msg.event) return;
+        const win = pickWindow(await self.clients.matchAll({ type: "window", includeUncontrolled: true }));
+        if (win) {
+          if (action === "reply") {
+            try {
+              await win.focus();
+            } catch (_) {
+              /* not allowed: still tell it */
+            }
+          }
+          win.postMessage(msg);
+          return;
+        }
+        // no Tin Hat window: open one (the session is in the page); the message waits there until it is ready
+        const opened = await self.clients.openWindow(SCOPE + (action === "reply" ? "#/room/" + encodeURIComponent(room) : ""));
+        if (opened) opened.postMessage(msg);
+      })(),
+    );
+    return;
+  }
   keep(
     event,
     (async () => {

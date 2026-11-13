@@ -3,13 +3,17 @@ import { EventStatus, type MatrixEvent } from "matrix-js-sdk";
 import { liveTimelineChain, peekClient, uploadFile, fetchMedia, fetchEncryptedMedia, type EncryptedFile } from "@/core/matrix";
 import { toast } from "@/core/bus";
 import { ROOM_NOT_SYNCED } from "@/core/matrix/sendGuard";
+import { sendReadPosition } from "@/core/matrix/receipts";
 import { playUiSound } from "@/core/sounds";
 import { useChatStore } from "./store";
 import { editContent, mentionContent, textContent, type PickedMention } from "./lib/markdown";
 import { failReason, type MediaRef, type Row } from "./lib/model";
+import { pinsAfterDelete } from "./lib/pins";
 import { replyMentionIds } from "./lib/reply";
 import { mimeForName } from "./lib/format";
 import { bytesAre, inertBlob, isTextLike, viewerExt } from "@/core/mediatype";
+import { encryptedNowSync, roomEncryptedForUpload } from "@/core/matrix/uploadCrypto";
+import { RETRY_PLAIN_MEDIA, RETRY_UNKNOWN, hasPlainMedia, retryVerdict } from "./retryRule";
 
 function client() {
   const c = peekClient();
@@ -93,7 +97,13 @@ export async function redactMessage(roomId: string, eventId: string): Promise<vo
   } catch (e) {
     toast(`Delete failed: ${(e as Error)?.message ?? e}`);
     dropFailedLocal(roomId);
+    return;
   }
+  // QA W1: deleting a pinned message also unpins it, when I may edit the room's pins (pins.ts pinsAfterDelete; a pin I
+  // may not take back is only hidden). After the delete went through, so a failed delete never loses the pin.
+  const cur = (client().getRoom(roomId)?.currentState.getStateEvents("m.room.pinned_events", "")?.getContent() as Content | undefined)?.pinned;
+  const pins = Array.isArray(cur) ? cur.filter((x): x is string => typeof x === "string") : [];
+  if (pinsAfterDelete(pins, eventId, canPin(roomId))) await setPinned(roomId, eventId, false);
 }
 
 /** Failed optimistic edits/redactions/reactions roll back (cancel the local echo). */
@@ -189,7 +199,16 @@ export function retryLocal(roomId: string, row: Row): void {
     }
     return;
   }
-  if (c && room && row.local) c.resendEvent(row.local, room).catch(() => {});
+  if (!c || !room || !row.local) return;
+  const ev = row.local;
+  const content = ev.getContent() as Record<string, unknown>;
+  void retryVerdict(c, roomId, content).then((v) => {
+    if (v === "unknown") return toast(RETRY_UNKNOWN);
+    // re-read as late as we can; js-sdk does one more asynchronous check of its own inside resendEvent, a window this
+    // narrows and can't close (the same residual as VN-1)
+    if (v === "refuse-plain-media" || (hasPlainMedia(content) && encryptedNowSync(c, roomId))) return toast(RETRY_PLAIN_MEDIA);
+    c.resendEvent(ev, room).catch(() => {});
+  });
 }
 
 export function deleteLocal(row: Row): void {
@@ -203,10 +222,6 @@ export function deleteLocal(row: Row): void {
 // ---- attachments -----------------------------------------------------------------------------
 
 let upSeq = 0;
-function isEncrypted(roomId: string): boolean {
-  const c = peekClient();
-  return !!c?.getRoom(roomId)?.hasEncryptionStateEvent();
-}
 
 async function imageSize(file: File): Promise<{ w: number; h: number }> {
   try {
@@ -246,7 +261,16 @@ async function runUpload(roomId: string, id: string): Promise<void> {
       return;
     }
     const mime = u.file.type || mimeForName(u.file.name);
-    const up = await uploadFile(u.file, { encrypt: isEncrypted(roomId), name: u.file.name, mimetype: mime });
+    // security review round 4 (VN-1 class): the room's encryption is decided at the upload (uploadFile `room`: the room
+    // state OR the crypto store; unsure = throws = failed, nothing uploaded) — never from the room state alone
+    let up = await uploadFile(u.file, { encrypt: false, room: roomId, name: u.file.name, mimetype: mime });
+    if (!up.file) {
+      // the room turned encrypted while the plaintext upload ran: upload again, encrypted (a plaintext reference never
+      // goes into an encrypted room; unsure = throws = failed)
+      const c = peekClient();
+      if (!c) throw new Error("Not signed in");
+      if (await roomEncryptedForUpload(c, roomId)) up = await uploadFile(u.file, { encrypt: true, name: u.file.name, mimetype: mime });
+    }
     // native info = {mimetype, size, w/h for images}; no duration, no video size, no thumbnail
     const info: Content = { mimetype: mime, size: u.file.size };
     if (up.msgtype === "m.image" && u.w && u.h) {
@@ -365,7 +389,7 @@ export function sendTyping(roomId: string, on: boolean): void {
 }
 
 const lastReceipt = new Map<string, string>();
-export function sendReceipt(roomId: string, ev: MatrixEvent): void {
+export function markReadPosition(roomId: string, ev: MatrixEvent): void {
   const c = peekClient();
   const id = ev.getId();
   if (!c || !id || id.startsWith("~")) return;
@@ -390,7 +414,8 @@ export function sendReceipt(roomId: string, ev: MatrixEvent): void {
     }
   }
   lastReceipt.set(roomId, id);
-  c.sendReadReceipt(ev, undefined, true).catch(() => lastReceipt.delete(roomId));
+  // public m.read only in a room of my own server, else m.read.private (core/matrix/receipts.ts)
+  sendReadPosition(ev).catch(() => lastReceipt.delete(roomId));
 }
 
 export function playSend() {

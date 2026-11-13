@@ -32,7 +32,8 @@ Quotas (network.db, so a restart doesn't reset them; sliding hour), counted by t
 An invite inside a room this server is in can skip both checks: when its content hash doesn't match, Synapse stores
 its own redacted copy (still an invite) without asking any module. on_new_event judges every invite no check decided,
 and declines a refused one on the person's behalf (it reached their sync for a moment; the decline is retried a few
-times, then given up and logged).
+times, then given up and logged). If its recorded outcome can't be read, the invite is left as it is for now and the
+lookup is retried a few times before it gets its decision.
 
 Failure rules: the blocked check never fails open (it is a set lookup). If the invite rule or the "known" check
 itself fails, the invite is refused (logged): a spam control must not let everything through on a bug. If the quota
@@ -46,6 +47,7 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Mapping
 
 from synapse.api.errors import Codes
 from synapse.module_api import NOT_SPAM, ModuleApi
@@ -74,6 +76,8 @@ SCHEMA = 3
 LOOKUP_FAILED = "\0lookup-failed"
 #: seconds between tries of an on-behalf decline (then it is given up, logged)
 DECLINE_RETRY_S = (5, 30, 120)
+#: seconds between further tries of a failed outcome lookup (then the invite is left as it is, logged)
+LOOKUP_RETRY_S = (5, 30, 120)
 
 
 def host_of(server) -> str:
@@ -296,7 +300,7 @@ def _finite(value, depth: int = 0) -> bool:
             return False
     if isinstance(value, float):
         return math.isfinite(value)
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):  # a dict, or the immutabledict Synapse hands modules for frozen account data
         return all(_finite(v, depth + 1) for v in value.values())
     if isinstance(value, (list, tuple)):
         return all(_finite(v, depth + 1) for v in value)
@@ -496,8 +500,39 @@ class NetworkRules:
             return
         eid = str(getattr(event, "event_id", "") or "")
         prev = await self._outcome(eid)
-        if prev == LOOKUP_FAILED:  # an accepted invite must never be undone by a hiccup: left as it is (logged)
+        if prev == LOOKUP_FAILED:  # an accepted invite must never be undone by a hiccup: nothing decided yet, retried
+            self.api.run_as_background_process("tinhat_network_recheck", self._recheck, event, state_map)
             return
+        await self._apply(event, state_map, eid, prev)
+
+    async def _recheck(self, event, state_map) -> None:
+        """The outcome lookup failed when the invite arrived: try again, a few times, so a transient database error
+        doesn't skip this invite for good. Still unreadable after that: left as it is (logged), as an accepted invite
+        must never be undone by a hiccup. An invite answered in the meantime is left alone. Lost if Synapse restarts while waiting, like an on-behalf decline."""
+        eid = str(getattr(event, "event_id", "") or "")
+        try:
+            for wait in LOOKUP_RETRY_S:
+                await self.api.sleep(wait)
+                prev = await self._outcome(eid)
+                if prev != LOOKUP_FAILED:
+                    # No decision recorded and the invite isn't current any more: answered while we waited. Never
+                    # decide it now: that would write its pending row over a newer invite's.
+                    if prev is not None or await self._still_their_invite(event, eid):
+                        await self._apply(event, state_map, eid, prev)
+                    return
+            logger.error("tinhat_network: giving up on the recorded outcome of invite %s to %s; left as it is", eid,
+                         event.state_key)
+        except Exception:  # noqa: BLE001  background work: logged, the invite stays as it is
+            logger.exception("tinhat_network: rechecking invite %s failed", eid)
+
+    async def _still_their_invite(self, event, eid: str) -> bool:
+        membership, cur = await self.api._store.get_local_current_membership_for_user_in_room(  # noqa: SLF001
+            str(event.state_key), str(event.room_id))
+        return membership == "invite" and cur == eid
+
+    async def _apply(self, event, state_map, eid: str, prev) -> None:
+        """Decide an invite that skipped the checks, or keep the decision recorded before (prev); decline a refused
+        one that is the person's current membership."""
         why = (None if prev == "ok" else prev) if prev is not None else await self.decide(event)
         if why is None:
             return

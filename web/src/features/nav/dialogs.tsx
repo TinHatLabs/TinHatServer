@@ -8,15 +8,16 @@ import { create } from "zustand";
 import { SERVER_LABEL } from "@/core/bearer";
 import { toast, useBus } from "@/core/bus";
 import { canSendState, getSession, logout, peekClient, useCryptoStatus } from "@/core/matrix";
-import { BasicCheckBox, BasicTextField, ConfirmDialog, PromptDialog, useIsMobile } from "@/ui";
+import { BasicCheckBox, BasicTextField, ConfirmDialog, PromptDialog, cx, useIsMobile } from "@/ui";
 import sheet from "@/features/settings/dialogs.module.css";
 import { createDm, createRoom, copyText, inviteToRoom, joinByLink, joinRoom, leaveRoom, setActivity, setRecording } from "./actions";
 import { getCurrentRoom, openRoomId } from "./open";
-import { dmTarget, serverOf } from "./dmTarget";
 import { newRoomHint } from "./newRoom";
 import { selectSpace, useNavStore } from "./model";
 import s from "./dialogs.module.css";
 import { changedActions, keysOf, useShortcutsRaw } from "@/actions/shortcutsStore";
+import { newRoomTitle } from "./newMenu";
+import { PeoplePicker } from "@/features/people/PeoplePicker";
 
 /** One-action dialogs: the native's single right-aligned button; on a phone a bottom sheet with Cancel too (there's no
  *  Esc there, and closing by a tap outside wasn't obvious: iPhone/iPad sweep, 2026-10-25). */
@@ -166,11 +167,10 @@ export function NavDialogs() {
 
 function NewChatDialog({ initial, onClose }: { initial: string; onClose: () => void }) {
   const one = useOneAction(onClose);
-  const [v, setV] = useState(initial);
   const [busy, setBusy] = useState(false);
-  // 2026-09-29: a plain username is enough ("alex" → @alex:<our server>); dmTarget = the desktop's dm_target
-  const target = dmTarget(v, serverOf(getSession().userId));
-  const submit = async () => {
+  const [chosen, setChosen] = useState<string | null>(null);
+  // 2026-11-12 (feat/people-search): the add-people picker; a plain username still means your server (dmTarget)
+  const submit = async (target: string | null) => {
     if (!target || busy) return;
     setBusy(true);
     const seq = useNavDialogs.getState().seq;
@@ -187,30 +187,16 @@ function NewChatDialog({ initial, onClose }: { initial: string; onClose: () => v
       open
       onClose={onClose}
       title="New DM"
-      actions={[...one.cancel, { text: "Message", icon: "document-edit-symbolic", disabled: !target || busy, onClick: () => void submit() }]}
+      actions={[...one.cancel, { text: "Message", icon: "document-edit-symbolic", disabled: !chosen || busy, onClick: () => void submit(chosen) }]}
       className={one.className}
     >
       <div className={s.body}>
         <div className={s.label}>Who do you want to message?</div>
-        <BasicTextField
-          className={s.field}
-          placeholder="Their username, e.g. alex"
-          aria-label="Username"
-          autoComplete="off"
-          spellCheck={false}
-          value={v}
-          autoFocus
-          onChange={(e) => setV(e.target.value)}
-          onAccepted={() => void submit()}
-        />
-        <div className={s.hint} data-dm-target={target ?? ""}>
-          {!v.trim()
-            ? "Just their username is enough. Someone on another server: @name:their.server."
-            : target
-              ? `Messages ${target}`
-              : "That isn't a username — letters, numbers and . _ - only."}
+        <PeoplePicker verb="Message" roomId={null} initial={initial} placeholder="Name or username, e.g. alex" onSelection={setChosen} onPick={(id) => void submit(id)} />
+        <div className={cx(s.hint, s.peopleHint)}>
+          Just their username is enough on your server. Someone on another server: their full address, like @name:their.server. If you already
+          have a DM with them, it opens that one instead of starting a second.
         </div>
-        <div className={s.hint}>If you already have a DM with them, it opens that one instead of starting a second.</div>
       </div>
     </PromptDialog>
   );
@@ -230,7 +216,7 @@ function NewRoomDialog({ space: initialSpace, parent, parentName, onClose }: { s
   // silently created the room outside the space — docs/native-bugs/nav.md)
   const mayAttach = !!parent && canSendState(parent, "m.space.child");
   const showPutIn = mayAttach && !space;
-  const title = space ? "New space" : mayAttach ? `New room in ${parentName}` : "New room";
+  const title = newRoomTitle(space, showPutIn && putIn, parentName); // unticking "Put it in" says New room (the desktop's title)
   const target = showPutIn && putIn ? parent : null;
   // 2026-10-23 (newRoom.ts, the desktop's new_room.rs hint — shared vectors): encrypted or not, in the same words
   const hint = newRoomHint({ space, isPrivate: priv, parent: target });
@@ -279,19 +265,30 @@ function NewRoomDialog({ space: initialSpace, parent, parentName, onClose }: { s
 
 function InviteDialog({ roomId, name, onClose }: { roomId: string; name: string; onClose: () => void }) {
   const one = useOneAction(onClose);
-  const [v, setV] = useState("");
+  const [chosen, setChosen] = useState<string | null>(null);
+  const picker = useRef<{ pickSelected: () => void } | null>(null);
   const label = name || roomId;
-  const submit = () => {
-    const t = v.trim();
-    if (!t) return;
-    void inviteToRoom(roomId, t);
-    onClose();
-  };
+  // 2026-11-12 (feat/people-search): the add-people picker; invite several people, then Done
   return (
-    <PromptDialog open onClose={onClose} title={`Invite to ${label}`} actions={[...one.cancel, { text: "Invite", icon: "list-add-user", disabled: !v.trim(), onClick: submit }]} className={one.className}>
+    <PromptDialog
+      open
+      onClose={onClose}
+      title={`Invite to ${label}`}
+      actions={[...one.cancel, { text: "Invite", icon: "list-add-user", disabled: !chosen, onClick: () => picker.current?.pickSelected() }, { text: "Done", onClick: onClose }]}
+      className={one.className}
+    >
       <div className={s.body}>
-        <BasicTextField className={s.field} placeholder={`@someone:${SERVER_LABEL}`} value={v} autoFocus onChange={(e) => setV(e.target.value)} onAccepted={submit} />
-        <div className={s.hint}>They'll get an invite they can accept or decline. Remove someone again from the member list on the right.</div>
+        <PeoplePicker
+          handle={picker}
+          verb="Invite"
+          roomId={roomId}
+          onSelection={setChosen}
+          onPick={(id) => {
+            void inviteToRoom(roomId, id);
+            return true;
+          }}
+        />
+        <div className={cx(s.hint, s.peopleHint)}>They'll get an invite they can accept or decline. Remove someone again from the member list on the right.</div>
       </div>
     </PromptDialog>
   );

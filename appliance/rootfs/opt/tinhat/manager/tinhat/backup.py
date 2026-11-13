@@ -3,7 +3,8 @@
 What a backup holds (enough to bring the same server back on another computer):
   db.dump        the whole database (pg_dump), so messages, rooms, people, keys
   state/         the manager's state and secrets, the name's credentials, the chat server's config and signing key
-                 (its identity), call and web server config, the home-network certificate authority
+                 (its identity), call and web server config, the home-network certificate authority's public root,
+                 the API's data and (0.3.16) its Pad state (the person mutes: api/pad/state.json)
   media_store    files and pictures people uploaded (backed up straight from where they live)
   backup.json    what this is: server, version, when, how many people/rooms/messages
 Not in it: certificates (re-issued), Docker images (the version's own), logs.
@@ -13,6 +14,7 @@ Where: a USB drive plugged into the server, or a shared folder on another comput
 one-file copy (a restic repository with one snapshot, as a .tar) for the browser.
 """
 import asyncio
+import errno
 import json
 import logging
 import os
@@ -25,7 +27,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import compose, config, state, hw
+from . import compose, config, dbcheck, restorecap, restoresafe, state, hw
+from .updater import PAD_FILE, NotPlain, _pad_dir_fd, _read_nofollow, pad_problem  # noqa: F401 (install.py)
 
 log = logging.getLogger("tinhat.backup")
 
@@ -83,10 +86,30 @@ def password() -> str | None:
 
 # ---- running restic -------------------------------------------------------------------------------------------------
 
+def restic_env(repo: str, pw: str) -> dict:
+    return {**os.environ, "RESTIC_REPOSITORY": repo, "RESTIC_PASSWORD": pw, "RESTIC_CACHE_DIR": str(DIR / "cache"),
+            "RESTIC_PROGRESS_FPS": "0.1"}
+
+
 def restic(repo: str, pw: str, *args: str, timeout: float = 7200, cwd: str | None = None) -> subprocess.CompletedProcess:
-    env = {**os.environ, "RESTIC_REPOSITORY": repo, "RESTIC_PASSWORD": pw, "RESTIC_CACHE_DIR": str(DIR / "cache"),
-           "RESTIC_PROGRESS_FPS": "0.1"}
-    return subprocess.run(["restic", *args], env=env, capture_output=True, text=True, timeout=timeout, cwd=cwd)
+    return subprocess.run(["restic", *args], env=restic_env(repo, pw), capture_output=True, text=True, timeout=timeout,
+                          cwd=cwd)
+
+
+def restore_capped(repo: str, pw: str, snap: str, target: Path, include: str | None = None,
+                   timeout: float = 6 * 3600) -> subprocess.CompletedProcess:
+    """`restic restore` of a snapshot (or only `include` in it) into target, bounded (restorecap, 0.3.16): the
+    snapshot's own claim must fit this disk first, and restic is stopped once it writes more than it claimed.
+    Raises restoresafe.UnsafeBackup (nothing it wrote is kept); restic's own failures come back as its result."""
+    env = restic_env(repo, pw)
+    # --no-cache: restic's cache (on this disk) would fill with whatever the repository's index holds before any of
+    # this looks at it (review of the first draft); include: our own staging path, no pattern characters in it
+    ls = ["restic", "--no-cache", "ls", "--json"] + (["--recursive", snap, include] if include else [snap])
+    c = restorecap.read_claim(ls, env)
+    target.mkdir(parents=True, exist_ok=True)
+    restorecap.preflight(c, restorecap.disk(target))
+    cmd = ["restic", "--no-cache", "restore", snap, "--target", str(target)] + (["--include", include] if include else [])
+    return restorecap.run_capped(cmd, env, target, c, timeout)
 
 
 def repo_exists(repo: str, pw: str) -> bool | None:
@@ -227,6 +250,7 @@ async def prepare_staging() -> dict:
             dst = STAGING / "state" / item
             dst.parent.mkdir(parents=True, exist_ok=True)
             (shutil.copytree if src.is_dir() else shutil.copy2)(src, dst)
+    stage_pad(STAGING / "state")
     st = state.load_state()
     meta = {"server_name": st.get("server_name"), "mode": st.get("mode"), "version": config.VERSION,
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "counts": await counts(),
@@ -235,6 +259,31 @@ async def prepare_staging() -> dict:
     state.write_json(STAGING / "backup.json", meta, 0o600)
     return meta
 
+
+def stage_pad(dest_state: Path) -> bool:
+    """The Pad state (person mutes; 0.3.16, docs/RELEASING.md, Pad state) into a backup: ONE read of the file (the API
+    only ever replaces it by rename, so the copy is whole), never following a link (the API's own folder: a link there
+    must not copy another file of this computer into a backup); never its folder (the API's temp files). A restore takes
+    it only when its own API loads it (install._restore_pad). False: there's none (or not a plain file)."""
+    try:
+        dfd = _pad_dir_fd(state=config.STATE_DIR)
+        if dfd is None:
+            return False
+        try:
+            pad = _read_nofollow("state.json", dfd)
+        finally:
+            os.close(dfd)
+    except OSError as e:  # a link (left out on purpose) or a failed read (said in the log: the backup goes on)
+        if not isinstance(e, NotPlain) and e.errno != errno.ELOOP:
+            log.warning("backup: the Pad state couldn't be read (%s); this backup has no person mutes", e)
+        return False
+    if pad is None:
+        return False
+    copy = dest_state / PAD_FILE
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    with open(os.open(copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as f:
+        f.write(pad)
+    return True
 
 async def run_backup(repo: str, pw: str, media: bool = True, prune: bool = True) -> dict:
     """One backup into `repo` (created if new). Returns {snapshot, size, counts}."""
@@ -312,49 +361,51 @@ async def download_file(media: bool) -> Path:
 # ---- test restore ---------------------------------------------------------------------------------------------------
 
 async def test_restore() -> dict:
-    """Restore the newest backup into a throwaway database and compare it with the live one."""
+    """Restore the newest backup into a throwaway database (dbcheck.isolated: no network, not as a superuser) and
+    compare it with the live one."""
     st = state.load_state()
     pw = password()
     if not pw:
         raise BackupError("Set a backup password first.")
     work = Path(tempfile.mkdtemp(dir=DIR, prefix="test-"))
-    name = f"tinhat-restore-test-{int(time.time())}"
     try:
         repo = await asyncio.to_thread(repo_for, st["server_name"])
         snaps = await asyncio.to_thread(snapshots, repo, pw)
         if not snaps:
             raise BackupError("There's no backup to test yet.")
-        r = await asyncio.to_thread(restic, repo, pw, "restore", snaps[0]["id"], "--target", str(work),
-                                    "--include", str(STAGING), timeout=3600)
+        try:  # bounded (restorecap): a Test restore runs on the live server's own disk
+            r = await asyncio.to_thread(restore_capped, repo, pw, snaps[0]["id"], work, str(STAGING), 3600)
+        except restoresafe.UnsafeBackup as e:
+            raise BackupError(str(e))
         if r.returncode != 0:
             raise BackupError(f"Couldn't read the backup: {_why(r)}")
+        # untrusted input (restoresafe), as in the setup's restore: no link or special file survives to be read below
+        # (review 0.3.16: a signing.key linked to the live key or to /dev/zero)
+        try:
+            removed = await asyncio.to_thread(restoresafe.strip_specials, work)
+        except restoresafe.UnsafeBackup as e:
+            raise BackupError(str(e))
+        if removed:
+            log.warning("test restore: removed %d link(s)/special file(s) from the backup: %s", len(removed), ", ".join(removed[:20]))
         dump = next(work.rglob("db.dump"), None)
         meta = state.read_json(next(work.rglob("backup.json"), work / "none"), {})
         key = next(work.rglob("signing.key"), None)
         if dump is None or key is None:
             raise BackupError("The backup is missing the database or the server's signing key.")
         same_key = key.read_bytes() == (config.SYNAPSE_DIR / "signing.key").read_bytes()
-        image = _postgres_image()
-        await _sh("docker", "run", "-d", "--rm", "--name", name, "-e", "POSTGRES_PASSWORD=test", "-e", "POSTGRES_USER=synapse",
-                  "-e", "POSTGRES_DB=synapse", "-e", "POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C",
-                  "-v", f"{dump}:/backup/db.dump:ro", "--network", "none", image)
-        for _ in range(60):
-            if (await _sh("docker", "exec", name, "pg_isready", "-U", "synapse", check=False))[0] == 0:
-                break
-            await asyncio.sleep(2)
-        await asyncio.sleep(2)
-        rc, out = await _sh("docker", "exec", name, "pg_restore", "-U", "synapse", "-d", "synapse", "--no-owner",
-                            "/backup/db.dump", check=False)
-        rc, out = await _sh("docker", "exec", name, "psql", "-U", "synapse", "-d", "synapse", "-tAc", COUNT_SQL)
-        people, rooms, messages = (int(x) for x in out.strip().splitlines()[-1].split("|"))
-        restored = {"people": people, "rooms": rooms, "messages": messages}
+        # the same isolated restore a real one uses (dbcheck, 0.3.16): no network, not as a superuser, checked
+        try:
+            checked = await dbcheck.isolated(dump, work / "dbcheck", st["server_name"], _postgres_image(),
+                                             await dbcheck.synapse_schema_version(config.OPT / "compose.yaml"))
+        except restoresafe.UnsafeBackup as e:
+            raise BackupError(str(e))
+        restored = checked.counts
         ok = same_key and restored == (meta.get("counts") or restored)
         res = {"at": int(time.time()), "ok": ok, "snapshot": snaps[0]["id"], "backup_time": snaps[0]["time"],
                "restored": restored, "in_backup": meta.get("counts"), "live": await counts(), "same_identity": same_key}
         set_status(test=res)
         return res
     finally:
-        await _sh("docker", "rm", "-f", name, check=False)
         shutil.rmtree(work, ignore_errors=True)
         await asyncio.to_thread(unmount_all)
 
@@ -364,15 +415,6 @@ def _postgres_image() -> str:
         if line.strip().startswith("image: postgres"):
             return line.split("image:", 1)[1].strip()
     return "postgres:17-alpine"
-
-
-async def _sh(*cmd: str, check: bool = True, timeout: float = 600) -> tuple[int, str]:
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-    text = out.decode(errors="replace")
-    if check and proc.returncode != 0:
-        raise BackupError(f"{cmd[1] if len(cmd) > 1 else cmd[0]} failed: {text.strip()[-300:]}")
-    return proc.returncode or 0, text
 
 
 # ---- the nightly run ------------------------------------------------------------------------------------------------
@@ -406,12 +448,15 @@ def find_servers(root: Path) -> list[str]:
     return sorted(d.name for d in base.iterdir() if (d / "config").is_file())
 
 
+#: the most read_from_snapshot takes (backup.json is a few hundred bytes; a backup's own file can say anything)
+SMALL_FILE_MAX = 1024 * 1024
+
+
 def read_from_snapshot(repo: str, pw: str, snap: str, rel: str) -> bytes | None:
-    """One small file out of a snapshot (relative to the staging folder), e.g. backup.json."""
-    r = subprocess.run(["restic", "dump", snap, f"{STAGING}/{rel}"], capture_output=True, timeout=600,
-                       env={**os.environ, "RESTIC_REPOSITORY": repo, "RESTIC_PASSWORD": pw,
-                            "RESTIC_CACHE_DIR": str(DIR / "cache")})
-    return r.stdout if r.returncode == 0 else None
+    """One small file out of a snapshot (relative to the staging folder), e.g. backup.json; None when it isn't there
+    or is bigger than SMALL_FILE_MAX (read as a stream and stopped there: never held whole in memory)."""
+    return restorecap.read_capped(["restic", "--no-cache", "dump", snap, f"{STAGING}/{rel}"], restic_env(repo, pw),
+                                  SMALL_FILE_MAX)
 
 
 def cleanup_downloads(max_age: float = 3600) -> None:

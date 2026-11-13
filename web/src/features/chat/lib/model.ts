@@ -106,7 +106,7 @@ export function isEdit(ev: MatrixEvent): boolean {
   return r?.rel_type === "m.replace";
 }
 
-function isLocallyRedacted(ev: MatrixEvent): boolean {
+export function isLocallyRedacted(ev: MatrixEvent): boolean {
   return ev.isRedacted() || !!ev.localRedactionEvent?.();
 }
 
@@ -306,7 +306,7 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
       replyTo: inReply ? { id: inReply, loaded: false, sender: "", name: "", body: "" } : null,
       reactions: [],
       mentionsMe,
-      pinned: !!ev.getId() && pinnedSet.has(ev.getId()!),
+      pinned: !redacted && !!ev.getId() && pinnedSet.has(ev.getId()!), // QA W1: a deleted message carries no 📌
       media: redacted || undec ? null : mediaOf(content, msgtype),
       embeds: !redacted && !undec && isText ? extractEmbeds(body) : [],
       onlyEmbed: false,

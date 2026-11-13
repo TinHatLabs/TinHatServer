@@ -12,6 +12,7 @@ import { MATRIX_ORIGIN, bearerAllowed } from "@/core/bearer";
 import { getPref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
 import { applyHostPolicy, normalizeFocusUrl, postSfuGet, watchTokenProblemRaw, padTokenProblemRaw, jwtPayloadText, type PadMode, callHostsOf, contentLive, focusDecision, ownFoci, rosterCounts, rotationOff, sessionsFrom, CALL_HOSTS_TYPE, type Focus, type FocusDecision, type LiveSession, type RawMemberEvent } from "./callrules";
+import { firstWellKnown, wellKnownReader, WELL_KNOWN_WAITS_MS } from "./focus";
 import { clientMarker } from "./av1";
 import { deviceStateKey, nativeDeviceId, pageOwnsMembership } from "@/features/native";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, MEMBERSHIP_EXPIRES_MS, defaultFocusUrl, displayName, avatarMxc, sleep, withTimeout, errText } from "./util";
@@ -94,35 +95,19 @@ export function roomCallParticipants(roomId: string, now = Date.now()): CallPart
 
 // ---- focus (M1: the call host policy, DESIGN §2) ---------------------------------------------------------------
 
-let wellKnown: Promise<Content | null> | null = null;
-
-/** The Tin Hat Server's .well-known/matrix/client, on its homeserver origin (= this page's); memoised, retried after a
- *  failure. */
-function wellKnownDoc(): Promise<Content | null> {
-  if (!wellKnown) {
-    // 12.1.9: an error answer (5xx, 404 mid-update) is a failure too, never remembered as "no well-known"
-    wellKnown = fetch(`${MATRIX_ORIGIN}/.well-known/matrix/client`, { signal: AbortSignal.timeout(8000) })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`well-known ${r.status}`))))
-      .then((j: unknown) => (j && typeof j === "object" ? (j as Content) : null))
-      .catch(() => {
-        wellKnown = null;
-        return null;
-      });
-  }
-  return wellKnown;
-}
+/** The Tin Hat Server's .well-known/matrix/client, on its homeserver origin (= this page's): focus.ts wellKnownReader
+ *  keeps a 2xx JSON object for the page's life and never a failure, so the next caller asks again (desktop: rtc.rs
+ *  resolve_focus). */
+const wellKnownDoc: () => Promise<Content | null> = wellKnownReader(() =>
+  fetch(`${MATRIX_ORIGIN}/.well-known/matrix/client`, { signal: AbortSignal.timeout(8000) }),
+);
 
 /** 12.1.9 (assembly-044 observation): the well-known, asked up to 3 times (now, +1 s, +3 s) before a caller falls back.
  *  A served web on its own host (Tin Hat Server's web.<domain>) whose one lookup failed started a NEW call on the page
  *  origin's /livekit/jwt instead of the well-known's call host; everyone joining later followed it and older desktops
  *  asked "This call runs on web.<domain>". Only a failure waits; a good answer is memoised as before. */
 async function wellKnownDocRetried(): Promise<Content | null> {
-  for (const wait of [0, 1000, 3000]) {
-    if (wait) await sleep(wait);
-    const d = await wellKnownDoc();
-    if (d) return d;
-  }
-  return null;
+  return firstWellKnown(wellKnownDoc, WELL_KNOWN_WAITS_MS, sleep); // desktop: rtc.rs focus_read_retried
 }
 
 /** Own foci (DESIGN §2.1): the well-known's livekit focus and `<homeserver>/livekit/jwt` (= defaultFocusUrl()). */

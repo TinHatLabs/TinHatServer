@@ -32,6 +32,8 @@ let batch = 0;
 let batchOpen = false;
 let selfPops = 0;
 let lastBack = 0;
+// the popstate the stack itself caused (its own history.back()), for wasOwnPop()
+let ownPop: Event | null = null;
 let timer = 0;
 let listening = false;
 
@@ -68,9 +70,10 @@ function reconcile(): void {
   }
 }
 
-function onPop(): void {
+function onPop(e: Event): void {
   if (selfPops > 0) {
     selfPops--;
+    ownPop = e;
     schedule();
     return;
   }
@@ -109,6 +112,12 @@ function unregister(reg: Reg): void {
   if (i < 0) return;
   stack.splice(i, 1);
   schedule();
+}
+
+/** This popstate was the stack's own history.back() (a sheet closed in the UI), not a Back or a link. Ask after the
+ *  event has reached the stack's listener (e.g. from a setTimeout(0) in your own popstate handler). */
+export function wasOwnPop(e: Event): boolean {
+  return e === ownPop;
 }
 
 /** Levels used by the primitives: sheets/windows 0 (inner sheets 1), dialogs 5, transient popups

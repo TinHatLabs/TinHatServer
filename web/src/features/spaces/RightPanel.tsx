@@ -517,7 +517,7 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
         <div className={cx(s.fieldRow, s.inviteRow)}>
           <BasicTextField
             className={s.growField}
-            placeholder="Invite @user:server…"
+            placeholder="Invite by username or address…"
             value={invite}
             onChange={(e) => setInvite(e.target.value)}
             onAccepted={(v) => {

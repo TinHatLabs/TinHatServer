@@ -81,10 +81,12 @@ allow_public_rooms_without_auth: false
 presence:
   enabled: false
 
-# People on the server can find each other by name.
+# People on the server can find each other by name; people on this server come first in a search (the apps' people
+# search, 12.1.12: someone here before a namesake on another server).
 user_directory:
   enabled: true
   search_all_users: {search_all}
+  prefer_local_users: true
 
 # Profiles (display names, pictures, Tin Hat's own profile fields) only for signed-in callers: nobody on the internet
 # can check which accounts exist or read them (security review 2026-10-26). Every Tin Hat app reads profiles with its

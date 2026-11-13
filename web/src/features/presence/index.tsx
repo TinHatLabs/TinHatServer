@@ -1,6 +1,6 @@
 // features/presence — REACH §2 + A1–A4: opt-in presence (Online / Away / In a call) and the custom status.
 // Off by default; the consent is the account data dev.tinhat.presence, written only by a person.
-// A7 (2026-09-28): the time zone for Friends' clocks is separate and opt-OUT (tz.ts, dev.tinhat.presence_tz).
+// A7 (2026-09-28): the time zone for People's clocks is separate and opt-OUT (tz.ts, dev.tinhat.presence_tz).
 //
 //   runtime.ts   store, sender (PUT beats), reader (GET map), off switch (DELETE until 204), user actions
 //   machine.ts   the timer-driven senders (presence §2.4/A2.13, activity §3.4/A2.12) — pure, unit-tested

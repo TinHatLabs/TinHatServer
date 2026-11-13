@@ -17,8 +17,11 @@ import { applyReducedMotion, CrashProbe, GlowButton, setFormFactorAttrs, ToastHo
 import { Startup } from "./Startup";
 import { LoginView } from "./LoginView";
 import { Shell } from "./Shell";
-import { Gallery } from "./Gallery";
+import { lazyPart } from "@/ui/lazy";
 import { useRoute } from "./router";
+
+// the QA gallery (#/__gallery) is its own chunk, fetched only when that route opens (web-perf 2026-11-07)
+const Gallery = lazyPart("Gallery", () => import("./Gallery").then((m) => m.Gallery), { prefetch: false });
 
 export function App() {
   useAppEnvironment();

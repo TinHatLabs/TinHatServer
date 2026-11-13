@@ -209,7 +209,7 @@ class Federation:
         finally:
             self.pending.pop(nonce, None)
         if st == 0:
-            return False, (f"Couldn't reach {target}. Check that it's switched on and that friends outside its home can "
+            return False, (f"Couldn't reach {target}. Check that it's switched on and that people outside its home can "
                            "reach it (its dashboard's Network tab says), then try again.")
         if st != 200 or not body.get("ok"):
             return False, body.get("error") or f"{target} said no (HTTP {st})."

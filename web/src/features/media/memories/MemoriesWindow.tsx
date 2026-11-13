@@ -7,9 +7,12 @@ import { loadResume, saveResume, useClips, type ResumeMap } from "./prefs";
 import { Avatar, EmptyState, GlowButton, Heading, HeaderIconButton, Icon, ScrollArea, avatarSeed, cx, useIsMobile } from "@/ui";
 import { fmtBytes, fmtDate, fmtTime, shortError, shortName } from "../shared/format";
 import { countKinds, fetchSessions, peopleOf, posterUrl, type VodSession } from "./model";
-import { MemoriesPlayer } from "./MemoriesPlayer";
+import { lazyPart } from "@/ui/lazy";
 import { Pill } from "./Pill";
 import s from "./Memories.module.css";
+
+// web-perf 2026-11-07: the player (+ its remuxer) is its own chunk (ui/lazy.tsx), fetched after the start
+const MemoriesPlayer = lazyPart("MemoriesPlayer", () => import("./MemoriesPlayer").then((m) => m.MemoriesPlayer));
 
 // ---- the window ----------------------------------------------------------------------------------
 

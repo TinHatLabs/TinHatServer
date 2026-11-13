@@ -38,6 +38,16 @@ class NoForcedEncryption(unittest.TestCase):
                     self.assertIn('server_name: "crew.example.org"', y)
                     self.assertNotIn(KEY, y, (federation, features, gw))
 
+    def test_user_directory_prefers_local_users(self):  # 0.3.16: the people search lists this server's people first
+        import re
+        for federation in (None, [], ["friends.example.org"]):
+            for features in ({}, {"directory": False}):
+                y = templates.homeserver_yaml("crew.example.org", SECRETS, features, federation, None)
+                block = re.search(r"^user_directory:\n((?:  .*\n)+)", y, re.M)
+                self.assertIsNotNone(block, (federation, features))
+                self.assertIn("  prefer_local_users: true\n", block.group(1), (federation, features))
+                self.assertIn("  enabled: true\n", block.group(1))
+
     def test_nothing_that_ships_sets_it(self):
         roots = [_ROOT / "appliance" / "rootfs", _ROOT / "compose", _ROOT / "windows", _ROOT / "api", _ROOT / "build"]
         hits = []

@@ -466,7 +466,7 @@ def status_doc() -> dict:
 
 
 STATUS_LINES = {
-    "calls-paused": "This month's relay allowance is used up, so calls with friends outside your home are paused until "
+    "calls-paused": "This month's relay allowance is used up, so calls with people outside your home are paused until "
                     "the 1st. Chat keeps working.",
     "paused": "The relay has paused this server until the 1st: it used twice this month's allowance.",
     "suspended": "The Tin Hat team paused the relay for this server.",
@@ -482,14 +482,14 @@ def summary(outside: dict) -> dict:
     h = r.get("health") or {}
     if outside.get("ok") and h.get("ok") is False and (h.get("checked") or 0) > (outside.get("at") or 0):
         # The last check passed, but the tunnel is down now: say what's true now.
-        return {"level": "bad", "headline": "Friends outside your home can't reach your server right now.",
+        return {"level": "bad", "headline": "People outside your home can't reach your server right now.",
                 "lines": ["The tunnel to the Tin Hat relay is down. This server keeps trying by itself; check that it's "
                           "online."], "fix": []}
     if outside.get("ok"):
-        lines = [("Your internet provider doesn't allow incoming connections, so friends connect through the Tin Hat "
-                  "relay. " if cgnat else "Friends connect through the Tin Hat relay. ")
+        lines = [("Your internet provider doesn't allow incoming connections, so people connect through the Tin Hat "
+                  "relay. " if cgnat else "People connect through the Tin Hat relay. ")
                  + "It passes their traffic on without being able to read it."]
-        return {"level": "good", "headline": "Friends outside your home reach your server through the Tin Hat relay.",
+        return {"level": "good", "headline": "People outside your home reach your server through the Tin Hat relay.",
                 "lines": lines + ([STATUS_LINES[st]] if st in STATUS_LINES else []), "fix": []}
     lines = []
     if st in STATUS_LINES:
@@ -505,8 +505,8 @@ def summary(outside: dict) -> dict:
     if tls and blocked:
         lines.append("Chat works through the relay, but its call port doesn't answer yet.")
     level = "warn" if tls else "bad"
-    head = ("Friends outside your home can chat through the relay, but calls may not connect." if tls
-            else "Friends outside your home can't reach your server through the relay right now.")
+    head = ("People outside your home can chat through the relay, but calls may not connect." if tls
+            else "People outside your home can't reach your server through the relay right now.")
     return {"level": level, "headline": head, "lines": lines, "fix": []}
 
 
@@ -534,12 +534,12 @@ async def _ask() -> bool:
     _answer = asyncio.get_running_loop().create_future()
     _question = {
         "id": "relay",
-        "title": "Friends outside your home can't reach your server directly",
+        "title": "People outside your home can't reach your server directly",
         "lines": [
             "Your internet provider shares one public address between many homes (\"carrier NAT\"). T-Mobile and "
             "Verizon 5G home internet, AT&T Internet Air and Starlink usually do this, so nothing from outside can "
             "reach your home, and no router setting changes that.",
-            "The Tin Hat relay fixes it: your server keeps a connection open to the relay, and friends reach your server "
+            "The Tin Hat relay fixes it: your server keeps a connection open to the relay, and people reach your server "
             "through it. Your server keeps its own certificate, so the relay passes everything on without being able "
             "to read it. People at home still connect straight to the server.",
         ],
@@ -565,7 +565,7 @@ async def setup_step(set_step, calls: bool):
             return ("warn", "Your internet provider doesn't allow incoming connections (carrier NAT).")
         set_step("ask", "Your internet provider doesn't allow incoming connections (carrier NAT). Choose below.")
         if not await _ask():
-            return ("warn", "Your internet provider doesn't allow incoming connections (carrier NAT), so friends outside "
+            return ("warn", "Your internet provider doesn't allow incoming connections (carrier NAT), so people outside "
                             "your home can't reach your server. You can turn on the Tin Hat relay on the last page.")
     set_step("running", "Connecting to the Tin Hat relay…")
     try:
@@ -577,5 +577,5 @@ async def setup_step(set_step, calls: bool):
         return ("warn", "The Tin Hat relay gave this server a place, but the tunnel to it isn't answering yet. The server "
                         "keeps trying by itself.")
     cgnat = (state.load_state().get("ports") or {}).get("kind") == "cgnat"
-    return ("done", ("Your internet provider doesn't allow incoming connections (carrier NAT), so friends will reach "
-                     if cgnat else "Friends will reach ") + f"your server through the Tin Hat relay ({d['relayAddress']}).")
+    return ("done", ("Your internet provider doesn't allow incoming connections (carrier NAT), so people will reach "
+                     if cgnat else "People will reach ") + f"your server through the Tin Hat relay ({d['relayAddress']}).")

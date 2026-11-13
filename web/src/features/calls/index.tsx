@@ -16,6 +16,7 @@
 //   setRankProvider(fn)        spaces: (roomId, mxid) => effectivePerms(roomId, mxid).rank (moderation packets
 //                              are honoured only from a sender ranked above the target; PL fallback)
 //   republishMembership()      "Never record me" flipped mid-call (DECISIONS D11)
+import { chordEndsHold, pressStartsHold, pttTextFocus } from "./pttChord";
 import { create } from "zustand";
 import type { FeatureModule } from "@/core/registry";
 import { bus, toast } from "@/core/bus";
@@ -281,6 +282,7 @@ function install() {
   });
   // Push-to-talk: hold its key (Ctrl unless Settings → Shortcuts moved it: a modifier held alone or an F-key,
   // ACTIONS.md §8.4) while Tin Hat has focus; blur / hidden = released.
+  let pttHeldKey: string | null = null;
   const isPttKey = (e: KeyboardEvent) => {
     const name = eventKeyName(e);
     return name !== null && pttKeys().includes(name);
@@ -288,18 +290,34 @@ function install() {
   window.addEventListener(
     "keydown",
     (e) => {
-      if (isPttKey(e) && !e.repeat && getCall().pushToTalk) engine.pttHold(true);
+      const isPtt = isPttKey(e);
+      if (isPtt && !e.repeat && getCall().pushToTalk) {
+        const name = eventKeyName(e) ?? "";
+        if (pressStartsHold(name, pttTextFocus())) {
+          pttHeldKey = name;
+          engine.pttHold(true);
+        }
+      } else if (chordEndsHold(pttHeldKey, isPtt, e.repeat) && getCall().pttSpeaking) {
+        pttHeldKey = null;
+        engine.pttHold(false);
+      }
     },
     true,
   );
   window.addEventListener(
     "keyup",
     (e) => {
-      if (isPttKey(e) && getCall().pushToTalk) engine.pttHold(false);
+      if (!isPttKey(e)) return;
+      const held = pttHeldKey !== null;
+      pttHeldKey = null;
+      if (held && getCall().pushToTalk) engine.pttHold(false);
     },
     true,
   );
-  window.addEventListener("blur", () => getCall().pttSpeaking && engine.pttHold(false));
+  window.addEventListener("blur", () => {
+    pttHeldKey = null;
+    if (getCall().pttSpeaking) engine.pttHold(false);
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden" && getCall().pttSpeaking) engine.pttHold(false);
   });

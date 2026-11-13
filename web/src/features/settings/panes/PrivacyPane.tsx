@@ -139,7 +139,7 @@ function YourStatus() {
       />
       {share && <SeenAs />}
       <NoteRow>
-        Turning it off stops the sharing at once; it leaves friends' screens within about 20 seconds and nothing is kept. Messages, typing and read receipts are separate. Other
+        Turning it off stops the sharing at once; it leaves other people's screens within about 20 seconds and nothing is kept. Messages, typing and read receipts are separate. Other
         Matrix apps you use may report your status on their own.
       </NoteRow>
       {error && <NoteRow tone="danger">{error}</NoteRow>}

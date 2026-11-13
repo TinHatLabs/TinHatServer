@@ -4,11 +4,12 @@
 //   const touch = useIsTouch();        // coarse pointer / touch screen
 //   getFormFactor(), isTouch           // non-React reads
 //
-// Mobile when (coarse pointer OR navigator.userAgentData.mobile) AND the SHORT screen side < 820 px,
-// OR the viewport is narrower than 700 px. Overrides, strongest first:
+// Mobile when (coarse pointer OR navigator.userAgentData.mobile) AND the SHORT screen side < 700 px (TOUCH_PHONE_SHORT;
+// 820 until the two-pane band, docs/TWO-PANE.md), OR the viewport is narrower than 700 px. Overrides, strongest first:
 //   ?ff=mobile|desktop in the URL (before or after the #hash — tests use it)
 //   pref "formFactor" = auto|desktop|mobile (Settings → Appearance → Layout)
-// Tablets (coarse pointer, short side ≥ 820 px) stay "desktop" with isTouch = true.
+// Tablets (coarse pointer, short side ≥ 700 px: the iPad mini, a foldable's inner screen, every iPad) stay "desktop" with
+// isTouch = true; below 1024 px of width that is the two-pane band (app/dock/shellView.ts twoPaneSizes).
 // The shell mirrors the result onto <html data-ff data-touch> (ui/formFactor.ts reads that).
 import { useSyncExternalStore } from "react";
 import { getPref, onPrefChange } from "@/core/prefs";
@@ -43,6 +44,11 @@ function prefOverride(): FormFactor | null {
   return v === "mobile" || v === "desktop" ? v : null;
 }
 
+/** A touch screen whose short side is under this is a phone (CSS px). Every phone is far below it (430 at most, in
+ *  landscape too); the smallest tablets are above (iPad mini 744). The viewport rule below still sends any window under
+ *  700 px wide to the phone layout. */
+export const TOUCH_PHONE_SHORT = 700;
+
 /** The automatic decision (no overrides). */
 export function autoFormFactor(): FormFactor {
   if (typeof window === "undefined") return "desktop";
@@ -52,7 +58,7 @@ export function autoFormFactor(): FormFactor {
   // uaMobile counts only with a phone-sized screen too: Chromium reports userAgentData.mobile for
   // emulated / some real tablets (Playwright "iPad Pro 11": 834 px short side) — tablets keep the
   // desktop layout with touch adaptations (ARCHITECTURE "Form factor"; INTEGRATION #6)
-  if (((coarse || uaMobile) && short < 820) || window.innerWidth < 700) return "mobile";
+  if (((coarse || uaMobile) && short < TOUCH_PHONE_SHORT) || window.innerWidth < 700) return "mobile";
   return "desktop";
 }
 

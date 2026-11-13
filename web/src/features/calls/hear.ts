@@ -316,7 +316,7 @@ function step(s: Sess) {
   const micSilent = snap.mic.check === "dead" || snap.mic.check === "hint";
   if (micSilent !== st.micSilent || JSON.stringify(snap) !== JSON.stringify(prev)) patch({ hear: snap, micSilent });
   tick++;
-  if (tick % 12 === 0) sendReceipt(s, snap);
+  if (tick % 12 === 0) sendRxReport(s, snap);
   if (tick % 20 === 10)
     for (const [to, payload] of echoStep((sid) => {
       // the local-echo reference = what we actually PLAY (per-person gain, deafen/BRB cut, layers)
@@ -327,7 +327,7 @@ function step(s: Sess) {
   for (const [k, r] of reports) if (Date.now() - r.at > 20000) reports.delete(k);
 }
 
-function sendReceipt(s: Sess, snap: HearSnapshot) {
+function sendRxReport(s: Sess, snap: HearSnapshot) {
   const st = getCall();
   const rx: Record<string, string> = {};
   for (const [identity, p] of Object.entries(snap.peers)) {

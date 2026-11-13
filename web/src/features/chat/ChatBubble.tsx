@@ -203,10 +203,27 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
           setHover(true);
         }}
         onMouseLeave={() => setHover(false)}
+        // keyboard (a11y pass; the same on the desktop): the message list moves the focus between rows
+        // (ConversationView onLogKey); Enter, the Menu key or Shift+F10 on a row opens its action menu at the row
+        tabIndex={-1}
+        data-msg-line=""
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return; // keys inside the row (links, poll answers, …) are theirs
+          if (e.key !== "Enter" && e.key !== "ContextMenu" && !(e.key === "F10" && e.shiftKey)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          if (row.echo && !row.failed) return;
+          const r = (bubbleRef.current ?? e.currentTarget).getBoundingClientRect();
+          h.onMenu(row, { x: r.left + Math.min(24, r.width / 2), y: r.top + Math.min(16, r.height / 2) });
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           if (row.echo && !row.failed) return;
-          h.onMenu(row, { x: e.clientX, y: e.clientY });
+          // a context menu from the keyboard (Menu key) comes with a point outside the row: open it at the row
+          const r = e.currentTarget.getBoundingClientRect();
+          const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+          const b = (bubbleRef.current ?? e.currentTarget).getBoundingClientRect();
+          h.onMenu(row, inside ? { x: e.clientX, y: e.clientY } : { x: b.left + Math.min(24, b.width / 2), y: b.top + Math.min(16, b.height / 2) });
         }}
         onPointerDown={onPointerDown}
         onPointerUp={() => {

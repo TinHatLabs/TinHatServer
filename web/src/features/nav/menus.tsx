@@ -32,6 +32,7 @@ import {
   setRoomPhoto,
 } from "./actions";
 import { openNavDialog } from "./dialogs";
+import { newMenuRows, newRoomOpen } from "./newMenu";
 import { getCurrentRoom } from "./open";
 import { refreshNow, useNavStore, type NotifyMode, type RoomRow } from "./model";
 import { setNavMode, getNavMode, useNavMode } from "./navmode";
@@ -157,32 +158,24 @@ export function AppMenu({ anchor, onClose, placement }: { anchor: MenuAnchor; on
   );
 }
 
-/** The room column's + (2026-09-29, contract menus.new): New DM, and New room only while a space is selected —
- *  the room is created in that space. Desktop twin: Main.qml newMenu. */
+/** The room column's + (contract menus.new): New DM… and New room… — in a space the room goes into it, on Home / People
+ *  it is a room of its own (QA D21; newMenu.ts). Desktop twin: NewMenu.qml. */
 export function NewMenu({ anchor, onClose }: { anchor: MenuAnchor; onClose: () => void }) {
   const activeKey = useNavStore((st) => st.activeKey);
   const activeLabel = useNavStore((st) => st.activeLabel);
-  const inSpace = activeKey.startsWith("!");
   return (
     <Menu open onClose={onClose} anchor={anchor} title="New">
-      <MenuItem
-        text="New DM…"
-        icon="document-edit-symbolic"
-        onTriggered={() => {
-          onClose();
-          openNavDialog({ kind: "newChat" });
-        }}
-      />
-      {inSpace && (
+      {newMenuRows(activeKey).map((r) => (
         <MenuItem
-          text="New room…"
-          icon="folder-new-symbolic"
+          key={r.action}
+          text={r.text}
+          icon={r.icon}
           onTriggered={() => {
             onClose();
-            openNavDialog({ kind: "newRoom", space: false, parent: activeKey, parentName: activeLabel });
+            openNavDialog(r.action === "dm.new" ? { kind: "newChat" } : newRoomOpen(activeKey, activeLabel));
           }}
         />
-      )}
+      ))}
     </Menu>
   );
 }

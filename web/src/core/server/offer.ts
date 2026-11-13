@@ -34,7 +34,7 @@ export const FEATURE_DOC: Readonly<Record<ServerFeature, string>> = {
   games: "the Game Reel's games catalogue (search, add by name, covers)",
   steam: "importing a Steam library into My games",
   gameservers: "the Game servers widget",
-  presence: "Reach: online / away / in-a-call statuses, custom statuses, Who's around, Friends' clocks, Is it just me?",
+  presence: "Reach: online / away / in-a-call statuses, custom statuses, Who's around, People's clocks, Is it just me?",
   push: "push notifications on phones and closed browsers",
   memories: "Memories, the call recorder (and its recorder account)",
   reports: "Report a problem",
@@ -245,7 +245,7 @@ export function applyActionGates(table: GateTable): number {
 export const SETTING_GATES: ReadonlyArray<readonly [string, ServerFeature]> = [
   ["privacy.never-record", "memories"],
   ["profile.join-sound", "soundboard"],
-  // Reach: "Your status" and the time zone Friends' clocks shows (both live in the presence service)
+  // Reach: "Your status" and the time zone People's clocks shows (both live in the presence service)
   ["privacy.share-status", "presence"],
   ["privacy.share-time-zone", "presence"],
   ["privacy.time-zone", "presence"],

@@ -4,12 +4,14 @@ Every step can run again safely, so "Try again" after a failure just reruns the 
 secrets are generated once and kept, accounts that already exist are reused, rooms that exist are kept.
 """
 import asyncio
+import errno
 import json
 import logging
 import os
 import re
 import shutil
 import ssl
+import stat
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -18,7 +20,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp.abc import AbstractResolver
 
-from . import apiconf, caddylock, compose, config, console, environment, hw, names, netrules, owndomain, relay, restoresafe, state, templates
+from . import apiconf, caddylock, compose, config, console, dbcheck, environment, hw, names, netrules, owndomain, relay, restoresafe, state, templates
 from .synapse import Synapse
 
 log = logging.getLogger("tinhat.install")
@@ -476,7 +478,7 @@ class Installer:
         if ip in now:
             return f"{sn} already points to this server ({ip})."
         where = "at your domain's DNS provider" if own["provider"] == "proxy" else f"in your {label} settings"
-        return ("warn", f"Point {sn} at {ip} (an A record) {where}; friends need it to find the server. If your "
+        return ("warn", f"Point {sn} at {ip} (an A record) {where}; people need it to find the server. If your "
                         "home's address changes, your router's dynamic DNS can keep it current.")
 
     async def _s_ports(self, a: dict):
@@ -545,8 +547,11 @@ class Installer:
         files = work / "files"
         shutil.rmtree(files, ignore_errors=True)
         files.mkdir(parents=True)
-        res = await asyncio.to_thread(backup.restic, r["repo"], r["password"], "restore", r["snapshot"],
-                                      "--target", str(files), timeout=6 * 3600)
+        try:  # bounded (restorecap, 0.3.16): the backup's own claim must fit this disk, and restic stops past it
+            res = await asyncio.to_thread(backup.restore_capped, r["repo"], r["password"], r["snapshot"], files)
+        except restoresafe.UnsafeBackup as e:
+            shutil.rmtree(files, ignore_errors=True)
+            raise InstallError(str(e))
         if res.returncode != 0:
             raise InstallError("Couldn't read the backup.", backup._why(res))
         root = files / str(backup.STAGING).lstrip("/")
@@ -561,8 +566,15 @@ class Installer:
             raise InstallError("The backup is missing the database or the server's identity (signing key).")
         try:
             restoresafe.check_secrets(state.read_json(root / "state" / "secrets.json", None))
+            # the database: restored first into a throwaway one with no network, as a role that isn't a superuser,
+            # checked, then dumped again by us; only that dump reaches this server's database (dbcheck, 0.3.16)
+            checked = await dbcheck.isolated(root / "db.dump", work / "dbcheck", a["server_name"],
+                                             dbcheck.postgres_image(config.OPT / "compose.yaml"),
+                                             await dbcheck.synapse_schema_version(config.OPT / "compose.yaml"))
         except restoresafe.UnsafeBackup as e:
+            shutil.rmtree(files, ignore_errors=True)
             raise InstallError(str(e))
+        log.info("restore: the backup's database passed the check (schema %s, %s)", checked.schema_version, checked.counts)
         # since 0.3.8 a backup holds no home-network CA key (backup.STATE_ITEMS): Caddy makes a new CA in "secure"
         new_ca = a.get("mode", "lan") == "lan" and not (root / "state" / "caddy" / "data" / "caddy" / "pki").exists()
         for item in backup.STATE_ITEMS:
@@ -579,6 +591,7 @@ class Installer:
                 if dst.is_symlink():  # never write through a link on this side either
                     dst.unlink()
                 shutil.copy2(src, dst, follow_symlinks=False)
+        _restore_pad(root / "state" / backup.PAD_FILE)
         old = state.read_json(root / "state" / "state.json", {})
         drop = {"phase", "ports", "reach", "assessment", "failed_step", "error", "error_details", "names_notices",
                 "connect_codes", "names_status", "restoring", "livekit_public_ip",
@@ -594,7 +607,8 @@ class Installer:
             shutil.rmtree(backup.MEDIA, ignore_errors=True)
             shutil.move(str(media), str(backup.MEDIA))
         backup.MEDIA.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(root / "db.dump"), str(work / "db.dump"))
+        shutil.move(str(checked.dump), str(work / "db.dump"))  # our own copy of the checked database (dbcheck)
+        shutil.rmtree(work / "dbcheck", ignore_errors=True)
         meta = state.read_json(root / "backup.json", {})
         shutil.rmtree(files, ignore_errors=True)
         config.POSTGRES_DIR.mkdir(parents=True, exist_ok=True)
@@ -628,8 +642,10 @@ class Installer:
             if rc != 0:
                 raise InstallError("Couldn't prepare the database for the backup.", _tail(out))
         with open(dump, "rb") as f:
+            # our own checked dump (dbcheck), in one transaction: all of it or nothing (as the updater's rollback)
             proc = await asyncio.create_subprocess_exec(*compose.base(), "exec", "-T", "postgres", "pg_restore", "-U",
-                                                        "synapse", "-d", "synapse", "--no-owner", stdin=f,
+                                                        "synapse", "-d", "synapse", "--no-owner", "--single-transaction",
+                                                        "--exit-on-error", stdin=f,
                                                         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
             out, _ = await asyncio.wait_for(proc.communicate(), 6 * 3600)
         if proc.returncode != 0:
@@ -1077,6 +1093,55 @@ def _chown_tree(path, uid: int) -> None:
         for f in files:
             os.chown(os.path.join(root, f), uid, uid)
 
+
+
+def _restore_pad(src: Path) -> str:
+    """The backup's Pad state (0.3.16, docs/RELEASING.md, Pad state): restored only when this release's API loads it.
+    The API reads the file FAIL CLOSED, so a file it can't load (damaged, a crafted backup, a format this release
+    doesn't read) would refuse every Pad token on the restored server: such a file is left out (the restored server
+    starts with no person mutes, as before 0.3.16) and the log says why. Either way the restored server ends with the
+    backup's Pad state or none: a file an earlier try left here goes too. The bytes are read once (never through a
+    link: the restored tree has none, restoresafe) and those bytes are what is checked and written, durably, through
+    the pad folder's own descriptor."""
+    from . import backup
+    data, why = None, "none in the backup"
+    try:  # (no size limit of its own: restorecap bounded the whole restore; the API holds the file in memory anyway)
+        fd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        fd = None
+    except OSError as e:  # a failed read is never "none in the backup" (the restore stops and says so)
+        if e.errno != errno.ELOOP:
+            raise InstallError(f"Couldn't read the backup's Pad state ({e.strerror or e}).")
+        fd = None
+    if fd is not None:
+        with os.fdopen(fd, "rb") as f:
+            if stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                data = f.read()
+                why = backup.pad_problem(data)
+    dfd = backup._pad_dir_fd(create=True, state=config.STATE_DIR)
+    try:
+        if why is not None:
+            try:
+                os.unlink("state.json", dir_fd=dfd)
+                os.fsync(dfd)
+                log.warning("restore: removed the Pad state an earlier try left here")
+            except FileNotFoundError:
+                pass
+            if why != "none in the backup":
+                log.warning("restore: the backup's Pad state was left out (%s); person mutes start empty", why)
+                return f"left out ({why})"
+            return why
+        tmp = f".state.json.restore-{os.getpid()}-{os.urandom(4).hex()}"
+        wfd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dfd)
+        with os.fdopen(wfd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.rename(tmp, "state.json", src_dir_fd=dfd, dst_dir_fd=dfd)
+        os.fsync(dfd)
+        return "restored"
+    finally:
+        os.close(dfd)
 
 def _hosts_entry(server_name: str, short: str) -> None:
     """127.0.1.1 = this box's own name(s), Debian style; host-network containers (lk-jwt) read it too. On the owner's

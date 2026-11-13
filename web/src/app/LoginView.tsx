@@ -33,8 +33,10 @@ import {
 } from "@/core/matrix";
 import { GlowButton, TinHatLoader } from "@/ui";
 import { isTouch } from "@/core/device";
+import { signInServer } from "@/core/signInServer";
 import { readMove } from "@/core/server/move";
 import { askPasswordReset } from "@/core/server/store";
+import { expandServerName, serverHost, serverNameHint } from "@/core/servername";
 import { chooseServer, hasNativeCap } from "@/features/native";
 import { LoginField } from "./LoginField";
 import { inviteFieldValue } from "./invite";
@@ -81,7 +83,7 @@ export function LoginView() {
   // how this server gives a forgotten password back: asked when the reset face opens (the typed server may be any);
   // the name as the desktop writes it (no scheme, no slash, lower case)
   const [resetMode, setResetMode] = useState<"checking" | "owner" | "email">("email");
-  const resetHost = hostOf(homeserver.trim()).toLowerCase();
+  const resetHost = serverHost(homeserver) ?? hostOf(expandServerName(homeserver)).toLowerCase(); // a bare name is a tinhat.me name
   useEffect(() => {
     if (face !== "reset") return;
     let live = true;
@@ -112,8 +114,12 @@ export function LoginView() {
   // new one.
   const [moved, setMoved] = useState<{ from: string; to: string } | null>(null);
   useEffect(() => {
-    const host = hostOf(homeserver.trim()).toLowerCase();
-    if (!host || (moved && moved.to === host)) return;
+    const host = serverHost(homeserver) ?? ""; // servername.ts: "crew" asks crew.tinhat.me (the desktop's check_moved)
+    if (!host) {
+      setMoved(null); // nothing usable typed: an earlier server's note no longer applies (the desktop's check_moved)
+      return;
+    }
+    if (moved && moved.to === host) return;
     setMoved(null);
     let live = true;
     const t = window.setTimeout(() => {
@@ -193,8 +199,16 @@ export function LoginView() {
   };
   const doLogin = async () => {
     if (!username || !password || busy) return;
+    // QA 12.1.11 W9/D6 (core/signInServer.ts = the desktop's sign_in_server): an empty Server field takes the server of a
+    // full @name:server user ID and says so, else asks for one — it no longer signs in quietly to the page's server
+    const pick = signInServer(homeserver, username);
+    if ("error" in pick) {
+      setStatus(pick.error);
+      return;
+    }
+    if (pick.fromUserId) setHomeserver(pick.server);
     setBusy(true);
-    setStatus("Connecting…");
+    setStatus(pick.fromUserId ? `Signing in to ${pick.server}, the server in your user ID…` : "Connecting…");
     try {
       await loginWithPassword({ homeserver, username, password });
       setStatus("Signed in");
@@ -343,6 +357,12 @@ export function LoginView() {
               name="homeserver"
               autoComplete="url"
             />
+            {/* a bare name is a tinhat.me name: say which server it opens (the desktop's serverHint, the phones' words) */}
+            {serverNameHint(homeserver) && (
+              <div className={`${s.small} ${s.center} ${s.dim}`} data-server-hint="">
+                {serverNameHint(homeserver)}
+              </div>
+            )}
             {face === "signin" && moved && (
               <div className={`${s.small} ${s.center}`} role="status">
                 {`This server moved to ${moved.to}. Sign in there with the same username and password.`}

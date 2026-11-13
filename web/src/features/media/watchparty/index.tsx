@@ -6,9 +6,12 @@ import { peekClient, useRoomStateEvents } from "@/core/matrix";
 import type { Registries } from "@/core/registry";
 import { Button, Icon } from "@/ui";
 import { installUnloadLeave, joinParty, useWatchParty, VIEWER_EVENT, VIEWER_TTL_MS } from "./engine";
-import { WatchPartyWindow } from "./WatchPartyWindow";
+import { lazyPart } from "@/ui/lazy";
 import { MediaPartyButton, MediaPartyPhoneStrip } from "./CallBarPieces";
 import s from "./Banner.module.css";
+
+// web-perf 2026-11-07: the Media Party window is its own chunk (ui/lazy.tsx), fetched after the start
+const WatchPartyWindow = lazyPart("WatchPartyWindow", () => import("./WatchPartyWindow").then((m) => m.WatchPartyWindow));
 
 export { useWatchParty } from "./engine";
 
