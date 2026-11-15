@@ -96,6 +96,15 @@ export type Support = { ok: true } | { ok: false; kind: "ios-install" | "unsuppo
 
 export const IOS_INSTALL_HINT = "On iPhone and iPad, add Tin Hat to your Home Screen first: Share ▸ Add to Home Screen, then open it from there.";
 
+/** D06.4 / P20 (Sunday QoL): the room page's one-time card — "ask" = the browser can still be asked (Get notified… with
+ *  Turn on), "install" = an iPhone/iPad Safari tab, where nothing can be asked until Tin Hat is on the Home Screen (the
+ *  IOS_INSTALL_HINT card, Not now only), null = no card. Web only: the desktop notifies natively. */
+export function notifyCardKind(perm: NotificationPermission | "unsupported", support: Support): "ask" | "install" | null {
+  if (perm === "default") return "ask";
+  if (!support.ok && support.kind === "ios-install") return "install";
+  return null;
+}
+
 /** A2.10 detection order: the iPhone/iPad "add to Home Screen" guidance comes BEFORE "not supported". */
 export function pushSupport(env: Env): Support {
   if (isIos(env) && !isInstalled(env)) return { ok: false, kind: "ios-install", text: IOS_INSTALL_HINT };

@@ -3,20 +3,23 @@
 // locked / media / embeds / link preview / calendar card, timestamp), failed row, reactions, receipts,
 // and the hover action bar.
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { useMemberRole, RoleBadge } from "@/features/spaces";
-import { openUserProfile } from "@/core/bus";
+import { useMemberRole, RoleBadge, roleNameColour } from "@/features/spaces";
+import { bus, openUserProfile } from "@/core/bus";
 import { useCryptoStatus, useIsFirstDevice, useMember } from "@/core/matrix";
 import { findTimelineRenderer } from "@/core/registry";
 import { Avatar, Icon, cx, holdTextSelection, senderColor, useTip, useContentInk } from "@/ui";
 import { fmtClock, fmtFull } from "./lib/format";
 import { isJumbo, renderFormatted, renderPlain } from "./lib/html";
-import { utdText } from "./lib/utd";
+import { utdOffersVerify, utdText } from "./lib/utd";
 import { isDiceRow, type Row } from "./lib/model";
+import { summaryLabel, summaryText } from "./threads/core";
 import { AudioChip, AudioPlayer, BIG_AUDIO, FileCard, ImageBlock, VideoCard } from "./MediaBlocks";
 import { EmbedCard } from "./EmbedCard";
 import { LinkPreviewCard } from "./LinkPreviewCard";
 import s from "./Bubble.module.css";
+import { clockQuiet } from "./lib/stamp";
 import { linkContainerEvents } from "@/core/linkgate";
+import { reactKeyNorm } from "./lib/reactions";
 
 export interface ReceiptUser {
   userId: string;
@@ -34,6 +37,8 @@ export interface BubbleHandlers {
   onRetry: (row: Row) => void;
   onDeleteLocal: (row: Row) => void;
   onImage: (src: string, w: number, h: number, caption: string) => void;
+  /** threads (docs/THREADS.md): open this message's thread (start one on it); absent inside a thread's own panel */
+  onThread?: (row: Row, opener: HTMLElement | null) => void;
   /** returns the timeline viewport's top (for the hover-bar tuck) */
   viewTop: () => number;
 }
@@ -61,10 +66,22 @@ const QUICK = ["👍", "❤️", "😂"];
 function LockedNote({ code, maxWidth }: { code: string | null; maxWidth: number }) {
   const firstDevice = useIsFirstDevice();
   const verified = useCryptoStatus().thisDeviceVerified;
+  const text = utdText({ code, firstDevice, verified });
   return (
     <div className={s.locked} style={{ maxWidth }} data-utd={code ?? ""}>
       <Icon name="lock-symbolic" size={14} color="var(--th-bubble-other-meta-fg)" />
-      <span>{utdText({ code, firstDevice, verified })}</span>
+      <span>
+        {text}
+        {/* A28.3: the words ask to verify, so the way to do it is right here (the desktop's ChatBubble: the same) */}
+        {utdOffersVerify(text) && (
+          <>
+            {" "}
+            <button type="button" className={s.lockedVerify} onClick={() => bus.emit("openVerifyDialog", {})}>
+              Verify this device…
+            </button>
+          </>
+        )}
+      </span>
     </div>
   );
 }
@@ -76,7 +93,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
   const role = useMemberRole(roomId, row.sender);
   const name = member?.name && member.name !== row.sender ? member.name : row.sender.replace(/^@/, "").split(":")[0];
   const ink = useContentInk();
-  const nameColor = (role?.color && ink(role.color)) || senderColor(row.sender);
+  const nameColor = roleNameColour(role?.color, ink) || senderColor(row.sender); // the game-art veil measures the same colours (3-2)
   const [tuck, setTuck] = useState(false);
   // the hover bar only exists while the pointer is over the row (hundreds of rows → no idle buttons)
   const [hover, setHover] = useState(false);
@@ -186,11 +203,13 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
     >
       {p.dayLabel && (
         <div className={s.day}>
-          <span className={s.dayPill}>{p.dayLabel}</span>
+          <span className={s.dayPill} data-amb="">
+            {p.dayLabel}
+          </span>
         </div>
       )}
       {p.isDivider && (
-        <div className={s.newDiv}>
+        <div className={s.newDiv} data-amb="">
           <span className={s.newLine} />
           <span className={s.newLabel}>NEW</span>
         </div>
@@ -265,6 +284,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
             <div className={s.nameRow}>
               <span
                 className={s.name}
+                data-amb="name"
                 style={{ color: nameColor, maxWidth: maxBubble }}
                 onClick={(e) => {
                   const r = e.currentTarget.getBoundingClientRect();
@@ -296,28 +316,30 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
                   </div>
                 ))}
               {row.previewUrl && !row.redacted && <LinkPreviewCard url={row.previewUrl} maxW={inner} mine={mine} enabled={p.previewsOn} />}
-              <Stamp text={clockText} tip={row.pending || row.failed ? "" : fmtFull(row.ts)} failed={row.failed} mine={mine} />
+              <Stamp text={clockText} tip={row.pending || row.failed ? "" : fmtFull(row.ts)} failed={row.failed} mine={mine} quiet={clockQuiet({ grouped, pending: row.pending, failed: row.failed, pinned: row.pinned, edited: row.edited })} />
             </div>
             {!noBar && !p.touch && hover && <HoverBar row={row} tuck={tuck} h={h} />}
           </div>
           {row.failed && (
-            <div className={s.failedRow}>
+            <div className={s.failedRow} data-amb="">
               <span className={s.failReason}>{row.failReason || "Couldn't send"}</span>
-              <span className={s.retry} onClick={() => h.onRetry(row)}>
+              {/* L1 A31.0 / D05.6: real buttons (Tab, Enter / Space, a screen reader names them), drawn as before */}
+              <button type="button" className={s.retry} aria-label="Retry sending this message" onClick={() => h.onRetry(row)}>
                 Retry
-              </span>
-              <span className={s.del} onClick={() => h.onDeleteLocal(row)}>
+              </button>
+              <button type="button" className={s.del} aria-label="Delete this unsent message" onClick={() => h.onDeleteLocal(row)}>
                 Delete
-              </span>
+              </button>
             </div>
           )}
           {row.reactions.length > 0 && (
-            <div className={s.reactions} style={{ maxWidth: maxBubble }}>
+            <div className={s.reactions} style={{ maxWidth: maxBubble }} data-amb="">
               {row.reactions.map((r) => (
                 <ReactionChip key={r.key} r={r} onClick={() => h.onReact(row, r.key)} />
               ))}
             </div>
           )}
+          {row.thread && h.onThread && <ThreadSummary row={row} roomId={roomId} maxWidth={maxBubble} onOpen={(el) => h.onThread!(row, el)} />}
           {p.receipts.length > 0 && <Receipts users={p.receipts} />}
         </div>
       </div>
@@ -345,11 +367,11 @@ function escapeName(n: string) {
   return n.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function Stamp({ text, tip, failed, mine }: { text: string; tip: string; failed: boolean; mine: boolean }) {
+function Stamp({ text, tip, failed, mine, quiet }: { text: string; tip: string; failed: boolean; mine: boolean; quiet?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   useTip(ref, tip, { delay: 600 });
   return (
-    <div className={cx(s.stamp, failed && s.stampFailed)} style={!failed && mine ? { color: "var(--th-bubble-own-meta-fg)" } : undefined}>
+    <div className={cx(s.stamp, failed && s.stampFailed, quiet && s.stampQuiet)} style={!failed && mine ? { color: "var(--th-bubble-own-meta-fg)" } : undefined}>
       <span ref={ref}>{text}</span>
     </div>
   );
@@ -388,11 +410,15 @@ function ReactionChip({ r, onClick }: { r: Row["reactions"][number]; onClick: ()
   const ref = useRef<HTMLButtonElement>(null);
   const all = r.who.filter(Boolean);
   const shown = all.slice(0, 8).join(", ") + (all.length > 8 ? ` +${all.length - 8}` : "");
-  useTip(ref, all.length ? `${shown} reacted with ${r.key}` : `${r.mine ? "You" : "Someone"} reacted with ${r.key}`, { delay: 450 });
+  const tip = all.length ? `${shown} reacted with ${r.key}` : `${r.mine ? "You" : "Someone"} reacted with ${r.key}`;
+  useTip(ref, tip, { delay: 450 });
   return (
     <button
       ref={ref}
       type="button"
+      // QOL A31.1: a toggle with a name (the desktop chip's Accessible.name: key, count, who)
+      aria-pressed={r.mine}
+      aria-label={`${r.key} ${r.count}: ${tip}`}
       className={cx(s.chip, r.mine && s.chipMine)}
       onClick={(e) => {
         e.stopPropagation();
@@ -425,15 +451,65 @@ function HoverBar({ row, tuck, h }: { row: Row; tuck: boolean; h: BubbleHandlers
   return (
     <div className={cx(s.hoverBar, row.mine && s.hoverBarMine, tuck && s.hoverTuck)} onClick={(e) => e.stopPropagation()}>
       {QUICK.map((k) => {
-        const mineR = row.reactions.find((r) => r.key === k && r.mine);
+        const mineR = row.reactions.find((r) => reactKeyNorm(r.key) === reactKeyNorm(k) && r.mine); // QOL A07.2: ❤ = ❤️
         return <BarBtn key={k} emoji={k} on={!!mineR} tip={mineR ? `Take back your ${k}` : `React ${k}`} onClick={() => h.onReact(row, k)} />;
       })}
       <BarBtn icon="face-smile-symbolic" tip="More reactions" onClick={(el) => h.onReactPicker(row, el)} />
       <BarBtn icon="mail-reply-sender-symbolic" tip="Reply" onClick={() => h.onReply(row)} />
+      {h.onThread && canThread(row) && <BarBtn icon="dialog-messages-symbolic" tip="Reply in thread" onClick={(el) => h.onThread!(row, el)} />}
       {canEdit && <BarBtn icon="document-edit-symbolic" tip="Edit" onClick={() => h.onEdit(row)} />}
       <BarBtn icon="overflow-menu-symbolic" tip="More" onClick={(el) => h.onMenu(row, el)} />
     </div>
   );
+}
+
+/** threads: a message a thread can start on (or continue): a real, readable main-timeline message. */
+export function canThread(row: Row): boolean {
+  return !!row.eventId && !row.echo && !row.redacted && !row.undecryptable && row.threadId === "";
+}
+
+/** threads: "12 replies · Ana · 5 min ago" under a thread root, with the newest repliers' faces and an unread dot;
+ *  opens the thread. The age refreshes every minute. */
+function ThreadSummary({ row, roomId, maxWidth, onOpen }: { row: Row; roomId: string; maxWidth: number; onOpen: (el: HTMLElement) => void }) {
+  const t = row.thread!;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(id);
+  }, []);
+  const label = summaryLabel(t.count, t.lastName, t.lastTs, now) + (t.unread > 0 ? ". Unread replies" : "");
+  return (
+    <button
+      type="button"
+      className={cx(s.threadSum, t.unread > 0 && s.threadSumUnread)}
+      style={{ maxWidth }}
+      aria-label={label}
+      data-thread-root={row.eventId ?? ""}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen(e.currentTarget);
+      }}
+      onKeyDown={(e) => {
+        // the timeline's own keys (Enter = the message menu) must not see the summary's Enter / Space
+        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+      }}
+    >
+      <span className={s.threadFaces} aria-hidden>
+        {t.repliers.map((u, i) => (
+          <ReplierFace key={u.id} roomId={roomId} id={u.id} name={u.name} i={i} />
+        ))}
+      </span>
+      <span className={s.threadText} aria-hidden>
+        {summaryText(t.count, t.lastName, t.lastTs, now)}
+      </span>
+      {t.unread > 0 && <span className={s.threadDot} aria-hidden />}
+    </button>
+  );
+}
+
+function ReplierFace({ roomId, id, name, i }: { roomId: string; id: string; name: string; i: number }) {
+  const m = useMember(roomId, id);
+  return <Avatar size={18} name={name} seed={id} imageSource={m?.avatarMxc ?? null} className={s.threadFace} style={{ marginLeft: i ? -6 : 0, zIndex: 3 - i }} />;
 }
 
 function BarBtn({ emoji, icon, tip, on, onClick }: { emoji?: string; icon?: string; tip: string; on?: boolean; onClick: (el: HTMLElement) => void }) {

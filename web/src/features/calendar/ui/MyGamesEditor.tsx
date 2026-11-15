@@ -9,6 +9,7 @@ import { cx } from "@/ui";
 import { useGames, savePrefs, searchCatalog, addCustomGame, importSteamLibrary } from "../gamesStore";
 import { ReelButton, Art, art } from "./ReelParts";
 import s from "./Reel.module.css";
+import { IMPORT_SHOWN, importCountText } from "../model/reelQol";
 
 type Json = Record<string, unknown>;
 interface LocalPrefs {
@@ -38,14 +39,23 @@ const COLS: Array<{ key: ListKey; title: string; hint: string }> = [
   { key: "definitelyNot", title: "Definitely not", hint: "A hard veto while you’re here." },
 ];
 
+/** L1 A19.2: unsaved edits outlive the editor (closing "My games" or the reel window unmounts it; the desktop only hides
+ *  its editor, so its edits survive). Kept for the page's life, dropped on Save; exported for the tests. */
+export const keptEdits: { cur: { prefs: LocalPrefs; names: Record<string, string> } | null } = { cur: null };
+
 export function MyGamesEditor() {
   const stored = useGames((x) => x.myPrefs);
   const results = useGames((x) => x.search);
+  // QOL A19.5 (review): the text the results answer (not an older search's, not an added game)
+  const searchFor = useGames((x) => x.searchFor);
   const imp = useGames((x) => x.importState);
   const busy = useGames((x) => x.busy);
-  const [prefs, setPrefs] = useState<LocalPrefs>(() => fromStored(stored).prefs);
-  const [nameCache, setNameCache] = useState<Record<string, string>>(() => fromStored(stored).names);
-  const [dirty, setDirty] = useState(false);
+  const [prefs, setPrefs] = useState<LocalPrefs>(() => keptEdits.cur?.prefs ?? fromStored(stored).prefs);
+  const [nameCache, setNameCache] = useState<Record<string, string>>(() => ({ ...fromStored(stored).names, ...(keptEdits.cur?.names ?? {}) }));
+  const [dirty, setDirty] = useState(() => keptEdits.cur !== null);
+  useEffect(() => {
+    keptEdits.cur = dirty ? { prefs, names: nameCache } : null;
+  }, [dirty, prefs, nameCache]);
   const [q, setQ] = useState("");
   const [qFocus, setQFocus] = useState(false);
   const [steam, setSteam] = useState("");
@@ -93,7 +103,9 @@ export function MyGamesEditor() {
     setDirty(false);
   };
   const qt = q.trim();
-  const items = (Array.isArray(imp.items) ? (imp.items as Json[]) : []).slice(0, 60);
+  // QOL A19.3: the real count (it used to count after the cut), the first 60 shown — and the line says so
+  const allItems = Array.isArray(imp.items) ? (imp.items as Json[]) : [];
+  const items = allItems.slice(0, IMPORT_SHOWN);
   const impErr = typeof imp.error === "string" ? imp.error : "";
   const impVisible = imp.error !== undefined || imp.items !== undefined;
   // docs/SELFHOST.md: a server without the games catalogue has no search (and nothing to add by name); without a Steam
@@ -125,11 +137,17 @@ export function MyGamesEditor() {
             if (deb.current) clearTimeout(deb.current);
             const v = e.target.value.trim();
             deb.current = setTimeout(() => {
+              deb.current = null;
               if (v.length >= 2) searchCatalog(v);
             }, 220);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && qt.length >= 2 && results.length === 0) void addCustomGame(qt);
+            // QOL A19.5: Enter adds the first result (by name when there is none) — only results of THIS text: while
+            // the next search is pending the list still shows the last one's (review), and Enter waits
+            if (e.key === "Enter" && qt.length >= 2) {
+              if (results.length === 0) void addCustomGame(qt);
+              else if (!deb.current && searchFor === qt) addTo("wouldPlay", results[0]);
+            }
           }}
           aria-label="Add a game — type its name"
         />
@@ -195,7 +213,7 @@ export function MyGamesEditor() {
       {impVisible && (
         <div className={s.impRow}>
           <span className={impErr ? s.err11 : s.dim11}>
-            {impErr ? impErr : `${items.length} games found` + (imp.pending ? ` (${imp.pending} still being checked)` : "") + " — tick the ones you’d play:"}
+            {impErr ? impErr : importCountText(allItems.length, Number(imp.pending) || 0)}
           </span>
           {!impErr && items.length > 0 && (
             <ReelButton

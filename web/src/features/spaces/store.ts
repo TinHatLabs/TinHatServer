@@ -10,7 +10,7 @@
 // when a relevant state event arrives for the open space or one of its children.
 import { create } from "zustand";
 import { EventType, RoomStateEvent, type MatrixClient, type MatrixEvent, type Room } from "matrix-js-sdk";
-import { ensureMembersLoaded, managedHere, peekClient, powerLevelsForWrite, sendPowerLevels, uploadFile, withPowerLevelLock } from "@/core/matrix";
+import { ensureMembersLoaded, errParts, managedHere, peekClient, powerLevelsForWrite, sendPowerLevels, uploadFile, withPowerLevelLock } from "@/core/matrix";
 import { toast } from "@/core/bus";
 import { createLogger } from "@/core/log";
 import {
@@ -39,6 +39,7 @@ import { isRoomId } from "@/app/router";
 import { shareLinkNow } from "@/core/server";
 import { goneText } from "./leftWords";
 import { dmTarget, serverOf } from "@/features/nav/dmTarget";
+import { inviteFailure } from "@/features/people/people";
 
 const log = createLogger("spaces");
 
@@ -744,7 +745,8 @@ async function doInvite(sid: string, mxidIn: string): Promise<string> {
   try {
     await rl(() => c.client.invite(sid, mxid));
   } catch (e) {
-    throw `Couldn't invite ${localpart(mxid)}: ${errText(e)}`;
+    const p = errParts(e);
+    throw inviteFailure(p.status ?? 0, p.errcode, p.message, mxid, serverOf(c.client.getUserId()), "Invite").text;
   }
   await settleMembership(c.space, mxid, ["invite", "join"]);
   return `Invited ${c.display(mxid)}`;
@@ -1024,6 +1026,22 @@ export const spaceActions = {
   invite: (mxid: string) => {
     const sid = openSpaceOrError();
     if (sid) void runAction(() => doInvite(sid, mxid));
+  },
+  /** invite, and say how it went (the picker keeps a failed person pickable with the reason; 2026-11-13, A02.0) */
+  inviteResult: async (mxid: string): Promise<{ ok: boolean; text: string }> => {
+    const sid = openSpaceOrError();
+    if (!sid) return { ok: false, text: "No space is open" };
+    let res = { ok: false, text: "" };
+    await runAction(() =>
+      doInvite(sid, mxid).then(
+        (msg) => ((res = { ok: true, text: msg }), msg),
+        (e) => {
+          res = { ok: false, text: typeof e === "string" ? e : errText(e) };
+          throw e;
+        },
+      ),
+    );
+    return res;
   },
   searchUsers: (query: string) => {
     const q = query.trim();

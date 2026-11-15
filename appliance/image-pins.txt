@@ -1,0 +1,7 @@
+# Every image compose.yaml runs that we don't build ourselves, pinned by its registry index digest (the multi-arch list:
+# one digest for amd64 and arm64). provision.sh pulls `repo@digest` and refuses an image with no line here, so a re-cut
+# can never pick up whatever a tag points at today. Change a line only on purpose (a new upstream version), with the
+# rehearsals run on it. 0.3.17 keeps 0.3.16's three images byte for byte (launch-gate, 2026-11-14).
+ghcr.io/element-hq/lk-jwt-service:0.4.0 sha256:aba31cef052cedbf263f5e642dfb49476f779b46d0244d5b9337022033c4b66d
+livekit/livekit-server:v1.13.7 sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+postgres:17-alpine sha256:e5d2edd28b1f8d40a0a6c0c9cdc545b19b56a0d5d88f94bc11a97d970d4700d0

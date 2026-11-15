@@ -18,6 +18,8 @@ import { bus } from "@/core/bus";
 import { InlineMessage, showToast } from "@/ui";
 // ADDITIVE (nav, see features/nav/CORE-CHANGES.md): the version.json updater state + What's new sheet
 import { openWhatsNew, useUpdate } from "@/features/nav";
+import { UPDATE_LATER_PREF, laterValue, updateLaterHidesAny } from "@/features/nav/updateLater";
+import { setPref, usePref } from "@/core/prefs";
 // 11.0: the layout notices (features/editmode/layoutDoc.ts)
 import { clearOverride, keepOverride, resolveConflict, useRendered } from "@/features/editmode/layoutDoc";
 import s from "./Shell.module.css";
@@ -25,16 +27,19 @@ import s from "./Shell.module.css";
 export function BannerStrip({ islandMargin }: { islandMargin?: number } = {}) {
   const session = useSession();
   const crypto = useCryptoStatus();
-  const bundleChanged = useUpdateAvailable();
+  const bundleKey = useUpdateAvailable();
   const nav = useUpdate();
-  const update = bundleChanged || nav.available;
+  // P17: "Later" hides the strip until a newer version (or, without a version, a newer bundle) appears
+  const navNext = nav.available ? nav.next : "";
+  const laterFor = usePref(UPDATE_LATER_PREF, "");
+  const update = (bundleKey.length > 0 || nav.available) && !updateLaterHidesAny(laterFor, navNext, bundleKey);
   const loggedIn = session.state === "ready" || session.state === "syncing";
   // F1: not while a brand-new account's first device is still setting its encryption up (it ends verified)
   // a temporary guest account (docs/GUESTS.md) has nothing to verify against and leaves within 12 hours: no banner
   const showVerify = loggedIn && !crypto.loading && crypto.cryptoReady && !crypto.thisDeviceVerified && !crypto.firstDevicePending && !isGuestAccount(session.userId);
   const showOffline = loggedIn && session.syncDown;
   const updateText = nav.available && nav.next ? `Update available: v${nav.current || ((import.meta.env.VITE_TW_SEMVER as string | undefined) ?? "dev")} → v${nav.next}` : undefined;
-  return <BannerStripView verify={showVerify} verifyKey={showVerify && keyFirst(crypto)} offline={showOffline} update={update} updateText={updateText} islandMargin={islandMargin} />;
+  return <BannerStripView verify={showVerify} verifyKey={showVerify && keyFirst(crypto)} offline={showOffline} update={update} updateText={updateText} onLater={navNext || bundleKey ? () => setPref(UPDATE_LATER_PREF, laterValue(navNext, bundleKey)) : undefined} islandMargin={islandMargin} />;
 }
 
 /**
@@ -86,7 +91,7 @@ export function ResetBanner({ islandMargin }: { islandMargin?: number } = {}) {
 }
 
 /** The strip itself (also used by the gallery replica). */
-export function BannerStripView({ verify, verifyKey, offline, update, updateText, islandMargin }: { verify?: boolean; verifyKey?: boolean; offline?: boolean; update?: boolean; updateText?: string; islandMargin?: number }) {
+export function BannerStripView({ verify, verifyKey, offline, update, updateText, onLater, islandMargin }: { verify?: boolean; verifyKey?: boolean; offline?: boolean; update?: boolean; updateText?: string; onLater?: () => void; islandMargin?: number }) {
   if (!verify && !offline && !update) return null;
   return (
     <div
@@ -117,6 +122,7 @@ export function BannerStripView({ verify, verifyKey, offline, update, updateText
           actions={[
             ...(updateText ? [{ text: "What's new", onTriggered: () => openWhatsNew() }] : []),
             { text: "Reload now", onTriggered: () => location.reload() },
+            ...(onLater ? [{ text: "Later", onTriggered: onLater }] : []),
           ]}
         />
       )}
@@ -125,8 +131,9 @@ export function BannerStripView({ verify, verifyKey, offline, update, updateText
 }
 
 /** The web's updater: the served index.html points at a different bundle than the one running. */
-function useUpdateAvailable(): boolean {
-  const [avail, setAvail] = useState(false);
+function useUpdateAvailable(): string {
+  // the newer bundle's entry script ("" = none): the key "Later" remembers when version.json has no version
+  const [avail, setAvail] = useState("");
   useEffect(() => {
     if (import.meta.env.DEV) return;
     const mine = [...document.querySelectorAll<HTMLScriptElement>("script[type=module][src]")].map((s) => new URL(s.src, location.href).pathname);
@@ -137,7 +144,7 @@ function useUpdateAvailable(): boolean {
         if (!r.ok) return;
         const html = await r.text();
         const srcs = [...html.matchAll(/<script[^>]+type="module"[^>]+src="([^"]+)"/g)].map((m) => new URL(m[1], location.href).pathname);
-        if (srcs.length && !srcs.some((x) => mine.includes(x))) setAvail(true);
+        if (srcs.length && !srcs.some((x) => mine.includes(x))) setAvail(srcs[0]);
       } catch {
         /* offline — the offline banner covers it */
       }

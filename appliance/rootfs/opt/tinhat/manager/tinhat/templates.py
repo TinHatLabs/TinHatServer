@@ -26,9 +26,10 @@ signing_key_path: /data/signing.key
 log_config: /data/log.config
 media_store_path: /data/media_store
 max_upload_size: {upload_mb}M
-# New rooms stay on version 10: their ids are random, so the server can move to a new name with its history
-# ("Move to your own domain", move.py). Version 12 makes a room's id from its creator, which a move can't rename.
-default_room_version: "10"
+# New rooms are on version 11 (since 0.3.17; rooms made before keep version 10). Versions 10 and 11 have random ids, so
+# the server can move to a new name with its history ("Move to your own domain", move.py); 11's redaction rules keep
+# more of an event than 10's. Version 12 makes a room's id from its creator, which a move can't rename.
+default_room_version: "11"
 
 listeners:
   - port: 8008
@@ -397,6 +398,108 @@ def web_csp_line(csp: str | None = None) -> str:
     return f'\t\theader Content-Security-Policy "{csp}"\n'
 
 
+# Tin Hat Web's own files (/srv/web = /opt/tinhat/web), the last handle of every mode's site (web_app_block).
+#  - /assets/* are the build's hashed files: kept for a year (immutable). One that isn't there is a plain 404 that no
+#    cache keeps (no-store), never the app's index.html: a tab still on an older build that asks for one of its parts
+#    after an update would otherwise get HTML cached for a year under that part's name.
+#  - everything else is the app (index.html for its routes, sw.js, the guest door page …), always revalidated. A
+#    folder's address (/, /call/) resolves to its index.html (try_files: Caddy's file matcher passes over the
+#    folder itself), so it gets the pre-compressed page too.
+#  - WEB_FILES: a browser that takes brotli gets the build's pre-compressed FILE.br (build/precompress.py) instead of
+#    FILE compressed on the fly, with FILE's own Content-Type; one that takes zstd but not brotli gets FILE.zst when
+#    the build has one. Caddy 2.10.2's own `file_server { precompressed }` answers those with 206 Partial Content
+#    (caddyserver/caddy#7250, fixed after 2.10.2; service workers and caches refuse 206), so the choice is made here:
+#    the side file is served as an ordinary file (200, its own ETag; encode leaves an encoded response alone).
+#    A side file that is missing just means FILE (the build only makes one where it is smaller).
+WEB_TYPES = (("js", "text/javascript; charset=utf-8"), ("mjs", "text/javascript; charset=utf-8"),
+             ("css", "text/css; charset=utf-8"), ("html", "text/html; charset=utf-8"), ("wasm", "application/wasm"),
+             ("svg", "image/svg+xml"), ("json", "application/json"))
+
+
+def _accepts(enc: str) -> str:
+    """Accept-Encoding names `enc` with a q-value that isn't 0 (RFC 9110 12.5.3): "br", "gzip, br", "br;q=0.5"; not "br;q=0"."""
+    return rf"(?i)(^|,)\s*{enc}\s*(;\s*q\s*=\s*(1(\.0*)?|0?\.\d*[1-9]\d*))?\s*(,|$)"
+
+
+def _web_files() -> str:
+    exts = " ".join(f"*.{e}" for e, _ in WEB_TYPES)
+    types = "".join(f'\t~\\.{e}$ "{t}"\n' for e, t in WEB_TYPES)
+    out = ["# the build's pre-compressed copy of the file when the browser takes it (WEB_FILES above); handles are\n",
+           "# matched after the rewrites above, on the file that is actually served\n",
+           f"map {{path}} {{tinhat_web_type}} {{\n{types}}}\n"]
+    for side, enc in (("br", "br"), ("zst", "zstd")):
+        out.append(f"@tinhat_web_{side} {{\n\tpath {exts}\n\theader_regexp tinhat_ae_{side} Accept-Encoding {_accepts(enc)}\n"
+                   f"\tfile {{path}}.{side}\n}}\n"
+                   f"handle @tinhat_web_{side} {{\n{PAGE}"
+                   f"\theader Content-Type {{tinhat_web_type}}\n"
+                   f"\theader Content-Encoding {enc}\n"
+                   # the whole encoded file, always: a range of it (a multipart one would be framed unencoded under
+                   # this Content-Encoding) isn't worth getting right for files a browser loads whole
+                   f"\trequest_header -Range\n\trequest_header -If-Range\n"
+                   f"\trewrite * {{path}}.{side}\n"
+                   f"\tfile_server\n}}\n")
+    out.append(f"handle {{\n{PAGE}\tfile_server\n}}\n")
+    return "".join(out)
+
+
+#: a page the app hands out (index.html for any of its routes, the door page) is revalidated every time: matched here,
+#: on the file actually served (after try_files), not on the address asked for
+PAGE = "\t@tinhat_web_page path *.html\n\theader @tinhat_web_page Cache-Control no-cache\n"
+
+
+WEB_FILES = _web_files()
+
+WEB_APP = """\
+	handle {
+		root * /srv/web
+{csp}		handle /assets/* {
+			# a file that is there; never a folder (/assets/ itself is no file of the build)
+			@tinhat_web_here {
+				file
+				not path */
+			}
+			@tinhat_web_gone {
+				not {
+					file
+					not path */
+				}
+			}
+			header @tinhat_web_here Cache-Control "public, max-age=31536000, immutable"
+			header @tinhat_web_gone Cache-Control no-store
+			handle @tinhat_web_gone {
+				respond "Not found" 404
+			}
+{files3}		}
+		handle {
+			@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/* /guest /guest/*
+			header @fresh Cache-Control "no-cache"
+			# Old guest links (the call-only scheme removed in 0.3.1: /call/legacy.html?room=…, /?join=…, /guest/…) get
+			# the door page, which says what happened instead of the web app guessing at an unknown address
+			# (docs/GUESTS.md).
+			@oldguest {
+				path /call/legacy.html /guest /guest/*
+			}
+			@oldjoin {
+				path / /index.html
+				query join=*
+			}
+			rewrite @oldguest /call/index.html
+			rewrite @oldjoin /call/index.html
+			try_files {path} {path}index.html /index.html
+{files3}		}
+	}
+"""
+
+
+def _indent(text: str, tabs: int) -> str:
+    return "".join("\t" * tabs + line if line.strip() else line for line in text.splitlines(keepends=True))
+
+
+def web_app_block(csp: str | None = None) -> str:
+    """The web app's handle (WEB_APP) for a site, with the bundle's CSP line (web_csp_line)."""
+    return WEB_APP.replace("{csp}", web_csp_line(csp)).replace("{files3}", _indent(WEB_FILES, 3))
+
+
 # Who may open the dashboard (access.py; the owner's choice at setup or in Network → Who can open the dashboard): on a
 # server friends reach from outside, every route to /admin starts with this. "Anywhere" (the default) writes nothing;
 # otherwise any caller outside the home network and the named addresses gets a 403 before the manager sees the request.
@@ -544,27 +647,7 @@ https://{server_name} {{
 		reverse_proxy 127.0.0.1:8090
 	}}
 	# The Tin Hat API (/api, as on the Tin Hat hub). Only invite codes live on the box so far.
-{api_routes}	handle {{
-		root * /srv/web
-{web_csp}		@immutable path /assets/*
-		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/* /guest /guest/*
-		header @fresh Cache-Control "no-cache"
-		# Old guest links (the call-only scheme removed in 0.3.1: /call/legacy.html?room=…, /?join=…, /guest/…) get the
-		# door page, which says what happened instead of the web app guessing at an unknown address (docs/GUESTS.md).
-		@oldguest {{
-			path /call/legacy.html /guest /guest/*
-		}}
-		@oldjoin {{
-			path / /index.html
-			query join=*
-		}}
-		rewrite @oldguest /call/index.html
-		rewrite @oldjoin /call/index.html
-		try_files {{path}} {{path}}index.html /index.html
-		file_server
-	}}
-}}
+{api_routes}{web_app}}}
 
 :80 {{
 	import tinhat_headers
@@ -668,27 +751,7 @@ https://{server_name} {{
 	handle @admin {{{admin_gate}
 		reverse_proxy 127.0.0.1:8090
 	}}
-{api_routes}	handle {{
-		root * /srv/web
-{web_csp}		@immutable path /assets/*
-		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/* /guest /guest/*
-		header @fresh Cache-Control "no-cache"
-		# Old guest links (the call-only scheme removed in 0.3.1: /call/legacy.html?room=…, /?join=…, /guest/…) get the
-		# door page, which says what happened instead of the web app guessing at an unknown address (docs/GUESTS.md).
-		@oldguest {{
-			path /call/legacy.html /guest /guest/*
-		}}
-		@oldjoin {{
-			path / /index.html
-			query join=*
-		}}
-		rewrite @oldguest /call/index.html
-		rewrite @oldjoin /call/index.html
-		try_files {{path}} {{path}}index.html /index.html
-		file_server
-	}}
-}}
+{api_routes}{web_app}}}
 
 # Port 80 sends people to https: someone who types just the server's name into a browser that starts with http://
 # (the router sends port 80 here when it can), or the server's address on the home network. The one exception: the
@@ -836,27 +899,7 @@ CADDY_PROXY = """\
 			header_up X-Tinhat-Via-Proto {{http.request.header.X-Forwarded-Proto}}
 		}}
 	}}
-{api_routes}	handle {{
-		root * /srv/web
-{web_csp}		@immutable path /assets/*
-		header @immutable Cache-Control "public, max-age=31536000, immutable"
-		@fresh path / /index.html /sw.js /push-sw.js /version.json /manifest.webmanifest /call/ /call/* /guest /guest/*
-		header @fresh Cache-Control "no-cache"
-		# Old guest links (the call-only scheme removed in 0.3.1: /call/legacy.html?room=…, /?join=…, /guest/…) get the
-		# door page, which says what happened instead of the web app guessing at an unknown address (docs/GUESTS.md).
-		@oldguest {{
-			path /call/legacy.html /guest /guest/*
-		}}
-		@oldjoin {{
-			path / /index.html
-			query join=*
-		}}
-		rewrite @oldguest /call/index.html
-		rewrite @oldjoin /call/index.html
-		try_files {{path}} {{path}}index.html /index.html
-		file_server
-	}}
-}}
+{api_routes}{web_app}}}
 
 # Your reverse proxy sends https://{server_name} here.
 http://:{port} {{
@@ -917,7 +960,7 @@ def caddy_proxy(server_name: str, port: int, shared: bool = False, proxies: list
     own_ips = "".join(f" {a}/32" for a in hw.addresses() if ":" not in a)
     return CADDY_PROXY.format(server_name=server_name, port=port, own_sites=own, app_links=APP_LINKS_ROUTE, own_ips=own_ips, api_routes=CADDY_API,
                               trusted=proxy_words(proxies), admitted=admit_words(proxies), headers_snippet=HEADERS_SNIPPET,
-                              web_csp=web_csp_line(), admin_gate=admin_gate(proxy=True),
+                              web_app=web_app_block(), admin_gate=admin_gate(proxy=True),
                               date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
 
 
@@ -1231,7 +1274,7 @@ def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roo
     setup = setup_site(server_name)
     return CADDY_ANYWHERE.format(
         app_links=APP_LINKS_ROUTE,
-        api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line(), admin_gate=admin_gate(),
+        api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_app=web_app_block(), admin_gate=admin_gate(),
         setup_site=setup, relay_servers=CADDY_RELAY_SERVERS.format(proxy_from=proxy_from) if proxy_from else "", hsts=HSTS,
         server_name=server_name, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         acme_directory=acme_directory, tls_dns=tls_dns + (NAMED_TLS_POLICY if setup else ""),
@@ -1240,7 +1283,7 @@ def _caddy_public(server_name: str, tls_dns: str, acme_directory: str, extra_roo
 
 def caddy_lan(server_name: str) -> str:
     return CADDY_LAN.format(server_name=server_name, app_links=APP_LINKS_ROUTE, date=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-                            api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_csp=web_csp_line())
+                            api_routes=CADDY_API, headers_snippet=HEADERS_SNIPPET, web_app=web_app_block())
 
 
 # ---- the Tin Hat API ------------------------------------------------------------------------------------------

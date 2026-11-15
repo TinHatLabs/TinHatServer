@@ -11,6 +11,8 @@
 // per room, one microphone for the app: starting a recording stops any other into review.
 import { createStore } from "zustand/vanilla";
 import { VOICE_MIN_MS, durationMs, voiceContent } from "./core";
+import { nowPlaying } from "../lib/nowPlaying";
+import { overUploadLimit } from "../lib/uploadLimit";
 
 export type VoiceState = "idle" | "requesting" | "recording" | "finalizing" | "review" | "sending";
 
@@ -115,6 +117,8 @@ export const TEXT = {
   failed: "The recording failed",
   micStopped: "The microphone stopped",
   cap: "Stopped at the 15-minute limit",
+  /** QOL A00.2: a call started while recording (the desktop's stop_note) */
+  call: "Stopped for the call",
   recording: "Recording",
   sent: "Voice message sent",
 } as const;
@@ -223,6 +227,7 @@ export async function startVoice(roomId: string): Promise<void> {
   const d0 = deps;
   const account = d0?.account();
   if (!d0 || !account || getDraft(roomId)) return;
+  nowPlaying.recording(); // QOL A00.1: a voice note / clip playing in the timeline must not bleed into the recording
   const id = ++seq;
   const draft: VoiceDraft = {
     id,
@@ -440,7 +445,7 @@ export async function sendVoice(roomId: string): Promise<void> {
     }
     const limit = await dd.uploadLimit().catch(() => null);
     if (!live(roomId, id)) return;
-    if (limit !== null && limit > 0 && blob.size > limit) {
+    if (overUploadLimit(blob.size, limit)) {
       patch(roomId, { state: "review", error: TEXT.tooLarge });
       dd.announce(TEXT.tooLarge);
       return;
@@ -514,7 +519,16 @@ export async function stopVoiceForCall(timeoutMs = 2000): Promise<void> {
   const waits: Promise<unknown>[] = [];
   for (const d of Object.values(voiceStore.getState().drafts)) {
     if (d.state === "requesting") cancelVoice(d.roomId);
-    else if (d.state === "recording" || d.state === "finalizing") waits.push(stopVoice(d.roomId));
+    else if (d.state === "recording" || d.state === "finalizing") {
+      // QOL A00.2: the review row says why it stopped
+      const roomId = d.roomId;
+      waits.push(
+        stopVoice(roomId).then(() => {
+          const now = getDraft(roomId);
+          if (now && now.state === "review" && !now.note && !now.error) patch(roomId, { note: TEXT.call });
+        }),
+      );
+    }
   }
   for (const st of starting.values()) waits.push(st.settled);
   if (!waits.length) return;

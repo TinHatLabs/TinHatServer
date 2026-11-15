@@ -261,9 +261,19 @@ included. Behind your own reverse proxy nothing changes for you: keep forwarding
    digits, `_` and `-` of the localpart, so `@a.b` and `@ab` share one scratch name: a speed-test room, nothing private).
 6. Fails closed: when Synapse can't be asked, `502 {"reason":"check-failed"}`, never a pass-through. When lk-jwt
    doesn't answer, `502`.
-7. Limits: 120 token requests a minute per caller address (an IPv4 address or an IPv6 /64); 120 sign-in lookups a minute
-   per address and 600 for everyone together, counting new sign-ins from this server and every sign-in from another
-   server (lk-jwt looks those up) (`429`, `Retry-After`). CORS answers as lk-jwt's do. On a warm cache the check adds a
+7. Limits: 120 token requests a minute per caller address (an IPv4 address or an IPv6 /64), of which one account may use
+   60 (0.3.17: a member flooding from a shared address, a NAT, gets the 429, not the others behind it), and 240 per
+   account; 120 sign-in lookups a minute per address and 600 for everyone together, counting new sign-ins from this
+   server and every sign-in from another server (lk-jwt looks those up). Since 0.3.17 lookups are also counted per
+   account once the answer names it (60 a minute): past that the request is a 429 for that account and its lookup is
+   taken back out of the shared 600 (it stays on its address), so one account minting many sign-ins can't use up
+   everyone's; a ceiling of 3000 lookups a minute stays, whoever's (Synapse's own protection: an account spread over 25
+   or more addresses that mints 3000 sign-ins a minute can still reach it). Lookups this server's own accounts answer for
+   within their 60 count in a second per-address allowance of 120 (each account at most 60 of it), so one member behind
+   a shared address (a NAT) can't use up the others' lookups; one address makes at most 120 + 120 a minute. A sign-in
+   already known to be an account's counts as that account's from the start. A 429 that is the caller's own (its
+   sign-in's or account's limits) says "for this account" and isn't counted against its address (`429`,
+   `Retry-After`). CORS answers as lk-jwt's do. On a warm cache the check adds a
    few milliseconds (lab: 8.4 ms vs 3.7 ms median through the proxy, mostly the fresh member-list read).
 
 What it doesn't change (lk-jwt's own behaviour, as before): lk-jwt still looks up another server's sign-in at the

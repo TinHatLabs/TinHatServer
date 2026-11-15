@@ -14,6 +14,7 @@ import { defaultMode, hideTileRemember, loadView, saveView, setSelfViewMode, typ
 import { REASON_ABOUT_ME, REASON_ABOUT_THEM, snap } from "./hear";
 import { openPip } from "./Pip";
 import { StreamMenu } from "./menus";
+import { tileDoubleAction } from "./tileGestures";
 import type { Slot } from "./layout";
 import s from "./Tile.module.css";
 
@@ -316,7 +317,8 @@ export const Tile = memo(function Tile(p: TileProps) {
 
   const openMenu = (anchor: { x: number; y: number } | { x: number; y: number; width: number; height: number }) => {
     if (self) return;
-    ui().set({ volMenu: { mxid, identity: tile.participant, name, anchor } });
+    // P9 (12.1.16): the menu gets the tile, for its Pin / Full screen rows
+    ui().set({ volMenu: { mxid, identity: tile.participant, name, anchor, view: { tileId: tile.id, share, fake: !!p.fake, fullscreen: isFs, toggleFs } } });
   };
 
   const rootStyle: CSSProperties = p.flow
@@ -358,6 +360,20 @@ export const Tile = memo(function Tile(p: TileProps) {
       setFsh(h);
     });
   };
+  // D02.3: the stage knows which tile is full screen (carry.ts keeps it mounted through its sharer's blip, and a share
+  // that comes back is rendered into this same Tile: the id changes, the full screen stays)
+  const idRef = useRef(tile.id);
+  idRef.current = tile.id;
+  useEffect(() => {
+    if (fsh) ui().set({ fsTile: tile.id });
+    else if (ui().fsTile === tile.id) ui().set({ fsTile: null });
+  }, [fsh, tile.id]);
+  // P9 (12.1.16): double-click someone's share = full screen (and back); any other tile resets its view (tileGestures.ts)
+  const onTileDoubleClick = () => {
+    const a = tileDoubleAction({ share, self, fake: !!p.fake });
+    if (a === "fullscreen") toggleFs();
+    else if (a === "reset") resetView();
+  };
   // the share ending (the tile going away) leaves full screen and puts the layout back
   useEffect(() => {
     alive.current = true;
@@ -365,6 +381,7 @@ export const Tile = memo(function Tile(p: TileProps) {
       alive.current = false;
       fshRef.current?.exit();
       fshRef.current = null;
+      if (ui().fsTile === idRef.current) ui().set({ fsTile: null });
     };
   }, []);
   useEffect(() => () => window.clearTimeout(lp.current), []);
@@ -415,7 +432,7 @@ export const Tile = memo(function Tile(p: TileProps) {
           ))}
         <video ref={videoRef} className={s.video} style={{ ...videoStyle, visibility: hasFrame ? "visible" : "hidden" }} autoPlay playsInline muted />
       </div>
-      <div className={s.viewLayer} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onDoubleClick={() => !self && resetView()} style={{ cursor: overflowX > 0 || overflowY > 0 ? "grab" : undefined }} />
+      <div className={s.viewLayer} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onDoubleClick={onTileDoubleClick} style={{ cursor: overflowX > 0 || overflowY > 0 ? "grab" : undefined }} />
       <div className={s.nameStrip}>
         <div className={s.nameRow}>
           {isMuted && (
@@ -475,7 +492,20 @@ export const Tile = memo(function Tile(p: TileProps) {
       {share && recOnly && tunedIn && cw > 160 && (
         <div className={s.tunedPill}>
           <span className={s.tunedText}>{cw <= 430 ? "● tuned in" : "● recording-only · tuned in"}</span>
-          <span className={s.tunedLeave} onClick={() => act("setTileTunedIn")(tile.id, false)}>
+          {/* D05.7: a button for screen readers and the keyboard too (Enter / Space); the desktop's Leave is one as well */}
+          <span
+            className={s.tunedLeave}
+            role="button"
+            tabIndex={0}
+            aria-label="Leave the tuned-in stream"
+            onClick={() => act("setTileTunedIn")(tile.id, false)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              e.stopPropagation();
+              act("setTileTunedIn")(tile.id, false);
+            }}
+          >
             Leave
           </span>
         </div>

@@ -9,6 +9,9 @@
 //   GET  /search?q=          autocomplete: catalog first, then the keyless Steam store search
 //   GET  /game/<id>          full entry (lazily resolves Steam details, rate-limit aware)
 //   GET  /art/<id>/<kind>    portrait|header|hero|logo — cached; portrait -> header -> placeholder
+//   GET  /art/<id>/background  wide chat-background art (Steam library hero / SteamGridDB hero) — cached, size-capped,
+//                           allow-listed hosts; NO fallback: no art -> 404 (the app shows the room's preset). background.mjs
+//   POST /resolve {names}    Matrix-authed: status texts -> catalogue ids, a LOCAL lookup only (never asks Steam)
 //   GET  /seed               the house catalog (non-Steam + pinned entries) with art state
 //   POST /custom {name}      Matrix-authed: a custom:<slug> entry with placeholder art
 //   POST /steam/library      Matrix-authed: {profile} -> owned games (needs steam.key; stores nothing)
@@ -31,6 +34,7 @@ import { fileURLToPath } from "node:url";
 import { createHs, createMatrixAuth, clientKey, mono } from "../tinhat-api/reachcommon.mjs";
 import { createGamesLimits, customAllowed } from "./limits.mjs";
 import { SANDBOX_HEADERS } from "../tinhat-api/media.mjs";
+import { createBackgroundArt, resolveNames, sniffImage, readCapped, BG } from "./background.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3003);
@@ -245,6 +249,19 @@ async function cachedArt(entry, kind) {
     inflight.set(key, p);
     try { return await p; } finally { inflight.delete(key); }
 }
+// The chat-background kind ("Match the game"): its own cache with the size cap, host allow-list and remembered misses
+// (background.mjs). A hand-placed art-manual/<slug>-background.jpg|png|webp wins, like manual covers.
+function manualBackground(entry) {
+    const slug = entry.id.replace(/^[a-z]+:/, "").replace(/[^a-z0-9._-]/gi, "_");
+    for (const ext of ["jpg", "jpeg", "png", "webp"]) {
+        const p = join(MANUAL_ART_DIR, `${slug}-background.${ext}`);
+        if (existsSync(p)) return p;
+    }
+    return null;
+}
+// The guarded https fetcher (private-address refusal in the connection's own DNS lookup). The route test preloads a
+// module that sets globalThis.__tinhatGamesArtFetch (an in-process hook only: no environment switch can turn the guard off).
+const backgrounds = createBackgroundArt({ dir: ART_DIR, manualFile: manualBackground, ...(typeof globalThis.__tinhatGamesArtFetch === "function" ? { fetchImpl: globalThis.__tinhatGamesArtFetch } : {}) });
 function placeholderSvg(name) {
     const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
     let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -321,7 +338,7 @@ app.disable("x-powered-by");
 app.use((req, res, next) => (limits.request(req.path, clientKey(req)) ? next() : tooMany(res)));
 app.use(express.json({ limit: "8kb" }));
 
-app.get("/health", (_req, res) => res.json({ ok: true, games: Object.keys(db.games).length, queue: detailQueue.length, sgdb: !!SGDB_KEY, steamKey: !!STEAM_KEY }));
+app.get("/health", (_req, res) => res.json({ ok: true, games: Object.keys(db.games).length, queue: detailQueue.length, sgdb: !!SGDB_KEY, steamKey: !!STEAM_KEY, backgrounds: backgrounds.stats() }));
 
 app.get("/search", requireMatrixUser, perUser("search"), async (req, res) => {
     const q = clean(req.query.q).toLowerCase();
@@ -353,6 +370,32 @@ app.get("/game/:id", (req, res) => {
 
 app.get("/seed", (_req, res) => {
     res.json({ items: Object.values(db.games).filter((g) => g.seeded && !g.mergedInto).map(pub) });
+});
+
+app.get("/art/:id/background", async (req, res) => {
+    for (const [k, v] of Object.entries(SANDBOX_HEADERS)) res.setHeader(k, v);
+    const e = canonical(req.params.id);
+    let b = null;
+    try { const f = e ? await backgrounds.get(e) : null; b = f ? readCapped(f, BG.MAX_BYTES) : null; } catch {}
+    const type = b ? sniffImage(b) : null;
+    if (!type) {
+        // no art (or an unknown game): the app falls back to the room's preset; ask again in 10 min at most
+        res.setHeader("Cache-Control", "public, max-age=600");
+        return res.status(404).end();
+    }
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("Content-Type", type);
+    res.send(b);
+});
+
+app.post("/resolve", requireMatrixUser, perUser("resolve"), (req, res) => {
+    const names = req.body?.names;
+    if (!Array.isArray(names) || names.length > BG.RESOLVE_MAX_NAMES || names.some((n) => typeof n !== "string" || n.length > 256)) {
+        return res.status(400).json({ error: `expected {"names": [up to ${BG.RESOLVE_MAX_NAMES} strings]}` });
+    }
+    // a local lookup only: a status text never leaves this server (no Steam search here, unlike /search); not logged
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ids: resolveNames(names, Object.values(db.games)) });
 });
 
 app.get("/art/:id/:kind", async (req, res) => {
@@ -422,6 +465,13 @@ app.post("/steam/library", requireMatrixUser, perUser("library"), async (req, re
     } catch (e) {
         res.status(502).json({ error: `Steam did not answer: ${e.message}` });
     }
+});
+
+// A request the routes refused before they ran (malformed JSON, too large): a plain answer, NOTHING logged — the
+// parser's message can quote the body, and /resolve bodies are people's status texts.
+app.use((err, _req, res, _next) => {
+    if (res.headersSent) return;
+    res.status(err?.status >= 400 && err?.status < 500 ? err.status : 500).json({ error: "bad request" });
 });
 
 app.listen(PORT, "127.0.0.1", () => console.log(`[games] catalog on 127.0.0.1:${PORT}, ${Object.keys(db.games).length} games, data ${DATA_DIR}`));

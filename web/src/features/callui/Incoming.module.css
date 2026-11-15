@@ -32,6 +32,16 @@
   flex-direction: column;
   gap: 4px;
 }
+/* A15.3: past the ring the cards settle into the top-right corner, narrower, one line (the desktop's settled) */
+.hostSettled {
+  left: auto;
+  right: 18px;
+  transform: none;
+  width: min(calc(100vw - 36px), 360px);
+}
+.hostSettled [data-sub] {
+  display: none;
+}
 .hostMobile {
   top: calc(var(--th-safe-top) + 8px);
   width: calc(100vw - 24px);

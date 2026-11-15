@@ -29,6 +29,7 @@ import { ParticipantVolumeMenu as PVM, DevicesMenu } from "./menus";
 import { useChromeShown, useHoldChrome } from "./chrome";
 import { CallHeaderButton as HeaderCall, CallHeaderGear as HeaderGear } from "./HeaderButtons";
 import { VoiceHudHost } from "./VoiceHud";
+import { CallAnnouncer } from "./CallAnnouncer";
 
 export type CallStageProps = StageProps;
 export const CallStage = Stage;
@@ -60,6 +61,7 @@ export const feature: FeatureModule = {
     const offs = [
       r.overlays.add({ id: "callui-effects", order: 10, component: CallEffects }),
       r.overlays.add({ id: "callui-incoming", order: 900, component: IncomingCallCards }),
+      r.overlays.add({ id: "callui-announcer", order: 5, component: CallAnnouncer }), // a11y round 2 (M3): call events said aloud
       r.overlays.add({ id: "callui-pip", order: 800, component: PipHost }),
       r.overlays.add({ id: "callui-voicehud", order: 810, component: VoiceHudHost }),
       r.overlays.add({ id: "callui-host-sheet", order: 910, component: CallHostSheet }), // M1: a call hosted elsewhere
@@ -73,6 +75,7 @@ export const feature: FeatureModule = {
         order: 10,
         keys: "Ctrl+Shift+M",
         whenTyping: true,
+        inModal: true, // (4-5) the mic stays yours with a dialog open
         description: "Mute / unmute the microphone (in a call)",
         enabled: () => getC().inCall,
         run: () => {
@@ -88,6 +91,7 @@ export const feature: FeatureModule = {
         order: 11,
         keys: "Ctrl+Shift+D",
         whenTyping: true,
+        inModal: true,
         description: "Deafen / undeafen (in a call)",
         enabled: () => getC().inCall,
         run: () => act("applyDeafen")(!getC().deafened),
@@ -115,9 +119,14 @@ export const feature: FeatureModule = {
       const t = getC().tiles.find((x) => x.id === tileId);
       if (t) pip(t);
     });
+    // "Share again" on the notice of a share that stopped on its own (calls/shareStopped.ts)
+    const offShare = bus.on("openSharePicker", () => {
+      if (getC().inCall) ui().set({ streamPop: true, optsFace: null });
+    });
     return () => {
       offs.forEach((f) => f());
       offBus();
+      offShare();
     };
   },
 };

@@ -16,7 +16,7 @@ import { useMember } from "@/core/matrix";
 import { toast } from "@/core/bus";
 import { Avatar, Button, Menu, MenuItem, MenuSeparator, ToolButton, animate, cx, useTip, type MenuAnchor } from "@/ui";
 import { shortName } from "../shared/format";
-import { clearPlayed, clearQueue, moveItem, moveToNext, playUrl, removeAt, shuffleUpcoming, upcomingLabel, type QueueItem } from "./engine";
+import { clearPlayed, clearQueue, moveItem, moveToNext, partyRoomId, playUrl, removeAt, restoreQueue, shuffleUpcoming, upcomingLabel, type QueueItem } from "./engine";
 import { serviceLabel } from "./links";
 import s from "./WatchParty.module.css";
 import { openExternal } from "@/core/openlink";
@@ -254,7 +254,7 @@ export function QueueList({ roomId, queue: shared, nowUrl, inParty, canControl, 
         <span className={s.queueBtns}>
           {upcoming >= 2 && <ToolButton iconName="media-playlist-shuffle-symbolic" iconSize={16} label={labels ? "Shuffle" : undefined} disabled={!canControl} tip={hostTip("shuffle the queue") || "Shuffle — what's up next, for everyone"} className={s.headBtn} onClick={() => shuffleUpcoming()} />}
           {nowIdx > 0 && <ToolButton iconName="edit-clear-history-symbolic" iconSize={16} label={labels ? "Clear played" : undefined} disabled={!canControl} tip={hostTip("clear the queue") || "Clear played — remove what already played, for everyone"} className={s.headBtn} onClick={() => clearPlayed()} />}
-          {queue.length > 0 && <Button text="Clear" flat disabled={!canControl} title={hostTip("clear the queue") || "Clear the queue (for everyone)"} onClick={() => clearQueue()} />}
+          {queue.length > 0 && <Button text="Clear" flat disabled={!canControl} title={hostTip("clear the queue") || "Clear the queue (for everyone)"} onClick={() => clearWithUndo(queue)} />}
         </span>
       </div>
       {queue.length > 0 ? (
@@ -324,4 +324,14 @@ export function QueueList({ roomId, queue: shared, nowUrl, inParty, canControl, 
       )}
     </>
   );
+}
+
+/** QOL A16.2 (P11 (a)): Clear empties the queue for everyone at once; a 5 s "Queue cleared · Undo" toast puts it back (the
+ *  cleared items first, then anything others added meanwhile: queue.ts undoClear). Desktop: WatchPartyWindow's undo bar. */
+export function clearWithUndo(queue: readonly QueueItem[]): void {
+  if (!queue.length) return;
+  const cleared = [...queue];
+  const roomId = partyRoomId(); // Undo never writes into another party
+  clearQueue();
+  toast("Queue cleared", { timeoutMs: 5000, action: { label: "Undo", run: () => restoreQueue(cleared, roomId) } });
 }

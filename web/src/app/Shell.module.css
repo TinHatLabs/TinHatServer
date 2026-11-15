@@ -88,3 +88,12 @@
     opacity: 0;
   }
 }
+
+/* A01.0 / P4: "No rooms yet" — New DM… / New room… under the empty state's words */
+.noRoomsButtons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}

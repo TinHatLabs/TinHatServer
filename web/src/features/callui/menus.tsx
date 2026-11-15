@@ -13,6 +13,9 @@ import { useHoldChrome } from "./chrome";
 import type { CallCategory } from "@/features/calls/contract";
 import type { LayoutMode } from "./layout";
 import s from "./menus.module.css";
+import { SHARE_BW, SHARE_FPS, SHARE_RES } from "./shareQuick";
+import { TILE_WORDS, tileViewItems } from "./tileGestures";
+import * as linkLab from "@/lab/linkLab";
 
 // D2: menus sized to their content (min 200 px) instead of the rig's fixed 200 px that elides the labels.
 const FIT = { width: "max-content", minWidth: 200, maxWidth: "calc(100vw - 12px)" } as const;
@@ -32,7 +35,7 @@ export function LayoutMenu({ anchor, onClose }: { anchor: HTMLElement | null; on
       <CheckMenuItem text="Speaker — one big, the rest below" checked={mode === "speaker"} onTriggered={() => set("speaker")} />
       <CheckMenuItem text="Side strip — streams big, everyone beside" checked={mode === "sidebar"} onTriggered={() => set("sidebar")} />
       <MenuSeparator />
-      {pinned ? <MenuItem text="Unpin the main tile" onTriggered={() => ui().set({ pinned: null })} /> : <MenuItem text="Pin: hover a tile and press the pin" disabled />}
+      {pinned ? <MenuItem text="Unpin the main tile" onTriggered={() => ui().set({ pinned: null })} /> : <MenuItem text={TILE_WORDS.layoutPinHint} disabled />}
       <CheckMenuItem text="Animate layout changes" checked={animate} onTriggered={() => ui().set({ animate: !animate })} />
     </Menu>
   );
@@ -205,15 +208,19 @@ export interface ParticipantVolumeMenuProps {
   onClose: () => void;
   /** the room of the call (moderation / space); defaults to the call's room */
   roomId?: string;
+  /** P9: opened from a call tile — its view rows */
+  view?: VolMenuState["view"];
 }
 
 function myUserId(): string {
   return peekClient()?.getUserId() ?? "";
 }
 
-/** The fake call (?fakecall=1) shows real people's ids on its tiles — never send anything for them. */
+/** The fake call (?fakecall=1) shows real people's ids on its tiles — never send anything for them. The lab's
+ *  write-through switch (?fakewrite=1, src/lab/linkLab.ts, read at each click as before) exists in lab builds only: in a
+ *  production build the guard can never be lifted from a link (fix1216/weblinkfence). */
 export function fakeGuard(): boolean {
-  if (!getC().fake || /[?&]fakewrite=1/.test(location.search)) return false;
+  if (!getC().fake || (__TW_LAB__ && linkLab.fakeWrite())) return false;
   toast("Fake call — nothing was sent", { timeoutMs: 2500 });
   return true;
 }
@@ -298,11 +305,25 @@ export function ParticipantVolumeMenu(p: ParticipantVolumeMenuProps) {
   };
   const anchor = p.anchor instanceof HTMLElement ? p.anchor : "width" in p.anchor ? (p.anchor as Rect) : p.anchor;
   const id = identity || mxid;
+  const pinnedNow = useCallUi((x) => x.pinned);
+  const view = p.view;
+  const viewRows = view ? tileViewItems({ share: view.share, self: false, fake: view.fake, pinned: pinnedNow === view.tileId, fullscreen: view.fullscreen }) : [];
+  const runView = (what: string) => {
+    if (!view) return;
+    if (what === "pin") ui().set({ pinned: view.tileId });
+    else if (what === "unpin") ui().set({ pinned: null });
+    else view.toggleFs();
+  };
   const ctx: MemberMenuCtx = useMemo(() => ({ userId: mxid, roomId, identity: identity || undefined }), [mxid, roomId, identity]);
   // ParticipantVolumeMenu.qml order: Message · Pull aside / corner rows · [Moderation] mute · disconnect ·
   // kick · ban · roles · Volume. Message / moderation / space rows come from r.memberMenu (spaces owns them).
   return (
     <Menu open onClose={p.onClose} anchor={anchor} modal width={366} title={name}>
+      {/* P9 (12.1.16): the tile's Pin / Full screen rows, any tile size (the desktop's ParticipantVolumeMenu.qml, first) */}
+      {viewRows.map(([id, text]) => (
+        <MenuItem key={id} icon={id === "fullscreen" ? "view-fullscreen-symbolic" : id === "leaveFullscreen" ? "view-restore-symbolic" : "window-pin-symbolic"} text={text} onTriggered={() => runView(id)} />
+      ))}
+      {viewRows.length > 0 && <MenuSeparator />}
       <MemberRows items={rows} ctx={ctx} from={-Infinity} to={50} />
       {cornerItem && (
         <div ref={asideTipRef}>
@@ -356,27 +377,15 @@ export function ParticipantVolumeMenu(p: ParticipantVolumeMenuProps) {
 export function VolMenuHost() {
   const vm = useCallUi((x) => x.volMenu);
   if (!vm) return null;
-  return <ParticipantVolumeMenu key={vm.identity + vm.mxid} mxid={vm.mxid} identity={vm.identity} name={vm.name} anchor={vm.anchor} onClose={() => ui().set({ volMenu: null })} />;
+  return <ParticipantVolumeMenu key={vm.identity + vm.mxid} mxid={vm.mxid} identity={vm.identity} name={vm.name} anchor={vm.anchor} view={vm.view} onClose={() => ui().set({ volMenu: null })} />;
 }
 
 // ---- Devices menu (gear ▾) ---------------------------------------------------------------------
 
-// AppCore.qml:878-905 — Resolution × Frame rate × Bandwidth; kbps = base(res) × tier factor.
-export const SHARE_RES: { label: string; w: number; h: number; base: number }[] = [
-  { label: "Auto — fit my connection", w: 0, h: 0, base: 12000 },
-  { label: "720p", w: 1280, h: 720, base: 4000 },
-  { label: "1080p", w: 1920, h: 1080, base: 8000 },
-  { label: "1440p", w: 2560, h: 1440, base: 12000 },
-  { label: "2160p (4K)", w: 3840, h: 2160, base: 16000 },
-  { label: "Source (native)", w: 4096, h: 4096, base: 18000 },
-];
-export const SHARE_BW: { label: string; f: number }[] = [
-  { label: "Good — lightest", f: 0.6 },
-  { label: "Great — balanced", f: 1.0 },
-  { label: "Best — most bandwidth", f: 1.5 },
-  { label: "Unleashed — LAN-grade", f: 2.5 },
-];
-const FPS = [5, 15, 30, 60];
+// AppCore.qml:878-905 — Resolution × Frame rate × Bandwidth; kbps = base(res) × tier factor. The lists live in
+// shareQuick.ts (the share picker's "Custom…" panel offers the same ones; shared vectors with the desktop).
+export { SHARE_RES, SHARE_BW };
+const FPS = SHARE_FPS;
 // Encoder tags as stored in the 5th field of shareQuality (native call_ctl: nvenc | vp9 | h264).
 const ENC: [string, string][] = [
   ["GPU · best (AV1 on RTX 40+, else H.264)", "nvenc"],

@@ -7,7 +7,7 @@
 // meaning); backup = key backup active here. Child dialogs (verify, rename, sign out) open over the window.
 import { useEffect, useRef, useState } from "react";
 import { CryptoEvent } from "matrix-js-sdk/lib/crypto-api/index.js";
-import { peekClient, startDeviceVerificationWith, useCryptoStatus } from "@/core/matrix";
+import { checkClock, peekClient, startDeviceVerificationWith, useClockNote, useCryptoStatus } from "@/core/matrix";
 import { fallbackOffersTrust, fingerprintText, trustDevice, trustDoneText, trustLookupFor, trustResultText, TRUST_WORDS, WAIT_MS } from "@/features/native";
 import { bus, toast } from "@/core/bus";
 import { Button, Icon, Menu, MenuItem, PromptDialog, TextField, ToolButton, cx, useIsMobile } from "@/ui";
@@ -105,6 +105,10 @@ function YourAccount() {
 
 function ThisDevice() {
   const st = useCryptoStatus();
+  const clockNote = useClockNote(); // fix/verify-request (desktop: Settings → Security → This device → Clock)
+  useEffect(() => {
+    void checkClock();
+  }, []);
   const [setting, setSetting] = useState(false);
   const [pw, setPw] = useState("");
   const verified = st.thisDeviceVerified;
@@ -121,11 +125,19 @@ function ThisDevice() {
   };
   return (
     <Section title="This device">
+      {clockNote && (
+        <Row
+          id="security.clock"
+          icon={<Icon name="dialog-warning" size={22} color="var(--th-settings-error-fg)" staticOnly />}
+          label="Clock"
+          description={clockNote}
+        />
+      )}
       <Row
         id="security.verification"
         icon={<Icon name={verified ? "security-high-symbolic" : "security-low-symbolic"} size={22} color={verified ? "var(--th-settings-success-fg)" : "var(--th-settings-error-fg)"} staticOnly />}
         label="Verification"
-        description={verified ? "This device is verified (cross-signed) — it can read your encrypted messages." : "Not verified yet — encrypted messages can't be read on this device."}
+        description={verified ? "This device is verified — it can read your encrypted messages." : "Not verified yet — encrypted messages can't be read on this device."}
         control={verified ? <span className={p.okText}>Verified</span> : <Button highlighted text="Verify…" onClick={() => bus.emit("openVerifyDialog", {})} />}
       />
       <Row
@@ -143,7 +155,7 @@ function ThisDevice() {
       >
         {!backup && setting && (
           <>
-            <Hint>Setting it up asks for your account password and gives you a recovery key to write down.</Hint>
+            <Hint>Enter your account password. You get a Security Key to write down.</Hint>
             <div className={p.fieldRow}>
               <TextField
                 className={p.fill}
@@ -175,7 +187,7 @@ function DeviceItem({ d, onRename, onSignOut, onTrust }: { d: DeviceRow; onRenam
   return (
     <Row
       className={p.deviceRow}
-      attrs={{ "data-device-id": d.id, title: `Session ${d.id}` }}
+      attrs={{ "data-device-id": d.id, title: `Device ${d.id}` }}
       rowProps={{
         onContextMenu: (e) => {
           e.preventDefault();
@@ -200,7 +212,7 @@ function DeviceItem({ d, onRename, onSignOut, onTrust }: { d: DeviceRow; onRenam
               <MenuItem text="Rename…" icon="edit-rename" onTriggered={() => (close(), onRename())} />
               {!d.isCurrent && (
                 <MenuItem
-                  text="Verify this session"
+                  text="Verify this device"
                   icon="security-high-symbolic"
                   onTriggered={() => {
                     close();
@@ -389,11 +401,13 @@ function Devices() {
           ) : undefined
         }
       />
-      {prof.devices.length === 0 && (
-        <NoteRow>
-          {prof.devicesState === "loading" || prof.devicesState === "idle" ? "Loading your devices…" : "Couldn't load your devices — close and reopen Settings to try again."}
-        </NoteRow>
-      )}
+      {/* D10.8: a way out of the failure (the desktop: the same words and button) */}
+      {prof.devices.length === 0 &&
+        (prof.devicesState === "loading" || prof.devicesState === "idle" ? (
+          <NoteRow>Loading your devices…</NoteRow>
+        ) : (
+          <Row label="Couldn't load your devices" description="Check your connection, then try again." control={<Button text="Try again" onClick={() => void refreshDevices()} />} />
+        ))}
       {devices.map((d) => (
         <DeviceItem
           key={d.id}
@@ -417,7 +431,7 @@ function Devices() {
         open={!!rename}
         className={phone ? dlg.bottomSheet : undefined}
         onClose={() => setRename(null)}
-        title="Rename session"
+        title="Rename device"
         subtitle={err || undefined}
         preferredWidth={420}
         actions={[
@@ -435,14 +449,14 @@ function Devices() {
           { text: "Cancel", role: "reject", onClick: () => setRename(null) },
         ]}
       >
-        <TextField aria-label="Session name" value={newName} onChange={(e) => setNewName(e.target.value)} />
+        <TextField aria-label="Device name" value={newName} onChange={(e) => setNewName(e.target.value)} />
       </PromptDialog>
 
       <PromptDialog
         open={!!signOut}
         className={phone ? dlg.bottomSheet : undefined}
         onClose={() => setSignOut(null)}
-        title="Sign out this session?"
+        title="Sign out this device?"
         subtitle={err || `${signOut?.name || signOut?.id || ""} will be signed out. Enter your account password to confirm.`}
         preferredWidth={420}
         actions={[
@@ -469,22 +483,22 @@ function Devices() {
         open={signOutAll}
         className={phone ? dlg.bottomSheet : undefined}
         onClose={() => setSignOutAll(false)}
-        title="Sign out all other sessions?"
+        title="Sign out all other devices?"
         subtitle={
           err ||
-          `${others} other session${others === 1 ? "" : "s"} will be signed out — every device and browser except this one. Enter your account password to confirm.`
+          `${others} other device${others === 1 ? "" : "s"} will be signed out — every device and browser except this one. Enter your account password to confirm.`
         }
         preferredWidth={420}
         actions={[
           {
-            text: `Sign out ${others} session${others === 1 ? "" : "s"}`,
+            text: `Sign out ${others} device${others === 1 ? "" : "s"}`,
             role: "destructive",
             disabled: !pw,
             onClick: () => {
               deleteOtherDevices(pw)
                 .then((k) => {
                   setSignOutAll(false);
-                  toast(`Signed out ${k} session${k === 1 ? "" : "s"}`);
+                  toast(`Signed out ${k} device${k === 1 ? "" : "s"}`);
                 })
                 .catch((e) => setErr(`Couldn't sign them out: ${(e as Error).message}`));
             },

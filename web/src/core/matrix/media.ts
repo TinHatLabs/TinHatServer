@@ -14,6 +14,7 @@ import { bearerAllowed } from "@/core/bearer";
 import { createLogger } from "@/core/log";
 import { blobType, inertBlob } from "@/core/mediatype";
 import { encryptedNowSync, roomEncryptedForUpload } from "./uploadCrypto";
+import { photoBytesForUpload } from "@/core/photoUpload";
 
 const log = createLogger("media");
 
@@ -389,6 +390,10 @@ export async function uploadFile(
   if (!client) throw new Error("Not signed in");
   const name = opts.name ?? (file instanceof File ? file.name : "file");
   const mimetype = opts.mimetype || file.type || "application/octet-stream";
+  // "Location is removed from photos you send" (docs/PHOTO-METADATA.md): an image goes up without its GPS and
+  // identifying metadata (lossless; the orientation is kept). Can't be cleaned = throws ExifStripError, nothing is uploaded.
+  // From here on `file` is the cleaned picture: the probe, the size, the encryption and the request all use it.
+  file = await photoBytesForUpload(file, mimetype);
   const extra = await probe(file, mimetype);
   const info: MediaInfo = { mimetype, size: file.size, ...extra };
   if (mimetype.startsWith("audio/")) {

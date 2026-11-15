@@ -7,6 +7,8 @@
 import type { CallActions, CallCategory, CallState, CallStore, Tile } from "@/features/calls/contract";
 import { callStore, DEFAULTS } from "./store";
 import { openPip } from "./Pip";
+import { bus, toast } from "@/core/bus";
+import { SHARE_GONE_STATUS, shareStoppedNotice } from "@/features/calls/shareStopped";
 
 function urlParam(name: string): string | null {
   const s = new URLSearchParams(location.search).get(name);
@@ -230,6 +232,8 @@ export function installFakeCall(): void {
       : [],
   };
   callStore.setState(state);
+  // screenshots: the notice of a share that stopped on its own (a fake call's own status lines are not toasted)
+  if (demo.has("sharestopped")) setTimeout(() => toast(SHARE_GONE_STATUS, shareStoppedNotice(() => bus.emit("openSharePicker", {}))), 500);
   if (demo.has("incoming")) {
     // The real engine's callwatch shares this store and rewrites incomingCalls on every sync, which
     // wiped the demo card; keep it until it is dismissed.

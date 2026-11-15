@@ -5,7 +5,6 @@
 //   ?sbpill=1            pretend a clip plays (call-bar now-playing pill)   (--tinhat-sbpill)
 //   ?memories=1          open Memories for the open room            (--tinhat-memories)
 //   ?memopen=<id|latest> + open that session                         (--tinhat-memopen)
-//   ?watchparty=1        open the watch party for the open room (JOINS it — test rooms only)
 //   ?joinsound=1         a dev window hosting JoinSoundSection (settings owns the real placement)
 //   ?memdebug=1          [memories] console logs                     (--tinhat-mem-debug)
 //   ?memtest=1           with memopen: an in-page player self-test (--tinhat-memtest) → "[memtest] PASS|FAIL …"
@@ -65,12 +64,12 @@ export function MediaDevHooks() {
 
   useEffect(() => {
     if (!ready || done.current) return;
-    const want = ["sb", "sbdemo", "sbpill", "memories", "memopen", "watchparty", "memtest", "joinsound"].some((f) => flag(f) !== null);
+    const want = ["sb", "sbdemo", "sbpill", "memories", "memopen", "memtest", "joinsound"].some((f) => flag(f) !== null);
     if (!want) {
       done.current = true;
       return;
     }
-    if (!roomId && (flag("memories") !== null || flag("memopen") !== null || flag("watchparty") !== null)) return; // wait for the room
+    if (!roomId && (flag("memories") !== null || flag("memopen") !== null)) return; // wait for the room
     const t = window.setTimeout(() => {
       done.current = true;
       if (flag("sbdemo") !== null) {
@@ -80,7 +79,6 @@ export function MediaDevHooks() {
       if (flag("sbpill") !== null) fakePlaying();
       const mo = flag("memopen");
       if (mo !== null || flag("memories") !== null) openMemories(roomId, mo ?? undefined);
-      if (flag("watchparty") !== null) openWatchParty(roomId);
       if (flag("memtest") !== null) void runMemTest();
       if (flag("joinsound") !== null) openWindow("media-joinsound-dev", {});
     }, 600);

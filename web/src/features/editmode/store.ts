@@ -6,12 +6,34 @@ import { create } from "zustand";
 import { showToast } from "@/ui";
 import { getFormFactor } from "@/core/device";
 import type { JObj, Json } from "@/layout";
-import { EditSession, dockFloat, drawerTargets, floatIsland, newActionButton, newButtonIsland, newDrawer, removeButtonIslandFrom, resetIsland, type FormKind, type Step } from "./session";
+import { EditSession, dockFloat, drawerTargets, floatIsland, hiddenRefs, newActionButton, newButtonIsland, newDrawer, removeButtonIslandFrom, resetIsland, type FormKind, type Step } from "./session";
 import { closeDrawer } from "./drawerRun";
+import { REMOVED_WORDS, hiddenWords } from "./hints";
+import { islandText } from "./names";
+import { registries } from "@/core/registry";
 import { beginSession, clearOverride, endSession, getRendered, readOverride, saveLayout, setOverride } from "./layoutDoc";
 
-/** Reset layout on this device (EDITMODE-UI §9): the device-local override, at once. */
+/** L1 A17.1: Reset while an edit session has unsaved changes asks first (they used to go without a word; the reset
+ *  itself has its Restore). index.tsx draws the question (ResetAsk). The desktop: Main.qml resetAsk. */
+export const RESET_ASK = {
+  title: "Reset the layout on this device?",
+  text: "Your unsaved layout changes will be lost too.",
+  confirm: "Reset",
+  back: "Keep editing",
+} as const;
+export const useResetAsk = create<{ open: boolean }>(() => ({ open: false }));
+
+/** Reset layout on this device (EDITMODE-UI §9): the device-local override, at once — after a question when an open
+ *  edit session has unsaved changes (A17.1). */
 export function resetOnThisDevice(): void {
+  if (useEdit.getState().session?.dirty) {
+    useResetAsk.setState({ open: true });
+    return;
+  }
+  resetNow();
+}
+export function resetNow(): void {
+  useResetAsk.setState({ open: false });
   if (useEdit.getState().session) cancelEdit();
   setOverride();
   showToast("Layout reset on this device.", 3000);
@@ -242,7 +264,26 @@ export function editRemoveButtons(ref: string): void {
   const s = useEdit.getState().session;
   if (!s || useEdit.getState().readOnly) return;
   const r = removeButtonIslandFrom(s.form, ref);
-  if (r && s.commit(r)) bump();
+  if (r && s.commit(r)) {
+    bump();
+    showToast(REMOVED_WORDS, 3000); // A17.0
+  }
+}
+
+/** Add widget (EDITMODE-UI §7): the widget gallery; a hidden widgets island comes back first (one undo step). The
+ *  toolbar's Add widget and (A17.6) the Widgets island's own menu. */
+export function openAddWidget(): void {
+  const s = useEdit.getState().session;
+  if (s && hiddenRefs(s.form).includes("widgets")) editApply({ op: "restore", ref: "widgets" });
+  const item = registries.appMenu.list().find((m) => m.id === "widgets-add");
+  (item as unknown as { run?: (c: unknown) => void } | undefined)?.run?.({});
+}
+
+/** A17.0: hide an island and say so (Undo brings it back). */
+export function editHide(ref: string): Step {
+  const r = editApply({ op: "hide", ref });
+  if (r.ok) showToast(hiddenWords(islandText(ref).name), 3000);
+  return r;
 }
 
 /** The `layout.edit` action (Ctrl+E, a button, Ctrl+K): Done while a session is open, else open edit mode on the form

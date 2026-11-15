@@ -2,6 +2,8 @@
 // talk, Sound when I talk while muted, Keep call buttons visible), Camera (Camera, Camera quality, Adaptive layers),
 // Screen share (resolution, frame rate, bandwidth, encoder), Incoming video (quality; web: Receive AV1 screen shares),
 // Connection (Test connection speed + its result).
+import { presetShortcutsSearch } from "@/actions/ui/ShortcutsPane";
+import { openSettingsAt } from "../store";
 import { useEffect, useState } from "react";
 import { setPref, usePref } from "@/core/prefs";
 import { apiFetch } from "@/core/api";
@@ -21,6 +23,7 @@ import {
   usePushToTalk,
   useQualities,
   sameDev,
+  withSaved,
 } from "../callbridge";
 import { useFormFactor } from "@/core/device";
 import { setCallBarPinned, useCallBarPinned } from "@/features/callui/chrome";
@@ -80,7 +83,7 @@ export function CallsPane() {
   useEffect(() => {
     refreshDeviceLists();
   }, []);
-  const cams = [{ id: "", name: "Default (first camera)" }, ...dev.cameras];
+  const cams = withSaved([{ id: "", name: "Default (first camera)" }, ...dev.cameras], dev.cameraId); // A13.3
   const camIdx = Math.max(0, cams.findIndex((c) => sameDev(c, dev.cameraId)));
   const sq = parseShare(q.shareQuality);
   const cq = q.camQuality.split(/\s+/);
@@ -136,7 +139,17 @@ export function CallsPane() {
           description={`Hold ${pttKeys()[0] ?? "Ctrl"} to speak while Tin Hat is the focused tab. Browsers can't do push to talk while you're in a game. Ctrl, Alt or Shift on their own don't work while you're typing a message; pick another key to talk while typing.`}
           checked={ptt}
           onToggled={applyPushToTalk}
-        />}
+        >
+          {/* A22.5 (2026-11-13): the key is changed here too, not only in Settings → Shortcuts (the desktop: the same link) */}
+          <Button
+            flat
+            text="Change key…"
+            onClick={() => {
+              presetShortcutsSearch("Push to talk");
+              openSettingsAt("shortcuts");
+            }}
+          />
+        </SwitchRow>}
         <SwitchRow
           id="calls.muted-sound"
           label="Sound when I talk while muted"
@@ -163,7 +176,7 @@ export function CallsPane() {
         <SwitchRow
           id="calls.pad"
           label="Let my other verified devices control my calls here"
-          description="While this device is in a call, your phone (or another device of yours) can play sounds, mute you and set people's volumes here. Only your own verified devices can; the call bar shows a chip while one does."
+          description="Pad lets you use your phone as a remote, a mic or a camera for the call on your computer. This switch is for the remote: while this device is in a call, your phone (or another device of yours) can play sounds, mute you and set people's volumes here. Only your own verified devices can; the call bar shows a chip while one does."
           checked={padOn !== false}
           onToggled={(on) => setPref(PAD_PREF, on)}
         />

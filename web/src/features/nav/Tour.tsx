@@ -1,4 +1,4 @@
-// Tour.tsx — Tour.qml: the first-run tour (Kirigami OverlaySheet, no close button) — 7 cards in a
+// Tour.tsx — Tour.qml: the first-run tour (Kirigami OverlaySheet, no close button) — 8 cards in a
 // swipeable 432 × 234 pager, dots, Skip / Back / Next / Done. Opened from the calm first run's offer card or from
 // Settings → About & help → "Take the tour" (card 1); any dismissal persists `tour_seen = 1`.
 // selfhost/firstrun: the calm first run never opens it by itself — the footer's "Take a 1-minute tour" card offers it
@@ -19,10 +19,13 @@ const CARDS: Array<[string, string, string]> = [
     "Built for game nights",
     "Share your screen in high quality, hear everyone separately with your own per-person volumes, and record the call for Memories to relive later. Encrypted, self-hosted, and yours — in the browser or the Tin Hat app.",
   ],
+  // A01.6 / D01.8 / P4 (Sunday QoL): the friend who came from an invite — where it is, and how to start a chat
+  ["mail-message-symbolic", "Say hi", "Got here from an invite? The room or DM you were invited to is in your room list — open it and say hi. To start your own, use the + above your rooms for a new DM or a new room."],
   [
     "view-list-details-symbolic",
     "Find your way around",
-    'A persistent Discord-style Spaces sidebar — or tuck it into a corner dock to spare an OLED panel (toggle in ☰ → "Tuck nav into corner"). Drag the space bubbles to reorder them however you like.',
+    // A34.4: the toggle left the ☰ menu in 11.2 — it is the account island's button (and Settings → Appearance)
+    'A persistent Discord-style Spaces sidebar — or tuck it into a corner dock to spare an OLED panel (the "Tuck nav into corner" button next to your name, or Settings → Appearance). Drag the space bubbles to reorder them however you like.',
   ],
   ["preferences-desktop-color", "Make it yours", "Hundreds of themes, from OLED black to Goose — pick one under ☰ → Theme, or make your own in Settings → Appearance. The chrome recolors to match, instantly."],
   [
@@ -70,7 +73,7 @@ const TOUCH_CHAT_NO_GIFS = "Markdown, reactions, replies and @mentions — plus 
 export function tourCards(on: { memories: boolean; gifs: boolean; touch?: boolean }): Array<[string, string, string]> {
   return CARDS.map((c, i): [string, string, string] => {
     if (i === 0 && !on.memories) return [c[0], c[1], FIRST_CARD_NO_MEMORIES];
-    if (i === 4) return on.touch ? [c[0], c[1], on.gifs ? TOUCH_CHAT : TOUCH_CHAT_NO_GIFS] : on.gifs ? c : [c[0], c[1], CHAT_CARD_NO_GIFS];
+    if (c[1] === "Chat like a pro") return on.touch ? [c[0], c[1], on.gifs ? TOUCH_CHAT : TOUCH_CHAT_NO_GIFS] : on.gifs ? c : [c[0], c[1], CHAT_CARD_NO_GIFS];
     if (on.touch && TOUCH_TEXT[c[1]]) return [c[0], c[1], TOUCH_TEXT[c[1]]];
     return c;
   });

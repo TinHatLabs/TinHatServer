@@ -97,6 +97,23 @@ def doc() -> dict:
             "compose": config.compose_edition()}
 
 
+def watch_item(st: dict, auto: bool, compose: bool) -> dict | None:
+    """The Overview's line for an update that is waiting (D04.7): with automatic updates on it installs tonight by
+    itself and needs no line; off (or the Docker Compose edition, which never installs by itself) it waits for the owner,
+    who otherwise read "Everything is running" for weeks. Security fixes make it the serious kind."""
+    av = st.get("available") or {}
+    if st.get("phase") not in ("available", "staged") or not av.get("version"):
+        return None
+    if st.get("after_calls") and not compose:
+        return {"key": "update-waiting", "level": "info", "text": f"Tin Hat Server {av['version']} installs as soon as the calls end."}
+    if auto and not compose:
+        return None
+    out = f"Tin Hat Server {av['version']} is out" + (", with security fixes" if av.get("security") else "") + ". "
+    out += ("It comes with a new image of this app." if compose else
+            "Automatic updates are off, so it waits for you to install it.")
+    return {"key": "update-waiting", "level": "bad" if av.get("security") else "warn", "text": out}
+
+
 # ---- the signed channel ---------------------------------------------------------------------------------------------
 
 def verify(manifest: bytes, sig: bytes) -> bool:
@@ -281,7 +298,7 @@ def start_install(by: str) -> None:
     shutil.rmtree(runner, ignore_errors=True)
     shutil.copytree(config.OPT / "manager", runner, ignore=shutil.ignore_patterns("__pycache__"))
     state.write_json(JOB, {"version": ver, "from": config.VERSION, "by": by, "at": int(time.time())}, 0o644)
-    set_status(phase="installing", step="starting", message=None)
+    set_status(phase="installing", step="starting", message=None, after_calls=None)
     subprocess.run(["systemctl", "start", "--no-block", "tinhat-update.service"], check=True, timeout=30)
     log.info("installing %s (%s)", ver, by)
 
@@ -319,9 +336,51 @@ def clear_stale_download() -> None:
         log.info("update status: a stale \"downloading\" cleared at start")
 
 
+QUIET_FOR = 50  # "Install when the calls end": no call at two ticks in a row (a minute apart), not one gap between calls
+_quiet_since = 0.0
+
+
+async def _after_calls(st: dict, busy_call) -> bool:
+    """The owner's "Install when the calls end" (D04.7): install as soon as no call has been going for about a minute,
+    at any hour and with automatic updates on or off. True when it handled this tick."""
+    global _quiet_since
+    if not st.get("after_calls"):
+        _quiet_since = 0.0
+        return False
+    if st.get("phase") not in ("available", "staged"):  # installed meanwhile, or nothing to install any more
+        set_status(after_calls=None)
+        _quiet_since = 0.0
+        return False
+    if await busy_call() is not False:  # a call, or LiveKit can't say: wait
+        _quiet_since = 0.0
+        return True
+    now = time.time()
+    if not _quiet_since:
+        _quiet_since = now
+        return True
+    if now - _quiet_since < QUIET_FOR:
+        return True
+    _quiet_since = 0.0
+    try:
+        if st.get("phase") == "available":
+            await download()  # minutes: a call may have started meanwhile, or the owner pressed Don't wait
+        busy = await busy_call()
+        now_st = status()  # read last, with no await before start_install: a Don't wait that already answered holds
+        if not now_st.get("after_calls") or now_st.get("phase") != "staged":
+            return True
+        if busy is not False:  # downloaded, but someone is in a call now: wait for a quiet minute again
+            return True
+        start_install(f"when the calls ended ({(now_st.get('after_calls') or {}).get('by') or 'the owner'})")
+    except Exception as e:  # noqa: BLE001 — the card says so; the owner can press Install now again
+        log.exception("update after the calls")
+        set_status(phase="available", after_calls=None, message=f"The update didn't start: {e}")
+    return True
+
+
 async def tick(busy_call) -> None:  # the manager runs this as its own task (a download can take minutes)
     """Daily check; at night, install what's available (auto) and restart for a kernel security update, never while
-    `busy_call()` says someone is in a call (it returns True, False, or None when it can't tell)."""
+    `busy_call()` says someone is in a call (it returns True, False, or None when it can't tell). And the owner's
+    "Install when the calls end", at any hour."""
     st = status()
     if st.get("phase") in ("installing", "rolling-back", "downloading"):
         return
@@ -329,6 +388,8 @@ async def tick(busy_call) -> None:  # the manager runs this as its own task (a d
         await check()
         st = status()
     if config.compose_edition():  # updates come with a new image; the check above still says what's out
+        return
+    if await _after_calls(st, busy_call):
         return
     if not settings()["auto"] or not in_window():
         return

@@ -126,6 +126,13 @@ export function wasOwnPop(e: Event): boolean {
 export const BACK_LEVEL_DIALOG = 5;
 export const BACK_LEVEL_POPUP = 9;
 
+/** The same as useBackToClose outside React (and for the tests): a level of the back stack until the returned
+ *  function is called. */
+export function pushBackLevel(level: number, onBack: () => boolean | void): () => void {
+  const reg = register(level, onBack);
+  return () => unregister(reg);
+}
+
 /** While `active`, the sheet is a level of the phone back stack: the back button calls `onBack`
  *  (return false to stay open — the entry is pushed again). */
 export function useBackToClose(active: boolean, onBack: () => boolean | void, level = 0): void {
@@ -133,7 +140,6 @@ export function useBackToClose(active: boolean, onBack: () => boolean | void, le
   cb.current = onBack;
   useEffect(() => {
     if (!active) return;
-    const reg = register(level, () => cb.current());
-    return () => unregister(reg);
+    return pushBackLevel(level, () => cb.current());
   }, [active, level]);
 }

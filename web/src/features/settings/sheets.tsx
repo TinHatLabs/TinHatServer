@@ -8,10 +8,11 @@ import { usePref, setPref } from "@/core/prefs";
 import { BasicButton, ConfirmDialog, Dialog, OverlaySheet, PromptDialog, Switch, cx, useIsMobile } from "@/ui";
 import { LOGSHIP_ENABLED, applyLogship, logshipState, submitBugReport } from "./logs";
 import { EngineLevelMeter } from "./LevelMeter";
-import { applyNs, startMicMonitor, stopMicMonitor, useMicDsp, useMicRunning } from "./callbridge";
+import { applyNs, startMicMonitor, stopMicMonitor, useMicDsp, useMicRunning, useNcProbe } from "./callbridge";
 import { SheetHeader } from "./SheetHeader";
 import { useVerifyUi } from "./VerifyDeviceDialog";
 import s from "./dialogs.module.css";
+import * as linkLab from "@/lab/linkLab";
 
 // ---- version / updates (§5: version.json written by the deploy script, D16) ---------------------
 // ONE updater: the nav's (`@/features/nav` update.ts — ☰ row, update banner, What's-new sheet, polls
@@ -50,7 +51,8 @@ export const SHORTCUT_ROWS: Array<[string, string]> = [
 
 // ---- Report a problem --------------------------------------------------------------------------
 
-let keepNote = false;
+// L1 A34.0: the note stays until a report is SENT: Cancel, Escape, a click outside and a failed send all keep it, and the
+// next open shows it again (every open used to clear it unless the last send had failed). Desktop: the same.
 let keptText = "";
 
 function BugReportDialog() {
@@ -59,42 +61,45 @@ function BugReportDialog() {
   const ref = useRef<HTMLTextAreaElement>(null);
   const mobile = useIsMobile();
   useBus("openBugReport", () => {
-    setNote(keepNote ? keptText : "");
+    setNote(keptText);
     setOpen(true);
   });
+  const close = () => {
+    keptText = note;
+    setOpen(false);
+  };
   useEffect(() => {
     if (open) setTimeout(() => ref.current?.focus(), 0);
   }, [open]);
   const send = () => {
     const text = note;
     if (!text.trim()) return;
+    keptText = text;
     setOpen(false);
+    // a send can finish after the dialog was reopened and another note typed: it only clears / restores ITS note
     toast("Sending report…");
     submitBugReport(text)
       .then((msg) => {
-        keepNote = false;
-        keptText = "";
+        if (keptText === text) keptText = "";
+        setNote((n) => (n === text ? "" : n));
         toast(msg, { timeoutMs: 6000 });
       })
       .catch((e) => {
-        keepNote = true;
-        keptText = text;
-        toast(`Report failed: ${(e as Error)?.message ?? e}`, { timeoutMs: 6000, kind: "error" });
+        if (!keptText) keptText = text;
+        // A34.6: the desktop's words (AppCore.qml): the note is kept
+        toast(`Report failed: ${(e as Error)?.message ?? e} — your note is kept; open Report a problem to try again.`, { timeoutMs: 12000, kind: "error" });
       });
   };
   return (
     <Dialog
       open={open}
-      onClose={() => {
-        keptText = note;
-        setOpen(false);
-      }}
+      onClose={close}
       title="Report a problem"
       width={mobile ? "100%" : "min(520px, calc(100vw - 36px))"}
       className={cx(s.bugDialog, mobile && s.mobileDialog)}
       buttons={[
         { text: "Send report", role: "accept", disabled: !note.trim(), onClick: send },
-        { text: "Cancel", role: "reject", onClick: () => setOpen(false) },
+        { text: "Cancel", role: "reject", onClick: close },
       ]}
     >
       <div className={s.col4}>
@@ -145,13 +150,8 @@ function SignOutConfirm() {
 
 // ---- first-run log-sharing consent (SET-69) ----------------------------------------------------
 
-const noConsent = (() => {
-  try {
-    return /[?&](noconsent|noverify)\b/.test(location.search + location.hash);
-  } catch {
-    return false;
-  }
-})();
+// the lab's no-consent link switch (src/lab/linkLab.ts): lab builds only; a production build always asks (fix1216/weblinkfence)
+const noConsent = __TW_LAB__ ? linkLab.noConsent() : false;
 
 let consentOpen = false;
 
@@ -205,6 +205,7 @@ function LogshipConsent() {
 function NoiseTestSheet() {
   const [open, setOpen] = useState(false);
   const dsp = useMicDsp();
+  useNcProbe(open);
   const micRunning = useMicRunning();
   useBus("openNoiseTest", () => setOpen(true));
   useEffect(() => {

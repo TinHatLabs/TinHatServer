@@ -79,6 +79,8 @@ export interface GamesState {
   settingsJson: Json;
   settingsDefaults: Json;
   search: Json[];
+  /** QOL A19.5: the text `search` answers ("" = not a search's: an added game, cleared) — the desktop's searchFor */
+  searchFor: string;
   importState: Json;
   simulation: Snapshot | null;
   busy: boolean;
@@ -101,6 +103,7 @@ export const useGames = create<GamesState>()(() => ({
   settingsJson: settingsToJson(defaultSettings()),
   settingsDefaults: settingsToJson(defaultSettings()),
   search: [],
+  searchFor: "",
   importState: {},
   simulation: null,
   busy: false,
@@ -980,7 +983,7 @@ export function searchCatalog(q0: string): void {
   if (searchTimer) clearTimeout(searchTimer);
   searchAbort?.abort();
   if (!q) {
-    set({ search: [] });
+    set({ search: [], searchFor: "" });
     return;
   }
   searchTimer = setTimeout(async () => {
@@ -989,11 +992,11 @@ export function searchCatalog(q0: string): void {
     try {
       const v = await apiJson<Json>(`/games/search?q=${encodeURIComponent(q)}`, { signal: ac.signal, timeoutMs: 20000 });
       const list = (Array.isArray(v.items) ? v.items : Array.isArray(v.results) ? v.results : Array.isArray(v) ? v : []) as Json[];
-      if (!ac.signal.aborted) set({ search: list });
+      if (!ac.signal.aborted) set({ search: list, searchFor: q });
     } catch (e) {
       if (ac.signal.aborted) return;
       log.warn(`search failed: ${e}`);
-      set({ search: [], lastError: "Couldn't reach the game catalog" });
+      set({ search: [], searchFor: "", lastError: "Couldn't reach the game catalog" });
     }
   }, 300);
 }
@@ -1006,7 +1009,7 @@ export async function addCustomGame(name0: string): Promise<void> {
     const v = await apiJson<Json>("/games/custom", { method: "POST", json: { name }, timeoutMs: 20000 });
     const entry = (v && typeof v.game === "object" ? v.game : v) as Json;
     if (typeof entry.id === "string") rememberCatalogEntry(entry.id, entry);
-    set({ search: [entry] });
+    set({ search: [entry], searchFor: "" });
   } catch (e) {
     set({ lastError: `Couldn't add that game: ${e instanceof ApiError ? e.message : e}` });
   }

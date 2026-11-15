@@ -15,7 +15,7 @@ import { parseSequence } from "@/actions/keys";
 import { present } from "@/actions/evaluate";
 import { getActionsSnapshot } from "@/actions/snapshot";
 import { runAction } from "@/actions/run";
-import { setActionKeyHook, setDefaultLiveCheck } from "@/core/shortcuts";
+import { MODAL_SAFE_ACTIONS, setActionKeyHook, setDefaultLiveCheck } from "@/core/shortcuts";
 import { installProviders } from "./providers";
 import { installHandlers } from "./exec";
 import { getFormFactor } from "@/core/device";
@@ -33,9 +33,11 @@ function installKeys(): void {
     const p = parseSequence(registered);
     return p.ok ? defaultLive(action, p.text) : true;
   });
-  setActionKeyHook((_e, text, typing) => {
+  setActionKeyHook((_e, text, typing, modal) => {
     for (const b of effectiveNow().bindings) {
       if (b.key !== text || b.source !== "user" || !b.wins || b.hold || (typing && !b.typing)) continue;
+      // 12.1.16 (4-5): with a modal dialog open only the mic keys run (the rest wait for the dialog)
+      if (modal && !MODAL_SAFE_ACTIONS.includes(b.action)) continue;
       const p = present({ app: "web", action: b.action, snapshot: getActionsSnapshot() });
       if (!p.visible || !p.enabled) continue;
       void runAction(b.action, { source: "key" });

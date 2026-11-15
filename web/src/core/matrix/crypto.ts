@@ -28,6 +28,20 @@ import {
   type Verifier,
 } from "matrix-js-sdk/lib/crypto-api/index.js";
 import { onClientChanged, peekClient, secretStorageKeyCache } from "./client";
+import {
+  clockOff,
+  deviceLabel,
+  keyErrorNote,
+  NO_ANSWER_MS,
+  noAnswerNote,
+  NOTE_WAITING_OUT,
+  ownClockNote,
+  peerClockNote,
+  peerUnknownNote,
+  requestDroppedForTime,
+  skewFromDate,
+} from "./clockPolicy";
+import { toast } from "@/core/bus";
 import { afterFirstTry, afterSecondTry, NOT_ASKED, START_OVER, stopNote, type StartOverStop } from "./startOver";
 import {
   FIRST_DEVICE_MAX_WAIT_MS,
@@ -219,6 +233,8 @@ export function useCryptoStatus(): CryptoStatus {
 const WATCH_ACCOUNT_DATA = /^(m\.secret_storage\.|m\.cross_signing\.|m\.megolm_backup\.v1)/;
 
 let unwatch: (() => void) | null = null;
+// fix/verify-request: this device's clock vs the server's (useClockNote / checkClock below)
+const useClockStore = create<{ note: string }>()(() => ({ note: "" }));
 
 function watchClient(c: MatrixClient | null) {
   unwatch?.();
@@ -227,6 +243,7 @@ function watchClient(c: MatrixClient | null) {
   status = EMPTY_STATUS;
   for (const l of statusListeners) l();
   resetVerification();
+  useClockStore.setState({ note: "" });
   if (!c) return;
   const me = c.getUserId();
   const bump = () => void refreshCryptoStatus();
@@ -244,12 +261,14 @@ function watchClient(c: MatrixClient | null) {
     // re-check so the verify banner clears live (as the desktop does).
     if (ev.getType() === "m.secret.send") bump();
     noteVerificationToDevice(ev);
+    if (ev.getType() === "m.key.verification.request") void droppedRequestNotice(c, ev);
   };
   let prepared = false;
   const onSync = (state: string) => {
     if (!prepared && state === "PREPARED") {
       prepared = true;
       bump();
+      void checkClock(); // fix/verify-request
       void setUpFirstDevice(c);
     }
   };
@@ -401,7 +420,7 @@ async function keyFromInput(
   const keyId = await client.secretStorage.getDefaultKeyId();
   if (!keyId) throw new Error("this account has no recovery set up yet");
   const tuple = await client.secretStorage.getKey(keyId);
-  if (!tuple) throw new Error("the recovery key description is missing on the server");
+  if (!tuple) throw new Error("the Security Key description is missing on the server");
   const info = tuple[1] as SecretStorage.SecretStorageKeyDescriptionAesV1;
   let key: Uint8Array<ArrayBuffer> | null = null;
   try {
@@ -469,7 +488,8 @@ export async function restoreFromSecurityKey(
   } catch (e) {
     const msg = (e as Error)?.message ?? String(e);
     log.warn("[verify] failed", msg);
-    throw new Error(`Verification failed: ${msg}`);
+    // fix/verify-request: plain words (desktop twin: clock_policy.rs key_error_note)
+    throw new Error(keyErrorNote(msg));
   }
 }
 
@@ -985,6 +1005,9 @@ function drive(client: MatrixClient, req: VerificationRequest) {
 }
 
 function onIncomingRequest(req: VerificationRequest) {
+  // fix/verify-request: the SDK kept this one — droppedRequestNotice must never explain it away
+  const me0 = peekClient()?.getUserId();
+  if (me0 && req.transactionId) remember(sdkSeen, `${me0}|${req.otherDeviceId ?? ""}|${req.transactionId}`);
   // Only surface our OWN devices: this dialog is "verify this device", not "verify a contact".
   if (!req.isSelfVerification || req.initiatedByMe) return;
   const client = peekClient();
@@ -1004,6 +1027,141 @@ function onIncomingRequest(req: VerificationRequest) {
   drive(client, req);
 }
 
+// ---- fix/verify-request: clocks + requests the SDK drops without a word (desktop twin: bridge.rs) -----------------
+
+/** React: "This device's clock is about N … off …" ("" = fine, or couldn't tell). Desktop twin: the clockNote qproperty.
+ * Shown in the verify dialog and Settings → Security; never blocks anything. */
+export function useClockNote(): string {
+  return useClockStore((s) => s.note);
+}
+
+/** Compare this device's clock with the server's and refresh useClockNote (sign-in, the verify dialog, Settings →
+ * Security). Desktop twin: login.checkClock(). */
+let clockGen = 0;
+export async function checkClock(): Promise<void> {
+  const client = peekClient();
+  if (!client) return;
+  const gen = ++clockGen;
+  const skew = await serverClockSkew(client);
+  if (peekClient() !== client || gen !== clockGen) return; // another account, or a newer check, meanwhile
+  log.info(`[clock] this device vs server: ${skew} s`);
+  useClockStore.setState({ note: skew !== null && clockOff(skew) ? ownClockNote(skew, isWindows()) : "" });
+}
+
+function isWindows(): boolean {
+  return typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+}
+
+/** Our clock minus the server's, in seconds, from an HTTP Date header: the homeserver's when the browser may read it
+ * (same origin, or the header exposed), else this web app's own origin (a HEAD that skips the HTTP cache). null =
+ * couldn't tell (WEB-EXCEPTIONS: a cross-origin homeserver hides its Date header from scripts). */
+async function serverClockSkew(client: MatrixClient): Promise<number | null> {
+  const urls = [`${client.baseUrl.replace(/\/+$/, "")}/_matrix/client/versions`];
+  if (typeof location !== "undefined") urls.push(`${location.origin}${location.pathname}`);
+  for (const [i, url] of urls.entries()) {
+    try {
+      const sent = Date.now();
+      const res = await fetch(url, { method: i === 0 ? "GET" : "HEAD", cache: "no-store", credentials: "omit", signal: AbortSignal.timeout(5000) });
+      const got = Date.now();
+      const date = res.headers.get("date");
+      const skew = date ? skewFromDate(date, sent, got) : null;
+      if (skew !== null) return skew;
+    } catch {
+      /* next */
+    }
+  }
+  return null;
+}
+
+/** The own devices that can answer a self-verification (cross-signed, not this one): "name (active 5 minutes ago)",
+ * most recently active first. */
+async function verifiedDeviceLabels(client: MatrixClient): Promise<string[]> {
+  const crypto = client.getCrypto();
+  if (!crypto) return [];
+  const me = client.getSafeUserId();
+  const mine = client.getDeviceId();
+  try {
+    const devs = (await crypto.getUserDeviceInfo([me])).get(me);
+    const verified = new Map<string, string>();
+    for (const d of devs?.values() ?? []) {
+      if (d.deviceId === mine) continue;
+      const s = await crypto.getDeviceVerificationStatus(me, d.deviceId);
+      if (s?.signedByOwner) verified.set(d.deviceId, d.displayName ?? "");
+    }
+    const now = Date.now();
+    let rows: Array<[number, string]>;
+    try {
+      const { devices } = await client.getDevices();
+      rows = devices
+        .filter((d) => verified.has(d.device_id))
+        .map((d) => {
+          const seen = typeof d.last_seen_ts === "number" ? d.last_seen_ts : null;
+          return [seen ?? 0, deviceLabel(d.display_name ?? "", d.device_id, seen === null ? null : Math.trunc((now - seen) / 1000))];
+        });
+    } catch {
+      rows = [...verified].map(([id, name]) => [0, deviceLabel(name, id, null)]);
+    }
+    rows.sort((a, b) => b[0] - a[0]);
+    return rows.map((r) => r[1]);
+  } catch {
+    return [];
+  }
+}
+
+const droppedSeen = new Set<string>();
+/** Transactions the SDK surfaced as VerificationRequestReceived (it kept them, whatever happened next). */
+const sdkSeen = new Set<string>();
+function remember(set: Set<string>, key: string) {
+  if (set.size >= 64) set.delete(set.values().next().value as string); // oldest first
+  set.add(key);
+}
+
+/** An m.key.verification.request from another of OUR devices that the SDK dropped (no request object for it): say
+ * why, once per request — a clock outside the SDK's window, or a device this one has no keys for yet. */
+async function droppedRequestNotice(client: MatrixClient, ev: MatrixEvent): Promise<void> {
+  const me = client.getUserId();
+  if (!me || ev.getSender() !== me) return;
+  const c = ev.getContent() as { transaction_id?: unknown; from_device?: unknown; timestamp?: unknown };
+  const txn = typeof c.transaction_id === "string" ? c.transaction_id : "";
+  const from = typeof c.from_device === "string" ? c.from_device : "";
+  const key = `${me}|${from}|${txn}`;
+  if (!txn || !from || from === client.getDeviceId() || droppedSeen.has(key)) return;
+  remember(droppedSeen, key); // reserved BEFORE the wait: a second delivery of the same event says nothing
+  const crypto = client.getCrypto();
+  if (!crypto) return;
+  const now = Date.now();
+  await sleep(500); // VerificationRequestReceived for a request the SDK kept normally lands first; give it a moment
+  if (peekClient() !== client) return;
+  if (sdkSeen.has(key) || crypto.getVerificationRequestsToDeviceInProgress(me).some((r) => r.transactionId === txn)) return;
+  let known = false;
+  let peer = from;
+  try {
+    const d = (await crypto.getUserDeviceInfo([me])).get(me)?.get(from);
+    known = !!d;
+    if (d?.displayName?.trim()) peer = d.displayName.trim();
+  } catch (e) {
+    log.info(`[sas] request from ${from} has no request object; device lookup failed (${(e as Error)?.message ?? e}): no notice`);
+    return; // a failed lookup proves nothing
+  }
+  const ts = typeof c.timestamp === "number" ? c.timestamp : null;
+  let note: string;
+  if (ts !== null && requestDroppedForTime(ts, now)) {
+    const own = await serverClockSkew(client);
+    log.warn(`[sas] dropped request from ${from}: its stamp is ${Math.trunc((ts - now) / 1000)} s from our clock (ours vs server: ${own})`);
+    note = peerClockNote(peer, Math.trunc((ts - now) / 1000), own, isWindows());
+  } else if (!known) {
+    log.warn(`[sas] dropped request from ${from}: this device doesn't have its keys yet`);
+    note = peerUnknownNote(peer);
+  } else {
+    log.info(`[sas] request from ${from} has no request object (not a clock or unknown-device case)`);
+    return;
+  }
+  if (peekClient() !== client) return; // signed out / another account meanwhile
+  // the SDK may have surfaced it during the lookups above: then it was kept, and there is nothing to explain
+  if (sdkSeen.has(key) || crypto.getVerificationRequestsToDeviceInProgress(me).some((r) => r.transactionId === txn)) return;
+  toast(note, { timeoutMs: 15000 });
+}
+
 /** Ask our other signed-in (verified) devices to verify this one by comparing emoji. */
 export async function startDeviceVerification(): Promise<void> {
   const client = peekClient();
@@ -1020,11 +1178,16 @@ export async function startDeviceVerification(): Promise<void> {
     sasCanBootstrap: false,
     sasCanStart: false,
     recoveryKey: "",
-    sasNote: "Open Tin Hat on a device you're already signed in to — it will ask you to compare emoji.",
+    sasNote: NOTE_WAITING_OUT,
   });
   const gen = active.gen;
   const me = client.getSafeUserId();
   const myDevice = client.getDeviceId();
+  // fix/verify-request: a request stamped by a wrong clock is dropped SILENTLY by the other device (matrix-sdk-crypto
+  // is_timestamp_valid) and would wait forever. Check our clock against the server's first (desktop: the same).
+  // Launch-gate: never block or delay the request: the clock check runs beside it and only refreshes useClockNote (the
+  // dialog shows it on every screen).
+  void checkClock();
   // The SDK only sends the request to devices already signed by our self-signing key; with none,
   // it "succeeds" and reaches nobody. Detect that up front and say so (as the desktop does).
   try {
@@ -1069,6 +1232,17 @@ export async function startDeviceVerification(): Promise<void> {
       return;
     }
     drive(client, req);
+    // fix/verify-request: no answer in 30 s → say what to check, naming the devices that can answer
+    setTimeout(() => {
+      if (active.gen !== gen || active.req !== req || phaseOf(req) !== VerificationPhase.Requested) return;
+      if (useVerificationStore.getState().sasState !== "waiting") return;
+      void verifiedDeviceLabels(client).then((names) => {
+        if (active.gen !== gen || active.req !== req || phaseOf(req) !== VerificationPhase.Requested) return;
+        if (useVerificationStore.getState().sasState !== "waiting") return;
+        log.info(`[sas] no answer after ${NO_ANSWER_MS} ms (${names.length} verified devices named)`);
+        vset({ sasNote: noAnswerNote(names) });
+      });
+    }, NO_ANSWER_MS);
   } catch (e) {
     if (active.gen === gen) vstate("cancelled", `Could not start: ${(e as Error)?.message ?? e}`);
   }

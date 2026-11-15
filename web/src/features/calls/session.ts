@@ -4,6 +4,7 @@ import type { LocalAudioTrack, LocalVideoTrack, Room } from "livekit-client";
 import type { Focus } from "./rtc";
 import type { TinHatKeyProvider } from "./keys";
 import type { Planner } from "./callrules";
+import type { LinkWatch } from "./callHealth";
 
 export interface Sess {
   gen: number;
@@ -51,6 +52,8 @@ export interface Sess {
   worker: Worker | null; // the E2EE worker we created (terminated at close)
   chimesArmedAt: number;
   closing: boolean; // we initiated the disconnect
+  /** 12.1.13 (reconnect-wedge): the call link watch (callHealth.ts; the desktop's call_health.rs) */
+  link: LinkWatch;
 }
 
 let current: Sess | null = null;

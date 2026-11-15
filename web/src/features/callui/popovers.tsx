@@ -9,9 +9,13 @@ import { useServerFeature } from "@/core/server";
 import { ensureWritable, sendState, useRoomState, peekClient } from "@/core/matrix";
 import type { PublishStat } from "@/features/calls/contract";
 import { act, callStore, getC, ui, useC, useCallUi, SELF_SHARE_ID } from "./store";
+import { probeNoiseSuppression } from "@/features/calls";
+import { displayAudioSupported } from "@/features/calls/engine";
+import { previewAudioCaption, shareAudioChoices } from "@/features/calls/shareAudio";
 import { heardSummary, snap } from "./hear";
 import { useHoldChrome } from "./chrome";
 import { fakeGuard, parseShareQuality } from "./menus";
+import { QUICK_WORDS, SHARE_BW, SHARE_FPS_LABELS, SHARE_RATE_HINT, SHARE_RES, quickBwIndex, quickFpsIndex, quickPick, quickResIndex, type Quality4, type QuickPick } from "./shareQuick";
 import { nativeShareOn } from "@/features/native";
 import s from "./popovers.module.css";
 
@@ -119,6 +123,7 @@ function MicFace() {
   const agc = useC("micAgc");
   const ns = useC("micNsMode");
   const ncOk = useC("ncAvailable");
+  useEffect(() => probeNoiseSuppression(), []); // its Strong row reads the RNNoise probe's answer
   const ecDegraded = useC("ecDegraded");
   const ecNote = useC("ecNote");
   const ptt = useC("pushToTalk");
@@ -258,10 +263,13 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
   const sharing = useC("sharing");
   const shareRecOnly = useC("shareRecOnly");
   const musicPlaying = useC("musicPlaying");
+  const musicSourceName = useC("musicSourceName");
   const q = parseShareQuality(useC("shareQuality"));
   const audioPref = usePref("share-audio", "");
   const [audio, setAudio] = useState<"none" | "browser">(audioPref === "browser" ? "browser" : "none");
   const [recOnly, setRecOnly] = useState(shareRecOnly);
+  // 12.1.15: "Custom…" opens a small panel right here instead of the whole Settings window (shareQuick.ts)
+  const [custom, setCustom] = useState(false);
   const mobile = useIsMobile();
   const memoriesOn = useServerFeature("memories");
   const previewRef = useRef<HTMLVideoElement>(null);
@@ -275,6 +283,9 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
     if (open) setRecOnly(shareRecOnly);
   }, [open, shareRecOnly]);
   useEffect(() => {
+    if (open) setCustom(false); // a reopened picker starts with the panel closed
+  }, [open]);
+  useEffect(() => {
     if (!open || !sharing) return;
     const el = previewRef.current;
     act("attachVideo")(SELF_SHARE_ID, el);
@@ -287,12 +298,16 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
   const preset = PRESETS.find((p) => p.w === q.w && p.h === q.h && p.fps === q.fps);
   const summary = qualitySummary(q);
   const canDisplay = typeof navigator.mediaDevices?.getDisplayMedia === "function" || nativeShareOn();
+  // A06.2 (12.1.16): sound only where this browser can share it (shareAudio.ts; docs/WEB-EXCEPTIONS.md)
+  const choices = shareAudioChoices(displayAudioSupported(), audio);
   const start = () => {
     setPref("share-audio", audio);
-    act("shareScreen")({ audio, recordingOnly: memoriesOn && recOnly && !nativeShareOn(), quality: { w: q.w, h: q.h, fps: q.fps, kbps: q.kbps } });
+    act("shareScreen")({ audio: choices.audio, recordingOnly: memoriesOn && recOnly && !nativeShareOn(), quality: { w: q.w, h: q.h, fps: q.fps, kbps: q.kbps } });
     close();
   };
   const primary = sharing ? "Done" : "Start sharing";
+  const q4: Quality4 = [q.w, q.h, q.fps, q.kbps];
+  const applyQuick = (what: QuickPick, i: number) => act("applyShareQuality")(...quickPick(q4, what, i));
   const w = Math.min(560, W - 40);
   const content = (
     <div className={s.streamBody} style={mobile ? undefined : { width: w - 36 }}>
@@ -314,7 +329,7 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
         <div className={s.preview} style={{ height: Math.min(220, Math.round((w - 36) * 9 / 16)) }}>
           <video ref={previewRef} autoPlay playsInline muted className={s.previewVideo} />
           <div className={s.previewCap}>
-            What you're sending · {summary} · {audio === "browser" ? "tab/system audio" : "no audio"}
+            What you're sending · {summary} · {previewAudioCaption(musicPlaying, musicSourceName)}
           </div>
         </div>
       )}
@@ -334,14 +349,26 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
         {PRESETS.map((p) => (
           <Pill key={p.key} grow label={p.label} sub={p.sub} checked={preset?.key === p.key} onClick={() => act("applyShareQuality")(p.w, p.h, p.fps, p.kbps)} />
         ))}
-        <Pill label="Custom…" sub="res · fps · encoder" checked={!preset} onClick={() => (close(), openSettings("calls"))} />
+        <Pill label={QUICK_WORDS.pill} sub={QUICK_WORDS.pillSub} checked={!preset || custom} onClick={() => setCustom((v) => !v)} />
       </div>
+      {custom && (
+        <div className={s.quick} role="group" aria-label="Custom quality">
+          <span className={s.quickLbl}>{QUICK_WORDS.resolution}</span>
+          <ComboBox model={SHARE_RES} textRole="label" currentIndex={quickResIndex(q4)} onActivated={(i) => applyQuick("res", i)} aria-label={QUICK_WORDS.resolution} />
+          <span className={s.quickLbl}>{QUICK_WORDS.frameRate}</span>
+          <ComboBox model={SHARE_FPS_LABELS} currentIndex={quickFpsIndex(q4)} onActivated={(i) => applyQuick("fps", i)} aria-label={QUICK_WORDS.frameRate} />
+          <span className={s.quickLbl}>{QUICK_WORDS.bandwidth}</span>
+          <ComboBox model={SHARE_BW} textRole="label" currentIndex={quickBwIndex(q4)} onActivated={(i) => applyQuick("bw", i)} aria-label={QUICK_WORDS.bandwidth} />
+          <span />
+          <Button flat text={QUICK_WORDS.more} onClick={() => (close(), openSettings("calls"))} style={{ justifySelf: "end" }} />
+        </div>
+      )}
       <div className={s.section}>Audio</div>
       <div className={s.pillFlow}>
-        <Pill label="No audio" checked={audio === "none"} onClick={() => setAudio("none")} />
-        <Pill label="Everything" sub="tab or system sound" checked={audio === "browser"} onClick={() => setAudio("browser")} />
+        <Pill label="No audio" checked={choices.audio === "none"} onClick={() => setAudio("none")} />
+        {choices.everything && <Pill label="Everything" sub="tab or system sound" checked={choices.audio === "browser"} onClick={() => setAudio("browser")} />}
       </div>
-      <div className={s.hint}>Your browser shares a tab's sound (or, on Windows and ChromeOS, all system sound) — tick "Share audio" in its picker. Per-app audio needs the desktop app.</div>
+      <div className={s.hint}>{choices.hint}</div>
       {/* selfhost/firstrun item 1: only where the server records (Memories) */}
       {memoriesOn && !nativeShareOn() && (
         <div className={s.recRow}>
@@ -360,6 +387,7 @@ export function StreamPopover({ anchor }: { anchor: HTMLElement | null }) {
             onClick={() => {
               if (sharing) act("stopScreen")();
               if (musicPlaying) act("stopMusic")();
+              close(); // A06.7 (12.1.16): as on the desktop
             }}
           />
         )}
@@ -466,6 +494,7 @@ export function HealthPopup({ open, onClose, anchor }: { open: boolean; onClose:
                 {st.w}×{st.h} @ {Math.round(st.fps)} fps
               </div>
             )}
+            {st.kind === "screen" && st.w > 0 && <div className={s.hintS} data-share-rate-hint="">{SHARE_RATE_HINT}</div>}
             <div className={s.hintS}>
               {rate(st.sendKbps)}
               {st.targetKbps > 0 ? `  ·  cap ${rate(st.targetKbps)}` : ""}

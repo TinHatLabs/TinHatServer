@@ -13,8 +13,8 @@ import { onServerOffer } from "@/core/server";
 import { playUiSound } from "@/core/sounds";
 import { serverOf } from "@/features/nav/dmTarget";
 import { getCurrentRoom } from "@/features/nav/open";
-import { GUESTS_TYPE, WAITING_TYPE, arrivals, departures, isGuestAccount, isGuestsRoom, noticeText, parseGuestState, parseWaiting, type Waiter } from "./model";
-import { guestRoomOffered, refreshGuests, useGuests } from "./store";
+import { GUESTS_TYPE, WAITING_TYPE, WORDS, arrivals, departures, isGuestAccount, isGuestsRoom, localRole, mergeRole, noticeAction, noticeText, parseGuestState, parseWaiting, type Waiter } from "./model";
+import { guestRoomOffered, letGuestIn, refreshGuests, useGuests } from "./store";
 
 export const SEEN_PREF = "guests.seen";
 const tagOf = (id: string) => `guest:${id}`;
@@ -24,10 +24,12 @@ function readSeen(): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
-function announce(roomId: string, w: Waiter): void {
+function announce(roomId: string, w: Waiter, canAdmit: boolean): void {
   const text = noticeText(w.name);
   const here = getCurrentRoom() === roomId && document.visibilityState === "visible" && document.hasFocus();
-  if (!here) toast(text, { timeoutMs: 8000, action: { label: "Open", run: () => openRoom(roomId) } });
+  // A27.4 (Sunday QoL): whoever may let guests in gets Let in on the notice itself (model.noticeAction)
+  const action = noticeAction({ canAdmit }) === "letIn" ? { label: WORDS.letIn, run: () => void letGuestIn(w) } : { label: "Open", run: () => openRoom(roomId) };
+  if (!here) toast(text, { timeoutMs: 8000, action });
   if (!here && getPref("desktop-notifications", "1") !== "0") showNote({ title: text, tag: tagOf(w.id), room: roomId, silent: true });
   playUiSound("notify");
 }
@@ -52,11 +54,16 @@ export function watchGuests(): () => void {
     shown = shown.filter((id) => waiting.some((w) => w.id === id));
     const on = parseGuestState(st(GUESTS_TYPE))?.on ?? useGuests.getState().doc?.on ?? false;
     const eligible = guestRoomOffered() && on && room.getMyMembership() === "join" && !isGuestAccount(me);
+    const docNow = useGuests.getState().doc;
+    const canAdmit = mergeRole(
+      localRole({ userId: me, membership: room.getMyMembership(), powerLevels: st("m.room.power_levels") }),
+      docNow && docNow.room === roomId ? docNow : null,
+    ).canAdmit;
     const before = readSeen();
     const r = arrivals({ seen: before, waiting, now: Date.now(), eligible });
     if (r.seen.length !== before.length || r.seen.some((id, i) => id !== before[i])) setPref(SEEN_PREF, r.seen);
     for (const w of r.notify) {
-      announce(roomId, w);
+      announce(roomId, w, canAdmit);
       shown.push(w.id);
     }
   };

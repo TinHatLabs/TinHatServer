@@ -165,6 +165,8 @@ export interface CallState {
   ecDegraded: boolean;
   ecNote: string;
   micSilent: boolean;
+  /** A13.2: why the Settings meter's own capture last failed ("" = it runs / never tried; settings/meterHint.ts) */
+  micMonitorWhy: string;
   outputMissing: boolean;
   shareQuality: string; // "W H FPS KBPS ENC" ("0 0 …" = Auto)
   camQuality: string; // "W H FPS KBPS SIM01"
@@ -283,6 +285,10 @@ export interface CallActions {
   setMuted(identity: string, category: CallCategory, muted: boolean): void;
   reapplyAll(): void;
   dismissIncoming(roomId: string): void;
+  /** P8: the card's Decline (tells the caller + my other devices; a group call: = dismissIncoming) */
+  declineIncoming(roomId: string): void;
+  /** P8: the ring a Decline would name (null = no Decline on this card: not a two-person room / no live ring) */
+  declinableRing(roomId: string): string | null;
   /** Additive (fix/ios-resume): call INSIDE a click / tap — restarts the sound and, if needed, the mic. */
   resumeFromTap(): void;
   /** Additive (11.3 Same room): link up with a call member (identity or mxid; "" or a reason), unlink, answer an

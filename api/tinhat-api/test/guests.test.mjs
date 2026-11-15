@@ -118,7 +118,7 @@ test("only a server admin turns the guest room on the first time; it makes the r
     assert.equal(made.power_level_content_override.users[OWNER], 50, "managers manage; the room's own state stays the server's");
     assert.equal(made.power_level_content_override.users[SYS], 100, "the system account keeps 100 (also as the caller itself)");
     assert.deepEqual(Object.keys(made.power_level_content_override.users).at(-1), SYS, "the system account's entry comes last");
-    assert.equal(made.room_version, "10");
+    assert.equal(made.room_version, "11", "pinned (not the default): a later default of 12 would refuse its users override");
     assert.equal(made.creation_content["m.federate"], false);
     assert.equal(w.s.published, r.body.room, "Synapse's guest rules learn the room");
     assert.equal(made.power_level_content_override.events[G.WAITING], 100);

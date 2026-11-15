@@ -62,7 +62,8 @@ export function WidgetStack({ mobile: mobileProp, island: islandProp }: { mobile
     if (!stack || !panel) return;
     // remember each open widget's height (folded ones keep their last open height)
     for (const [w, el] of frames.current) if (!el.hasAttribute("data-folded")) heights.current.set(w, el.offsetHeight);
-    const list = panel.querySelector<HTMLElement>(':scope > [role="list"]');
+    // the room list's scroll box (a11y round 2: its "Rooms" list role moved onto a wrapper of the rows inside it)
+    const list = panel.querySelector<HTMLElement>(":scope > [data-rooms-list]");
     const top = list ? list.offsetTop : stack.offsetTop;
     const mb = parseFloat(getComputedStyle(stack).marginBottom) || 0;
     const room = Math.max(FOLDED_H, Math.floor(panel.clientHeight - top - LIST_MIN - mb - 2));

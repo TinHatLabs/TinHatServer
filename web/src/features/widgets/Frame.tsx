@@ -2,7 +2,7 @@
 // ⋯) over the body; collapsed / Small = the header with the one-line summary. Clicking the header collapses /
 // expands; dragging it reorders (Stack.tsx owns the drag); ⋯ = Size, Collapse, Settings…, Move up / down, Add widget…,
 // Remove. A widget id this app doesn't know shows "Needs a newer Tin Hat" (kept, never dropped).
-import { memo, useRef, useState, type KeyboardEvent, type PointerEvent as RPointerEvent } from "react";
+import { memo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { CheckBox, ComboBox, Dialog, Icon, Menu, MenuItem, MenuSectionLabel, MenuSeparator, cx, useAnimate, useTip } from "@/ui";
 import { SIZES, settingsOf, sizeOf, widgetDef, type WidgetItem, type WidgetSize } from "@/widgets/registry";
 import { widgetImpl, type WidgetCtx, type WidgetImpl } from "./impl";
@@ -55,6 +55,7 @@ function KnownFrame(p: FrameProps & { impl: WidgetImpl<unknown> }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const animate = useAnimate();
   const [justOpened, setJustOpened] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const menuBtn = useRef<HTMLButtonElement>(null);
   useTip(menuBtn, menu ? "" : "Widget options");
 
@@ -72,13 +73,6 @@ function KnownFrame(p: FrameProps & { impl: WidgetImpl<unknown> }) {
     }
     setCollapsed(item.w, !userCollapsed);
     if (userCollapsed) setJustOpened(animate);
-  };
-  const onKey = (e: KeyboardEvent) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggle();
-    }
   };
   const Summary = impl.Summary;
   const Extra = impl.HeaderExtra;
@@ -98,20 +92,33 @@ function KnownFrame(p: FrameProps & { impl: WidgetImpl<unknown> }) {
     >
       <div
         className={s.header}
-        role="button"
-        tabIndex={0}
-        aria-expanded={!folded}
-        onClick={toggle}
-        onKeyDown={onKey}
+        onClick={(e) => {
+          if (!(e.target as HTMLElement).closest("button, a, input, [data-no-drag]")) toggleRef.current?.focus({ preventScroll: true });
+          toggle();
+        }}
         onPointerDown={(e) => {
           if (p.mobile || e.button !== 0) return;
           if ((e.target as HTMLElement).closest("button, a, [data-no-drag]")) return;
           p.onDragStart?.(item.w, e);
         }}
       >
+        {/* a11y round 2 (M6): the keyboard's fold toggle is a real button over the header, BESIDE the ⋮ button (the header
+            itself was a role=button holding ⋮ — nested controls a screen reader flattens). Pointer input passes through it
+            to the header (pointer-events: none): the look, hover, click and drag are unchanged; Enter / Space toggle. */}
+        <button
+          ref={toggleRef}
+          type="button"
+          className={s.toggle}
+          aria-label={def.title}
+          aria-expanded={!folded}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggle();
+          }}
+        />
         <Icon name={def.icon} size={p.mobile ? 18 : 16} color="var(--th-widget-header-icon)" className={s.icon} staticOnly />
         <span className={s.title}>{def.title}</span>
-        {live && <span className={s.live} aria-label="live" />}
+        {live && <span className={s.live} role="img" aria-label="live" />}
         <span className={s.extra}>{folded ? <Summary model={model} ctx={ctx} /> : Extra ? <Extra model={model} ctx={ctx} /> : null}</span>
         <button
           ref={menuBtn}

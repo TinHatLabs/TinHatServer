@@ -86,7 +86,7 @@ export function Menu(p: MenuProps) {
   return <DesktopMenu {...p} />;
 }
 
-function DesktopMenu({ open, onClose, anchor, placement, offset, modal, width = 200, className, style, children, _parent, _subRect }: MenuProps) {
+function DesktopMenu({ open, onClose, anchor, placement, offset, modal, width = 200, className, style, children, title, _parent, _subRect }: MenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [openSub, setOpenSub] = useState<string | null>(null);
@@ -191,6 +191,8 @@ function DesktopMenu({ open, onClose, anchor, placement, offset, modal, width = 
         ref={ref}
         role="menu"
         tabIndex={-1}
+        // its name for a screen reader: the title ("Menu"; a submenu its row's words, e.g. "Particles")
+        aria-label={title || undefined}
         // the highlighted row is the one a screen reader reads (the menu keeps the focus; rows are not focused)
         aria-activedescendant={highlight ?? undefined}
         className={cx(s.menu, className)}
@@ -399,6 +401,7 @@ export function SubMenu({ title, icon, children, disabled, width }: { title: str
             ctx.menuEl()?.focus({ preventScroll: true });
           }}
           width={width}
+          title={title}
           _parent={ctx}
           _subRect={subRect(ref.current)}
         >

@@ -26,12 +26,15 @@ import {
   stopOutputMonitor,
   useDeviceLists,
   useEngine,
-  useMicDsp,
+  useMicDsp, useNcProbe,
   useMicRunning,
+  useMicMonitorWhy,
+  withSaved,
   useOutRunning,
   useShareSource,
 } from "../callbridge";
 import { EngineLevelMeter } from "../LevelMeter";
+import { meterHint } from "../meterHint";
 import { setStatus } from "../store";
 import { ComboRow, Hint, Row, Section, SwitchRow } from "../rows";
 import { SameRoomRows } from "./SameRoomRows";
@@ -42,7 +45,9 @@ export function AudioPane() {
   const e = useEngine();
   const dev = useDeviceLists();
   const dsp = useMicDsp();
+  useNcProbe(true);
   const micRunning = useMicRunning();
+  const micWhy = useMicMonitorWhy(); // A13.0/A13.2: why it shows nothing
   const outRunning = useOutRunning();
   const share = useShareSource();
   const [settled, setSettled] = useState(false);
@@ -60,8 +65,8 @@ export function AudioPane() {
     };
   }, []);
 
-  const inputs = [{ id: "", name: "System default" }, ...dev.inputs];
-  const outputs = [{ id: "", name: "System default" }, ...dev.outputs];
+  const inputs = withSaved([{ id: "", name: "System default" }, ...dev.inputs], dev.inputId); // A13.3
+  const outputs = withSaved([{ id: "", name: "System default" }, ...dev.outputs], dev.outputId);
   const sources = [{ id: "", name: "None" }, ...share.sources];
   const inIdx = Math.max(0, inputs.findIndex((d) => sameDev(d, dev.inputId)));
   const outIdx = Math.max(0, outputs.findIndex((d) => sameDev(d, dev.outputId)));
@@ -76,7 +81,7 @@ export function AudioPane() {
         <ComboRow id="audio.input-device" label="Input device" model={inputs} textRole="name" currentIndex={inIdx} onActivated={(i) => setInput(inputs[i].id)} />
         <Row id="audio.input-level" label="Input level" description="Talk — the bars should move.">
           <EngineLevelMeter which="mic" dim={!micRunning} />
-          {!micRunning && settled && <Hint tone="danger">No signal from this microphone — it may be unplugged or in use by another app. Pick another one above.</Hint>}
+          {!micRunning && settled && <Hint tone="danger">{meterHint(micWhy)}</Hint>}
         </Row>
         <SwitchRow
           id="audio.echo-cancellation"

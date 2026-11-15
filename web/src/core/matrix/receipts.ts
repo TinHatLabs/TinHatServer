@@ -6,6 +6,8 @@
 //   publicReceiptHere(roomId)          the rule for a room in the local store
 //   sendReadMarkers(roomId, eventId)   m.fully_read + the receipt, one read_markers call (Mark as read everywhere)
 //   sendReadPosition(ev)               the receipt alone, unthreaded (the open room's reading position)
+//   sendThreadPosition(ev, thread)     threads (MSC3771): the receipt alone, thread_id "main" (the main
+//                                      timeline) or the thread's root (the thread panel); never an unthreaded fallback
 //
 // The lint in receipts.test.ts fails on any receipt / read-marker send outside this file.
 import { type MatrixEvent, Method, ReceiptType } from "matrix-js-sdk";
@@ -37,3 +39,34 @@ export async function sendReadPosition(ev: MatrixEvent): Promise<void> {
   if (!c || !roomId) return;
   await c.sendReadReceipt(ev, publicReceiptHere(roomId) ? ReceiptType.Read : ReceiptType.ReadPrivate, true);
 }
+
+/** threads (MSC3771, spec v1.4): the receipt alone with a thread_id ("main" = the main timeline, else the thread's
+ *  root), public or private as publicReceiptHere says. js-sdk only adds thread_id itself when its own thread mode is on,
+ *  and Tin Hat runs it off (docs/THREADS.md), so the body carries it. The main timeline's keeps js-sdk's local echo (as
+ *  sendReadPosition did); a thread's is posted without one (js-sdk would file it as unthreaded). A refused threaded
+ *  receipt (400: most likely an event the server files under another thread) is NOT retried unthreaded — that would
+ *  clear every thread (review 2026-11-13); the caller may try again on its next read. */
+export async function sendThreadPosition(ev: MatrixEvent, thread: string): Promise<"threaded" | "unthreaded"> {
+  const c = peekClient();
+  const roomId = ev.getRoomId();
+  const eventId = ev.getId();
+  if (!c || !roomId || !eventId) return "unthreaded";
+  const type = publicReceiptHere(roomId) ? ReceiptType.Read : ReceiptType.ReadPrivate;
+  try {
+    if (thread === "main") await c.sendReceipt(ev, type, { thread_id: "main" }, true);
+    else
+      await c.http.authedRequest(
+        Method.Post,
+        `/rooms/${encodeURIComponent(roomId)}/receipt/${encodeURIComponent(type)}/${encodeURIComponent(eventId)}`,
+        undefined,
+        { thread_id: thread },
+      );
+    return "threaded";
+  } catch (e) {
+    console.warn(`[threads] the server refused a ${thread === "main" ? "main" : "thread"} receipt (${(e as Error)?.message ?? e})`);
+    throw e;
+  }
+}
+
+// threads: my receipts in one m.receipt event (pure, with the other receipt keys in receiptRule.ts)
+export { myReceiptsIn } from "./receiptRule";

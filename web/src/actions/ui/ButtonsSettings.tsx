@@ -39,11 +39,12 @@ export function ButtonsSettings() {
             : "Choose the buttons of the room header, the message box, your account card and the call controls — hide, reorder or add. You can also right-click any of these rows to edit it there."
         }
       >
-        {rows.map((r) => {
+        {rows.map((r, i) => {
           const changed = storedRow(form, r.island, r.row) !== undefined;
           return (
             <Row
               key={`${r.island}.${r.row}`}
+              id={i === 0 ? "appearance.buttons" : undefined}
               attrs={{ "data-row": `${r.island}.${r.row}`, "data-buttons-settings": "" }}
               label={
                 <>

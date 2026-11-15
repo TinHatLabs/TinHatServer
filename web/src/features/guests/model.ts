@@ -58,6 +58,48 @@ export const EXPLAIN =
 export const waitingText = (name: string): string => `${name} is waiting`;
 export const noticeText = (name: string): string => `${name} is waiting to come in as a guest`;
 
+// ---- the confirm before Turn off / New link (Sunday QoL P10, TRIAGE A14.4/A27.0; shared vectors
+// src/features/nav/testvectors/first-run.json `guestConfirm`, the desktop's guests.rs guest_confirm) ----------------
+
+export interface GuestConfirm {
+  title: string;
+  body: string;
+  confirm: string;
+}
+
+const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** What Turn off / New link will do, named before it happens: `guests` = guest accounts in the Guests room now (-1 =
+ *  not known on this device: the room isn't joined here — never a confident "nobody"), `waiting` = people at the door. Turn off removes both; New link turns away whoever waited with the old link. */
+export function guestConfirm(what: "off" | "link", guests: number, waiting: number): GuestConfirm {
+  if (what === "off") {
+    const parts: string[] = [];
+    if (guests < 0) parts.push("any guests in the room will be removed");
+    else if (guests > 0) parts.push(`${count(guests, "guest", "guests")} in the room will be removed`);
+    if (waiting > 0) parts.push(`${count(waiting, "person", "people")} waiting will be turned away`);
+    const said = parts.join(" and ");
+    const body = (said ? `${said[0].toUpperCase()}${said.slice(1)}. ` : "Nobody is in or waiting right now. ") + "The guest link stops working.";
+    return { title: "Turn off the guest room?", body, confirm: "Turn off" };
+  }
+  let body = "The old link stops working";
+  if (waiting > 0) body += ` and ${count(waiting, "person", "people")} waiting with it will be turned away`;
+  body += ".";
+  if (guests !== 0) body += " Guests already in the room stay.";
+  body += " The new link is copied for you.";
+  return { title: "Make a new guest link?", body, confirm: "New link" };
+}
+
+/** A27.4 (Sunday QoL): the "is waiting" notice's button — Let in for whoever may let guests in (the knock is what they
+ *  act on), else Open (the Guests room). The desktop's guests_ctl.rs notice_action. */
+export function noticeAction(role: Pick<GuestRole, "canAdmit">): "letIn" | "open" {
+  return role.canAdmit ? "letIn" : "open";
+}
+
+/** Guest accounts joined to the room (the Turn off confirm's count). */
+export function guestsIn(members: ReadonlyArray<{ userId: string; membership: string }>): number {
+  return members.filter((m) => m.membership === "join" && isGuestAccount(m.userId)).length;
+}
+
 // ---- the room state ---------------------------------------------------------------------------------------------
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);

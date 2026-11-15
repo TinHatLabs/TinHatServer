@@ -22,6 +22,7 @@ import type { DmStrip as Strip, DmStripEntry } from "./dmstrip";
 import { swallowNextClick } from "./touch";
 import r from "./SpaceRail.module.css";
 import s from "./DmStrip.module.css";
+import { dmInviteTip } from "./firstrun";
 
 type Item = { key: string; entry: DmStripEntry | null; more: number };
 type Shown = Item & { phase: "in" | "idle" | "out" };
@@ -165,7 +166,7 @@ function DmBubble({ entry, onMenu }: { entry: DmStripEntry; onMenu: (x: number, 
   const pres = usePresence(entry.peer || null);
   const n = entry.unread;
   const tip = entry.invite
-    ? `${entry.name} wants to chat — click to look`
+    ? dmInviteTip(entry.name, entry.peer) // D09.4: names the inviter's full address
     : `${entry.name} — ${n === 1 ? "1 new message" : `${n} new messages`}${pres ? ` · ${viewOf(pres).label}` : ""}`;
   useTip(ref, tip);
   const lp = useLongPress(onMenu);

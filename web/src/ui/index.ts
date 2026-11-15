@@ -54,6 +54,7 @@ export * from "./Dialog";
 export * from "./OverlaySheet";
 export * from "./InlineMessage";
 export * from "./Toast";
+export { announce, LiveRegions } from "./announce";
 export * from "./AppWindow";
 export * from "./ScrollArea";
 export * from "./Avatar";

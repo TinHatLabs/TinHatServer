@@ -5,7 +5,8 @@
 //   header      the call's room · "on <device> ▾" (a chooser only when two of my devices are in that call) · the
 //               connection dot ("Not reaching <device>" when the PC doesn't answer)
 //   my row      Mute/Unmute · Deafen · BRB · Stop sound · Leave (Leave asks first, here) — the call bar's round buttons;
-//               in push to talk the mic says "Push to talk is on at <device>" instead of a toggle
+//               in push to talk the mic says "Push to talk is on at <device>" instead of a toggle; that line, or "A
+//               moderator muted your mic for everyone…", shows under the row too (no tooltips on touch screens)
 //   soundboard  my Favourites (the Soundboard pad's grid, starred order), the call room's sounds, the PC's Recent; the
 //               playing one glows, tapping it stops it; the role line under it when the call's roles turned it off
 //   people      avatar + talking ring, mic-off, 💤; a tap → "Volume — <name> (on <device>)": the per-person menu's
@@ -27,6 +28,7 @@ import { whyText, type PadCat } from "@/features/calls/pad/rules";
 import type { PadPersonView, PadView } from "@/features/calls/pad/controller";
 import { closePad, openPad, padController, useDeviceName, usePadCtrl, usePadDevices, usePadTargets } from "./runtime";
 import { PartyCard, PhoneModes, Watch, WebSearch } from "./PadExtras";
+import { myRowNote } from "./words";
 import s from "./PadScreen.module.css";
 
 const PENDING_RING = "var(--th-pad-pending-ring)";
@@ -87,7 +89,7 @@ function PadScreen() {
       <Watch view={view} device={device} mobile={mobile} />
       <PhoneModes view={view} device={device} mobile={mobile} />
       <Sounds view={view} device={device} mobile={mobile} dim={!live} />
-      <PartyCard view={view} device={device} dim={!live} />
+      <PartyCard view={view} device={device} mobile={mobile} dim={!live} />
       <People view={view} onPick={(u, el) => setVol({ u, anchor: el })} />
     </div>
   );
@@ -287,7 +289,8 @@ function MyRow({ view, device, dim, onLeave }: { view: PadView; device: string; 
           <CallButton data-id="pad-leave" wide icon="call-stop-symbolic" tip={`Leave the call on ${device}`} danger live={can("leave")} onClick={onLeave} />
         </Cell>
       </div>
-      {me.mic === "ptt" && <div className={s.myNote}>Push to talk is on at {device} — use the key there.</div>}
+      {/* why the mic can't be pressed, in plain sight (a touch screen has no tooltip; QOL D06.6) */}
+      {myRowNote(me.mic, device) && <div className={s.myNote} data-testid="pad-my-note">{myRowNote(me.mic, device)}</div>}
     </div>
   );
 }

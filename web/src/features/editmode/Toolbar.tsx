@@ -6,14 +6,13 @@
 // a session live here too (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y; Ctrl+E and Ctrl+Enter = Done — Ctrl+E is the shell's).
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { presetDesktop, solve, type JObj } from "@/layout";
-import { registries } from "@/core/registry";
 import { useShortcut } from "@/core/shortcuts";
 import { Icon, Popover, TextField, cx, useTip } from "@/ui";
 import { canon } from "@/layout";
 import { cancelDrag, useDrag, type SolveCtx } from "./drag";
 import { islandText } from "./names";
 import { hiddenRefs } from "./session";
-import { cancelEdit, doneEdit, editApply, editDrawerTargets, editNewActionButton, editNewButtons, editNewDrawer, editPreset, editRedo, editReset, editUndo, useEdit } from "./store";
+import { cancelEdit, doneEdit, editApply, openAddWidget, editDrawerTargets, editNewActionButton, editNewButtons, editNewDrawer, editPreset, editRedo, editReset, editUndo, useEdit } from "./store";
 import { buttonIslands } from "@/actions/layoutStore";
 import { drawer as actionsDrawer } from "@/actions/evaluate";
 import { fold } from "@/actions/palette";
@@ -21,6 +20,8 @@ import { useActionsSnapshot } from "@/actions/snapshot";
 import { BUTTON_LOOKS, DRAWER_ICON_FACES, actionRows } from "./addPanels";
 import { openRowEditor } from "@/actions/ui/editorStore";
 import { trackPointer } from "./EditLayer";
+import { doneTip } from "./hints";
+import { useShortcutsRaw, winningKeys } from "@/actions/shortcutsStore";
 import s from "./Toolbar.module.css";
 
 export const PRESETS: readonly { id: string; name: string; line: string }[] = [
@@ -66,6 +67,8 @@ function TBtn({ icon, label, showLabel = true, onClick, disabled, tip, accent, b
 }
 
 export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }) {
+  useShortcutsRaw(); // A17.2: re-render when the keys change
+  const editKey = winningKeys("layout.edit")[0];
   const session = useEdit((x) => x.session);
   useEdit((x) => x.v);
   const readOnly = useEdit((x) => x.readOnly);
@@ -84,8 +87,10 @@ export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }
   const drawerBtn = useRef<HTMLButtonElement | null>(null);
   const cancelBtn = useRef<HTMLButtonElement | null>(null);
 
-  useShortcut("Ctrl+Z", () => (useDrag.getState().drag ? false : (editUndo(), true)), { whenTyping: true, priority: 50 });
-  useShortcut(["Ctrl+Shift+Z", "Ctrl+Y"], () => (useDrag.getState().drag ? false : (editRedo(), true)), { whenTyping: true, priority: 50 });
+  // A23.4 (2026-11-14): not while typing — a text field keeps its own undo / redo (the desktop's QML Shortcut yields to a
+  // focused field through ShortcutOverride); the layout's undo / redo is for everywhere else
+  useShortcut("Ctrl+Z", () => (useDrag.getState().drag ? false : (editUndo(), true)), { priority: 50 });
+  useShortcut(["Ctrl+Shift+Z", "Ctrl+Y"], () => (useDrag.getState().drag ? false : (editRedo(), true)), { priority: 50 });
   useShortcut("Ctrl+Enter", () => (doneEdit(), true), { whenTyping: true, priority: 50 });
 
   if (!session) return null;
@@ -130,7 +135,7 @@ export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }
             onClick={() => setAddAt(addBtn.current)}
             data="add-island"
           />
-          <TBtn icon="list-add-symbolic" label="Add widget" showLabel={labels} onClick={addWidget} data="add-widget" />
+          <TBtn icon="list-add-symbolic" label="Add widget" showLabel={labels} onClick={openAddWidget} data="add-widget" />
           <TBtn
             icon="media-playback-start-symbolic"
             label="Add button"
@@ -153,7 +158,7 @@ export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }
           <TBtn label="Cancel" onClick={cancel} btnRef={(el) => (cancelBtn.current = el)} data="cancel" />
         </>
       )}
-      <TBtn label={readOnly ? "Close" : "Done"} accent onClick={() => void doneEdit()} data="done" tip={readOnly ? undefined : dirty ? "Save and close (Ctrl+E)" : "Close (Ctrl+E)"} />
+      <TBtn label={readOnly ? "Close" : "Done"} accent onClick={() => void doneEdit()} data="done" tip={readOnly ? undefined : doneTip(dirty, editKey)} />
 
       {presetsAt && <PresetsMenu anchor={presetsAt} form={session.form} start={session.start} ctx={ctx ?? undefined} onClose={() => setPresetsAt(null)} />}
       {addAt && <AddIslandPopover anchor={addAt} hidden={hidden} onClose={() => setAddAt(null)} />}
@@ -189,13 +194,6 @@ export function Toolbar({ hostW, ctx }: { hostW: number; ctx?: SolveCtx | null }
   );
 }
 
-/** Add widget (EDITMODE-UI §7): the widget gallery; a hidden widgets island comes back first (one undo step). */
-function addWidget(): void {
-  const s = useEdit.getState().session;
-  if (s && hiddenRefs(s.form).includes("widgets")) editApply({ op: "restore", ref: "widgets" });
-  const item = registries.appMenu.list().find((m) => m.id === "widgets-add");
-  (item as unknown as { run?: (c: unknown) => void } | undefined)?.run?.({});
-}
 
 function PresetsMenu({ anchor, form, start, ctx, onClose }: { anchor: HTMLElement; form: JObj; start: JObj; ctx?: SolveCtx; onClose: () => void }) {
   const current = typeof form["preset"] === "string" ? (form["preset"] as string) : null;

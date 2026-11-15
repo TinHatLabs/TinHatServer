@@ -73,3 +73,9 @@ export function utdRow(i: { redacted: boolean; relType: string | null }): UtdRow
   if (i.relType !== null && UTD_HIDDEN_RELATIONS.includes(i.relType)) return "hidden";
   return "row";
 }
+
+/** A28.3: the locked message's words ask to verify this device → offer "Verify this device…" next to them (the
+ *  desktop's ChatBubble.qml utdOffersVerify: the same test on the same words). */
+export function utdOffersVerify(text: string): boolean {
+  return text.includes("Verify this device");
+}

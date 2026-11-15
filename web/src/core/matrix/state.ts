@@ -63,6 +63,8 @@ export const TINHAT_MEMBER_STATE_EVENTS: readonly string[] = [
   "dev.tinhat.games.spin",
   // widgets W1: the space's Sticky note — the friend group's (with roles active the reconciler owns it: edit_space_note)
   "dev.tinhat.note",
+  // Memories photos: each member writes only their OWN list (state_key = own user id; Matrix enforces it)
+  "dev.tinhat.memories",
   "org.matrix.msc3401.call.member",
   "m.call.member",
 ];

@@ -227,7 +227,9 @@ export function createGuests(deps) {
     async function createRoom(caller) {
         const sys = await system();
         const body = {
-            room_version: "10",
+            // pinned, not the server's default: a v12 room would refuse the users override below (its creator, the
+            // system account, can't be listed). Never federated, so nothing outside reaches it either way.
+            room_version: "11",
             creation_content: { "m.federate": false },  // only this server's accounts, never another server's
             name: "Guests",
             topic: "Guests someone let in join here; they're gone after 12 hours.",

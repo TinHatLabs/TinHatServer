@@ -32,6 +32,10 @@ import {
   setRoomPhoto,
 } from "./actions";
 import { openNavDialog } from "./dialogs";
+import { roomMenuCall } from "./roomMenuCall";
+import { openRoomId } from "./open";
+import { runAction } from "@/actions/run";
+import { useCallStore } from "@/features/calls";
 import { newMenuRows, newRoomOpen } from "./newMenu";
 import { getCurrentRoom } from "./open";
 import { refreshNow, useNavStore, type NotifyMode, type RoomRow } from "./model";
@@ -320,6 +324,25 @@ export function registerNavMenus(r: Registries): void {
     visible: (c) => rowOf(c.roomId)?.membership === "join",
     run: (c) => openNavDialog({ kind: "invite", roomId: c.roomId, name: rowOf(c.roomId)?.name ?? "" }),
   });
+  // A04.3 (2026-11-14): the room's call, findable without the double-click — opens the room and runs call.join on it
+  // (the call button's path: its gates, the switch when in another call, the consent sheets)
+  const callItem = (roomId: string) => {
+    const c = useCallStore.getState() as unknown as { inCall?: boolean; joined?: boolean; callRoomId?: string; roomId?: string | null };
+    const inThis = (!!c.inCall || !!c.joined) && (c.callRoomId || c.roomId || "") === roomId;
+    const row = rowOf(roomId);
+    return roomMenuCall(row?.membership ?? "", !!row?.call, inThis);
+  };
+  m.add({
+    id: "nav.joinCall",
+    order: 35,
+    label: (c) => callItem(c.roomId),
+    icon: "call-start-symbolic",
+    visible: (c) => callItem(c.roomId) !== "",
+    run: (c) => {
+      if (!isOpen(c.roomId)) openRoomId(c.roomId);
+      void runAction("call.join", { source: "host", target: { room: c.roomId } });
+    },
+  });
   m.add({
     id: "nav.notifications",
     order: 40,
@@ -412,6 +435,7 @@ export function registerNavMenus(r: Registries): void {
 
   // space context menu (spec §3.7)
   const sm = r.spaceMenu;
+  const spaceUnread = (key: string) => useNavStore.getState().spaces.find((x) => x.key === key)?.unread ?? 0;
   sm.add({
     id: "nav.spaceSettings",
     order: 10,
@@ -419,7 +443,8 @@ export function registerNavMenus(r: Registries): void {
     icon: "configure-symbolic",
     run: (c: SpaceMenuCtx) => bus.emit("openSpaceSettings", { spaceId: c.spaceId, tab: "overview" }),
   });
-  sm.add({ id: "nav.markAllRead", order: 20, label: "Mark all as read", icon: "checkmark-symbolic", run: (c) => void markSpaceRead(c.spaceId, c.label) });
+  // A11.2: only when the space has something unread
+  sm.add({ id: "nav.markAllRead", order: 20, label: "Mark all as read", icon: "checkmark-symbolic", visible: (c) => spaceUnread(c.spaceId) > 0, run: (c) => void markSpaceRead(c.spaceId, c.label) });
   sm.add({ id: "nav.spaceInvite", order: 30, label: "Invite people…", icon: "list-add-user", run: (c) => openNavDialog({ kind: "invite", roomId: c.spaceId, name: c.label }) });
   sm.add({
     id: "nav.copySpaceLink",

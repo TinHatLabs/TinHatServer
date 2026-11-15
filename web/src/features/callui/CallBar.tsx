@@ -1,6 +1,8 @@
 // CallBar.tsx — the control bar (Main.qml:7311-7890): 64 px pill of CallButtons + the registered
 // r.callBarItems ("controls" slot) merged by native order, the "You're muted" bubble, and the
 // popovers/menus that rise from it.
+import { helpKey, useShortcutsRaw } from "@/actions/shortcutsStore";
+import { mutedHint } from "@/features/calls/pttChord";
 import { cloneElement, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRegistry, type CallBarItemContribution } from "@/core/registry";
 import { toast, useBus } from "@/core/bus";
@@ -163,11 +165,12 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
   const code = (activity?.code ?? "").trim();
   const game = (activity?.game ?? "").trim();
 
+  useShortcutsRaw(); // A12.2: the tooltips re-read the keys when they change
   const micTip = serverMuted
     ? `${serverMutedBy || "A moderator"} muted your mic for everyone — ask them to unmute you`
     : (pttSpeaking ? "Transmitting (push-to-talk)\n" : "") +
       (micMuted ? "Unmute" : "Mute") +
-      " — Ctrl+Shift+M" +
+      " — " + helpKey("call.mic.toggle", "Ctrl+Shift+M") + // A12.2: the key it has now (rebinding follows)
       (gameChat ? "\nGame chat: people in the game's voice chat don't hear this mic here; everyone else does" : "") +
       (heard ? "\n" + heard : "");
 
@@ -185,6 +188,8 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
         <CallButton
           ref={micRef}
           data-id="mic"
+          pressed={micMuted || serverMuted}
+          menuName="Microphone settings"
           icon={micMuted || serverMuted ? "microphone-sensitivity-muted-symbolic" : "audio-input-microphone-symbolic"}
           tip={micTip}
           danger={micMuted || serverMuted}
@@ -241,8 +246,10 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
       node: (
         <CallButton
           data-id="deafen"
+          pressed={deafened}
+          menuName="Speaker settings"
           icon={deafened ? "audio-volume-muted-symbolic" : "audio-volume-high-symbolic"}
-          tip={deafened ? "Undeafen (restore audio) — Ctrl+Shift+D" : "Deafen (mute all output) — Ctrl+Shift+D"}
+          tip={`${deafened ? "Undeafen (restore audio)" : "Deafen (mute all output)"} — ${helpKey("call.deafen.toggle", "Ctrl+Shift+D")}`}
           danger={deafened}
           hasMenu
           menuOpen={optsFace === "speaker"}
@@ -257,6 +264,8 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
       node: (
         <CallButton
           data-id="camera"
+          pressed={cameraOn}
+          menuName="Camera settings"
           icon="camera-video-symbolic"
           tip={cameraOn ? "Turn camera off" : "Turn camera on"}
           active={cameraOn}
@@ -275,6 +284,8 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
         <CallButton
           ref={shareRef}
           data-id="share"
+          pressed={sharing}
+          menuName="Screen share settings"
           icon="video-display-brightness-symbolic"
           tip={sharing ? `Stop sharing${shareRecOnly ? " (recording only)" : ""} — ▴ for preview & options` : "Share your screen…"}
           active={sharing}
@@ -295,6 +306,8 @@ export function CallBar({ roomId, mobile }: { roomId: string; mobile?: boolean }
       node: (
         <CallButton
           data-id="shareaudio"
+          pressed={musicPlaying}
+          menuName="Shared audio settings"
           icon="audio-speakers-symbolic"
           tip={
             musicPlaying
@@ -692,7 +705,7 @@ function MutedBubble({ ptt }: { ptt: boolean }) {
   return (
     <div className={s.bubble} role="status" onClick={(e) => e.stopPropagation()}>
       <Icon name="microphone-sensitivity-muted-symbolic" size={16} color="var(--th-callbar-muted-bubble-icon)" />
-      <span className={s.bubbleText}>{ptt ? `You're muted — hold ${pttKeys()[0] ?? "Ctrl"} to talk` : "You're muted"}</span>
+      <span className={s.bubbleText}>{ptt ? mutedHint(pttKeys()[0] ?? "Ctrl") : "You're muted"}</span>
       {!ptt && (
         <Button
           text="Unmute"

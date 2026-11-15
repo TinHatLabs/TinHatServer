@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { SERVER_LABEL } from "@/core/bearer";
 import { toast, useBus } from "@/core/bus";
-import { canSendState, getSession, logout, peekClient, useCryptoStatus } from "@/core/matrix";
+import { canSendState, getSession, guestLeaveConfirm, logout, peekClient, useCryptoStatus } from "@/core/matrix";
 import { BasicCheckBox, BasicTextField, ConfirmDialog, PromptDialog, cx, useIsMobile } from "@/ui";
 import sheet from "@/features/settings/dialogs.module.css";
 import { createDm, createRoom, copyText, inviteToRoom, joinByLink, joinRoom, leaveRoom, setActivity, setRecording } from "./actions";
@@ -147,11 +147,11 @@ export function NavDialogs() {
           onClose={close}
           dialogTitle="Record calls in this room?"
           confirmText="Start recording"
-          destructive
+          destructive={false} // A18.2: starting a recording destroys nothing
           message={
             <span className={s.pre}>
               {
-                'Calls in this room get recorded for the Memories tab — every stream and voice separately, so replays can switch points of view.\n\nNo extra participant appears: everyone in the call sees a 🔴 REC cue in their call header instead (and anyone who turned on "Never record me" in Settings → Calls is left out of the recording entirely — their cue says so). Stop any time with the ⏹ Rec button.'
+                'Calls in this room get recorded for the Memories tab — every stream and voice separately, so replays can switch points of view.\n\nNo extra participant appears: everyone in the call sees a 🔴 REC cue in their call header instead (and anyone who turned on "Never record me" in Settings → Privacy is left out of the recording entirely — their cue says so). Stop any time with the ⏹ Rec button.'
               }
             </span>
           }
@@ -283,10 +283,7 @@ function InviteDialog({ roomId, name, onClose }: { roomId: string; name: string;
           verb="Invite"
           roomId={roomId}
           onSelection={setChosen}
-          onPick={(id) => {
-            void inviteToRoom(roomId, id);
-            return true;
-          }}
+          onInvite={(id, who) => inviteToRoom(roomId, id, who)}
         />
         <div className={cx(s.hint, s.peopleHint)}>They'll get an invite they can accept or decline. Remove someone again from the member list on the right.</div>
       </div>
@@ -362,6 +359,8 @@ function NowPlayingDialog({ roomId, name, onClose }: { roomId: string; name: str
 export const SHORTCUT_ROWS: Array<[string, string]> = [
   ["Ctrl+K", "Jump to any room"],
   ["Ctrl+,", "Settings"],
+  ["Ctrl+F", "Filter rooms"],
+  ["Ctrl+/", "Keyboard shortcuts"],
   ["Alt+↑ / Alt+↓", "Previous / next room  (+Shift: unread only)"],
   ["Ctrl+Shift+M", "Mute / unmute your mic"],
   ["Ctrl+Shift+D", "Deafen / undeafen"],
@@ -390,6 +389,10 @@ export function shortcutRows(): Array<[string, string]> {
         return [ch.has("nav.quickSwitcher.open") ? k("nav.quickSwitcher.open") : key, d];
       case "Ctrl+,":
         return [ch.has("app.settings.open") ? k("app.settings.open") : key, d];
+      case "Ctrl+F":
+        return [ch.has("nav.roomList.filter") ? k("nav.roomList.filter") : key, d];
+      case "Ctrl+/":
+        return [ch.has("app.shortcuts.open") ? k("app.shortcuts.open") : key, d];
       case "Alt+↑ / Alt+↓":
         return [ch.has("nav.room.previous") || ch.has("nav.room.next") ? `${k("nav.room.previous")} / ${k("nav.room.next")}` : key, d];
       case "Ctrl+Shift+M":
@@ -436,6 +439,9 @@ function SignOutConfirm({ onClose }: { onClose: () => void }) {
   const crypto = useCryptoStatus();
   const me = getSession().userId ?? "";
   const ready = crypto.backupEnabled;
+  // A27.2 (Sunday QoL): a guest has no key backup to lose and can't sign back in — "Leave?" in guest words
+  const guest = guestLeaveConfirm(me);
+  if (guest) return <ConfirmDialog open onClose={onClose} dialogTitle={guest.title} confirmText={guest.confirm} destructive message={guest.message} onConfirmed={() => void logout()} />;
   return (
     <ConfirmDialog
       open

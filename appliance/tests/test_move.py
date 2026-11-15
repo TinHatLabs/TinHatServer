@@ -201,7 +201,7 @@ class FormerNames(unittest.TestCase):
         site = templates.CADDY_PROXY.format(server_name="chat.example.com", port=8080, own_ips=" 192.168.1.30/32",
                                             own_sites=templates.CADDY_PROXY_OWN_SITES.format(server_name="chat.example.com"),
                                             api_routes=templates.CADDY_API, date="today", trusted="private_ranges", admitted="private_ranges",
-                                            headers_snippet=templates.HEADERS_SNIPPET, web_csp="",
+                                            headers_snippet=templates.HEADERS_SNIPPET, web_app=templates.web_app_block(""),
                                             app_links=templates.APP_LINKS_ROUTE, admin_gate="")
         port = site[site.index("http://:8080 {"):]
         port = port[: port.index("\n}\n")]

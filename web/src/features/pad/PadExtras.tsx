@@ -4,7 +4,7 @@
 //   WebSearch    the soundboard's web search, run by THIS device (its own server, its own bearer); a result plays on
 //                the computer (`sound.play.web`) or ☆ goes to my board (my own favourites: account data, synced)
 //   Watch        "<name> is sharing · Watch": this device joins the call to WATCH (a normal, visible join: no mic
-//                captured, deafened, camera off); phones show the share here with Full screen; "This phone" row:
+//                captured, deafened, camera off); phones show the share here with Full screen; "This phone" ("This computer" outside the phone layout) row:
 //                Hear here · Talk here · Stop watching
 //   PhoneModes   (PAD-PHONE Step B) "This phone": Watch · Mic · Camera in ANY call the person is in — no screen share
 //                needed (2026-11-06); switching leaves the old mode first; Mic mode's notes + "Use phone mic"
@@ -29,6 +29,7 @@ import { mxidOf } from "@/features/calls/util";
 import { fmtTime } from "@/features/media/watchparty/queue";
 import { openWatchParty } from "@/features/media/watchparty";
 import { padController, usePadCtrl } from "./runtime";
+import { LEAVE_THAT_CALL, modesJoinNote, padPlace, leaveFirst, thisDevice, watchJoinNote, watchOnThis } from "./words";
 import { enterShareFullscreen, type FsHandle } from "@/features/callui/fullscreen";
 import s from "./PadExtras.module.css";
 import ps from "./PadScreen.module.css";
@@ -226,7 +227,7 @@ export function Watch({ view, device, mobile }: { view: PadView; device: string;
             }}
           />
         </div>
-        <div className={s.stripNote}>{elsewhere ? "Leave your call on this phone first." : "Joins on this phone to watch — muted, sound off. Everyone sees you joined."}</div>
+        {elsewhere ? <LeaveFirst mobile={mobile} testid="pad-watch-leave" noteTestid="pad-watch-note" /> : <div className={s.stripNote}>{watchJoinNote(padPlace(mobile))}</div>}
       </section>
     );
   }
@@ -284,7 +285,7 @@ export function Watch({ view, device, mobile }: { view: PadView; device: string;
       )}
       {!mobile && <div className={ps.empty}>The share is on the call screen.</div>}
       <div className={s.phoneRow} data-testid="pad-phone-row">
-        <span className={s.phoneHead}>This phone</span>
+        <span className={s.phoneHead}>{thisDevice(padPlace(mobile))}</span>
         <Switch text="Hear here" checked={!deaf} onToggled={(on) => useCallStore.getState().watchHear(on)} data-testid="pad-hear" />
         <Switch text={talking && !micMuted ? "Talk here · live" : "Talk here"} checked={talking && !micMuted} onToggled={(on) => useCallStore.getState().watchTalk(on)} data-testid="pad-talk" />
         <Button text="Stop watching" onClick={() => useCallStore.getState().padStop()} data-testid="pad-stop-watching" />
@@ -320,7 +321,8 @@ export function PhoneModes({ view, device, mobile }: { view: PadView; device: st
     if (mobile && mode === "watch") ui().set({ mobileMin: true });
     useCallStore.getState().padUse(view.room, mode);
   };
-  const title = !cur ? "This phone" : connecting && !inCall ? "This phone · joining…" : `This phone · ${MODE_LABEL[cur]}${cur === "mic" ? (micLive ? " · live" : " · waiting") : ""}`;
+  const here = thisDevice(padPlace(mobile));
+  const title = !cur ? here : connecting && !inCall ? `${here} · joining…` : `${here} · ${MODE_LABEL[cur]}${cur === "mic" ? (micLive ? " · live" : " · waiting") : ""}`;
   return (
     <section className={ps.section} data-testid="pad-phone-modes" data-mode={cur}>
       <Head title={title} hint={cur ? undefined : "use it in this call"} />
@@ -335,14 +337,25 @@ export function PhoneModes({ view, device, mobile }: { view: PadView; device: st
           <Button text="Use phone mic" highlighted onClick={() => useCallStore.getState().padUseMicNow()} data-testid="pad-mic-now" />
         </div>
       )}
-      <div className={s.stripNote} data-testid="pad-mode-note">
-        {elsewhere
-          ? "Leave your call on this phone first."
-          : cur
-            ? note || (cur === "watch" ? "Watching — the mic may take a moment to switch off; nothing is sent." : "")
-            : `Joins on this phone — everyone sees it's your phone (Pad). Mute, deafen and Leave above stay ${device}'s.`}
-      </div>
+      {elsewhere ? (
+        <LeaveFirst mobile={mobile} testid="pad-modes-leave" noteTestid="pad-mode-note" />
+      ) : (
+        <div className={s.stripNote} data-testid="pad-mode-note">
+          {cur ? note || (cur === "watch" ? "Watching — the mic may take a moment to switch off; nothing is sent." : "") : modesJoinNote(padPlace(mobile), device)}
+        </div>
+      )}
     </section>
+  );
+}
+
+/** "Leave your call on this … first." and, next to it, the way to do that: "Leave that call" leaves the call this
+ *  device is in (12.1.16 QOL A21.3; the desktop's Watch strip has the same button). */
+function LeaveFirst({ mobile, testid, noteTestid }: { mobile: boolean; testid: string; noteTestid: string }) {
+  return (
+    <div className={cx(s.stripNote, s.leaveRow)}>
+      <span data-testid={noteTestid}>{leaveFirst(padPlace(mobile))}</span>
+      <Button text={LEAVE_THAT_CALL} flat onClick={() => useCallStore.getState().leaveCall()} data-testid={testid} />
+    </div>
   );
 }
 
@@ -358,7 +371,7 @@ function SharePick({ room, participant, on, onPick }: { room: string; participan
 
 // ---- Media Party ------------------------------------------------------------------------------------------------------
 
-export function PartyCard({ view, device, dim }: { view: PadView; device: string; dim: boolean }) {
+export function PartyCard({ view, device, mobile, dim }: { view: PadView; device: string; mobile: boolean; dim: boolean }) {
   useRev();
   const c = padController();
   const p = view.party;
@@ -379,13 +392,13 @@ export function PartyCard({ view, device, dim }: { view: PadView; device: string
         <Head title="Media Party" hint="on in this room" />
         <div className={s.partyRow}>
           <Button text={`Join on ${device}`} disabled={!can("party.join")} onClick={() => c?.partyJoin()} data-testid="pad-party-join" />
-          <Button text="Watch on this phone" onClick={() => openWatchParty(view.room)} />
+          <Button text={watchOnThis(padPlace(mobile))} onClick={() => openWatchParty(view.room)} />
         </div>
       </section>
     );
   }
   const pos = partyPosNow(p, now);
-  const watchHere = <Button text="Watch on this phone" onClick={() => openWatchParty(view.room)} data-testid="pad-party-watch-here" />;
+  const watchHere = <Button text={watchOnThis(padPlace(mobile))} onClick={() => openWatchParty(view.room)} data-testid="pad-party-watch-here" />;
   const drive = can("party.play") && p.host;
   const add = (playNow: boolean) => {
     const u = link.trim();

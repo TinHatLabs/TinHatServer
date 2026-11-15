@@ -13,7 +13,7 @@ import { restoreSession, takeOverSession, useSession, type SessionInfo } from "@
 import { onPrefChange, getPref } from "@/core/prefs";
 import { iosKeyboardPath, keyboardInset, useFormFactor, useIsTouch } from "@/core/device";
 import { installShortcuts } from "@/core/shortcuts";
-import { applyReducedMotion, CrashProbe, GlowButton, setFormFactorAttrs, ToastHost, TooltipHost } from "@/ui";
+import { applyReducedMotion, CrashProbe, GlowButton, LiveRegions, setFormFactorAttrs, ToastHost, TooltipHost } from "@/ui";
 import { Startup } from "./Startup";
 import { LoginView } from "./LoginView";
 import { Shell } from "./Shell";
@@ -32,6 +32,7 @@ export function App() {
       <CrashProbe where="app" />
       <TooltipHost />
       <ToastHost />
+      <LiveRegions />
     </>
   );
 }
@@ -60,10 +61,12 @@ function Main() {
   const [catchingUp, setCatchingUp] = useState(false);
   const restored = useRef(false);
 
+  // QOL A29.1: the saved session's restore is still running (a slow one outlives the 20 s cap below)
+  const [restoring, setRestoring] = useState(true);
   useEffect(() => {
     if (restored.current) return;
     restored.current = true;
-    void restoreSession();
+    void restoreSession().finally(() => setRestoring(false));
   }, []);
 
   // native bridge.rs: "Catching up on messages" once the rooms are loading a while
@@ -105,8 +108,11 @@ function Main() {
   }
 
   const st = stageOf(session, catchingUp);
+  // QOL A29.1: a signed-in user whose restore is slow keeps the startup card past the 20 s cap — it used to drop them
+  // onto an idle sign-in form (the restore then replaced it on its own)
+  const holdCard = restoring && session.state === "starting";
   let underneath: React.ReactNode = null;
-  if (!launching) {
+  if (!launching && !holdCard) {
     if (session.state === "loggedOut" || session.state === "error") underneath = <LoginView />;
     else if (session.state === "starting") underneath = <LoginView />; // interactive sign-in in flight
     else underneath = <Shell />;
@@ -114,7 +120,7 @@ function Main() {
   return (
     <>
       {underneath}
-      {!cardGone && <Startup stage={st.stage} detail={st.detail} percent={st.percent} finished={!launching} onHidden={() => setCardGone(true)} />}
+      {!cardGone && <Startup stage={st.stage} detail={st.detail} percent={st.percent} finished={!launching && !holdCard} onHidden={() => setCardGone(true)} />}
     </>
   );
 }

@@ -191,3 +191,12 @@
   font-size: 18px;
   line-height: 1;
 }
+
+/* A10.7: the hint under an empty field — the prefixes (palette.texts.tip) */
+.tip {
+  flex: none;
+  padding: 6px 10px 4px;
+  color: var(--th-switcher-empty-fg);
+  font-size: var(--th-font-size-small);
+  text-align: center;
+}

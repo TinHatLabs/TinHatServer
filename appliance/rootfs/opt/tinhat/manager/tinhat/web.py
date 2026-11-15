@@ -20,13 +20,14 @@ import shutil
 import tarfile
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from urllib.parse import quote
 
 from aiohttp import web
 
-from . import access, apiconf, newcomers, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, netrules, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
-from . import caddylock, pyenv, restoresafe, setuptls, templates
+from . import access, apiconf, newcomers, notices, backup, gameservers, bench, compose, config, console, environment, federation, hw, limits, lkadmin, mdns, move, moved, names, netrules, owndomain, reach, recovery, relay, repairs, sessions, sshaccess, state, support, updates
+from . import caddylock, pyenv, restoresafe, setuptls, templates, websides
 from .install import Installer, validate, write_synapse_config
 from .synapse import Synapse
 
@@ -45,6 +46,42 @@ CODE_RE_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456
 
 def _json(data, status: int = 200) -> web.Response:
     return web.json_response(data, status=status, headers={"Cache-Control": "no-store"})
+
+
+REPORTS_HANDLED = config.STATE_DIR / "reports-handled.json"  # {"<kind>/<name>" | "matrix/<id>": {"by", "at"}}
+REPORTS_HANDLED_MAX = 5000
+REPORT_KEY = re.compile(r"(?:report|log)/[A-Za-z0-9][A-Za-z0-9._-]{0,199}|matrix/[0-9]{1,20}")
+
+
+def _reports_handled() -> dict:
+    d = state.read_json(REPORTS_HANDLED, {})
+    return d if isinstance(d, dict) else {}
+
+
+INVITE_NOTES = config.STATE_DIR / "invite-notes.json"  # {code: "a note to yourself"} (D04.4)
+INVITE_NOTE_MAX = 80
+
+
+def _invite_notes() -> dict:
+    d = state.read_json(INVITE_NOTES, {})
+    return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(d, dict) else {}
+
+
+def _guests_summary() -> dict | None:
+    """People → Guests (D04.8): the Guests room as the API keeps it (guests.json: on/off, since, which room; never its
+    link key) and how many guest accounts it has now (guest-accounts.json: user + room, no tokens). None before the
+    room exists. Read-only: turning it on or off and letting people in stays in the apps (the API does those)."""
+    g = state.read_json(apiconf.DIR / "guests.json", None)
+    if not isinstance(g, dict) or not isinstance(g.get("room"), str) or not g["room"]:
+        return None
+    accts = state.read_json(apiconf.DIR / "guest-accounts.json", [])
+    n = sum(1 for a in accts if isinstance(a, dict) and a.get("room") == g["room"]) if isinstance(accts, list) else 0
+    since = g.get("since")
+    return {"on": g.get("on") is True, "since": since if isinstance(since, (int, float)) and since > 0 else None,
+            "room": g["room"], "count": n}
+
+
+CALL_NAMES = 6  # names an update's "who is in a call" spells out; the rest are "N more"
 
 
 def _err(msg: str, status: int) -> web.Response:
@@ -311,6 +348,7 @@ class Manager:
         self.network_busy = False
         self._bg_update: asyncio.Task | None = None  # an owner-started update download (kept so it is not collected)
         self._bg_backup: asyncio.Task | None = None  # a backup, a test restore or a download being made
+        self._bg_websides: asyncio.Task | None = None  # the web app's pre-compressed copies (websides.py)
         self._bg_tick_update: asyncio.Task | None = None  # the nightly update work (can take minutes)
         # an owner's allow/remove is re-checked against a running move right before it is written (the move refuses
         # to start while the list isn't empty: both checks run without an await in between)
@@ -323,7 +361,8 @@ class Manager:
         # "Move to your own domain" (move.py); the owner's dashboard sign-in follows the account to its new name
         self.mover = move.Mover(self.synapse, self.checker, on_switched=self.sessions.rename)
         self._move_checking = asyncio.Lock()
-        self.fails = limits.Fails("unlock", "login", "restore", "recover", "recover-start", "backup-pw", "people-password")
+        self.fails = limits.Fails("unlock", "login", "restore", "recover", "recover-start", "backup-pw", "people-password",
+                                  "people-manage")
         self.operators: dict[str, tuple[bool, float]] = {}
         self._admin_recheck_at = 0.0  # monotonic: when the next dashboard admin re-check is due
         self._bg_admin_recheck: asyncio.Task | None = None
@@ -760,19 +799,23 @@ class Manager:
         out = []
         b, bs = backup.settings(), backup.status()
         if not b.get("dest") or not state.load_secrets().get("backup_password"):
-            out.append({"level": "warn", "text": "Backups aren't set up yet."})
+            out.append({"key": "backup-setup", "level": "warn", "text": "Backups aren't set up yet."})
         elif b.get("dest") == "usb" and not any(x.get("uuid") == (b.get("usb") or {}).get("uuid")
                                                 for x in await asyncio.to_thread(backup.drives)):
-            out.append({"level": "bad", "text": "Backups can't run: their USB drive isn't plugged into this server."})
+            out.append({"key": "backup-drive", "level": "bad", "text": "Backups can't run: their USB drive isn't plugged into this server."})
         elif bs.get("phase") == "failed":
-            out.append({"level": "bad", "text": "The last backup didn't work."})
+            out.append({"key": "backup-failed", "level": "bad", "text": "The last backup didn't work."})
         elif (bs.get("last") or {}).get("at") and time.time() - bs["last"]["at"] > 3 * 86400:
-            out.append({"level": "warn", "text": f"The last backup was {int((time.time() - bs['last']['at']) // 86400)} days ago."})
-        up = updates.status().get("phase")
+            out.append({"key": "backup-old", "level": "warn", "text": f"The last backup was {int((time.time() - bs['last']['at']) // 86400)} days ago."})
+        ust = updates.status()
+        up = ust.get("phase")
+        waiting = updates.watch_item(ust, updates.settings()["auto"], config.compose_edition())
+        if waiting:
+            out.append(waiting)
         if up == "broken":
-            out.append({"level": "bad", "text": "The last update needs attention."})
+            out.append({"key": "update-broken", "level": "bad", "text": "The last update needs attention."})
         elif up == "rolled-back":
-            out.append({"level": "warn", "text": "The last update didn't start properly, so the server went back to the version before."})
+            out.append({"key": "update-rolled-back", "level": "warn", "text": "The last update didn't start properly, so the server went back to the version before."})
         if (pyenv.CURRENT or {}).get("runtime") == "system":
             off = pyenv.is_off(config.STATE_DIR)
             why = ("because it was turned off on this machine (`tinhat pyenv on` turns it back on)" if off else
@@ -783,7 +826,7 @@ class Manager:
                     "make a backup and set Tin Hat Server up again from it. " if config.compose_edition() else
                     "What to do: install the next update when Updates offers it (it sets Tin Hat's copy up again). If "
                     "this is still here after an update, make a backup and reinstall Tin Hat Server from it. ")
-            out.append({"level": "warn", "text": "This server runs on an older web toolkit with known security problems "
+            out.append({"key": "pyenv", "level": "warn", "text": "This server runs on an older web toolkit with known security problems "
                         f"(the operating system's aiohttp {pyenv.CURRENT.get('aiohttp') or ''}), {why}. Everything still "
                         f"works. {todo}The support report has the details."})
         return out
@@ -792,14 +835,17 @@ class Manager:
         if not self._admin(req):
             return _err("Sign in first.", 401)
         tok = self._system_token()
+        owner = apiconf.owner()
         out = []
         for u in await self.synapse.users(tok):
             if u.get("name", "").startswith(f"@{config.SYSTEM_LOCALPART}:"):
                 continue
             out.append({"mxid": u.get("name"), "name": u.get("displayname") or u.get("name"), "admin": bool(u.get("admin")),
+                        "owner": u.get("name") == owner,
                         "deactivated": bool(u.get("deactivated")), "created": u.get("creation_ts"), "lastSeen": u.get("last_seen_ts")})
         out.sort(key=lambda x: (x["deactivated"], -(x["created"] or 0)))
-        return _json({"people": out})
+        st = state.load_state()
+        return _json({"people": out, "guests": _guests_summary(), "web": apiconf.settings(st)["web"] or st.get("server_name") or ""})
 
     async def people_password(self, req: web.Request) -> web.Response:
         """People → Set a new password, for someone who forgot theirs (this server sends no email). The server makes the
@@ -849,6 +895,81 @@ class Manager:
                  s.get("mxid"), mxid, out_everywhere, dropped)
         return _json({"ok": True, "mxid": mxid, "password": pw, "signedOut": out_everywhere})
 
+    async def _people_target(self, req: web.Request) -> tuple[dict | None, str, dict, web.Response | None]:
+        """People → Remove / Make admin (D04.2): the caller (a still-active admin, rate-limited like New password), the
+        target (a real account of this server: not the caller, not the server's own account, not the owner, not removed
+        already) and the request body. The last item is the refusal, if any."""
+        s = self._admin(req)
+        if not s or not self._csrf_ok(req):
+            return None, "", {}, _err("Sign in first.", 401)
+        if self._limited("people-manage", req, 3600, 30):  # remove + admin together
+            return None, "", {}, _err("That's a lot of changes in one hour. Try again later.", 429)
+        self._failed("people-manage", req)
+        try:
+            body = await req.json()
+        except ValueError:
+            return None, "", {}, _err("Bad request.", 400)
+        if not isinstance(body, dict):
+            return None, "", {}, _err("Bad request.", 400)
+        st0 = state.load_state()
+        sn = st0.get("server_name", "")
+        mxid = str(body.get("mxid", "")).strip()
+        if not sn or not re.fullmatch(r"@[a-z0-9._=/+-]+:" + re.escape(sn), mxid):
+            return None, "", {}, _err("That isn't an account on this server.", 400)
+        if mxid == f"@{config.SYSTEM_LOCALPART}:{sn}":
+            return None, "", {}, _err("That's the server's own account.", 400)
+        if mxid == s.get("mxid"):
+            return None, "", {}, _err("That's you. Another admin can do this for you.", 400)
+        if mxid == apiconf.owner(st0):
+            return None, "", {}, _err("That's the server's owner: their account always stays, and stays an admin.", 400)
+        tok = self._system_token()
+        st, me_u = await self.synapse.user(s.get("mxid", ""), tok)
+        if st != 200 or me_u.get("admin") is not True or me_u.get("deactivated"):
+            self.sessions.drop_for(s.get("mxid", ""))
+            return None, "", {}, _err("You aren't an admin of this server any more. Sign in again.", 401)
+        st, u = await self.synapse.user(mxid, tok)
+        if st == 404:
+            return None, "", {}, _err(f"There's no {mxid} on this server.", 404)
+        if st != 200:
+            return None, "", {}, _err(f"The chat server said {st}.", 502)
+        if u.get("deactivated"):
+            return None, "", {}, _err(f"{mxid} was removed from this server.", 400)
+        return s, mxid, {**body, "_user": u}, None
+
+    async def people_remove(self, req: web.Request) -> web.Response:
+        """People → Remove from this server (D04.2): Synapse deactivates the account (signed out everywhere, can't sign in
+        again, the name stays taken); "erase" also forgets their name and picture and hides their messages from people
+        who join a room later. The owner can't be removed (the account-safety module refuses it in Synapse too)."""
+        s, mxid, body, refused = await self._people_target(req)
+        if refused:
+            return refused
+        erase = body.get("erase") is True
+        st, out = await self.synapse.req("POST", f"/_synapse/admin/v1/deactivate/{quote(mxid, safe='')}",
+                                         self._system_token(), json={"erase": erase})
+        if st != 200:
+            return _err(f"The chat server didn't remove them ({(out or {}).get('error') or st}).", 502)
+        dropped = self.sessions.drop_for(mxid)
+        self.operators[mxid] = (False, time.time())
+        log.info("%s removed %s from this server (erase: %s; dashboard sign-ins ended: %d)", s.get("mxid"), mxid, erase, dropped)
+        return _json({"ok": True, "mxid": mxid, "erased": erase})
+
+    async def people_admin(self, req: web.Request) -> web.Response:
+        """People → Make admin / Remove admin (D04.2): a second admin (a partner who can open this dashboard too) without
+        the command line. Admins of this server sign in here and can manage people, invites and the server."""
+        s, mxid, body, refused = await self._people_target(req)
+        if refused:
+            return refused
+        if not isinstance(body.get("admin"), bool):
+            return _err("Bad request.", 400)
+        want = body["admin"]
+        st, out = await self.synapse.set_user(mxid, self._system_token(), admin=want)
+        if st not in (200, 201):
+            return _err(f"The chat server didn't take it ({(out or {}).get('error') or st}).", 502)
+        dropped = 0 if want else self.sessions.drop_for(mxid)
+        self.operators[mxid] = (want, time.time())  # the 60 s operator cache can't keep a removed admin signed in
+        log.info("%s %s %s (dashboard sign-ins ended: %d)", s.get("mxid"), "made an admin:" if want else "removed admin from", mxid, dropped)
+        return _json({"ok": True, "mxid": mxid, "admin": want})
+
     async def invites_list(self, req: web.Request, admin_ok: bool = False) -> web.Response:
         if not admin_ok and not self._admin(req):
             return _err("Sign in first.", 401)
@@ -857,6 +978,10 @@ class Manager:
             return _err(f"The chat server said {st}.", 502)
         lst = sorted((_shape(t) for t in body.get("registration_tokens", [])),
                      key=lambda a: (not a["active"], -(a["expiresAt"] or float("inf"))))
+        notes = _invite_notes()  # D04.4: who each code was for
+        for a in lst:
+            if notes.get(a["code"]):
+                a["note"] = notes[a["code"]]
         s = self._admin(req)
         app_device = await self._has_app_device(s["mxid"]) if s else True
         st = state.load_state()
@@ -882,6 +1007,13 @@ class Manager:
             body = await req.json()
         except ValueError:
             body = {}
+        if not isinstance(body, dict):
+            return _err("That request wasn't understood.", 400)
+        note = body.get("note")
+        if note is not None:
+            note = " ".join(str(note).split()) if isinstance(note, str) else None
+            if note is None or len(note) > INVITE_NOTE_MAX or any(unicodedata.category(c).startswith("C") for c in note):
+                return _err(f"The note is up to {INVITE_NOTE_MAX} letters of plain text.", 400)
         uses = body.get("uses", 1)
         days = body.get("days", 7)
         if not isinstance(uses, int) or not isinstance(days, int) or not (0 <= uses <= 1000) or not (0 <= days <= 3650):
@@ -892,7 +1024,13 @@ class Manager:
         if st != 200:
             return _err(res.get("error") or f"The chat server said {st}.", 502)
         log.info("%s minted %s (uses %s, days %s)", who, res.get("token"), uses or "unlimited", days or "never")
-        return _json({"invite": _shape(res)})
+        out = _shape(res)
+        if note and out.get("code"):  # kept by the manager: Synapse's registration tokens have no field for it
+            notes = _invite_notes()
+            notes[out["code"]] = note
+            state.write_json(INVITE_NOTES, notes, 0o600)
+            out["note"] = note
+        return _json({"invite": out})
 
     async def invites_delete(self, req: web.Request, who: str | None = None) -> web.Response:
         if who is None:
@@ -909,6 +1047,9 @@ class Manager:
         if st != 200:
             return _err(f"The chat server said {st}.", 502)
         log.info("%s revoked %s", who, code)
+        notes = _invite_notes()
+        if notes.pop(code, None) is not None:
+            state.write_json(INVITE_NOTES, notes, 0o600)
         return _json({"ok": True})
 
     async def set_features(self, req: web.Request) -> web.Response:
@@ -1127,6 +1268,11 @@ class Manager:
         matrix, total = await self._event_reports()
         every = req.query.get("all") == "1"  # "Show all" on the card
         doc = await asyncio.to_thread(apiconf.reports_doc, None if every else 50, None if every else 200)
+        handled = _reports_handled()  # D04.5: the owner's Done marks
+        for it in doc["items"]:
+            it["handled"] = f"{it.get('kind')}/{it.get('name')}" in handled
+        for it in matrix or []:
+            it["handled"] = f"matrix/{it.get('id')}" in handled
         return _json({"reports": doc["items"], "abuseTotal": doc["abuseTotal"], "abuseShown": doc["abuseShown"],
                       "otherTotal": doc["otherTotal"], "otherShown": doc["otherShown"], "matrix": matrix, "matrixTotal": total})
 
@@ -1157,6 +1303,30 @@ class Manager:
                         "reason": str(r.get("reason") or "")[:1000]})
         total = body.get("total")
         return out, total if isinstance(total, int) and total >= len(out) else len(out)
+
+    async def reports_done(self, req: web.Request) -> web.Response:
+        """Reports → Done / Not done (D04.5): the owner dealt with it, so it folds under Handled and stops counting.
+        Only a mark kept by the manager: the report itself stays as it is (Download still works)."""
+        s_ = self._admin(req)
+        if not s_ or not self._csrf_ok(req):
+            return _err("Sign in first.", 401)
+        try:
+            body = await req.json()
+        except ValueError:
+            return _err("Bad request.", 400)
+        key = body.get("key") if isinstance(body, dict) else None
+        if not isinstance(key, str) or not REPORT_KEY.fullmatch(key) or not isinstance(body.get("done"), bool):
+            return _err("Bad request.", 400)
+        marks = _reports_handled()
+        if body["done"]:
+            marks[key] = {"by": s_["mxid"], "at": int(time.time())}
+            if len(marks) > REPORTS_HANDLED_MAX:  # the oldest marks go first; their reports are long gone by then
+                marks = dict(sorted(marks.items(), key=lambda kv: kv[1].get("at", 0))[-REPORTS_HANDLED_MAX:])
+        else:
+            marks.pop(key, None)
+        state.write_json(REPORTS_HANDLED, marks, 0o600)
+        log.info("%s marked report %s %s", s_["mxid"], key, "done" if body["done"] else "not done")
+        return _json({"ok": True, "key": key, "done": body["done"]})
 
     async def report_file(self, req: web.Request) -> web.Response:
         if not self._admin(req):
@@ -1456,12 +1626,42 @@ class Manager:
         s = self._admin(req)
         if not s or not self._csrf_ok(req):
             return _err("Sign in first.", 401)
+        try:
+            body = await req.json()
+        except ValueError:
+            body = {}
+        if not isinstance(body, dict):
+            return _err("That request wasn't understood.", 400)
+        when = body.get("when") or "now"
+        if when not in ("now", "calls-end", "cancel"):
+            return _err("That request wasn't understood.", 400)
+        if when == "cancel":  # "Don't wait": the owner takes back their "Install when the calls end"
+            updates.set_status(after_calls=None)
+            log.info("%s no longer waits for the calls to end to update", s["mxid"])
+            return _json(updates.doc())
         if updates.status().get("phase") not in ("available", "staged"):
             return _err("There's no update to install.", 409)
         if self.mover.running:
             return _err("The server is moving to its new address; update after it's done.", 409)
         if self.network_busy:
             return _err("A network check is running; try again in a minute.", 409)
+        if when == "calls-end":  # the manager's tick installs it once no call has been going for a minute (updates.py)
+            updates.set_status(after_calls={"by": s["mxid"], "at": int(time.time())}, message=None)
+            log.info("%s asked to install the update when the calls end", s["mxid"])
+            return _json(updates.doc())
+        # D04.7: installing restarts the call server, so it never ends a live call without the owner knowing who is in
+        # it. "confirm" = they saw that and chose Install anyway. LiveKit not answering counts as a call.
+        if not body.get("confirm") and state.load_state().get("calls", True):
+            who = await lkadmin.who_in_calls()
+            if who is None or who["people"] or who["others"]:
+                return _json({"error": "People are in a call right now. Installing ends their call for a minute or two.",
+                              "in_call": await self._call_people(who)}, 409)
+            # Asking LiveKit awaited: another Install now (or the night install) may have started meanwhile. Check again,
+            # with no await between this check and the busy status below, so only one request can start it.
+            if updates.status().get("phase") not in ("available", "staged"):
+                return _err("The update has already started.", 409)
+            if self.mover.running or self.network_busy:
+                return _err("The server is busy with something else; try again in a minute.", 409)
 
         # Busy before answering, so the page shows the update under way at once (it follows it from here).
         updates.set_status(phase="downloading" if updates.status().get("phase") == "available" else "installing",
@@ -1478,6 +1678,24 @@ class Manager:
         self._bg_update = asyncio.create_task(go())
         log.info("%s asked to install the update", s["mxid"])
         return _json(updates.doc())
+
+    async def _call_people(self, who: dict | None) -> dict:
+        """lkadmin.who_in_calls() as the dashboard says it: display names (the first few), how many more."""
+        if who is None:
+            return {"known": False}
+        names, tok = [], None
+        for mx in who["people"][:CALL_NAMES]:
+            name = mx[1:].split(":", 1)[0]
+            try:
+                tok = tok or self._system_token()
+                rc, u = await self.synapse.user(mx, tok)
+                if rc == 200 and isinstance(u, dict) and isinstance(u.get("displayname"), str) and u["displayname"].strip():
+                    name = u["displayname"].strip()[:64]
+            except Exception:  # noqa: BLE001 — the name falls back to the account's own
+                pass
+            names.append(name)
+        return {"known": True, "calls": who["calls"], "names": names,
+                "more": len(who["people"]) - len(names) + who["others"]}
 
     async def updates_settings(self, req: web.Request) -> web.Response:
         if not self._admin(req) or not self._csrf_ok(req):
@@ -2277,6 +2495,8 @@ def build_app() -> web.Application:
     r.add_get("/admin/api/overview", m.overview)
     r.add_get("/admin/api/people", m.people)
     r.add_post("/admin/api/people/password", m.people_password)
+    r.add_post("/admin/api/people/remove", m.people_remove)
+    r.add_post("/admin/api/people/admin", m.people_admin)
     r.add_get("/admin/api/invites", m.invites_list)
     r.add_post("/admin/api/invites", m.invites_create)
     r.add_delete("/admin/api/invites/{code}", m.invites_delete)
@@ -2289,6 +2509,7 @@ def build_app() -> web.Application:
     r.add_delete("/admin/api/features/gameservers", m.gameservers_remove)
     r.add_get("/admin/api/reports", m.reports_list)
     r.add_get("/admin/api/reports/file", m.report_file)
+    r.add_post("/admin/api/reports/done", m.reports_done)
     r.add_get("/tinhat-api/admin/invites", m.api_invites_list)
     r.add_post("/tinhat-api/admin/invites", m.api_invites_create)
     r.add_delete("/tinhat-api/admin/invites/{code}", m.api_invites_delete)
@@ -2303,6 +2524,10 @@ def build_app() -> web.Application:
         except Exception:  # noqa: BLE001  (the manager must come up; the next change adopts it again)
             log.exception("couldn't check the federation list")
         m.mover.resume()  # a restart in the middle of a move (or a rollback that didn't finish): on in the background
+        # every pre-compressed copy the web server could hand out matches its file, or is moved out (websides.py); in
+        # the background (the manager comes up at once; the next run checks again if this one can't)
+        app["websides_check"] = asyncio.create_task(_guard("web app copies (start)", asyncio.get_running_loop()
+                                                           .run_in_executor(None, websides.startup)))
         app["bg"] = asyncio.create_task(_background(m))
 
     async def on_cleanup(app: web.Application) -> None:
@@ -2426,6 +2651,21 @@ async def _guard(what: str, coro) -> None:
         log.exception("%s failed", what)
 
 
+async def _websides() -> None:
+    """The web app's pre-compressed copies after an update (websides.py): not while a call is going, and stopped as
+    soon as one starts (the run itself stops for an update)."""
+    if await lkadmin.call_in_progress():
+        return
+    websides.mark_tried()
+    websides.STOP.clear()
+    job = asyncio.get_running_loop().run_in_executor(None, websides.run)
+    while not job.done():
+        await asyncio.wait({job}, timeout=10)
+        if not job.done() and await lkadmin.call_in_progress():
+            websides.STOP.set()
+    await job
+
+
 async def _background(m: Manager) -> None:
     """Keep the console banner current, keep tinhat.local answering, drop expired sessions, stay reachable."""
     tick = 0
@@ -2443,8 +2683,12 @@ async def _background(m: Manager) -> None:
                 m._bg_tick_update = asyncio.create_task(_guard("update tick", updates.tick(lkadmin.call_in_progress)))
             if backup.due() and (m._bg_backup is None or m._bg_backup.done()):
                 m._bg_backup = asyncio.create_task(_guard("nightly backup", backup.backup_now("nightly")))
+            if (m._bg_websides is None or m._bg_websides.done()) and websides.due():
+                m._bg_websides = asyncio.create_task(_guard("web app copies", _websides()))
             if not repairs.done("general_calls"):
                 await _guard("repair: General's calls", repairs.general_calls(m.synapse))
+        if tick % 30 == 17 and state.phase() == "ready" and not moved.is_moved():  # every 5 minutes (D04.1)
+            await _guard("notices to the admins", _tell_admins(m))
         if state.phase() == "ready" and not moved.is_moved():  # new people land in #general (never guests)
             await _guard("newcomers", newcomers.tick(m.synapse))
         if time.monotonic() >= m._admin_recheck_at and state.phase() == "ready" and m.sessions.mxids() \
@@ -2603,6 +2847,13 @@ async def _drop_setup_site(m: Manager) -> None:
         log.info("the setup page's own https site is gone (the server is set up)")
     else:
         log.warning("couldn't take the setup page's own https site out: %s", why)
+
+
+async def _tell_admins(m: Manager) -> None:
+    """The Overview's watch list as direct messages to the admins (notices.py): a backup that stopped, an update that
+    went wrong or waits, said in Tin Hat instead of only on a page nobody opens for a month."""
+    sn = state.load_state().get("server_name")
+    await notices.tick(m.synapse, await m._watch(), f"https://{sn}/admin/" if sn else None)
 
 
 async def _recheck_admins(m: Manager) -> None:

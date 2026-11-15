@@ -144,6 +144,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* QOL A08.7: the staged file's size (the desktop's chip: smallFont at 0.7) */
+.stFileRow .stSize {
+  flex: none;
+  opacity: 0.7;
+}
 .stX {
   all: unset;
   position: absolute;

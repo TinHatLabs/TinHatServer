@@ -56,6 +56,20 @@ async function copyText(text: string): Promise<void> {
 /** The step is on screen: the first run's other questions wait (asks.tsx) — nothing shows behind the key. */
 export const useKeyStepOpen = create<{ open: boolean }>(() => ({ open: false }));
 
+/** The Security Key as tinhat-security-key.txt (keyFileText; L1 A28.1: also the other key screen's Download, and the
+ *  desktop's "Save as file…" writes the same text). */
+export function downloadKeyFile(recoveryKey: string, userId: string): void {
+  const blob = new Blob([keyFileText({ key: recoveryKey, userId, date: localDate(Date.now()) })], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = KEY_FILE_NAME;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 export function FirstKeyDialog({ open, recoveryKey, onClose }: { open: boolean; recoveryKey: string; onClose: () => void }) {
   useEffect(() => {
     if (!open) return;
@@ -84,15 +98,7 @@ export function FirstKeyDialog({ open, recoveryKey, onClose }: { open: boolean; 
     );
   };
   const download = () => {
-    const blob = new Blob([keyFileText({ key: recoveryKey, userId, date: localDate(Date.now()) })], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = KEY_FILE_NAME;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    downloadKeyFile(recoveryKey, userId);
     setDownloaded(true);
   };
   const done = () => (keySaved({ copied, downloaded }) ? onClose() : setAsking(true));

@@ -300,7 +300,7 @@ function useWindowKeysFallback(winRef: React.RefObject<HTMLElement | null>, clos
       searchRef.current?.focus();
       searchRef.current?.select();
     },
-    { whenTyping: true, priority: 50, id: "settings.window.search" },
+    { whenTyping: true, priority: 50, id: "settings.window.search", inModal: true }, // (its own window's key: it checks the focus)
   );
   useEffect(() => {
     const mark = (e: Event) => {

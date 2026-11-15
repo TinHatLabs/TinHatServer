@@ -44,6 +44,16 @@ export function replyContent(text: string): ReplyContent | null {
   return body ? { msgtype: "m.text", body, "m.mentions": {} } : null;
 }
 
+/** threads (docs/THREADS.md): a quick reply to a message in a thread stays in it — replyContent plus the thread
+ *  relation with the spec's fallback (is_falling_back true, m.in_reply_to = the notified event, else the root). `root` =
+ *  the notified event's thread root (threads/core threadOf of its content; "" = not in a thread). The shared vectors'
+ *  threadReply group: the phone/Mac helpers and the mobile core copy them. */
+export function threadReplyContent(text: string, root: string, event: string): (ReplyContent & { "m.relates_to"?: unknown }) | null {
+  const c = replyContent(text);
+  if (!c || !eventOk(root) || root === event) return c;
+  return { ...c, "m.relates_to": { rel_type: "m.thread", event_id: root, is_falling_back: true, "m.in_reply_to": { event_id: eventOk(event) ? event : root } } };
+}
+
 const utf8 = new TextEncoder();
 /** '$' + 1..254 more UTF-8 bytes, no control or white-space characters. */
 export function eventOk(e: unknown): e is string {

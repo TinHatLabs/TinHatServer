@@ -12,6 +12,7 @@ import { VOICE_MAX_MS, VOICE_WARN_LEFT_MS, clock } from "./core";
 import { LIVE_FRAMES } from "./recorder";
 import { cancelVoice, deleteVoice, sendVoice, startVoice, stopVoice, type VoiceDraft } from "./store";
 import { useVoiceDraft, useVoiceSupported } from "./wire";
+import { useNowPlaying } from "../lib/useNowPlaying";
 import s from "./VoiceRecorder.module.css";
 
 export const IN_CALL_TIP = "You're in a call — voice messages are off until you leave";
@@ -167,6 +168,7 @@ function LiveStrip({ recent, bars }: { recent: number[]; bars: number }) {
 
 function Review({ d, playRef, mobile, narrow }: { d: VoiceDraft; playRef: React.RefObject<HTMLButtonElement | null>; mobile?: boolean; narrow?: boolean }) {
   const audio = useRef<HTMLAudioElement>(null);
+  const npDraft = useNowPlaying("draft", audio); // QOL A00.1: the preview is one of the players too
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0); // seconds
   const dur = d.durationMs / 1000;
@@ -209,6 +211,7 @@ function Review({ d, playRef, mobile, narrow }: { d: VoiceDraft; playRef: React.
         {d.url && (
           <audio
             ref={audio}
+            {...npDraft}
             src={d.url}
             preload="auto"
             onPlay={() => setPlaying(true)}

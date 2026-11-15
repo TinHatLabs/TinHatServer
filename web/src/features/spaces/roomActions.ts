@@ -89,7 +89,7 @@ export async function setMemberPower(roomId: string, mxid: string, power: number
       await rl(() => sendPowerLevels(roomId, { ...cur, users }));
     });
   } catch (e) {
-    fail("change that power level", e);
+    fail("change their role", e);
   }
 }
 

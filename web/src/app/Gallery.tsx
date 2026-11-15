@@ -13,9 +13,13 @@
 //   #/__gallery/replica-tooltip the bug-button tooltip (ui-tooltip-bug)
 //   #/__gallery/startup         the Startup card (stage cycling; ?stage=N pins one)
 //   #/__gallery/actions         11.0 buttons: rows, button islands, the Ctrl+K palette (?q= / ?stage=)
+//   #/__gallery/roomlist        the room list over fixture rows (the room filter's browser check, GalleryRoomList.tsx)
 //   #/__gallery/theme-editor    the theme editor panel (THEMES-UI.md §13; ?theme=&mode=&query=&ops=)
 //   #/__gallery/theme-share     theme share cards + the Try bar (THEMES-UI.md §14; ?theme=&try=1)
+//   #/__gallery/gamebg          game art behind a stand-in conversation ("Match the game", ?art=&theme=&ff=mobile&bare=1)
+//   #/__gallery/ambience        a shared chat background + its effect over a stand-in conversation (docs/AMBIENCE.md)
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { GalleryRoomList } from "./GalleryRoomList";
 import {
   Avatar,
   BasicButton,
@@ -73,6 +77,8 @@ import { ActionsGallery } from "@/actions/ui/ActionsGallery";
 import { ThemeEditorPage, ThemeSharePage } from "./GalleryThemeEditor";
 import { BannerStripView } from "./Banners";
 import { GuestsGallery } from "@/features/guests/gallery";
+import { GameArtGallery } from "./GalleryGameArt";
+import { AmbienceGallery } from "./GalleryAmbience";
 import s from "./Gallery.module.css";
 
 export function Gallery({ section }: { section?: string }) {
@@ -97,10 +103,16 @@ export function Gallery({ section }: { section?: string }) {
       return <MobilePage />;
     case "actions":
       return <ActionsGallery />;
+    case "roomlist":
+      return <GalleryRoomList />;
     case "theme-editor":
       return <ThemeEditorPage />;
     case "theme-share":
       return <ThemeSharePage />;
+    case "gamebg":
+      return <GameArtGallery />;
+    case "ambience":
+      return <AmbienceGallery />;
     case "guests":
       return <GuestsGallery />;
     default:

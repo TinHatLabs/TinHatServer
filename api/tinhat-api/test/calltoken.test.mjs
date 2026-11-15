@@ -369,8 +369,12 @@ test("caches_a_sign_in_up_to_a_minute_and_never_a_member_list", async () => {
 });
 
 test("rate_limits_per_caller_address", async () => {
-    const { post } = setup();
-    for (let i = 0; i < CALLTOKEN.PER_CLIENT_PER_MIN; i++) assert.equal((await post("/sfu/get", legacy(ROOM, "at"), { ip: "2001:db8:1:2::5" })).statusCode, 200);
+    const { s, post } = setup();
+    // (0.3.17: one account may use PER_ACCOUNT_AT_CLIENT_MIN of an address's allowance, so two members fill it here)
+    s.rooms[ROOM].push(BOB);
+    const half = CALLTOKEN.PER_ACCOUNT_AT_CLIENT_MIN;
+    for (let i = 0; i < half; i++) assert.equal((await post("/sfu/get", legacy(ROOM, "at"), { ip: "2001:db8:1:2::5" })).statusCode, 200);
+    for (let i = half; i < CALLTOKEN.PER_CLIENT_PER_MIN; i++) assert.equal((await post("/sfu/get", legacy(ROOM, "ab"), { ip: "2001:db8:1:2::6" })).statusCode, 200);
     const r = await post("/sfu/get", legacy(ROOM, "at"), { ip: "2001:db8:1:2::99" });
     assert.equal(r.statusCode, 429, "the same /64");
     assert.equal(r.headers["retry-after"], "10");
@@ -608,4 +612,213 @@ test("Step B review r4 P1 #3: with the Pad state unusable a normal token carries
         assert.equal(r.statusCode, 200);
         assert.deepEqual(JSON.parse(Buffer.from(r.body.jwt.split(".")[1], "base64url")).video.canPublishSources, ["camera", "screen_share", "screen_share_audio"]);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+// ---- 0.3.17: sign-in lookups counted per resolved account too (launch-gate 2026-11-12, assembly-0316's Astra r2) ----------
+// The shared budget (LOOKUPS_GLOBAL_MIN) and a shared address's allowance are for everyone: one account (many OpenID
+// tokens, many addresses) or one member behind a shared NAT must get the 429, never the others.
+const ACCOUNT_LOOKUPS = CALLTOKEN.LOOKUPS_PER_ACCOUNT_MIN ?? 60;
+const userinfoCalls = (hsCalls) => hsCalls.filter((p) => p.includes("/openid/userinfo")).length;
+
+test("LA1 one account minting many sign-ins (each from another /64) can't drain the shared lookup budget", async () => {
+    const { s, post, hsCalls } = setup();
+    s.rooms[ROOM].push(BOB);
+    let ok = 0, own429 = 0;
+    for (let i = 0; i < CALLTOKEN.LOOKUPS_GLOBAL_MIN + 50; i++) {
+        s.local[`am${i}`] = ALICE;
+        const r = await post("/sfu/get", legacy(ROOM, `am${i}`), { ip: `2001:db8:${(i + 1).toString(16)}::1` });
+        if (r.statusCode === 200) ok++;
+        else if (r.statusCode === 429 && /this account/.test(r.body?.error || "")) own429++;
+    }
+    assert.ok(ok <= ACCOUNT_LOOKUPS, `ALICE got ${ok} tokens from fresh sign-ins in a minute (her lookups: ${ACCOUNT_LOOKUPS})`);
+    assert.ok(own429 > 0, "the 429s name her account");
+    const b = await post("/sfu/get", legacy(ROOM, "ab"), { ip: "192.0.2.77" });
+    assert.equal(b.statusCode, 200, `BOB's first sign-in in the same minute: ${b.statusCode} ${JSON.stringify(b.body)}`);
+    const g = await post("/sfu/get", legacy(ROOM, "ag"), { ip: "198.51.100.200" });
+    assert.equal(g.statusCode, 200, "and a guest's");
+    assert.ok(userinfoCalls(hsCalls) >= 2, "they were looked up");
+});
+
+test("LA2 a sign-in already known to be an account's that is over its lookups is refused before Synapse is asked", async () => {
+    const { s, post, hsCalls, now } = setup();
+    const short = (tok) => ({ ...legacy(ROOM, tok), openid_token: { ...legacy(ROOM, tok).openid_token, expires_in: 1 } });
+    for (let i = 0; i < ACCOUNT_LOOKUPS + 5; i++) {
+        s.local[`am${i}`] = ALICE;
+        await post("/sfu/get", short(`am${i}`), { ip: `2001:db8:${(i + 1).toString(16)}::1` });
+    }
+    now.advance(2_000);                                 // am0's answer (kept 1 s) has run out: it would be looked up again
+    const before = userinfoCalls(hsCalls);
+    const r = await post("/sfu/get", short("am0"), { ip: "2001:db8:ffff::1" });
+    assert.equal(r.statusCode, 429, `${r.statusCode} ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error, /this account/);
+    assert.equal(userinfoCalls(hsCalls), before, "Synapse wasn't asked");
+});
+
+test("LB1 a member flooding from a shared address (one sign-in) doesn't starve the others behind it", async () => {
+    const { s, post } = setup();
+    s.rooms[ROOM].push(BOB);
+    const NAT = "198.51.100.7";
+    let own429 = 0;
+    for (let i = 0; i < CALLTOKEN.PER_CLIENT_PER_MIN + 80; i++) {
+        const r = await post("/sfu/get", legacy(ROOM, "at"), { ip: NAT });
+        if (r.statusCode === 429) { own429++; assert.match(r.body.error, /this account/, "a 429 for ALICE's account, not the address"); }
+    }
+    assert.ok(own429 > 0, "ALICE is limited");
+    const b = await post("/sfu/get", legacy(ROOM, "ab"), { ip: NAT });
+    assert.equal(b.statusCode, 200, `BOB behind the same address: ${b.statusCode} ${JSON.stringify(b.body)}`);
+    assert.equal((await post("/sfu/get", legacy(ROOM, "ag"), { ip: NAT })).statusCode, 200, "and a guest behind it");
+});
+
+test("LB2 a member minting sign-ins behind a shared address doesn't use up its lookups", async () => {
+    const { s, post } = setup();
+    s.rooms[ROOM].push(BOB);
+    const NAT = "198.51.100.8";
+    for (let i = 0; i < CALLTOKEN.LOOKUPS_PER_CLIENT_MIN + 30; i++) {
+        s.local[`am${i}`] = ALICE;
+        await post("/sfu/get", legacy(ROOM, `am${i}`), { ip: NAT });
+    }
+    const b = await post("/sfu/get", legacy(ROOM, "ab"), { ip: NAT });
+    assert.equal(b.statusCode, 200, `BOB's first sign-in behind the same address: ${b.statusCode} ${JSON.stringify(b.body)}`);
+});
+
+test("LC1 the address limit still holds: tokens nobody's account answers for, and several accounts together", async () => {
+    const { s, post } = setup();
+    s.rooms[ROOM].push(BOB);
+    const ip = "2001:db8:7:7::1";
+    const half = Math.floor(CALLTOKEN.PER_CLIENT_PER_MIN / 2);
+    for (let i = 0; i < half; i++) assert.equal((await post("/sfu/get", legacy(ROOM, "at"), { ip })).statusCode, 200);
+    for (let i = 0; i < CALLTOKEN.PER_CLIENT_PER_MIN - half; i++) assert.equal((await post("/sfu/get", legacy(ROOM, "ab"), { ip: "2001:db8:7:7::2" })).statusCode, 200);
+    const r = await post("/sfu/get", legacy(ROOM, "ag"), { ip: "2001:db8:7:7::99" });
+    assert.equal(r.statusCode, 429, "the /64's allowance is spent by two members");
+    assert.doesNotMatch(r.body.error, /this account/, "an address 429");
+    // unknown tokens: the address's own lookups (sign_in_lookups_have_their_own_budget) are unchanged
+});
+
+// ---- review round 1 of the per-account lookups (Astra): each case its own test --------------------------------------
+test("LR1 one account behind ONE address minting thousands of sign-ins: only that address waits, never anyone elsewhere", async () => {
+    const { s, post, hsCalls } = setup();
+    s.rooms[ROOM].push(BOB);
+    const NAT = "198.51.100.30";
+    for (let i = 0; i < CALLTOKEN.LOOKUPS_CEILING_MIN + 10; i++) { s.local[`an${i}`] = ALICE; await post("/sfu/get", legacy(ROOM, `an${i}`), { ip: NAT }); }
+    assert.ok(userinfoCalls(hsCalls) <= ACCOUNT_LOOKUPS + CALLTOKEN.LOOKUPS_PER_CLIENT_MIN + 2, `${userinfoCalls(hsCalls)} lookups from one address in a minute`);
+    const b = await post("/sfu/get", legacy(ROOM, "ab"), { ip: "192.0.2.78" });
+    assert.equal(b.statusCode, 200, `BOB elsewhere: ${b.statusCode} ${JSON.stringify(b.body)}`);
+});
+
+test("LR2 a give-back takes back exactly its own count (another request's stays counted across the window's edge)", async () => {
+    const { RateLimit } = await import("../reachcommon.mjs");
+    const now = clock(0);
+    const rl = new RateLimit(2, 60_000, now);
+    const mine = rl.take("k");            // t = 0: will be given back late
+    now.advance(1_000);
+    const other = rl.take("k");           // t = 1 s: stays
+    assert.ok(mine !== null && other !== null);
+    now.advance(1_000);
+    rl.undo("k", mine);                   // t = 2 s: the give-back of the t = 0 one
+    now.advance(58_500);                  // t = 60.5 s: the t = 1 s count must still be there
+    assert.equal(rl.take("k") !== null, true, "one free place");
+    assert.equal(rl.take("k"), null, "the other request's count is still in the window");
+});
+
+test("LR4 a remote server that later names someone else for a remembered sign-in: that account's lookups count", async () => {
+    const { s, post, fedCalls, now } = setup();
+    s.rooms[ROOM].push(RB2);
+    const short = (tok) => ({ ...legacy(ROOM, tok, "other.test"), openid_token: { ...legacy(ROOM, tok, "other.test").openid_token, expires_in: 1 } });
+    for (let i = 0; i < ACCOUNT_LOOKUPS + 5; i++) { s.remote[`rx${i}`] = `@x${i}:other.test`; await post("/sfu/get", short(`rx${i}`), { ip: `2001:db8:b${(i + 1).toString(16)}::1` }); }
+    for (let i = 0; i < ACCOUNT_LOOKUPS + 5; i++) s.remote[`rx${i}`] = RB2;     // the same sign-ins now said to be RB2's
+    now.advance(2_000);
+    let ok = 0;
+    for (let i = 0; i < ACCOUNT_LOOKUPS + 5; i++) if ((await post("/sfu/get", short(`rx${i}`), { ip: `2001:db8:c${(i + 1).toString(16)}::1` })).statusCode === 200) ok++;
+    assert.ok(ok <= ACCOUNT_LOOKUPS, `${ok} tokens for RB2 from re-checked sign-ins in a minute (${fedCalls.length} remote lookups)`);
+});
+
+// ---- review round 2 of the per-account lookups (Astra) ------------------------------------------------------------
+test("LR5 one caller's own 429 (its share of ITS address) is never handed to another caller sharing the lookup", async () => {
+    const { s, post, now } = setup();
+    const short = (tok) => ({ ...legacy(ROOM, tok), openid_token: { ...legacy(ROOM, tok).openid_token, expires_in: 1 } });
+    for (let i = 0; i < CALLTOKEN.PER_ACCOUNT_AT_CLIENT_MIN; i++) assert.equal((await post("/sfu/get", short("at"), { ip: "198.51.100.40" })).statusCode, 200);
+    now.advance(1_500);                                          // her answer ran out: the next request looks up again
+    const [a, b] = await Promise.all([post("/sfu/get", short("at"), { ip: "198.51.100.40" }), post("/sfu/get", short("at"), { ip: "192.0.2.41" })]);
+    assert.equal(a.statusCode, 429, "her own share of the first address is spent");
+    assert.equal(b.statusCode, 200, `the same sign-in from another address at the same moment: ${b.statusCode} ${JSON.stringify(b.body)}`);
+});
+
+test("LR6 a known sign-in that is refused now gives its account's lookup back (and is forgotten)", async () => {
+    const { s, post, now } = setup();
+    const short = (tok) => ({ ...legacy(ROOM, tok), openid_token: { ...legacy(ROOM, tok).openid_token, expires_in: 1 } });
+    const half = Math.floor(ACCOUNT_LOOKUPS / 2);
+    for (let i = 0; i < half; i++) { s.local[`ao${i}`] = ALICE; await post("/sfu/get", short(`ao${i}`), { ip: `2001:db8:d${(i + 1).toString(16)}::1` }); }
+    for (let i = 0; i < half; i++) delete s.local[`ao${i}`];    // signed out: Synapse now refuses them
+    now.advance(10_500);                                         // past the 1 s answers and the 10 s refusal cache
+    for (let i = 0; i < half; i++) assert.equal((await post("/sfu/get", short(`ao${i}`), { ip: `2001:db8:e${(i + 1).toString(16)}::1` })).statusCode, 401);
+    s.local.afresh = ALICE;
+    const r = await post("/sfu/get", legacy(ROOM, "afresh"), { ip: "192.0.2.42" });
+    assert.equal(r.statusCode, 200, `her fresh sign-in: ${r.statusCode} ${JSON.stringify(r.body)}`);
+});
+
+test("LR7 another server re-naming remembered sign-ins can't take its lookups past ONE address's bound", async () => {
+    const { s, post, fedCalls, now } = setup();
+    s.rooms[ROOM].push(RB2);
+    const short = (tok) => ({ ...legacy(ROOM, tok, "other.test"), openid_token: { ...legacy(ROOM, tok, "other.test").openid_token, expires_in: 1 } });
+    const N = 300;
+    for (let i = 0; i < N; i++) { s.remote[`ry${i}`] = `@y${i}:other.test`; await post("/sfu/get", short(`ry${i}`), { ip: `2001:db8:f${(i + 1).toString(16)}::1` }); }
+    for (let i = 0; i < N; i++) s.remote[`ry${i}`] = RB2;
+    now.advance(2_000);
+    const before = fedCalls.length;
+    for (let i = 0; i < N; i++) await post("/sfu/get", short(`ry${i}`), { ip: "198.51.100.43" });
+    const n = fedCalls.length - before;
+    // another server's sign-ins never count among the address's members (only this server's accounts do): its own 120
+    assert.ok(n <= CALLTOKEN.LOOKUPS_PER_CLIENT_MIN + 2, `${n} lookups of that server's sign-ins from one address in a minute`);
+});
+
+test("LR8 refused remembered sign-ins from one address (owner's switch off) stop at the address + account bound (Astra r3)", async () => {
+    const { s, post, hsCalls, now } = setup({ enabled: false });
+    const short = (tok) => ({ ...legacy(ROOM, tok), openid_token: { ...legacy(ROOM, tok).openid_token, expires_in: 1 } });
+    const N = CALLTOKEN.LOOKUPS_GLOBAL_MIN;
+    for (let i = 0; i < N; i++) {                                  // primed over ten minutes, within her lookups
+        if (i && i % ACCOUNT_LOOKUPS === 0) now.advance(61_000);
+        s.local[`ap${i}`] = ALICE;
+        await post("/sfu/get", short(`ap${i}`), { ip: `2001:db8:9${(i % 4000).toString(16)}::1` });
+    }
+    for (let i = 0; i < N; i++) delete s.local[`ap${i}`];         // all refused now
+    now.advance(61_000);
+    const before = userinfoCalls(hsCalls);
+    for (let i = 0; i < N; i++) await post("/sfu/get", short(`ap${i}`), { ip: "198.51.100.44" });
+    const n = userinfoCalls(hsCalls) - before;
+    assert.ok(n <= CALLTOKEN.LOOKUPS_PER_CLIENT_MIN + ACCOUNT_LOOKUPS + 2, `${n} lookups from one address in a minute`);
+    s.local.bobx = BOB; s.rooms[ROOM].push(BOB);
+    const b = await post("/sfu/get", legacy(ROOM, "bobx"), { ip: "192.0.2.79" });
+    assert.equal(b.statusCode, 200, `BOB elsewhere: ${b.statusCode} ${JSON.stringify(b.body)}`);
+});
+
+test("LR9 another server naming a new account for every sign-in from one address: still that address's bound (Astra r4)", async () => {
+    const { s, post, fedCalls } = setup({ enabled: false });
+    const N = CALLTOKEN.LOOKUPS_GLOBAL_MIN;
+    for (let i = 0; i < N; i++) { s.remote[`rz${i}`] = `@z${i}:other.test`; await post("/sfu/get", legacy(ROOM, `rz${i}`, "other.test"), { ip: "198.51.100.45" }); }
+    assert.ok(fedCalls.length <= CALLTOKEN.LOOKUPS_PER_CLIENT_MIN + 1, `${fedCalls.length} lookups of another server's sign-ins from one address in a minute`);
+    s.rooms[ROOM].push(BOB);
+    const b = await post("/sfu/get", legacy(ROOM, "ab"), { ip: "192.0.2.80" });
+    assert.equal(b.statusCode, 200, `BOB elsewhere: ${b.statusCode} ${JSON.stringify(b.body)}`);
+});
+
+test("LR10 several of this server's accounts behind ONE address: at most the address's two counts, never the shared budget (Astra r5)", async () => {
+    const { s, post, hsCalls } = setup({ enabled: false });
+    for (let u = 0; u < 10; u++) for (let i = 0; i < ACCOUNT_LOOKUPS; i++) { s.local[`sy${u}x${i}`] = `@sy${u}:${SN}`; await post("/sfu/get", legacy(ROOM, `sy${u}x${i}`), { ip: "198.51.100.46" }); }
+    const n = userinfoCalls(hsCalls);
+    assert.ok(n <= CALLTOKEN.LOOKUPS_PER_CLIENT_MIN + (CALLTOKEN.LOOKUPS_MEMBERS_PER_CLIENT_MIN ?? 0) + 2, `${n} lookups from one address in a minute`);
+    s.rooms[ROOM].push(BOB);
+    const b = await post("/sfu/get", legacy(ROOM, "ab"), { ip: "192.0.2.81" });
+    assert.equal(b.statusCode, 200, `BOB elsewhere: ${b.statusCode} ${JSON.stringify(b.body)}`);
+});
+
+test("LR11 a known sign-in past its account's share of THIS address is refused before Synapse is asked", async () => {
+    const { s, post, hsCalls, now } = setup();
+    const short = (tok) => ({ ...legacy(ROOM, tok), openid_token: { ...legacy(ROOM, tok).openid_token, expires_in: 1 } });
+    for (let i = 0; i < CALLTOKEN.PER_ACCOUNT_AT_CLIENT_MIN; i++) assert.equal((await post("/sfu/get", short("at"), { ip: "198.51.100.47" })).statusCode, 200);
+    now.advance(1_500);
+    const before = userinfoCalls(hsCalls);
+    const r = await post("/sfu/get", short("at"), { ip: "198.51.100.47" });
+    assert.equal(r.statusCode, 429);
+    assert.match(r.body.error, /this account/);
+    assert.equal(userinfoCalls(hsCalls), before, "Synapse wasn't asked");
 });

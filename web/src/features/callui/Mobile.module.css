@@ -190,3 +190,49 @@
   color: var(--th-call-status-bar-rec-fg);
   font-weight: 700;
 }
+
+/* A37.4 landscape auto-hide (Mobile.tsx): with a share or a camera on the stage of a phone on its side, the top bar
+   (with the banners under it) and the call bar float over the tiles, so the picture gets the whole height, and hide
+   after a few seconds without a touch. Otherwise the head is just part of the stage's column (display: contents). */
+.headFlow {
+  display: contents;
+}
+.head {
+  position: absolute;
+  z-index: 3;
+  top: var(--th-safe-top);
+  left: var(--th-safe-left);
+  right: var(--th-safe-right);
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+.head > * {
+  pointer-events: auto;
+}
+.head > .hideUp {
+  pointer-events: none;
+}
+.head > .top {
+  background: var(--th-callbar-mobile-bg);
+}
+/* hidden: the whole head (its banners and the now-playing strip too), not just the top bar */
+.headHidden {
+  opacity: 0;
+  transition: opacity var(--th-dur-slow) linear;
+}
+.headHidden,
+.headHidden * {
+  pointer-events: none !important;
+}
+/* the tiles' own buttons (z-index 5) stay under the floating head and bar */
+.overlay .scroller {
+  isolation: isolate;
+}
+.overlay .bar {
+  position: absolute;
+  left: var(--th-safe-left);
+  right: var(--th-safe-right);
+  bottom: 0;
+  z-index: 3;
+}

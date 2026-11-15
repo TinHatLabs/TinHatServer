@@ -8,14 +8,14 @@ import { Button } from "@/ui";
 import { closeSettings } from "@/features/settings";
 import { Buttons, NoteRow, Row, Section } from "@/features/settings/rows";
 import { EXPLAIN, GUESTS_TYPE, PANE_LABEL, WORDS, localRole, mergeRole, panePlan, parseGuestState, type PaneButton, type PanePlan } from "./model";
-import { copyGuestLink, newGuestLink, openGuestsRoom, refreshGuests, turnGuestRoomOff, turnGuestRoomOn, useGuests } from "./store";
+import { copyGuestLink, openGuestsRoom, refreshGuests, turnGuestRoomOn, useGuests } from "./store";
+import { useGuestConfirm } from "./GuestConfirm";
 import s from "./Guests.module.css";
 
-const RUN: Readonly<Record<PaneButton, () => Promise<unknown>>> = {
+// P10: Turn off / New link ask first (GuestConfirm.tsx)
+const RUN: Readonly<Record<Exclude<PaneButton, "turnOff" | "newLink">, () => Promise<unknown>>> = {
   turnOn: turnGuestRoomOn,
-  turnOff: turnGuestRoomOff,
   copy: copyGuestLink,
-  newLink: newGuestLink,
   open: async () => {
     if (await openGuestsRoom()) closeSettings();
   },
@@ -28,6 +28,7 @@ export function GuestsPane() {
   const state = parseGuestState(useRoomState(room, GUESTS_TYPE));
   const powerLevels = useRoomState(room, "m.room.power_levels");
   const membership = useRoomState(room, "m.room.member", me)?.membership;
+  const confirm = useGuestConfirm(room);
   useEffect(() => {
     void refreshGuests();
   }, []);
@@ -41,10 +42,11 @@ export function GuestsPane() {
   else {
     const doc = state ? { ...st.doc, on: state.on } : st.doc;
     const role = mergeRole(localRole({ userId: me, membership: typeof membership === "string" ? membership : null, powerLevels }), st.doc);
-    body = <GuestsPaneBody plan={panePlan(doc, role)} link={doc.link} busy={st.busy} onButton={(b) => void RUN[b]()} />;
+    body = <GuestsPaneBody plan={panePlan(doc, role)} link={doc.link} busy={st.busy} onButton={(b) => (b === "turnOff" ? confirm.ask("off") : b === "newLink" ? confirm.ask("link") : void RUN[b]())} />;
   }
   return (
     <Section title="Guest room" hint={EXPLAIN}>
+      {confirm.dialog}
       {body}
     </Section>
   );

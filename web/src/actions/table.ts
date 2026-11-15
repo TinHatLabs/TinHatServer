@@ -206,6 +206,9 @@ export interface PaletteSpec {
   boosts: { unread: number; dm: number };
   /** inclusive code-point ranges that separate words */
   separators: [number, number][];
+  /** accent folding (ACTIONS.md §10.3, 2026-11-14): code-point ranges dropped (combining marks) and lower-case letters
+   *  written as their base letters ("é" → "e", "ß" → "ss") */
+  fold: { drop: [number, number][]; letters: Record<string, string> };
   texts: {
     placeholder: string;
     pickPlaceholder: string;
@@ -213,6 +216,12 @@ export interface PaletteSpec {
     emptyRooms: string;
     /** an invite row's marker ("Invited", the room list's pill word; ACTIONS.md §10.7) */
     inviteMarker: string;
+    /** person mode's last row: "Find people named "{query}"…" (opens New DM with the query, ACTIONS.md §10.5) */
+    findPeople: string;
+    /** stage 2 with nothing to pick */
+    emptyStage: string;
+    /** the hint under an empty field: the prefixes */
+    tip: string;
     sections: Record<string, string>;
   };
 }

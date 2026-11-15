@@ -32,6 +32,11 @@
   cursor: default;
 }
 /* the Basic background Rectangle sits 1 px inside the item */
+/* a disabled row reads as disabled (the desktop's menus grey it; the ☰ Particles rows depend on it, round 4) */
+.item[data-disabled] {
+  color: var(--th-text-disabled);
+  cursor: default;
+}
 .item::before {
   content: "";
   position: absolute;

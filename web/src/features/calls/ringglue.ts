@@ -56,6 +56,15 @@ export function declineOutcome(ev: unknown, ctx: DeclineCtx): DeclineOutcome {
   return ctx.inCallHere && ctx.ownRings.includes(ring) ? "declined" : "none";
 }
 
+/** P8 (2026-11-13): the ring a Decline names (desktop ringglue.rs `decline_ring`, the vectors' `pick`): in a two-person
+ *  room the newest of the others' live ring ids (`ringSets().live`, event order) that is a valid ring id; else null — a
+ *  group call has no single caller to tell, so its card offers Dismiss only. */
+export function declineRing(live: readonly string[], dm: boolean): string | null {
+  if (!dm) return null;
+  for (let i = live.length - 1; i >= 0; i--) if (ringIdOk(live[i])) return live[i];
+  return null;
+}
+
 /** How long "<name> declined" stays on screen (ms; desktop ringglue.rs DECLINED_SHOWN_MS, the vectors'
  *  `declinedShownMs`). Transient for people; gates read the `[callwatch] ring in … declined by …` log line or
  *  `<html data-th-declined>` (tools/README-gates.md), which stay. */

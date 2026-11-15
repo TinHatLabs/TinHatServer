@@ -20,12 +20,15 @@ export interface RoomTimeline {
   version: number;
   /** the room object has been seen (false = not joined / unknown) */
   known: boolean;
+  /** A35.5: bumps on a read receipt alone — the events didn't change, so `version` / `events` stay (no re-copy of
+   *  the timeline, no row rebuild); only what shows receipts reads this */
+  receiptsVersion: number;
 }
 
 export function useRoomTimeline(roomId: string | null | undefined): RoomTimeline {
   const client = useClient();
   const [, force] = useState(0);
-  const st = useRef({ version: 0, loadingBack: false, events: [] as MatrixEvent[], canBack: true, roomId: undefined as string | null | undefined, known: false });
+  const st = useRef({ version: 0, receiptsVersion: 0, loadingBack: false, events: [] as MatrixEvent[], canBack: true, roomId: undefined as string | null | undefined, known: false });
 
   const snapshot = useCallback(() => {
     const room = roomId ? peekClient()?.getRoom(roomId) : null;
@@ -75,8 +78,20 @@ export function useRoomTimeline(roomId: string | null | undefined): RoomTimeline
     const onRoom = (r: Room | undefined) => {
       if (r?.roomId === roomId) bump();
     };
+    // A35.5: a receipt moves no event — it re-renders the "Seen by" faces only (it used to re-copy the whole timeline
+    // and rebuild every row, once per receipt in a busy room)
+    let rScheduled = false;
+    const bumpReceipts = () => {
+      if (rScheduled) return;
+      rScheduled = true;
+      queueMicrotask(() => {
+        rScheduled = false;
+        st.current.receiptsVersion++;
+        force((n) => n + 1);
+      });
+    };
     const onReceipt = (_e: unknown, room: Room) => {
-      if (room?.roomId === roomId) bump();
+      if (room?.roomId === roomId) bumpReceipts();
     };
     c.on(RoomEvent.Timeline, onRoomArg);
     c.on(RoomEvent.TimelineReset, onRoom);
@@ -143,5 +158,6 @@ export function useRoomTimeline(roomId: string | null | undefined): RoomTimeline
     paginate,
     version: st.current.version,
     known: st.current.known,
+    receiptsVersion: st.current.receiptsVersion,
   };
 }

@@ -3,9 +3,10 @@
 // phase-1 stub has only the shell block), each accessor falls back to the same native pref key the
 // engine persists (calls-engine.md §3.17) and to a local device enumeration + mic level monitor,
 // so the panes work stand-alone and hand over to the engine transparently.
+import { meterWhyOf } from "./meterHint";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useCallStore } from "@/features/calls";
+import { useCallStore, probeNoiseSuppression } from "@/features/calls";
 import type { CallStore, Dev } from "@/features/calls/contract";
 import { getPref, setPref, usePref } from "@/core/prefs";
 import { createLogger } from "@/core/log";
@@ -122,6 +123,14 @@ export function sameDev(d: Dev, sel: string): boolean {
   return !!sel && (d.id === sel || d.name === sel);
 }
 
+/** A13.3 (2026-11-13; the desktop's SettingsWindow withSaved): a saved device that isn't plugged in stays in the list as
+ *  itself, so the box doesn't show "System default" as if that were the choice. */
+export const SAVED_MISSING_LABEL = "Your saved device (not connected)";
+export function withSaved(list: Dev[], saved: string): Dev[] {
+  if (!saved || list.some((d) => sameDev(d, saved))) return list;
+  return [...list, { id: saved, name: SAVED_MISSING_LABEL }];
+}
+
 export function refreshDeviceLists(): void {
   const a = act("refreshInputs");
   act("refreshOutputs");
@@ -144,6 +153,14 @@ export function setCamera(id: string): void {
 export const canPickOutput: boolean = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
 
 // ---- mic DSP / PTT / quality (engine or pref) ------------------------------------------------
+
+/** The RNNoise probe for a view that shows "Strong (not available)" — only while it is on screen (`active`): the noise
+ *  sheet is mounted all the time and renders nothing while closed. */
+export function useNcProbe(active: boolean): void {
+  useEffect(() => {
+    if (active) probeNoiseSuppression();
+  }, [active]);
+}
 
 export function useMicDsp() {
   const e = useEngineSel((x) => ({
@@ -259,7 +276,7 @@ const localMon: LocalMon = { running: false, wanted: false, level: 0, pre: 0, st
 let localMonStop: (() => void) | null = null;
 const monListeners = new Set<() => void>();
 const emitMon = () => monListeners.forEach((l) => l());
-let monSnap = { running: false, level: 0, pre: 0 };
+let monSnap: { running: boolean; level: number; pre: number; why?: string } = { running: false, level: 0, pre: 0 };
 
 function rms(an: AnalyserNode, buf: Float32Array<ArrayBuffer>): number {
   an.getFloatTimeDomainData(buf);
@@ -356,7 +373,7 @@ async function startLocalMonitor(): Promise<void> {
   } catch (e) {
     log.info("mic monitor could not start", (e as Error)?.message ?? e);
     localMon.running = false;
-    monSnap = { running: false, level: 0, pre: 0 };
+    monSnap = { running: false, level: 0, pre: 0, why: meterWhyOf(e) }; // A13.2
     emitMon();
   } finally {
     lease.done();
@@ -406,6 +423,13 @@ function useLocalMon() {
 const engineHasMon = () => typeof engine().startMicMonitor === "function";
 
 /** Is the mic monitor delivering? (engine: !micSilent; else the local monitor). Changes rarely. */
+/** A13.0/A13.2: why the meter shows nothing ("" = unknown: reads as no signal; settings/meterHint.ts) */
+export function useMicMonitorWhy(): string {
+  const why = useEngineSel((x) => ({ why: String((x as { micMonitorWhy?: string }).micMonitorWhy ?? ""), has: typeof x.startMicMonitor === "function" }));
+  const local = useLocalMon();
+  return why.has ? why.why : (local.why ?? "");
+}
+
 export function useMicRunning(): boolean {
   const silent = useEngineSel((x) => ({ micSilent: !!x.micSilent, has: typeof x.startMicMonitor === "function" }));
   const local = useLocalMon();

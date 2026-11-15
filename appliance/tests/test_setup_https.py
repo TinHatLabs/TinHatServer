@@ -99,6 +99,19 @@ class Certificate(Real):
             self.assertEqual(setuptls.ensure(), fp, "kept: install.sh printed this one")
         self.assertEqual(setuptls.short(fp), f"{fp[:11]} ... {fp[-11:]}")
 
+    def test_passes_apple_rules(self):
+        """A phone opens the setup page over this certificate too: it must pass Apple's TLS rules
+        (build/cert-apple-check.py; the other generators: test_cert_apple_rules)."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cert_apple_check",
+                                                      pathlib.Path(__file__).resolve().parents[2] / "build" /
+                                                      "cert-apple-check.py")
+        check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check)
+        with mock.patch.dict(sys.modules, REAL):
+            self.assertIsNotNone(setuptls.ensure())
+        self.assertEqual(check.check_file(str(setuptls.CERT)), [])
+
     def test_no_openssl_no_private_page(self):
         with mock.patch.object(setuptls.shutil, "which", lambda n: None):
             self.assertIsNone(setuptls.ensure())

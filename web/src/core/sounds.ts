@@ -491,6 +491,11 @@ export function isPreviewing(file: string): boolean {
 }
 
 /** Incoming-call ringtone; loops until stopRing() (the toast bounds it). */
+/** D06.1 (2026-11-13): can a UI sound play now? false before the page's first gesture (the browser drops it). */
+export function soundsUnlocked(): boolean {
+  return gestured;
+}
+
 export function startRing(): void {
   if (!sndOn("ring")) return;
   void play("ring", soundUrl(`ring${sndVariant("ring")}`), { loop: true });

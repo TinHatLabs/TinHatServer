@@ -8,7 +8,7 @@ import { ensureWritable, getStateAll, onClientChanged, peekClient, sendState } f
 import { createLogger } from "@/core/log";
 import { getCall, patch, useCallStore } from "./store";
 import { sess } from "./session";
-import { forceMicMuted, hooks, reconcileVideo, toggleCamera } from "./engine";
+import { forceMicMuted, hooks, pttHold, reconcileVideo, toggleCamera } from "./engine";
 import * as audio from "./audio";
 import { AFK_TYPE, errText, isRecorder, mxidOf } from "./util";
 
@@ -26,7 +26,10 @@ export function setAfk(on: boolean): void {
   if (st.localAfk === on) return;
   patch({ localAfk: on });
   if (on) {
-    afkMutedMic = !st.micMuted;
+    // BRB privacy (2026-11-13): going away ends a push-to-talk hold first, so a hold carried into BRB is not
+    // un-muted on the way back with the key long released (the desktop's AppCore AFK edge does the same)
+    if (st.pttSpeaking) pttHold(false); // away now: immediate (no release tail)
+    afkMutedMic = !getCall().micMuted;
     if (afkMutedMic) forceMicMuted(true);
     if (st.cameraOn) toggleCamera();
   } else {

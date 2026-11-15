@@ -11,7 +11,7 @@ import { getSession, onClientChanged, peekClient } from "@/core/matrix";
 import { openRoom, toast } from "@/core/bus";
 import { closeNotes, showNote } from "@/core/notes";
 import { getPref } from "@/core/prefs";
-import { playCallChime, playUiSound, setCallAudioSession, startRing, stopRing } from "@/core/sounds";
+import { playCallChime, playUiSound, setCallAudioSession, soundsUnlocked, startRing, stopRing } from "@/core/sounds";
 import { createLogger } from "@/core/log";
 import type { IncomingCall } from "./contract";
 import { getCall, patch, useCallStore } from "./store";
@@ -22,7 +22,9 @@ import { onMemberProbe } from "./memberprobe";
 import { LEGACY_MEMBER_TYPES, MEMBER_TYPE, avatarMxc, displayName, isRecorder, mxidOf } from "./util";
 import { answeredElsewhere, pruneAnnounced, shouldAnnounce } from "./alertrules";
 import { appRings, nativeCall, nativeCallIn, onNativeCall, onRingAnswer, ringInApp } from "@/features/native";
-import { CALL_DECLINE_TYPE, DECLINED_SHOWN_MS, declineOutcome, declinedText, ringSets } from "./ringglue";
+import { CALL_DECLINE_TYPE, DECLINED_SHOWN_MS, declineOutcome, declineRing, declinedText, ringSets } from "./ringglue";
+import { sendEvent } from "@/core/matrix";
+import { apiFetch } from "@/core/api";
 
 const log = createLogger("callwatch");
 
@@ -116,12 +118,15 @@ const notes = new Set<string>();
 function notify(call: IncomingCall) {
   if (getPref("notify.calls", "") === "0") return;
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-  if (document.visibilityState === "visible" && document.hasFocus()) return;
+  // D06.1 (2026-11-13): before the page's first tap the browser plays no sound (a phone that just opened Tin Hat rang
+  // silently): then the system notification is posted even on a focused page, and with its own sound
+  const mute = soundsUnlocked();
+  if (mute && document.visibilityState === "visible" && document.hasFocus()) return;
   const posted = showNote({
     title: `Incoming call · ${call.roomName}`,
     body: call.who ? `${call.who} started a call` : "Someone started a call",
     tag: `incoming-call:${call.roomId}`,
-    silent: true,
+    silent: mute,
     room: call.roomId,
   });
   if (posted) notes.add(call.roomId);
@@ -137,6 +142,34 @@ export function dismissIncoming(roomId: string): void {
   const cur = getCall().incomingCalls.filter((c) => c.roomId !== roomId);
   patch({ incomingCalls: cur });
   if (cur.length === 0) stopRinging();
+}
+
+/** P8 (2026-11-13): can this card be declined (a two-person room with the caller's live ring)? = the card shows Decline. */
+export function declinableRing(roomId: string): string | null {
+  const c = peekClient();
+  const me = c?.getUserId() ?? "";
+  const room = c?.getRoom(roomId);
+  if (!room || !me) return null;
+  return declineRing(ringIds(room, me).live, room.getJoinedMemberCount() === 2);
+}
+
+/**
+ * P8 (2026-11-13; RINGING.md §5): the card's Decline. The card and the ring go here at once; then the DM gets
+ * `dev.tinhat.call.decline {ring}` (encrypted in an encrypted DM: the caller sees "<name> declined", my other devices drop
+ * their card) and the server is told (`POST /push/ring/decline`: my phones stop ringing). A group call has no Decline
+ * (declinableRing null): then this is just Dismiss. Desktop: LoginController.declineIncoming (ringglue.rs).
+ */
+export function declineIncoming(roomId: string): void {
+  const ring = declinableRing(roomId);
+  dismissIncoming(roomId);
+  if (!ring) return;
+  log.info(`declined the ring in ${roomId} (ring ${ring})`);
+  void sendEvent(roomId, CALL_DECLINE_TYPE, { ring }).catch((e) => log.warn(`decline: the room event failed: ${String(e)}`));
+  void apiFetch("/push/ring/decline", { method: "POST", auth: true, json: { room: roomId, ring }, timeoutMs: 8_000 })
+    .then((r) => {
+      if (!r.ok) log.info(`decline: the server answered ${r.status} (older server or push off)`);
+    })
+    .catch(() => undefined);
 }
 
 /** The card's Join / Switch: stop the ring, drop the card, open the room, switchCall. */

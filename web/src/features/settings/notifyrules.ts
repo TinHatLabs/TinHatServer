@@ -4,7 +4,8 @@
 //
 //   • before the baseline (the first NETWORK sync, and again after a resume from suspension): seed silently;
 //   • a room already in the baseline fires on a RISE of its count (all → notification count, mentions →
-//     highlight count), never while muted or attended, at most once per 5 s per room;
+//     highlight count), never while muted or attended, at most once per 5 s per room — a rise held back by that gap
+//     (or by the global cap) is KEPT, and the engine re-scans at `wakeAt` so it gets one trailing alert (A03.0);
 //   • a mode change of a known room seeds silently (switching a busy room to All must not replay it);
 //   • a room that APPEARS after the baseline (a new DM, a room just joined) counts from 0 — its first message
 //     notifies (web review #16); a new DM is often filed in m.direct a moment after it appears (mentions → all):
@@ -47,10 +48,14 @@ export function pushCovers(o: { encrypted: boolean; mode: Mode; rule: RoomRule; 
 
 export const ROOM_GAP_MS = 5_000;
 export const FRESH_MS = 120_000;
+/** Global rate cap: at most CAP alerts per CAP_WINDOW_MS (the desktop's GLOBAL_CAP / GLOBAL_WINDOW). */
+export const CAP = 8;
+export const CAP_WINDOW_MS = 10_000;
 
 /** One room at one scan → its next state, and the rise that may fire (0 = nothing to say). The caller still
- *  applies the global cap; when it fires it stamps `lastFire` (and drops `fresh`) itself. */
-export function stepRoom(prev: RoomSeen | undefined, o: Observation, seeded: boolean, now: number): { next: RoomSeen; rise: number } {
+ *  applies the global cap; when it fires it stamps `lastFire` (and drops `fresh`) itself. A rise inside the room's
+ *  5 s gap is HELD (its count stays at the last alerted level) and `wakeAt` says when it may fire (A03.0). */
+export function stepRoom(prev: RoomSeen | undefined, o: Observation, seeded: boolean, now: number): { next: RoomSeen; rise: number; wakeAt?: number } {
   if (!seeded) return { next: { count: o.count, mode: o.mode, lastFire: prev?.lastFire ?? 0 }, rise: 0 };
   let base: RoomSeen;
   if (!prev) base = { count: 0, mode: o.mode, lastFire: 0, fresh: now };
@@ -62,6 +67,44 @@ export function stepRoom(prev: RoomSeen | undefined, o: Observation, seeded: boo
   if (next.fresh !== undefined && now - next.fresh >= FRESH_MS) delete next.fresh;
   const rise = o.count - base.count;
   if (rise <= 0 || o.mode === "mute" || o.attended) return { next, rise: 0 };
-  if (now - base.lastFire < ROOM_GAP_MS) return { next, rise: 0 };
+  if (now - base.lastFire < ROOM_GAP_MS) return { next: { ...next, count: base.count }, rise: 0, wakeAt: base.lastFire + ROOM_GAP_MS };
   return { next, rise };
+}
+
+/** One scan over every joined room (the shared vectors testvectors/notify-burst.json, the desktop's plan_fires_in):
+ *  steps each room, applies the global cap (a capped rise is held like a gapped one), stamps the fired rooms and
+ *  returns them in room order, plus the earliest time a held rise may fire (null = nothing held). Mutates `seen` and
+ *  `fireLog`. */
+export function planScan(
+  seen: Map<string, RoomSeen>,
+  rooms: ReadonlyArray<Observation & { id: string }>,
+  seeded: boolean,
+  now: number,
+  fireLog: number[],
+): { fires: Array<{ id: string; rise: number }>; wakeAt: number | null } {
+  const recent = fireLog.filter((t) => now - t < CAP_WINDOW_MS);
+  fireLog.length = 0;
+  fireLog.push(...recent);
+  const fires: Array<{ id: string; rise: number }> = [];
+  let wakeAt: number | null = null;
+  const wake = (t: number) => {
+    wakeAt = wakeAt === null ? t : Math.min(wakeAt, t);
+  };
+  for (const o of rooms) {
+    const { next, rise, wakeAt: w } = stepRoom(seen.get(o.id), o, seeded, now);
+    if (w !== undefined) wake(w);
+    if (rise > 0) {
+      if (fireLog.length < CAP) {
+        fireLog.push(now);
+        next.lastFire = now;
+        delete next.fresh;
+        fires.push({ id: o.id, rise });
+      } else {
+        next.count -= rise; // held: the next scan after the cap window measures from the last alerted level
+        wake(fireLog[0]! + CAP_WINDOW_MS);
+      }
+    }
+    seen.set(o.id, next);
+  }
+  return { fires, wakeAt };
 }

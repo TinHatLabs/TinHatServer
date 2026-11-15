@@ -185,6 +185,17 @@
   display: flex;
   gap: 8px;
 }
+/* the share picker's "Custom…" panel: label + choice, three rows, then the link to the full page */
+.quick {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 12px;
+  align-items: center;
+}
+.quickLbl {
+  color: var(--th-callbar-popover-fg);
+  white-space: nowrap;
+}
 .pillFlow {
   display: flex;
   flex-wrap: wrap;

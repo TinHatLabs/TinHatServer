@@ -30,6 +30,8 @@ import { navInDrawerNow, openDrawer, useDrawerStore } from "./ThNav";
 import { selectSpace, useNavStore, type RoomRow } from "./model";
 import { getCurrentRoom, openRoomId } from "./open";
 import { paletteRoomLists } from "./palettelists";
+import { paletteChoice } from "./paletteChoice";
+import { openNavDialog } from "./dialogs";
 import s from "./QuickSwitcher.module.css";
 
 /** Pick mode (THEMES-UI.md §14.5 "Share to a room…"): the same switcher with its own title and placeholder, the room
@@ -39,12 +41,14 @@ export interface RoomPick {
   placeholder: string;
   onPick: (roomId: string) => void;
 }
-const useQs = create<{ open: boolean; stage: string | null; n: number; pick: RoomPick | null }>()(() => ({ open: false, stage: null, n: 0, pick: null }));
+const useQs = create<{ open: boolean; stage: string | null; n: number; pick: RoomPick | null; query: string }>()(() => ({ open: false, stage: null, n: 0, pick: null, query: "" }));
 /** Open the palette (at stage 2 of an action that picks its target, when `stage` is given). */
-export const openQuickSwitcher = (stage?: string) => useQs.setState((st) => ({ open: true, stage: stage ?? null, n: st.n + 1, pick: null }));
-export const closeQuickSwitcher = () => useQs.setState({ open: false, stage: null, pick: null });
+export const openQuickSwitcher = (stage?: string) => useQs.setState((st) => ({ open: true, stage: stage ?? null, n: st.n + 1, pick: null, query: "" }));
+/** Open it with `query` already typed (the room filter's "Search everywhere", A10.3). */
+export const searchEverywhere = (query: string) => useQs.setState((st) => ({ open: true, stage: null, n: st.n + 1, pick: null, query: query.trim() }));
+export const closeQuickSwitcher = () => useQs.setState({ open: false, stage: null, pick: null, query: "" });
 /** Open it as a room picker. */
-export const pickRoom = (pick: RoomPick) => useQs.setState((st) => ({ open: true, stage: null, n: st.n + 1, pick }));
+export const pickRoom = (pick: RoomPick) => useQs.setState((st) => ({ open: true, stage: null, n: st.n + 1, pick, query: "" }));
 export const quickSwitcherOpen = () => useQs.getState().open;
 
 /** The palette's view of the room list (nav order), the pending invites (newest first) and the people it can find
@@ -96,7 +100,7 @@ function showInvite(roomId: string, mobile: boolean): void {
 }
 
 export function QuickSwitcherHost() {
-  const { open, stage, n, pick } = useQs();
+  const { open, stage, n, pick, query } = useQs();
   const session = useSession();
   useBus("openQuickSwitcher", () => {
     if (session.state === "ready") openQuickSwitcher();
@@ -139,14 +143,14 @@ export function QuickSwitcherHost() {
     };
     window.setTimeout(refocus, 0);
   };
-  return <QuickSwitcher key={n} initialStage={stage} pick={pick} onClose={close} />;
+  return <QuickSwitcher key={n} initialStage={stage} initialQuery={query} pick={pick} onClose={close} />;
 }
 
-function QuickSwitcher({ initialStage, pick, onClose }: { initialStage: string | null; pick: RoomPick | null; onClose: (refocusComposer?: boolean) => void }) {
+function QuickSwitcher({ initialStage, initialQuery, pick, onClose }: { initialStage: string | null; initialQuery: string; pick: RoomPick | null; onClose: (refocusComposer?: boolean) => void }) {
   const mobile = useIsMobile();
   const global = useNavStore((st) => st.globalRooms);
   const live = useActionsSnapshot();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [stage, setStage] = useState<string | null>(initialStage);
   const [cur, setCur] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
@@ -177,35 +181,35 @@ function QuickSwitcher({ initialStage, pick, onClose }: { initialStage: string |
   const stageAction = stage ? actionById(stage) : undefined;
   const T = TABLE.palette.texts;
   const choose = (it: PaletteItem | undefined) => {
-    if (!it || !it.enabled) return;
-    if (it.kind === "room") {
+    const c = paletteChoice(it, !!pick);
+    if (c.do === "openRoom" || c.do === "pickRoom") {
       onClose();
-      if (pick) pick.onPick(it.id);
-      else openRoomId(it.id);
-      return;
-    }
-    if (it.kind === "invite") {
+      if (c.do === "pickRoom" && pick) pick.onPick(c.id);
+      else openRoomId(c.id);
+    } else if (c.do === "showInvite") {
       // where it waits with Accept / Decline (showInvite, ACTIONS.md §14.3) — never accepted here
       onClose();
-      showInvite(it.id, mobile);
-      return;
-    }
-    if (it.kind === "person") {
+      showInvite(c.id, mobile);
+    } else if (c.do === "message") {
       onClose(false);
-      void runAction("person.message", { source: "palette", target: { person: it.id } });
-      return;
-    }
-    if (it.kind === "action" && it.pick) {
+      void runAction("person.message", { source: "palette", target: { person: c.person } });
+    } else if (c.do === "newDm") {
+      // P6: "Find people named …" — the people picker searches everyone, not only your DM partners
+      onClose(false);
+      openNavDialog({ kind: "newChat", mxid: c.text });
+    } else if (c.do === "stage") {
       // stage 2: pick the target here
-      setStage(it.id);
+      setStage(c.action);
       setQuery("");
-      return;
+    } else if (c.do === "run") {
+      onClose(false);
+      void runAction(c.action, { source: "palette", target: c.target });
     }
-    onClose(false);
-    if (it.a) void runAction(it.a, { source: "palette", target: it.kind === "choice" ? it.target : null });
   };
   const placeholder = pick ? pick.placeholder : stageAction ? T.pickPlaceholder.replace("{label}", stageAction.label) : T.placeholder;
-  const empty = query.trim() ? T.empty.replace("{query}", query.trim()) : stage ? T.empty.replace("{query}", "") : T.emptyRooms;
+  // A10.7: stage 2 with nothing to pick says so (never 'Nothing matches ""'); an empty field names the prefixes below
+  const empty = query.trim() ? T.empty.replace("{query}", query.trim()) : stage ? T.emptyStage : T.emptyRooms;
+  const showTip = !pick && !stage && !query.trim();
   return (
     <OverlayPortal>
       {!mobile && <div className={s.dim} />}
@@ -231,6 +235,9 @@ function QuickSwitcher({ initialStage, pick, onClose }: { initialStage: string |
             value={query}
             onValueChange={setQuery}
             onKeyDown={(e) => {
+              // 12.1.16 fix round (4-7): a key that ends or steers an input method's composition (Enter commits the
+              // candidate, the arrows pick one) is the IME's, never the palette's: it used to run the highlighted result
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === "ArrowDown") {
                 e.preventDefault();
                 setCur(Math.max(0, Math.min(results.length - 1, curIdx + 1)));
@@ -285,6 +292,7 @@ function QuickSwitcher({ initialStage, pick, onClose }: { initialStage: string |
           ))}
           {results.length === 0 && <div className={s.empty}>{empty}</div>}
         </div>
+        {showTip && <div className={s.tip}>{T.tip}</div>}
       </div>
     </OverlayPortal>
   );
@@ -296,6 +304,12 @@ function Lead({ it, room, size }: { it: PaletteItem; room: RoomRow | undefined; 
   // selfhost/firstrun item 6: the room list's colour (a room's id; a DM's person) and a person's own
   if (it.kind === "room" || it.kind === "invite") return <Avatar size={size} name={it.label} seed={avatarSeed(it.id, room?.dm ? room.peer : "")} imageSource={room?.avatar || null} />;
   if (it.kind === "person") return <Avatar size={size} name={it.label} seed={avatarSeed(it.id)} imageSource={null} />;
+  if (it.kind === "find")
+    return (
+      <span className={s.icon} style={{ width: size, height: size }}>
+        <Icon name="edit-find" size={22} color="var(--th-action-palette-icon)" />
+      </span>
+    );
   return (
     <span className={s.icon} style={{ width: size, height: size }}>
       {it.emoji ? (

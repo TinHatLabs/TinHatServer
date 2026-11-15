@@ -1,5 +1,7 @@
 // format.ts — clock, day labels, sizes and durations exactly like ChatBubble.qml / ConversationView.qml.
 import { getPref } from "@/core/prefs";
+import { fullDay, fullTimeSystem, shortTimeSystem } from "./datefmt";
+import { dayNeedsYear } from "./catchup";
 
 /** Clock mode (native ui pref `clock`: "system" | "12" | "24"). */
 export function clockMode(): string {
@@ -14,20 +16,20 @@ export function fmtClock(ts: number, mode = clockMode()): string {
     const h = d.getHours() % 12 || 12;
     return `${h}:${pad(d.getMinutes())} ${d.getHours() < 12 ? "AM" : "PM"}`;
   }
-  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return shortTimeSystem(d);
 }
 
 /** Timestamp tooltip — the long local date/time (native: Qt TextDate "Wed Sep 23 06:06:30 2026"). */
 export function fmtFull(ts: number): string {
   const d = new Date(ts);
-  const day = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+  const day = fullDay(d);
   const mode = clockMode();
   const t =
     mode === "24"
       ? `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
       : mode === "12"
         ? `${d.getHours() % 12 || 12}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${d.getHours() < 12 ? "AM" : "PM"}`
-        : d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+        : fullTimeSystem(d);
   return `${day} ${t}`;
 }
 
@@ -42,14 +44,15 @@ export function sameDay(a: number, b: number): boolean {
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Day separator: "Today" / "Yesterday" / "ddd, MMM d" (CV:184-190). */
+/** Day separator: "Today" / "Yesterday" / "ddd, MMM d" (CV:184-190), with ", yyyy" when not this year (A05.2). */
 export function dayLabel(ts: number, now = Date.now()): string {
   if (sameDay(ts, now)) return "Today";
   const y = new Date(now);
   y.setDate(y.getDate() - 1); // one local calendar day (DST-safe)
   if (sameDay(ts, y.getTime())) return "Yesterday";
   const d = new Date(ts);
-  return `${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  const day = `${DAYS[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  return dayNeedsYear(ts, now) ? `${day}, ${d.getFullYear()}` : day; // A05.2
 }
 
 /** "MMM d, <clock>" for the pinned popover rows. */
@@ -90,6 +93,12 @@ const EXT_MIME: Record<string, string> = {
   webp: "image/webp",
   bmp: "image/bmp",
   svg: "image/svg+xml",
+  // phone photos: sent as pictures, so they lose their location too (docs/PHOTO-METADATA.md); a file card in the
+  // timeline (not inline: core/mediatype). The desktop's room.rs mime_for_ext.
+  heic: "image/heic",
+  heif: "image/heif",
+  hif: "image/heif",
+  avif: "image/avif",
   mp4: "video/mp4",
   webm: "video/webm",
   mkv: "video/x-matroska",

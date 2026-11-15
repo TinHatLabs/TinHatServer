@@ -25,6 +25,7 @@ import {
 } from "./store";
 import { nameFromFile } from "./data";
 import s from "./Soundboard.module.css";
+import { sbKeyAction } from "./keys";
 
 const ACCEPT = ".mp3,.ogg,.opus,.wav,.m4a,.webm,audio/*";
 
@@ -143,12 +144,20 @@ function SoundboardPopover() {
   const favIndexOf = (url: string) => personal.findIndex((p) => p.sourceUrl === url);
   const roomEntry = (url: string) => roomSounds.find((r) => r.sourceUrl === url) ?? null;
 
+  // QOL A16.0 / P12 (a) + A16.1: one key rule for the panel and the search box (keys.ts, shared vectors)
+  const counts = { fav: favShown.length, room: roomShown.length, recent: recentShown.length, web: st.web.length };
+  const runKey = (a: string, e: KeyboardEvent) => {
+    if (a === "type") return;
+    e.preventDefault();
+    const [list, i] = a.split(":");
+    const from = list === "fav" ? favShown : list === "room" ? roomShown : list === "recent" ? recentShown : list === "web" ? st.web : [];
+    const d = from[Number(i)];
+    if (d) toggleSound(d.sourceUrl, d.name, d.emoji);
+  };
+  const mods = (e: KeyboardEvent) => e.ctrlKey || e.altKey || e.metaKey;
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key >= "1" && e.key <= "9" && !e.ctrlKey && !e.altKey && !e.metaKey && document.activeElement !== search.current) {
-      const d = favShown[Number(e.key) - 1];
-      if (d) toggleSound(d.sourceUrl, d.name, d.emoji);
-      e.preventDefault();
-    }
+    if (document.activeElement === search.current) return; // the box runs its own (below)
+    runKey(sbKeyAction(e.key, mods(e), false, q, counts), e);
   };
 
   const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
@@ -291,13 +300,7 @@ function SoundboardPopover() {
           value={q}
           onValueChange={setQuery}
           placeholder="Search your sounds and the web…"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              const d = favShown[0];
-              if (d) toggleSound(d.sourceUrl, d.name, d.emoji);
-              e.preventDefault();
-            }
-          }}
+          onKeyDown={(e) => runKey(sbKeyAction(e.key, mods(e), true, q, counts), e)}
         />
         <BasicToolButton
           iconName="list-add-symbolic"

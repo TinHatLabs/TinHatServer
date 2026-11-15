@@ -6,6 +6,7 @@ import { AnimatedImage, BusyIndicator, Icon, ToolButton, Slider, useTip, cx } fr
 import { fileGlyph, fmtDuration, fmtSize } from "./lib/format";
 import type { MediaRef } from "./lib/model";
 import { mediaBlob, openMedia, saveMedia } from "./actions";
+import { useNowPlaying } from "./lib/useNowPlaying";
 import s from "./Bubble.module.css";
 
 type C = Record<string, unknown>;
@@ -44,6 +45,15 @@ export function ImageBlock({ m, maxW, mine, onOpen }: { m: MediaRef; maxW: numbe
     <div
       className={s.imgBox}
       style={{ width: box.w, height: box.h }}
+      // QOL A08.7: opens from the keyboard too (Tab, Enter / Space; the desktop's "Open image" button)
+      role="button"
+      tabIndex={0}
+      aria-label="Open image"
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.currentTarget.click();
+      }}
       onClick={(e) => {
         e.stopPropagation();
         if (err) {
@@ -95,6 +105,7 @@ export function VideoCard({ m, maxW }: { m: MediaRef; maxW: number }) {
   const [url, setUrl] = useState<string | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(m.w && m.h ? { w: m.w, h: m.h } : null);
   const vref = useRef<HTMLVideoElement>(null);
+  const npVideo = useNowPlaying("video", vref); // QOL A00.1: one player at a time
   const alive = useRef(true);
   // set on every mount: a remount (StrictMode's effect replay) used to leave it false, so Play hung on "Downloading…"
   useEffect(() => {
@@ -124,13 +135,14 @@ export function VideoCard({ m, maxW }: { m: MediaRef; maxW: number }) {
       setState("poster");
     }
   };
-  const meta = state === "loading" ? "Downloading…" : state === "failed" ? VIDEO_CANT_PLAY : [fmtSize(m.size), m.duration ? fmtDuration(m.duration) : ""].filter(Boolean).join("  ·  ");
+  const meta = state === "loading" ? busyWithSize("Downloading", m.size) : state === "failed" ? VIDEO_CANT_PLAY : [fmtSize(m.size), m.duration ? fmtDuration(m.duration) : ""].filter(Boolean).join("  ·  ");
   return (
     // aria-live: "Downloading…" and the can't-play line are announced (the card stays mounted through every state)
     <div className={s.videoCard} style={{ width: w, height: state === "failed" ? undefined : h }} data-failed={state === "failed" ? "" : undefined} aria-live="polite">
       {state === "playing" && url ? (
         <video
           ref={vref}
+          {...npVideo}
           className={s.videoEl}
           src={url}
           autoPlay
@@ -204,9 +216,17 @@ export function FileCard({ m, maxW, mine }: { m: MediaRef; maxW: number; mine: b
 
 export const BIG_AUDIO = 8 * 1024 * 1024;
 
+/** QOL A29.5: "Downloading 4.5 MB…" / "Opening 4.5 MB…" ("Downloading…" when the size is unknown) — the desktop's
+ *  ChatBubble.busyWithSize, the same words. */
+export function busyWithSize(verb: string, bytes: number | undefined): string {
+  const sz = fmtSize(bytes);
+  return `${verb}${sz ? ` ${sz}` : ""}…`;
+}
+
 export function AudioPlayer({ m, maxW, mine }: { m: MediaRef; maxW: number; mine: boolean }) {
   const src = useMediaUrl(m, true, 0);
   const a = useRef<HTMLAudioElement>(null);
+  const npAudio = useNowPlaying("audio", a); // QOL A00.1: one player at a time
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
   const [dur, setDur] = useState(m.duration ? m.duration / 1000 : 0);
@@ -245,6 +265,7 @@ export function AudioPlayer({ m, maxW, mine }: { m: MediaRef; maxW: number; mine
       {src && (
         <audio
           ref={a}
+          {...npAudio}
           src={src}
           preload="metadata"
           onPlay={() => setPlaying(true)}
@@ -263,7 +284,7 @@ export function AudioPlayer({ m, maxW, mine }: { m: MediaRef; maxW: number; mine
 export function AudioChip({ m, mine }: { m: MediaRef; mine: boolean }) {
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
-  useTip(ref, busy ? "Opening…" : "Download & open");
+  useTip(ref, busy ? busyWithSize("Opening", m.size) : "Download & open");
   const col = mine ? "var(--th-bubble-own-link-fg)" : "var(--th-bubble-other-link-fg)";
   return (
     <span

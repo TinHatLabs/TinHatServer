@@ -16,11 +16,11 @@
 // Contributions: r.appMenu "Edit layout…" · r.overlays the phone editor sheet · r.onReady `?layout=reset` + the sync.
 // Test hook (dev / __TW_DEBUG__): window.__twEdit.
 import type { FeatureModule } from "@/core/registry";
-import { showToast } from "@/ui";
+import { ConfirmDialog, showToast } from "@/ui";
 import { getFormFactor } from "@/core/device";
 import { bus } from "@/core/bus";
 import { canon, type JObj, type Json } from "@/layout";
-import { cancelEdit, doneEdit, editApply, editCommit, editPhone, editPreset, editRedo, editUndo, openEdit, useEdit } from "./store";
+import { RESET_ASK, cancelEdit, doneEdit, editApply, editCommit, editPhone, editPreset, editRedo, editUndo, openEdit, resetNow, useEdit, useResetAsk } from "./store";
 import { beginDrag, dropDrag, setHover, useDrag } from "./drag";
 import { currentCtx } from "./EditLayer";
 import { debugState, getRendered, readOverride, saveLayout, setOverride, subscribeRendered } from "./layoutDoc";
@@ -103,6 +103,7 @@ export const feature: FeatureModule = {
       run: () => (getFormFactor() === "mobile" ? openPhoneEditor() : openEdit("desktop")),
     });
     r.overlays.add({ id: "layout-phone-editor", order: 95, component: PhoneEditorHost });
+    r.overlays.add({ id: "layout-reset-ask", order: 96, component: ResetAsk }); // L1 A17.1
     const w = window as unknown as { __TW_DEBUG__?: boolean; __twEdit?: unknown };
     const q = new URLSearchParams(location.search);
     if (q.get("editmode") === "1") {
@@ -148,3 +149,20 @@ export const feature: FeatureModule = {
       };
   },
 };
+
+/** L1 A17.1: "Reset layout on this device" with unsaved layout changes open asks first (store.ts resetOnThisDevice). */
+function ResetAsk() {
+  const open = useResetAsk((s) => s.open);
+  return (
+    <ConfirmDialog
+      open={open}
+      onClose={() => useResetAsk.setState({ open: false })}
+      dialogTitle={RESET_ASK.title}
+      message={RESET_ASK.text}
+      confirmText={RESET_ASK.confirm}
+      cancelText={RESET_ASK.back}
+      destructive
+      onConfirmed={resetNow}
+    />
+  );
+}

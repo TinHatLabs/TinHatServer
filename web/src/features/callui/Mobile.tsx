@@ -2,10 +2,11 @@
 // scrolling tile grid, tap to show/hide the chrome, a bottom call bar (mic, camera, flip camera,
 // share only if getDisplayMedia exists, deafen, soundboard, leave), and a draggable minimised call
 // pill over the chat. The per-person menu and every popover present as bottom sheets.
-import { Fragment, cloneElement, isValidElement, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, cloneElement, isValidElement, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRoomName } from "@/core/matrix";
 import { openRoom, toast } from "@/core/bus";
 import { Icon, Menu, MenuItem, CheckMenuItem, MenuSeparator } from "@/ui";
+import { useBackToClose } from "@/ui/backStack";
 import { act, isRecorderTile, isShareTile, SELF_ID, SELF_SHARE_ID, ui, useC, useCallUi } from "./store";
 import { useHiddenSet, useHideMemorySync, useWatchedPush, useWatchedShares, useHiddenWindowPause, useSelfViewMode } from "./memory";
 import { CallButton } from "./CallButton";
@@ -20,12 +21,15 @@ import { useChatStore } from "@/features/chat/store";
 import { useActionsSnapshot } from "@/actions/snapshot";
 import { Dim, EditableRow, RowButton, bespokeOk, runRowItem, shownItems, useRow } from "@/actions/ui/rowHost";
 import { nativeShareOn } from "@/features/native";
+import { useFsGhost, usePinCarry } from "./carry";
+import { CHROME_IDLE_MS, OPEN_POPUP_SELECTOR, callMenuOpen, chromeAutoHides, isLandscape, phoneCellMaxHeight, phoneOverlay, pillClamp, type Pt, type View } from "./phone";
 import s from "./Mobile.module.css";
 
 export function MobileCallStage({ roomId }: { roomId: string }) {
   const min = useCallUi((x) => x.mobileMin);
   const chrome = useCallUi((x) => x.mobileChrome);
-  const tiles = useC("tiles");
+  // D02.3: a full-screen share stays mounted through its sharer's blip (carry.ts)
+  const { tiles, keyOf } = useFsGhost(useC("tiles"));
   const connecting = useC("connecting");
   const inCall = useC("inCall");
   const fake = useC("fake");
@@ -52,6 +56,7 @@ export function MobileCallStage({ roomId }: { roomId: string }) {
   const hidden = useHiddenSet();
   const watched = useWatchedShares();
   const pinned = useCallUi((x) => x.pinned);
+  usePinCarry(tiles, pinned); // D02.3 (review): the phone layout's pin follows a blip too
   const selfMode = useSelfViewMode();
   useWatchedPush(watched);
   useHideMemorySync();
@@ -64,36 +69,106 @@ export function MobileCallStage({ roomId }: { roomId: string }) {
     .sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i)
     .map((x) => x.t);
   const visible = gridTiles.filter((t) => !hidden.has(t.id));
+  // Your own tile is a "video" tile even with the camera off (native keeps it in the grid as an avatar
+  // placeholder); on a phone it sizes like the other audio-only people then, not like a camera.
+  const audioOnly = (t: (typeof tiles)[number]) => t.kind === "avatar" || (t.id === SELF_ID && !cameraOn && !localAfk);
+  // a share or a camera is on the stage (landscape auto-hide, A37.4)
+  const media = visible.some((t) => isShareTile(t) || !audioOnly(t));
   const n = tiles.filter((t) => t.id !== SELF_SHARE_ID).length;
   const [more, setMore] = useState<null | "menu" | "devices" | "health" | "game" | "hidden">(null);
+  // A37.3: the full-screen call is a level of the phone back stack, so Back (gesture, browser / Android button)
+  // minimises it to the pill like the top-left button, instead of leaving the room page under it
+  const minimise = () => ui().set({ mobileMin: true });
+  useBackToClose(!min, minimise);
   const [wide, setWide] = useState(() => window.innerWidth >= 700);
+  const [landscape, setLandscape] = useState(() => isLandscape(window.innerWidth, window.innerHeight));
   useEffect(() => {
-    const f = () => setWide(window.innerWidth >= 700);
+    const f = () => {
+      setWide(window.innerWidth >= 700);
+      setLandscape(isLandscape(window.innerWidth, window.innerHeight));
+    };
     window.addEventListener("resize", f);
     return () => window.removeEventListener("resize", f);
   }, []);
+  // A37.4: the tile area's height — in landscape a share / lone / pinned tile takes all of it
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const [scrollerH, setScrollerH] = useState(0);
+  useEffect(() => {
+    if (!scroller) return;
+    const f = () => setScrollerH(scroller.clientHeight);
+    f();
+    if (typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(f);
+    ro.observe(scroller);
+    return () => ro.disconnect();
+  }, [scroller]);
+  const cellMax = phoneCellMaxHeight(landscape, scrollerH);
+  // A37.4 landscape auto-hide (behaviour change): with a share or a camera on the stage the bars float over the tiles
+  // and hide after CHROME_IDLE_MS without a touch; any touch restarts the wait or brings them back; never while a menu,
+  // sheet or popover (or a connection / mute / away banner) is open. Portrait is unchanged (tap to show / hide).
+  const menus = useCallUi((x) => callMenuOpen({ more, optsFace: x.optsFace, streamPop: x.streamPop, volMenu: x.volMenu, menuHeld: x.menuHeld, soundboardOpen: x.soundboardOpen, ecOpen: x.ecOpen }));
+  const overlay = phoneOverlay(landscape, media);
+  // a banner in the head (connection, server mute, away, "tap to resume", a same-room ask) holds the chrome too: the
+  // head hides as a whole, and one arriving while hidden brings it back (out of the auto-hide case)
+  const needsTap = useC("needsTap");
+  const sameRoomAsk = useC("sameRoom").ask;
+  const alert = reconnecting || failed || serverMuted || localAfk || !!needsTap || !!sameRoomAsk;
+  const autoHide = chromeAutoHides(landscape, media, menus || alert);
+  const [poke, setPoke] = useState(0);
+  const hidByTimer = useRef(false);
+  const tapShown = useRef(false);
+  useEffect(() => {
+    if (chrome) hidByTimer.current = false;
+    if (!autoHide || !chrome || min) return;
+    const t = window.setTimeout(() => {
+      // a popup the store doesn't track (a tile's menu): wait for it to close
+      if (document.querySelector(OPEN_POPUP_SELECTOR)) return setPoke((n) => n + 1);
+      hidByTimer.current = true;
+      ui().set({ mobileChrome: false });
+    }, CHROME_IDLE_MS);
+    return () => window.clearTimeout(t);
+  }, [autoHide, chrome, min, poke]);
+  // out of the auto-hide case (turned upright, the share ended, a menu opened): bring back what the timer hid
+  useEffect(() => {
+    if (!autoHide && hidByTimer.current) {
+      hidByTimer.current = false;
+      ui().set({ mobileChrome: true });
+    }
+  }, [autoHide]);
+  const onTouch = () => {
+    tapShown.current = false;
+    if (!autoHide) return;
+    if (chrome) return setPoke((n) => n + 1);
+    tapShown.current = true; // this touch's own click must not hide them again
+    ui().set({ mobileChrome: true });
+  };
+  const toggleChrome = () => {
+    if (tapShown.current) tapShown.current = false;
+    else ui().set({ mobileChrome: !chrome });
+  };
   if (min) return null;
   // 6-column grid: a share spans the row, cameras sit two per row, audio-only people three per row
   // (a lone tile fills the row, portrait).
   const lone = visible.length <= 1;
-  // Your own tile is a "video" tile even with the camera off (native keeps it in the grid as an avatar
-  // placeholder); on a phone it sizes like the other audio-only people then, not like a camera.
-  const audioOnly = (t: (typeof tiles)[number]) => t.kind === "avatar" || (t.id === SELF_ID && !cameraOn && !localAfk);
   // Nobody on camera and ≤ 4 people: two per row, so the call uses the screen instead of a strip of stamps.
   const allAudio = visible.every((t) => audioOnly(t) && !isShareTile(t)) && visible.length <= 4;
   // Landscape phones and tablets (≥ 700 px): cameras three per row, audio-only people six per row.
   const span = (t: (typeof tiles)[number]) =>
     lone || isShareTile(t) || t.id === pinned ? 6 : audioOnly(t) ? (allAudio ? (wide ? 2 : 3) : wide ? 1 : 2) : wide ? 2 : 3;
   return (
-    <div className={s.stage} data-testid="mobile-call" onClick={(e) => e.target === e.currentTarget && ui().set({ mobileChrome: !chrome })}>
+    <div className={`${s.stage} ${overlay ? s.overlay : ""}`} data-testid="mobile-call" onPointerDownCapture={onTouch} onClick={(e) => e.target === e.currentTarget && toggleChrome()}>
+      {/* A37.4: the head (top bar, banners, now-playing strip): floats over the tiles in landscape auto-hide (left
+          un-indented to keep the diff small) */}
+      <div className={overlay ? `${s.head} ${chrome ? "" : s.headHidden}` : s.headFlow}>
       <div className={`${s.top} ${chrome ? "" : s.hideUp}`}>
-        <button type="button" className={s.topBtn} aria-label="Minimise the call" onClick={() => ui().set({ mobileMin: true })}>
+        <button type="button" className={s.topBtn} aria-label="Minimise the call" onClick={minimise}>
           <Icon name="go-down-symbolic" size={22} color="var(--th-stage-top-button-icon)" />
         </button>
         <div className={s.topText}>
           <div className={s.topTitle}>
-            <span className={s.dot} style={{ background: connecting ? "var(--th-call-status-bar-dot)" : "var(--th-call-status-bar-dot-live)" }} />
-            {connecting ? "Connecting…" : "In call"}
+            {/* 12.1.13: the desktop strip's rule (and the web's StatusBar): never "In call" after a drop */}
+            <span className={s.dot} style={{ background: inCall && !connecting ? "var(--th-call-status-bar-dot-live)" : "var(--th-call-status-bar-dot)" }} />
+            {connecting ? "Connecting…" : inCall ? "In call" : reconnecting ? "Reconnecting…" : "Disconnected"}
             {recActive && <span className={s.rec}>· 🔴 REC</span>}
           </div>
           <div className={s.topSub}>
@@ -133,13 +208,14 @@ export function MobileCallStage({ roomId }: { roomId: string }) {
       {phoneStrip.map((it) => (
         <it.component key={it.id} roomId={callRoomId || roomId} />
       ))}
-      <div className={s.scroller} onClick={(e) => (e.target as HTMLElement).closest("button") || ui().set({ mobileChrome: !chrome })}>
+      </div>
+      <div ref={setScroller} className={s.scroller} onClick={(e) => (e.target as HTMLElement).closest("button") || toggleChrome()}>
         <div className={s.grid} style={{ gridTemplateColumns: "repeat(6, minmax(0, 1fr))" }}>
           {gridTiles.map((t) => {
             const isH = hidden.has(t.id);
             const share = isShareTile(t);
             return (
-              <div key={t.id} className={s.cell} style={{ display: isH ? "none" : undefined, gridColumn: `span ${span(t)}`, aspectRatio: share || (lone && wide) ? "16 / 9" : lone ? "3 / 4" : t.id === pinned || (wide && allAudio) ? "4 / 3" : "1 / 1", maxHeight: share || lone || t.id === pinned ? "calc(100dvh - 190px)" : undefined, justifySelf: "center", width: "100%" }}>
+              <div key={keyOf(t)} className={s.cell} style={{ display: isH ? "none" : undefined, gridColumn: `span ${span(t)}`, aspectRatio: share || (lone && wide) ? "16 / 9" : lone ? "3 / 4" : t.id === pinned || (wide && allAudio) ? "4 / 3" : "1 / 1", maxHeight: share || lone || t.id === pinned ? cellMax : undefined, justifySelf: "center", width: "100%" }}>
                 <Tile tile={t} slot={{ x: 0, y: 0, w: 0, h: 0 }} flow hidden={isH} chrome={chrome} watched={watched.has(t.id)} pinned={pinned === t.id} animate={false} afkGrid={localAfk} roomId={roomId} selfPipMode={selfMode} fake={fake} mobile />
               </div>
             );
@@ -259,7 +335,21 @@ function MobileBar({ roomId, hide }: { roomId: string; hide: boolean }) {
   );
 }
 
-/** The minimised call: a draggable pill over the chat (tap = back to the call). */
+/** What's visible (the visual viewport: the on-screen keyboard shrinks it), in the pill's fixed coordinates. */
+function visibleView(): View {
+  const vv = window.visualViewport;
+  return vv ? { x: vv.offsetLeft, y: vv.offsetTop, w: vv.width, h: vv.height } : { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
+}
+
+/** The composer's top edge while one is on screen (the room page), else null. */
+function composerTop(): number | null {
+  const el = document.querySelector("[data-composer]");
+  const r = el?.getBoundingClientRect();
+  return r && r.height > 0 ? r.top : null;
+}
+
+/** The minimised call: a draggable pill over the chat (tap = back to the call). A37.2: held on screen by its
+ *  measured size inside the visual viewport, and above the composer (re-checked on resize / keyboard / room change). */
 export function MobileCallPill({ roomId }: { roomId: string }) {
   const micMuted = useC("micMuted");
   const needsTap = useC("needsTap");
@@ -267,14 +357,56 @@ export function MobileCallPill({ roomId }: { roomId: string }) {
   const roomName = useRoomName(roomId);
   const [pos, setPos] = useState(() => ({ x: 12, y: Math.max(80, window.innerHeight - 180) }));
   const drag = useRef<{ x: number; y: number; px: number; py: number; moved: boolean } | null>(null);
-  useEffect(() => {
-    const f = () => setPos((p) => ({ x: Math.min(p.x, window.innerWidth - 220), y: Math.min(p.y, window.innerHeight - 70) }));
+  const el = useRef<HTMLDivElement>(null);
+  // `snap`: also keep off the composer (not mid-drag: the pill may pass over it, it snaps above on release)
+  const clampTo = (p: Pt, snap = true): Pt => {
+    const box = el.current;
+    const size = box ? { w: box.offsetWidth, h: box.offsetHeight } : { w: 220, h: 52 };
+    const q = pillClamp(p, size, visibleView(), snap ? composerTop() : null);
+    return q.x === p.x && q.y === p.y ? p : q;
+  };
+  const reclamp = useRef(() => {});
+  reclamp.current = () => {
+    if (!drag.current) setPos((p) => clampTo(p));
+  };
+  useLayoutEffect(() => {
+    const f = () => reclamp.current();
+    f();
+    const vv = window.visualViewport;
     window.addEventListener("resize", f);
-    return () => window.removeEventListener("resize", f);
+    vv?.addEventListener("resize", f);
+    vv?.addEventListener("scroll", f);
+    // the pill's own size (its text changes) and the composer's (it grows while typing; a room page comes and goes)
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(f) : null;
+    let watched: Element | null = null;
+    const watchComposer = () => {
+      const c = document.querySelector("[data-composer]");
+      if (c === watched) return;
+      if (watched) ro?.unobserve(watched);
+      watched = c;
+      if (c) ro?.observe(c); // observing fires once at once: that's the re-clamp for a new composer
+    };
+    if (el.current) ro?.observe(el.current);
+    watchComposer();
+    // the app's router changes rooms without a hashchange: look for a new / gone composer once a second (one query)
+    const poll = window.setInterval(() => {
+      const c = document.querySelector("[data-composer]");
+      if (c === watched) return;
+      watchComposer();
+      if (!c) f(); // gone: the observer can't tell
+    }, 1000);
+    return () => {
+      window.removeEventListener("resize", f);
+      vv?.removeEventListener("resize", f);
+      vv?.removeEventListener("scroll", f);
+      window.clearInterval(poll);
+      ro?.disconnect();
+    };
   }, []);
   const n = tiles.filter((t) => t.id !== SELF_SHARE_ID).length;
   return (
     <div
+      ref={el}
       className={s.pill}
       style={{ left: pos.x, top: pos.y }}
       data-testid="mobile-call-pill"
@@ -283,19 +415,27 @@ export function MobileCallPill({ roomId }: { roomId: string }) {
         drag.current = { x: e.clientX, y: e.clientY, px: pos.x, py: pos.y, moved: false };
         e.currentTarget.setPointerCapture(e.pointerId);
       }}
-      onPointerCancel={() => (drag.current = null)}
-      onLostPointerCapture={() => (drag.current = null)}
+      onPointerCancel={() => {
+        drag.current = null;
+        reclamp.current();
+      }}
+      onLostPointerCapture={() => {
+        if (!drag.current) return;
+        drag.current = null;
+        reclamp.current();
+      }}
       onPointerMove={(e) => {
         const d = drag.current;
         if (!d) return;
         const dx = e.clientX - d.x,
           dy = e.clientY - d.y;
         if (Math.hypot(dx, dy) > 6) d.moved = true;
-        if (d.moved) setPos({ x: Math.max(4, Math.min(window.innerWidth - 60, d.px + dx)), y: Math.max(4, Math.min(window.innerHeight - 60, d.py + dy)) });
+        if (d.moved) setPos(clampTo({ x: d.px + dx, y: d.py + dy }, false));
       }}
       onPointerUp={(e) => {
         const d = drag.current;
         drag.current = null;
+        if (d?.moved) setPos((p) => clampTo(p)); // dropped over the composer: snap above it
         if (d && !d.moved && !(e.target as HTMLElement).closest("[data-mic]")) {
           ui().set({ mobileMin: false });
           if (roomId && !/^#\/room\//.test(location.hash)) openRoom(roomId);

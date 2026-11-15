@@ -16,7 +16,7 @@ import { EDITABLE_ROWS } from "@/actions/ui/RowEditor";
 import { beginDrag, cancelDrag, dropDrag, movePointer, stepHover, useDrag, type SolveCtx } from "./drag";
 import { islandText } from "./names";
 import { floatOf } from "./session";
-import { doneEdit, editApply, editCommit, editDock, editFloat, editRemoveButtons, editResetIsland, setPreview, useEdit } from "./store";
+import { doneEdit, editApply, editCommit, editDock, editFloat, editHide, editRemoveButtons, editResetIsland, openAddWidget, setPreview, useEdit } from "./store";
 import { setTab } from "./tabs";
 import { GAP_Z, GHOST_Z, LAYER_Z, PREVIEW_Z, ZONE_Z, chromeRefs, chromeZ, tabChipsZ } from "./zorder";
 import s from "./EditLayer.module.css";
@@ -202,7 +202,7 @@ export function EditLayer({ out, ctx, form }: { out: SolveOut; ctx: SolveCtx; fo
                 } else if (e.key === "Delete" || e.key === "Backspace") {
                   e.preventDefault();
                   const d = REGISTRY[kindOf(ref)];
-                  if (d?.hideable && !d.required) editApply({ op: "hide", ref });
+                  if (d?.hideable && !d.required) editHide(ref);
                 } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
                   e.preventDefault();
                   openMenu(ref, e.currentTarget);
@@ -339,8 +339,15 @@ function IslandMenu({
           onTriggered={() => openRowEditor({ island: r.island, row: r.row, form: "desktop", title: r.title })}
         />
       ))}
+      {/* A17.6: the Widgets island's own way to add one (the toolbar's Add widget; the desktop: the same item) */}
+      {kindOf(ref) === "widgets" && (
+        <>
+          <MenuItem text="Add widget…" icon="list-add-symbolic" onTriggered={openAddWidget} />
+          <MenuSeparator />
+        </>
+      )}
       {rows.length > 0 && <MenuSeparator />}
-      {hideable && <MenuItem text="Hide" icon="view-hidden-symbolic" shortcut="Del" onTriggered={() => editApply({ op: "hide", ref })} />}
+      {hideable && <MenuItem text="Hide" icon="view-hidden-symbolic" shortcut="Del" onTriggered={() => editHide(ref)} />}
       {d.floatable && !floating && rect && <MenuItem text="Float" icon="window-pin-symbolic" onTriggered={() => editFloat(ref, rect, host)} />}
       {floating && <MenuItem text="Dock" icon="view-restore-symbolic" onTriggered={() => editDock(ref)} />}
       {hideable && kindOf(ref) !== "buttons" && (

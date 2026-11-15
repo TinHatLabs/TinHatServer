@@ -23,6 +23,10 @@ export interface CallButtonProps {
   wide?: boolean;
   /** 11.0.2: the call bar's small pin — a 32 px disc with a 16 px glyph */
   small?: boolean;
+  /** D05.5 (2026-11-13): a toggle's state for screen readers (aria-pressed; the desktop's Accessible.checked) */
+  pressed?: boolean;
+  /** D05.5: the ▴'s name ("Microphone settings"; the desktop's menuName) */
+  menuName?: string;
   hasMenu?: boolean;
   menuOpen?: boolean;
   onMenu?: (anchor: HTMLElement) => void;
@@ -95,6 +99,7 @@ export const CallButton = forwardRef<HTMLDivElement, CallButtonProps>(function C
         type="button"
         aria-label={p.tip}
         aria-disabled={!live || undefined}
+        aria-pressed={p.pressed}
         className={`${s.btn} ${!live ? s.dead : ""}`}
         style={{ background: fill, border }}
         onPointerEnter={() => setHov(true)}
@@ -124,7 +129,7 @@ export const CallButton = forwardRef<HTMLDivElement, CallButtonProps>(function C
         <button
           ref={chev}
           type="button"
-          aria-label="Settings"
+          aria-label={p.menuName ?? "Settings"}
           className={s.chev}
           onPointerEnter={() => setChevHov(true)}
           onPointerLeave={() => setChevHov(false)}

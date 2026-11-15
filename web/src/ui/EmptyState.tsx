@@ -4,7 +4,7 @@
 // heading and a dim explanation, both centred and wrapped.
 import type { CSSProperties, ReactNode } from "react";
 import { Icon } from "./Icon";
-import { BusyIndicator } from "./BusyIndicator";
+import { BusyIndicator, useStillLabel } from "./BusyIndicator";
 import s from "./EmptyState.module.css";
 
 export interface EmptyStateProps {
@@ -15,15 +15,19 @@ export interface EmptyStateProps {
   className?: string;
   style?: CSSProperties;
   children?: ReactNode;
+  /** QOL A29.0: a loading state says what loads ("Still …" after 10 s without progress, like the desktop's) */
+  loadingLabel?: string;
 }
 
-export function EmptyState({ loading, iconName = "documentinfo-symbolic", title, explanation, className, style, children }: EmptyStateProps) {
+export function EmptyState({ loading, iconName = "documentinfo-symbolic", title, explanation, className, style, children, loadingLabel }: EmptyStateProps) {
+  const still = useStillLabel(loadingLabel ?? "", !!loading && !!loadingLabel);
+  if (loading && loadingLabel) title = still;
   return (
     <div className={`${s.wrap} ${className ?? ""}`} style={style}>
       <div className={s.col}>
         <div className={s.art}>
           <span className={s.glow} />
-          {loading ? <BusyIndicator size={48} /> : <Icon name={iconName} size={64} color="var(--th-empty-icon)" opacity={0.85} />}
+          {loading ? <BusyIndicator size={48} label={loadingLabel} /> : <Icon name={iconName} size={64} color="var(--th-empty-icon)" opacity={0.85} />}
         </div>
         {title && <div className={s.title}>{title}</div>}
         {explanation && <div className={s.expl}>{explanation}</div>}

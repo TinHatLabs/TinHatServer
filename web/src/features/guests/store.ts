@@ -91,6 +91,8 @@ const MANAGE_DONE = {
   off: "The guest room is off — whoever waited was turned away and the guests are gone",
   link: "New guest link — the old one stopped working",
 } as const;
+export const LINK_COPIED = "New guest link copied — the old one stopped working";
+export const LINK_NOT_COPIED = "New guest link made — the old one stopped working. Copy it to send it";
 const MANAGE_FAIL = { on: "Couldn't turn the guest room on", off: "Couldn't turn the guest room off", link: "Couldn't make a new link" } as const;
 
 async function manage(what: "on" | "off" | "link"): Promise<void> {
@@ -102,7 +104,11 @@ async function manage(what: "on" | "off" | "link"): Promise<void> {
     if (g !== gen) return;
     const doc = parseDoc(v);
     if (doc) set({ doc, loaded: true, at: Date.now(), error: "" });
-    toast(MANAGE_DONE[what], { kind: "success", timeoutMs: 5000 });
+    // P10: New link copies the new link (the confirm said so); a browser that refuses the clipboard keeps the old words
+    if (what !== "link") toast(MANAGE_DONE[what], { kind: "success", timeoutMs: 5000 });
+    else if (doc?.link && (await copyText(doc.link))) toast(LINK_COPIED, { kind: "success", timeoutMs: 5000 });
+    // a browser may refuse the clipboard after the request (the click is long gone): say so, with a way to copy it
+    else toast(LINK_NOT_COPIED, { kind: "success", timeoutMs: 8000, action: { label: "Copy", run: () => void copyGuestLink() } });
   } catch (e) {
     if (g === gen) toast(`${MANAGE_FAIL[what]}: ${errorText(e)}`, { kind: "error", timeoutMs: 6000 });
   } finally {

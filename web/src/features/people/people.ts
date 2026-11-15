@@ -7,11 +7,15 @@
 //   matchScore(name, id, t)  4 exact, 3 prefix, 2 a word's prefix, 1 anywhere, 0 none (display name and username)
 //   personLabel(id, name)    "Alex" for someone on your server, "Alex · elsewhere.example" for anyone else (display names are
 //                            not unique: the server is the impostor guard, as on invite cards)
-//   rankPeople(…)            the rows: People you know (DM partners first, then by match, then shared rooms; 8),
+//   rankPeople(…)            nothing typed: People you know (DM partners first, then shared rooms; 8; no Enter pick).
+//                            Typed: People you know (DM partners first, then by match, then shared rooms; 8),
 //                            On <your server> (the user directory in its own order; 10), and one look-up row for a
 //                            typed username/address nobody listed; members dimmed, never yourself; Enter's pick (the
 //                            typed person first) and its fallback when that look-up fails (yours only)
 //   lookupOutcome(…)         why a profile look-up failed, in plain words; only a refusal still allows an invite
+//   inviteFailure(…)         why an invite (or a new DM's invite) failed, in plain words, from the server's answer
+//   inviteStep(…)            an invite sent from the picker: "Inviting…" until the answer; only a yes makes them a member
+//   emptyNote(…)             the line an empty list shows: what to type, "Searching…", or that the search failed
 import { dmTarget, serverOf } from "../nav/dmTarget";
 
 export type QueryKind = "empty" | "name" | "username" | "address";
@@ -136,13 +140,24 @@ export function rankPeople(o: {
   members: readonly string[];
 }): { query: PeopleQuery; rows: PersonRow[]; pick: number; fallback: number } {
   const q = peopleQuery(o.input, o.own);
-  if (q.kind === "empty") return { query: q, rows: [], pick: -1, fallback: -1 };
   const members = new Set(o.members);
   const listed = new Set<string>([o.me]);
   const row = (section: Section, mxid: string, name: string, avatar: string, dm: boolean, lookup: boolean): PersonRow => {
     const l = personLabel(mxid, name, o.own);
     return { section, mxid, name: atrim(name ?? "") || localOf(mxid), avatar: avatar ?? "", server: l.server, line: l.line, member: members.has(mxid), lookup, dm };
   };
+  if (q.kind === "empty") {
+    // nothing typed yet (2026-11-13, P7): the people you know, ready to pick: DM partners first, then the most shared
+    // rooms; members and you left out. Enter picks no one until a row is chosen (arrows or the mouse).
+    const ready = o.known.filter((p) => p.mxid !== o.me && !members.has(p.mxid));
+    ready.sort((a, b) => {
+      if (a.dm !== b.dm) return a.dm ? -1 : 1;
+      if (a.shared !== b.shared) return b.shared - a.shared;
+      const byName = cmpCodePoints(atrim(a.name ?? "").toLowerCase(), atrim(b.name ?? "").toLowerCase());
+      return byName || cmpCodePoints(a.mxid, b.mxid);
+    });
+    return { query: q, rows: ready.slice(0, KNOWN_MAX).map((p) => row("known", p.mxid, p.name, p.avatar, p.dm, false)), pick: -1, fallback: -1 };
+  }
   const scored = o.known
     .filter((p) => p.mxid !== o.me)
     .map((p) => ({ p, sc: matchScore(p.name, p.mxid, q.term) }))
@@ -221,4 +236,95 @@ export function lookupOutcome(
     pickable: false,
     text: server ? `Couldn't reach ${server} right now. Their server may be down; try again later.` : "Couldn't reach your server right now. Try again in a moment.",
   };
+}
+
+export type InviteFailKind =
+  | "ratelimited"
+  | "member"
+  | "banned"
+  | "noperm"
+  | "disabled"
+  | "nofederation"
+  | "refused"
+  | "forbidden"
+  | "notfound"
+  | "unreachable"
+  | "other";
+
+const ALREADY_JOINED = ["M_ALREADY_JOINED", "ORG.MATRIX.MSC3848.ALREADY_JOINED"];
+const NO_POWER = ["M_INSUFFICIENT_POWER", "ORG.MATRIX.MSC3848.INSUFFICIENT_POWER"];
+
+/** An invite's failed answer → plain words (2026-11-13, A02.0/D09.1/D09.2). `status` 0 = no answer at all (network);
+ *  `verb` "Message" = the invite inside a new DM ("Couldn't start that chat." first). The server's own text is only
+ *  matched, never shown; a cause is named only when the answer establishes it (errcode or the server's known wording),
+ *  otherwise the words stay neutral. */
+export function inviteFailure(
+  status: number,
+  errcode: string,
+  message: string,
+  target: string,
+  ownServer: string,
+  verb: "Invite" | "Message",
+): { kind: InviteFailKind; text: string } {
+  const server = personLabel(target, "", ownServer).server;
+  const local = localOf(target);
+  const msg = (message ?? "").toLowerCase();
+  const code = (errcode ?? "").toUpperCase();
+  const dm = verb === "Message";
+  const lead = dm ? "Couldn't start that chat. " : "";
+  const out = (kind: InviteFailKind, text: string) => ({ kind, text: lead + text });
+  if (status === 429 || code === "M_LIMIT_EXCEEDED") return out("ratelimited", "Too many invites at once. Try again in a moment.");
+  if (status === 0) return out("unreachable", "Couldn't reach your server. Check your connection and try again.");
+  if (ALREADY_JOINED.includes(code) || msg.includes("is already in the room")) return out("member", `${local} is already a member.`);
+  if (code === "M_BANNED" || msg.includes("is banned from the room")) return out("banned", `${local} is banned here. Unban them first.`);
+  if (NO_POWER.includes(code) || msg.includes("permission to invite")) return out("noperm", "You don't have permission to invite people here. Ask an admin.");
+  if (msg.includes("invites have been disabled")) return out("disabled", "Your server doesn't allow invites. The owner of your server can change that.");
+  if (server && msg.includes("federation denied"))
+    return out(
+      "nofederation",
+      `Your server doesn't connect to ${server}, so people there can't be reached from here. The owner of your server can change that.`,
+    );
+  if (server && msg.includes("not permitted to send invites")) return out("refused", `${server} didn't accept the invite.`);
+  if ((status === 404 || code === "M_NOT_FOUND") && (msg.includes("unknown user") || msg.includes("user not found") || msg.includes("profile was not found")))
+    return out("notfound", server ? `${server} has no one called ${local}. Check the spelling.` : `There's no one called ${local} on your server. Check the spelling.`);
+  if (status === 403) return { kind: "forbidden", text: dm ? "Couldn't start that chat. The invite was refused." : `Couldn't invite ${local}. The invite was refused.` };
+  return { kind: "other", text: dm ? "Couldn't start that chat. Try again in a moment." : `Couldn't invite ${local}. Try again in a moment.` };
+}
+
+export type SearchState = "idle" | "searching" | "failed";
+
+/** The line an empty list shows (2026-11-13, A02.2): what to type; while the directory search runs, "Searching…" (never
+ *  "No one by that name" before the answer); when it failed, say so (the picker offers Try again). */
+export function emptyNote(kind: QueryKind, search: SearchState): string {
+  if (kind === "empty") return "Type a name, a username, or someone's full address.";
+  if (search === "searching") return "Searching…";
+  if (search === "failed") return "Couldn't search your server right now.";
+  return "No one by that name. Someone on another server: type their full address, like @name:their.server.";
+}
+
+/** An invite sent from the picker, until the answer: in flight, or failed with the reason. */
+export type Sent = { state: "inviting" } | { state: "failed"; text: string };
+export type InviteEvent = { kind: "start" } | { kind: "answer"; ok: boolean; text: string };
+
+/** The picker's invite bookkeeping (2026-11-13, A02.0): "start" marks them in flight (not pickable, not yet a member);
+ *  a yes makes them a member; a no keeps them pickable with the reason (pick again = try again). A second start while
+ *  one is in flight, or for a member, changes nothing. */
+export function inviteStep(
+  members: readonly string[],
+  sent: Readonly<Record<string, Sent>>,
+  mxid: string,
+  ev: InviteEvent,
+): { members: string[]; sent: Record<string, Sent> } {
+  const m = [...members];
+  const out: Record<string, Sent> = { ...sent };
+  if (ev.kind === "start") {
+    if (!m.includes(mxid) && out[mxid]?.state !== "inviting") out[mxid] = { state: "inviting" };
+    return { members: m, sent: out };
+  }
+  if (out[mxid]?.state !== "inviting") return { members: m, sent: out };
+  if (ev.ok) {
+    delete out[mxid];
+    if (!m.includes(mxid)) m.push(mxid);
+  } else out[mxid] = { state: "failed", text: ev.text };
+  return { members: m, sent: out };
 }

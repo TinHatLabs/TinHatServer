@@ -35,3 +35,4 @@ export { useDerived, readDerived, type DeriveSpec } from "./derive";
 export { onStorageLost, kickSenders, probeIdb } from "./resume";
 export { liveTimelineChain, paginateChainBack, type TimelineChain } from "./timeline";
 import "@/core/devhook";
+export { guestLeaveConfirm, sessionEndedText } from "./endedText";

@@ -144,6 +144,14 @@ export function clearPlayed<T extends { url: string }>(queue: readonly T[], nowU
   return ni <= 0 ? [...queue] : queue.slice(ni);
 }
 
+/** QOL A16.2 (P11) Undo after Clear: the cleared items in their order, then whatever others added since that isn't one
+ *  of them (a re-added link is not doubled). Shared vectors testvectors/mediaparty/undoclear.json (the desktop's
+ *  watchparty.rs queue_undo_clear). */
+export function undoClear<T extends { url: string }>(queue: readonly T[], cleared: readonly T[]): T[] {
+  const back = new Set(cleared.map((c) => c.url));
+  return [...cleared, ...queue.filter((q) => !back.has(q.url))];
+}
+
 /** mulberry32 (bit-for-bit the reference's): a seeded PRNG in [0, 1). */
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;

@@ -130,7 +130,19 @@ export function RoomHeaderBar({ roomId, leftInset = 0, mobile, onBack, bgRadius 
           <Icon name="go-previous" size={22} color="var(--th-header-back-icon)" />
         </button>
         <Avatar size={32} name={name || "Room"} seed={avatarSeed(roomId, dm.peer)} imageSource={avatar || dm.avatar} />
-        <div className={s.titleCol} onClick={() => bus.emit("openRightPanel", { roomId })}>
+        {/* D05.7: a button for screen readers and the keyboard too (Enter / Space), not only a tap target */}
+        <div
+          className={s.titleCol}
+          role="button"
+          tabIndex={0}
+          aria-label={`Room info: ${name || "Room"}`}
+          onClick={() => bus.emit("openRightPanel", { roomId })}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            bus.emit("openRightPanel", { roomId });
+          }}
+        >
           <span className={s.title}>{name || "Room"}</span>
           {sub && <span className={s.sub}>{sub}</span>}
         </div>

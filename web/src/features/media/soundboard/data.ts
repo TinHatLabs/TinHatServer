@@ -11,6 +11,8 @@ import { apiFetch } from "@/core/api";
 import { ensureWritable, getClient, peekClient, sendState, useAccountData, useRoomStateEvents } from "@/core/matrix";
 import { createLogger } from "@/core/log";
 import { withRetry } from "../shared/retry";
+import { uploadFailWords } from "./uploadWords";
+import { ExifStripError, refusePictureBytes } from "@/core/photoUpload";
 
 const log = createLogger("soundboard");
 
@@ -247,14 +249,25 @@ const MIME: Record<string, string> = {
   webm: "audio/webm",
 };
 
-/** Upload a clip and add it to favourites. Resolves with the stored name; throws the native error text. */
+/** Upload a clip and add it to favourites. Resolves with the stored name; throws the desktop's words (A20.2:
+ *  uploadWords.ts; the raw cause goes to the log only). */
 export async function uploadClip(file: File, name?: string): Promise<string> {
-  if (file.size > MAX_UPLOAD) throw new Error("Upload failed: bigger than 3 MB");
+  const fail = (kind: string, raw: unknown, status = 0): never => {
+    log.warn(`upload failed (${kind}${status ? ` ${status}` : ""}): ${(raw as Error)?.message ?? raw}`);
+    throw new Error(uploadFailWords(kind, status));
+  };
+  // R3-1: a clip is never a picture: bytes that sniff as one (a GPS JPEG renamed clip.mp3) are not sent
+  try {
+    await refusePictureBytes(file);
+  } catch (e) {
+    return fail(e instanceof ExifStripError ? "picture" : "unreadable", e);
+  }
+  if (file.size > MAX_UPLOAD) fail("too-big", file.size);
   let bytes: ArrayBuffer;
   try {
     bytes = await file.arrayBuffer();
-  } catch {
-    throw new Error("That file couldn't be read");
+  } catch (e) {
+    return fail("unreadable", e);
   }
   const nm = (name ?? nameFromFile(file.name)).slice(0, 80) || nameFromFile(file.name) || "clip";
   const ext = (file.name.split(".").pop() ?? "").toLowerCase();
@@ -265,9 +278,14 @@ export async function uploadClip(file: File, name?: string): Promise<string> {
   try {
     r = await apiFetch("/soundboard/upload", { method: "POST", body: fd, timeoutMs: 60000 });
   } catch (e) {
-    throw new Error(`Upload failed: network: ${(e as Error)?.message ?? e}`);
+    return fail("network", e);
   }
-  const text = await r.text();
+  let text: string;
+  try {
+    text = await r.text(); // the body can fail after the headers (a dropped connection, the timeout)
+  } catch (e) {
+    return fail("network", e);
+  }
   let body: Json | null = null;
   try {
     body = text ? (JSON.parse(text) as Json) : null;
@@ -276,15 +294,15 @@ export async function uploadClip(file: File, name?: string): Promise<string> {
   }
   if (!r.ok) {
     const err = typeof body?.error === "string" && body.error ? body.error : `HTTP ${r.status}`;
-    throw new Error(`Upload failed: ${err}`);
+    return fail("server", err, r.status);
   }
   const url = typeof body?.url === "string" ? body.url : "";
-  if (!url) throw new Error("Upload failed: bad reply: no url in reply");
+  if (!url) return fail("bad-reply", "no url in reply", r.status);
   const stored = typeof body?.name === "string" && body.name ? body.name : nm;
   try {
     await addPersonalSound(stored, url, "", 0);
   } catch (e) {
-    throw new Error(`Upload failed: saved on the server but not in your list: ${(e as Error)?.message ?? e}`);
+    return fail("not-listed", e);
   }
   return stored;
 }

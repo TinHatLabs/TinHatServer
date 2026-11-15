@@ -85,6 +85,7 @@ export const DEFAULTS: CallState & Omit<CallUiState, "setMaximized" | "setCollap
   ecDegraded: false,
   ecNote: "",
   micSilent: false,
+  micMonitorWhy: "",
   outputMissing: false,
   shareQuality: "1920 1080 60 8000 auto",
   camQuality: "1280 720 30 1700 0",
@@ -230,10 +231,14 @@ export interface VolMenuState {
   identity: string;
   name: string;
   anchor: { x: number; y: number } | { x: number; y: number; width: number; height: number };
+  /** P9 (12.1.16): opened from a call tile — its Pin / Full screen rows (tileGestures.ts) */
+  view?: { tileId: string; share: boolean; fake: boolean; fullscreen: boolean; toggleFs: () => void };
 }
 
 interface CallUi {
   pinned: string | null;
+  /** D02.3: the tile shown full screen (Tile reports it; carry.ts keeps it mounted through a blip) */
+  fsTile: string | null;
   sessionHidden: string[];
   listen: string[];
   sideFrac: number;
@@ -255,6 +260,7 @@ interface CallUi {
 
 export const useCallUi = create<CallUi>()((set) => ({
   pinned: null,
+  fsTile: null,
   sessionHidden: [],
   listen: [],
   sideFrac: 0.28,

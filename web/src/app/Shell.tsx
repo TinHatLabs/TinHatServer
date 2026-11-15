@@ -31,10 +31,10 @@ import { useBus } from "@/core/bus";
 import { getPref, setPref, usePref } from "@/core/prefs";
 import { useRegistry } from "@/core/registry";
 import { useShortcut } from "@/core/shortcuts";
-import { openSettings, toast } from "@/core/bus";
+import { bus, openSettings, openShortcuts, toast } from "@/core/bus";
 import { INVITE_WHILE_SIGNED_IN } from "./invite";
 import { useFormFactor } from "@/core/device";
-import { EmptyState, Menu, MenuItem, MenuSeparator, OverlayBoundary } from "@/ui";
+import { Button, EmptyState, Menu, MenuItem, MenuSeparator, OverlayBoundary } from "@/ui";
 import { useShape } from "@/ui/themes";
 import {
   NavColumn,
@@ -50,6 +50,10 @@ import {
   useDmStripEmpty,
   useDrawerStore,
 } from "@/features/nav";
+import { NO_ROOMS_LABEL, noRoomsPlan } from "@/features/nav/firstrun";
+import { openNavDialog } from "@/features/nav/dialogs";
+import { newRoomOpen } from "@/features/nav/newMenu";
+import { useNavStore } from "@/features/nav/model";
 import { RoomPage, FloatingChatsLayer, HeaderIsland, TimelineIsland } from "@/features/chat";
 import { CallStage } from "@/features/callui";
 import { useCall } from "@/features/calls";
@@ -74,10 +78,20 @@ export function Shell() {
   // bus openRoom → the route (history push, so Back returns)
   useBus("openRoom", ({ roomId, eventId }) => navigate(roomHash(roomId, eventId)));
   useShortcut("Ctrl+,", () => openSettings(), { whenTyping: true, action: "app.settings.open" });
+  // A23.1 (2026-11-14): Ctrl+/ = the `app.shortcuts.open` action's default key (not on phones: the action is hidden there)
+  useShortcut("Ctrl+/", () => openShortcuts(), { whenTyping: true, enabled: !mobile, action: "app.shortcuts.open" });
 
   const target = route.name === "room" ? route.target : null;
   const roomId = useResolvedRoomId(target);
-  const eventId = route.name === "room" ? route.eventId : undefined;
+  // threads (docs/THREADS.md): #/room/<id>[/$ev]?thread=<root> opens the room with that thread in its panel (centred on
+  // $ev); the event then belongs to the thread, not to the main timeline's jump
+  const thread = route.name === "room" ? route.thread : undefined;
+  const eventId = route.name === "room" && !thread ? route.eventId : undefined;
+  const threadFocus = route.name === "room" && thread ? (route.eventId ?? "") : "";
+  useEffect(() => {
+    if (!thread || !roomId || !roomId.startsWith("!")) return;
+    bus.emit("openThread", { roomId, eventId: thread, focus: threadFocus });
+  }, [roomId, thread, threadFocus]);
 
   // TH-SHELL-06: the last room comes back on the next launch (desktop; phones start at the list)
   useEffect(() => {
@@ -281,6 +295,11 @@ function DesktopShell({ roomId, eventId, always }: { roomId: string | null; even
   }, [form]);
   const orient = (i: number): "v" | "h" => (orientKey[i] === "h" ? "h" : "v");
   // the islands' contents are built only when what they show changes — a new layout alone re-renders frames, not them
+  // A01.0 / P4: no rooms at all (spaces don't count) once the list has loaded → "No rooms yet" + New DM / New room
+  const navLoaded = useNavStore((st) => st.loaded);
+  const joinedRooms = useNavStore((st) => st.globalRooms.filter((r) => r.membership === "join").length);
+  const invitedRooms = useNavStore((st) => st.globalRooms.filter((r) => r.membership === "invite").length);
+  const noRooms = useMemo(() => (navLoaded ? noRoomsPlan(joinedRooms, invitedRooms) : null), [navLoaded, joinedRooms, invitedRooms]);
   const islands = useMemo<IslandDef[]>(() => {
     const nodes: Array<[string, ReactNode, Partial<IslandDef>?]> = [
       ["nav", <NavIsland orient={orient(0)} />, orient(0) === "h" ? { measure: "explicit" } : undefined],
@@ -301,6 +320,23 @@ function DesktopShell({ roomId, eventId, always }: { roomId: string | null; even
             title="Your rooms are tucked away"
             explanation="Hover the handle in the top-left corner to open Spaces and rooms."
           />
+        ) : noRooms ? (
+          // A01.0 / P4 (Sunday QoL): a new account has no rooms — say so and offer the two ways to start
+          <EmptyState iconName="dialog-messages-symbolic" title={noRooms.title} explanation={noRooms.explanation}>
+            {noRooms.buttons.length > 0 && (
+              <div className={s.noRoomsButtons}>
+                {noRooms.buttons.map((b) => (
+                  <Button
+                    key={b}
+                    text={NO_ROOMS_LABEL[b]}
+                    highlighted={b === "newDm"}
+                    onClick={() => openNavDialog(b === "newDm" ? { kind: "newChat" } : newRoomOpen("home", "Home"))}
+                    data-no-rooms={b}
+                  />
+                ))}
+              </div>
+            )}
+          </EmptyState>
         ) : (
           <EmptyState
             iconName="dialog-messages-symbolic"
@@ -320,7 +356,7 @@ function DesktopShell({ roomId, eventId, always }: { roomId: string | null; even
       ...islandMeta(ref),
       ...extra,
     }));
-  }, [roomId, eventId, flat, fill, radius, pageH, headerInset, callInset, navInDrawer, drawerOpened, onPicked, dmsEmpty, composerEl, editing, orientKey, buttonRefs]);
+  }, [roomId, eventId, flat, fill, radius, pageH, headerInset, callInset, navInDrawer, drawerOpened, onPicked, dmsEmpty, composerEl, editing, orientKey, buttonRefs, noRooms]);
 
   // edit mode: the islands whose real content is absent right now get a placeholder (EDITMODE-UI §2)
   const absent = useMemo(() => {

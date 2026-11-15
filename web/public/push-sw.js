@@ -40,6 +40,8 @@ function parsePayload(data) {
   return {
     room,
     event: typeof p.event === "string" && p.event.startsWith("$") ? p.event : "",
+    // threads (docs/THREADS.md): the thread the event is in, when the payload names it ("" = the main timeline)
+    thread: eventUsable(p.thread) ? p.thread : "",
     kind: p.kind === "invite" ? "invite" : "message",
     title: text(p.title, 120) || "Tin Hat",
     body: text(p.body, 400) || "New activity",
@@ -90,16 +92,21 @@ async function readRec(cache, k) {
   }
 }
 
-async function setBadgeNow(room) {
+// `read`: rooms the page saw read while it was hidden (Mark as read, another device); they leave the pushed set.
+// A newer push for such a room can be dropped with it; the page's next sync puts the room in its set and recounts.
+async function setBadgeNow(room, read) {
   try {
     const cache = await caches.open(BADGE_CACHE);
     const page = await readRec(cache, "unread");
     const prev = await readRec(cache, "pushed");
     const pushed = new Set(prev.epoch === page.epoch ? prev.rooms : []);
+    let changed = false;
+    for (const r of read || []) changed = pushed.delete(r) || changed;
     if (room && !pushed.has(room)) {
       pushed.add(room);
-      await cache.put(badgeKey("pushed"), new Response(JSON.stringify({ rooms: [...pushed], epoch: page.epoch }), { headers: { "Content-Type": "application/json" } }));
+      changed = true;
     }
+    if (changed) await cache.put(badgeKey("pushed"), new Response(JSON.stringify({ rooms: [...pushed], epoch: page.epoch }), { headers: { "Content-Type": "application/json" } }));
     const n = new Set([...page.rooms, ...pushed]).size;
     const nav = self.navigator;
     if (n > 0) {
@@ -111,8 +118,8 @@ async function setBadgeNow(room) {
 }
 
 let badgeQueue = Promise.resolve();
-function setBadge(room) {
-  const p = badgeQueue.then(() => setBadgeNow(room));
+function setBadge(room, read) {
+  const p = badgeQueue.then(() => setBadgeNow(room, read));
   badgeQueue = p.catch(() => undefined);
   return p;
 }
@@ -123,6 +130,13 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   keep(event, Promise.resolve());
+});
+
+// The page's unread set changed while it was hidden: the badge follows now, not at the next visible moment.
+self.addEventListener("message", (event) => {
+  const d = event.data;
+  if (!d || d.type !== "tinhat-badge-sync" || !Array.isArray(d.read)) return;
+  keep(event, setBadge("", d.read.filter((x) => typeof x === "string")));
 });
 
 self.addEventListener("push", (event) => {
@@ -139,7 +153,7 @@ self.addEventListener("push", (event) => {
           renotify: true,
           icon: ICON,
           badge: ICON,
-          data: { room: n.room, event: n.event, kind: n.kind, user: n.user, push: true },
+          data: { room: n.room, event: n.event, thread: n.thread, kind: n.kind, user: n.user, push: true },
           // docs/NOTIF-ACTIONS.md: Reply / Mark as read on a room message (an invite keeps none)
           actions: n.room && n.kind === "message" ? messageActions(n.event) : [],
         })
@@ -167,10 +181,16 @@ self.addEventListener("notificationclick", (event) => {
   const room = typeof d.room === "string" && d.room.startsWith("!") ? d.room : "";
   const note = typeof d.note === "string" ? d.note : "";
   const user = typeof d.user === "string" ? d.user : "";
+  // threads: the notified event's thread when known (a click / Reply opens the thread: #/room/<room>?thread=<root>)
+  const thread = eventUsable(d.thread) ? d.thread : "";
+  const roomRoute = (r) => "#/room/" + encodeURIComponent(r) + (thread ? "?thread=" + encodeURIComponent(thread) : "");
   const action = typeof event.action === "string" ? event.action : "";
   // docs/NOTIF-ACTIONS.md: the buttons. The page does the work; Mark as read leaves the window where it is.
   if (room && (action === "read" || action === "reply")) {
-    const msg = action === "read" ? { type: "tinhat-mark-read", room, event: eventUsable(d.event) ? d.event : "", user } : { type: "tinhat-compose", room, user };
+    const msg =
+      action === "read"
+        ? { type: "tinhat-mark-read", room, event: eventUsable(d.event) ? d.event : "", user }
+        : { type: "tinhat-compose", room, user, event: eventUsable(d.event) ? d.event : "", thread };
     keep(
       event,
       (async () => {
@@ -188,7 +208,7 @@ self.addEventListener("notificationclick", (event) => {
           return;
         }
         // no Tin Hat window: open one (the session is in the page); the message waits there until it is ready
-        const opened = await self.clients.openWindow(SCOPE + (action === "reply" ? "#/room/" + encodeURIComponent(room) : ""));
+        const opened = await self.clients.openWindow(SCOPE + (action === "reply" ? roomRoute(room) : ""));
         if (opened) opened.postMessage(msg);
       })(),
     );
@@ -205,11 +225,11 @@ self.addEventListener("notificationclick", (event) => {
         } catch (_) {
           /* not allowed: still tell it */
         }
-        if (note) win.postMessage({ type: "tinhat-note-click", note, room, user });
-        else if (room) win.postMessage({ type: "tinhat-open-room", room, user });
+        if (note) win.postMessage({ type: "tinhat-note-click", note, room, user, thread });
+        else if (room) win.postMessage({ type: "tinhat-open-room", room, user, thread });
         return;
       }
-      await self.clients.openWindow(SCOPE + (room ? "#/room/" + encodeURIComponent(room) : ""));
+      await self.clients.openWindow(SCOPE + (room ? roomRoute(room) : ""));
     })(),
   );
 });

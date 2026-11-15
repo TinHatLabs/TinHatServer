@@ -1100,3 +1100,34 @@ test("PAD5-F5 roles worked out from a kept space state expire 10 s after THAT re
     t.now.advance(1_500);  // t=10.5 s: 10 s after the space was read, but only 1.5 s after room 2's roles were worked out
     assert.equal((await t.post(ask({ room: ROOM2, device_id: "P3" }))).body?.reason, "server-muted", "room 2 sees the change 10 s after the read");
 });
+
+// ---- 0.3.17: a member's Pad spam behind a shared address (assembly-0316 Astra r2: requests refused by the member's own
+// sign-in/account limits spent the address's allowance, so the others behind that NAT were refused a join) ----------------
+test("LB3 one member's Pad requests behind a shared address: their 429, never the others' behind it", async () => {
+    const t = setup();
+    const NAT = "198.51.100.9";
+    let own429 = 0;
+    for (let i = 0; i < CALLTOKEN.PER_CLIENT_PER_MIN + 20; i++) {
+        const r = await t.post(ask(), { ip: NAT });
+        if (r.statusCode === 429) own429++;
+    }
+    assert.ok(own429 > 0, "ALICE's Pad spam is limited");
+    const bob = await t.post(ask({ openid_token: { access_token: "ab", token_type: "Bearer", matrix_server_name: SN, expires_in: 3600 }, device_id: "BPHONE" }), { ip: NAT });
+    assert.notEqual(bob.statusCode, 429, `BOB's Pad request behind the same address: ${bob.statusCode} ${JSON.stringify(bob.body)}`);
+    assert.equal(bob.statusCode, 200);
+});
+
+test("LR3 shared lookups used up: one member's Pad re-checks of a KNOWN sign-in behind a NAT don't fill its address (Astra r1)", async () => {
+    const t = setup();
+    const NAT = "198.51.100.31";
+    assert.equal((await t.post(ask(), { ip: NAT })).statusCode, 200, "ALICE's sign-in, now known");
+    for (let i = 0; i < CALLTOKEN.LOOKUPS_GLOBAL_MIN; i++) {
+        t.s.local[`fill${i}`] = `@f${i}:${SN}`;
+        await t.post(ask({ openid_token: { access_token: `fill${i}`, token_type: "Bearer", matrix_server_name: SN, expires_in: 3600 } }), { ip: `2001:db8:a${(i + 1).toString(16)}::1` });
+    }
+    let busy = 0;
+    for (let i = 0; i < CALLTOKEN.PER_CLIENT_PER_MIN + 20; i++) if ((await t.post(ask(), { ip: NAT })).statusCode === 429) busy++;
+    assert.ok(busy > 0, "the shared budget is used up");
+    const bob = await t.post(ask({ openid_token: { access_token: "ab", token_type: "Bearer", matrix_server_name: SN, expires_in: 3600 }, device_id: "BPHONE" }), { ip: NAT });
+    assert.notEqual(bob.body?.error, "too many call sign-ins, try again shortly", `BOB behind the same address is not refused for the ADDRESS: ${bob.statusCode} ${JSON.stringify(bob.body)}`);
+});

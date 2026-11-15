@@ -10,6 +10,9 @@
 }
 .tlWrap {
   position: relative;
+  /* the shared background + particle layer sits at z-index -1 inside this (ambience/layer.tsx): above the
+     timeline's own background, below every message */
+  isolation: isolate;
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -51,6 +54,14 @@
   font-size: var(--th-font-size-small);
   color: var(--th-timeline-start-fg);
 }
+/* D09.3: "Waiting for Sam to join" under the last message of a DM the other person hasn't accepted yet */
+.waitingFor {
+  flex: none;
+  padding: 10px 12px 6px;
+  text-align: center;
+  font-size: var(--th-font-size-small);
+  color: var(--th-timeline-start-fg);
+}
 .histSpin {
   position: absolute;
   top: 4px;
@@ -68,6 +79,31 @@
 }
 .emptyWrap > * {
   width: min(calc(100% - 108px), 396px);
+}
+
+/* P2 a: "Jump to NEW" pill: 8 px from the top, centred, 32 tall, radius 16 (ConversationView.qml newPill) */
+.newPill {
+  all: unset;
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  height: 32px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  padding: 0 11px;
+  background: var(--th-timeline-jump-bg-unread);
+  border: 1px solid var(--th-timeline-jump-border-unread);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.newPill:focus-visible {
+  outline: 2px solid var(--th-border-focus);
+  outline-offset: 1px;
 }
 
 /* jump chip: 8 px from right/bottom, 36 tall, radius 18 */
@@ -189,6 +225,14 @@
 .quickOn {
   background: var(--th-bubble-quick-react-bg-checked);
   box-shadow: inset 0 0 0 1px var(--th-bubble-quick-react-ring-checked);
+}
+
+/* phones / touch: a thumb-sized "Jump to NEW" pill */
+.mobile .newPill,
+:global(html[data-touch]) .newPill {
+  height: 40px;
+  border-radius: 20px;
+  padding: 0 14px;
 }
 
 /* touch: thumb-sized jump chip */

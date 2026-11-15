@@ -1,29 +1,42 @@
 // memories/index.tsx — Memories entry points: the room-header button (RoomHeaderBar.qml:218-226,
 // left of the call button) and the window registration (864×720, min 480×420, "memories").
 //
-// selfhost/firstrun item 1: on a server that says it has no Memories (core/server) the button draws nothing and the
-// window never opens (the `memories.*` actions are hidden by the gate too).
+// Memories opens on EVERY server (docs/MEMORIES-PHOTOS.md): on one without a call recorder (memories:false) the window
+// shows photos only (photos.ts windowMode); the recording actions stay gated (core/server offer.ts).
 import { useRef } from "react";
 import type { Registries } from "@/core/registry";
-import { serverFeatureOn, useServerFeature } from "@/core/server";
+import { useServerFeature } from "@/core/server";
+import { windowMode } from "./photos";
 import { HeaderIconButton } from "@/ui";
 import { MemoriesWindow, memoriesTitle, openMemoriesWindow } from "./MemoriesWindow";
+import type { MessageMenuCtx } from "@/core/registry";
+import { peekClient } from "@/core/matrix";
+import { toast } from "@/core/bus";
+import { MEMORIES_WORDS, addToMemories, inMyMemories, removeFromMemories } from "./photosStore";
+
+/** The message menu's "Add to Memories" applies to MY sent image messages (docs/MEMORIES-PHOTOS.md: your own images only). */
+function myImage(ctx: MessageMenuCtx): boolean {
+  const ev = ctx.event;
+  const id = ev.getId() ?? "";
+  const me = peekClient()?.getUserId() ?? "";
+  return !!id && id.startsWith("$") && ev.getSender() === me && !ev.isRedacted() && ev.getType() === "m.room.message" && ev.getContent()?.msgtype === "m.image";
+}
 
 /** Open (or raise) the Memories window for `roomId` (`open` = session id | "latest" — gate hook). */
 export function openMemories(roomId: string, open?: string): void {
-  if (!roomId || !serverFeatureOn("memories")) return;
+  if (!roomId) return;
   openMemoriesWindow(roomId, open);
 }
 
 /** Room header "Memories" button (HeaderIconButton camera-video-symbolic). */
 export function MemoriesHeaderButton({ roomId }: { roomId: string }) {
   const ref = useRef<HTMLButtonElement>(null);
-  if (!useServerFeature("memories")) return null;
+  const mode = windowMode(useServerFeature("memories"));
   return (
     <HeaderIconButton
       ref={ref}
       iconName="camera-video-symbolic"
-      tip="Memories — relive this room's recorded calls"
+      tip={mode.tip}
       aria-label="Memories"
       disabled={!roomId}
       onClick={() => openMemories(roomId)}
@@ -46,4 +59,30 @@ export function registerMemories(r: Registries, offs: Array<() => void>): void {
   );
   // chat hosts r.roomHeaderActions in native order: game reel 10, calendar 20, memories 30, call 40
   offs.push(r.roomHeaderActions.add({ id: "media-memories", order: 30, component: MemoriesHeaderButton }));
+  // Memories photos: on my own image, after "Save as…" (50); removing never deletes the message
+  offs.push(
+    r.messageMenu.add({
+      id: "memories-photo",
+      order: 55,
+      label: (ctx) => (inMyMemories(ctx.roomId, ctx.event.getId() ?? "") ? "Remove from Memories" : "Add to Memories"),
+      icon: (ctx) => (inMyMemories(ctx.roomId, ctx.event.getId() ?? "") ? "list-remove-symbolic" : "image-x-generic"),
+      visible: myImage,
+      run: (ctx) => {
+        const id = ctx.event.getId() ?? "";
+        // R3-2 (review): re-checked when it runs: a menu left open across an account switch never queues the old
+        // account's photo under the new one (the photo must be the current account's own message)
+        const owner = peekClient();
+        if (!owner || ctx.event.getSender() !== owner.getUserId()) return;
+        const on = inMyMemories(ctx.roomId, id);
+        (on ? removeFromMemories(ctx.roomId, id, owner) : addToMemories(ctx.roomId, id, ctx.event.getTs(), owner)).then(
+          () => {
+            if (peekClient() === owner) toast(on ? "Removed from Memories. It stays in the chat." : "Added to Memories");
+          },
+          (e) => {
+            if ((e as Error)?.name !== "StaleSession" && peekClient() === owner) toast((e as Error)?.message || MEMORIES_WORDS.forbidden);
+          },
+        );
+      },
+    }),
+  );
 }

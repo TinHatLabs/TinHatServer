@@ -10,7 +10,8 @@ import { useCryptoStatus, useSession } from "@/core/matrix";
 import { setPref, usePref } from "@/core/prefs";
 import { isGuestAccount } from "@/core/server";
 import { Button, Icon, cx } from "@/ui";
-import { PERMISSION_QUESTION, askNotificationPermission, snoozeNotifyAsk, useNotifyCardVisible } from "@/features/push/PermissionCard";
+import { PERMISSION_QUESTION, askNotificationPermission, snoozeNotifyAsk, useNotifyCardKind, useNotifyCardVisible } from "@/features/push/PermissionCard";
+import { IOS_INSTALL_HINT } from "@/features/push/wire";
 import { QUESTION as STATUS_QUESTION, useStatusQuestionVisible } from "@/features/presence/controls";
 import { answerQuestion } from "@/features/presence/runtime";
 import { useVerifyUi } from "@/features/settings/VerifyDeviceDialog";
@@ -43,6 +44,7 @@ export function TourOfferCard({ mobile, island }: { mobile?: boolean; island?: b
       data-mobile={mobile ? "" : undefined}
       data-placement={island === "flat" ? "flat" : island ? "island" : undefined}
       role="dialog"
+      data-inline-card="" // (12.1.16) an inline card, not a popup: focusing it doesn't end a push-to-talk hold
       aria-label="Take a 1-minute tour?"
       data-tour-offer=""
     >
@@ -68,6 +70,7 @@ export function TourOfferCard({ mobile, island }: { mobile?: boolean; island?: b
 
 export function NotifyAskBanner(_: { roomId: string }) {
   const askable = useNotifyCardVisible();
+  const kind = useNotifyCardKind();
   const sentFirst = usePref(SENT_FIRST_PREF, false);
   const modalOpen = useFirstRunModal();
   const [busy, setBusy] = useState(false);
@@ -78,6 +81,19 @@ export function NotifyAskBanner(_: { roomId: string }) {
     setBusy(true);
     void asked.then(() => setBusy(false));
   };
+  // D06.4 / P20: an iPhone Safari tab can't be asked — it gets the Home Screen card instead (Not now = 30 days)
+  if (kind === "install")
+    return (
+      <div className={cx(s.ask, s.room)} role="region" aria-label="Add Tin Hat to your Home Screen" data-notify-ask="install">
+        <div className={s.head}>
+          <Icon name="notifications" size={16} color="var(--th-account-ask-icon)" className={s.icon} />
+          <div className={s.text}>{IOS_INSTALL_HINT}</div>
+        </div>
+        <div className={s.btns}>
+          <Button className={s.btn} flat text="Not now" onClick={snoozeNotifyAsk} />
+        </div>
+      </div>
+    );
   return (
     <div className={cx(s.ask, s.room)} role="region" aria-label={PERMISSION_QUESTION} data-notify-ask="">
       <div className={s.head}>

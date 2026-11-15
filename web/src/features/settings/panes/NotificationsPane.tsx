@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getSession } from "@/core/matrix";
 import { setPref, usePref } from "@/core/prefs";
 import { useServerFeature } from "@/core/server";
-import { previewSound } from "@/core/sounds";
+import { isPreviewing, previewSound } from "@/core/sounds";
 import { Button, Slider, ToolButton } from "@/ui";
 import { disablePush, enablePush, sendTest, setQuiet, usePushStore } from "@/features/push";
 import { BLOCKED_LINE, ON_LINE, QUIET_CAPTION, STUCK_LINE } from "@/features/push/ThisDevice";
@@ -16,6 +16,7 @@ import { hasNativeCap, inPhoneApp, inTinHatApp, nativeNotifications, NOTIFY_CHAN
 import { nativePushHint, phoneNoSwitchLine } from "@/features/native";
 import { notificationPermission, requestNotificationPermission, useNotificationPermission } from "../notify";
 import { ComboRow, Hint, NoteRow, Row, Section, SwitchRow } from "../rows";
+import { volumePreviewDebouncer, volumePreviewFile } from "../volumePreview";
 import p from "./panes.module.css";
 
 const NOTIFY_SOUNDS = ["Off", "Sound 1 (default, 1 s)", "Sound 2 (3 s)", "Sound 3 (1.5 s)", "Sound 4 (1 s)"];
@@ -38,6 +39,17 @@ export function NotificationsPane() {
   const volRaw = usePref("snd.volume", "70");
   const vol = Number.isNaN(parseInt(String(volRaw), 10)) ? 70 : Math.max(0, Math.min(100, parseInt(String(volRaw), 10)));
   const [volLive, setVolLive] = useState<number | null>(null);
+  // D07.1: letting go of the volume slider plays a sound at the new level (volumePreview.ts; shared vectors)
+  const volFile = useRef("");
+  volFile.current = volumePreviewFile(String(notify), String(nv));
+  const volPreview = useRef(
+    volumePreviewDebouncer(() => {
+      const f = volFile.current;
+      if (isPreviewing(f)) previewSound(f);
+      previewSound(f);
+    }),
+  ).current;
+  useEffect(() => () => volPreview.cancel(), [volPreview]);
   const perm = useNotificationPermission();
   // variant index 0..3 / 0..1 (the old combos'), then +1 for the "Off" row
   const notifyVar = nv === "2" ? 1 : nv === "3" ? 2 : nv === "4" ? 3 : 0;
@@ -151,8 +163,12 @@ export function NotificationsPane() {
                 onMoved={(v) => {
                   setVolLive(v);
                   setPref("snd.volume", String(Math.round(v)));
+                  volPreview.cancel(); // still moving: a preview waiting from the last release must not play mid-drag
                 }}
-                onRelease={() => setVolLive(null)}
+                onRelease={() => {
+                  setVolLive(null);
+                  volPreview.release();
+                }}
               />
               <span className={p.pct}>{Math.round(volLive ?? vol)}%</span>
             </div>

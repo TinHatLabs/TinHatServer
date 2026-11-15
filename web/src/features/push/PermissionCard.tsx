@@ -6,7 +6,7 @@
 import { useSession } from "@/core/matrix";
 import { getPref, setPref, usePref } from "@/core/prefs";
 import { enablePush, envNow, usePushStore } from "./client";
-import { isInstalled, isIos } from "./wire";
+import { isInstalled, isIos, notifyCardKind } from "./wire";
 import { inPhoneApp } from "@/features/native";
 
 const SNOOZE_PREF = "notify.ask-until";
@@ -15,13 +15,20 @@ export const PERMISSION_QUESTION = "Get notified about DMs and mentions?";
 
 /** Should the card show now? */
 export function useNotifyCardVisible(): boolean {
+  return useNotifyCardKind() !== null;
+}
+
+/** Which card (wire.notifyCardKind): "ask", "install" (an iPhone Safari tab: add to the Home Screen first; P20), or null. */
+export function useNotifyCardKind(): "ask" | "install" | null {
+  const support = usePushStore((st) => st.support);
   const session = useSession();
   const perm = usePushStore((st) => st.permission);
   const desk = usePref("desktop-notifications", "1");
   const until = Number(usePref(SNOOZE_PREF, "0")) || 0;
   // (never inside a Tin Hat phone app: its web view has no Web Push or Notification; the apps notify natively —
   // features/native. The Mac app has Notification (to Notification Center): it asks, like a desktop browser)
-  return session.state === "ready" && session.liveSyncDone && perm === "default" && desk !== "0" && until <= Date.now() && !inPhoneApp();
+  const kind = notifyCardKind(perm, support);
+  return session.state === "ready" && session.liveSyncDone && kind && desk !== "0" && until <= Date.now() && !inPhoneApp() ? kind : null;
 }
 
 /** [Turn on] — call it INSIDE the click (iOS asks only within the tap): the browser's question, or on an iPhone Home

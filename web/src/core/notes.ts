@@ -61,6 +61,8 @@ export interface Note {
   actions?: Array<{ action: string; title: string }>;
   /** the event the note shows (Mark as read targets it) */
   event?: string;
+  /** threads: the thread that event is in ("" / absent = the main timeline): Reply and the click open the thread */
+  thread?: string;
 }
 
 const appIcon = () => `${import.meta.env.BASE_URL}appicon/tinhat-192.png`;
@@ -86,7 +88,7 @@ export function showNote(n: Note): boolean {
       tag: n.tag,
       silent: n.silent ?? true,
       requireInteraction: n.requireInteraction,
-      data: { room: n.room ?? "", note: n.onClick ? id : "", user: getSession().userId ?? "", event: n.event ?? "" },
+      data: { room: n.room ?? "", note: n.onClick ? id : "", user: getSession().userId ?? "", event: n.event ?? "", thread: n.thread ?? "" },
     };
     if (n.actions?.length) (opts as { actions?: unknown }).actions = n.actions;
     r.showNotification(n.title, opts).then(
@@ -169,19 +171,20 @@ export async function closeAllNotes(): Promise<void> {
 
 // ---- the worker's clicks ---------------------------------------------------------------------------------------
 
-let pendingRoom: { room: string; user: string } | null = null;
+let pendingRoom: { room: string; user: string; thread: string } | null = null;
 
 // docs/NOTIF-ACTIONS.md: Reply / Mark as read from a notification. features/push installs the handlers (the page
 // sends; the worker never does). They run once signed in and synced, and only for the account they were posted for.
 export interface NoteActions {
   markRead(room: string, event: string): void;
-  compose(room: string): void;
+  /** threads: `event` = the notified event, `thread` = its thread when the notification knew it ("" = find out) */
+  compose(room: string, event?: string, thread?: string): void;
 }
 let noteActions: NoteActions | null = null;
 export function setNoteActions(a: NoteActions | null): void {
   noteActions = a;
 }
-type QueuedAction = { kind: "read" | "compose"; room: string; event: string; user: string };
+type QueuedAction = { kind: "read" | "compose"; room: string; event: string; user: string; thread?: string };
 let queued: QueuedAction[] = [];
 const recent = new Map<string, number>();
 
@@ -197,7 +200,7 @@ function runAction(q: QueuedAction): void {
     return;
   }
   if (q.kind === "compose") {
-    noteActions?.compose(q.room);
+    noteActions?.compose(q.room, q.event, q.thread ?? "");
     return;
   }
   // a repeat of the same (room, event) within a minute is dropped
@@ -209,23 +212,29 @@ function runAction(q: QueuedAction): void {
   noteActions?.markRead(q.room, q.event);
 }
 
-function openWhenReady(room: string, user: string): void {
+/** threads: a notification about a thread reply opens the room and that thread (chat's bus openThread). */
+function openRoomOrThread(room: string, thread: string): void {
+  if (thread) bus.emit("openThread", { roomId: room, eventId: thread });
+  else openRoom(room);
+}
+
+function openWhenReady(room: string, user: string, thread = ""): void {
   const s = getSession();
   if (s.state === "ready" && s.userId) {
     if (user && user !== s.userId) {
       log.info("a notification of another account was clicked — not opening it here");
       return;
     }
-    openRoom(room);
+    openRoomOrThread(room, thread);
     return;
   }
-  pendingRoom = { room, user }; // A2.9: until signed in and synced
+  pendingRoom = { room, user, thread }; // A2.9: until signed in and synced
 }
 
 bus.on("sessionReady", ({ userId }) => {
   const p = pendingRoom;
   pendingRoom = null;
-  if (p && (!p.user || p.user === userId)) openRoom(p.room);
+  if (p && (!p.user || p.user === userId)) openRoomOrThread(p.room, p.thread);
   const q = queued;
   queued = [];
   for (const a of q) runAction(a);
@@ -238,23 +247,25 @@ bus.on("loggedOut", () => {
 
 if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("message", (e: MessageEvent) => {
-    const d = e.data as { type?: unknown; room?: unknown; note?: unknown; user?: unknown; event?: unknown } | null;
+    const d = e.data as { type?: unknown; room?: unknown; note?: unknown; user?: unknown; event?: unknown; thread?: unknown } | null;
     if (!d || typeof d !== "object") return;
     const user = typeof d.user === "string" ? d.user : "";
+    const thread = typeof d.thread === "string" && d.thread.startsWith("$") ? d.thread : "";
     // docs/NOTIF-ACTIONS.md: only from this origin's service worker
     if (d.type === "tinhat-mark-read" || d.type === "tinhat-compose") {
       const fromWorker = typeof ServiceWorker !== "undefined" && e.source instanceof ServiceWorker && (!e.origin || e.origin === location.origin);
       if (!fromWorker || typeof d.room !== "string" || !d.room.startsWith("!")) return;
-      if (d.type === "tinhat-compose") runAction({ kind: "compose", room: d.room, event: "", user });
+      if (d.type === "tinhat-compose")
+        runAction({ kind: "compose", room: d.room, event: typeof d.event === "string" && d.event.startsWith("$") ? d.event : "", user, thread });
       else if (typeof d.event === "string" && d.event.startsWith("$")) runAction({ kind: "read", room: d.room, event: d.event, user });
       return;
     }
-    if (d.type === "tinhat-open-room" && typeof d.room === "string" && d.room.startsWith("!")) openWhenReady(d.room, user);
+    if (d.type === "tinhat-open-room" && typeof d.room === "string" && d.room.startsWith("!")) openWhenReady(d.room, user, thread);
     else if (d.type === "tinhat-note-click" && typeof d.note === "string") {
       const run = clicks.get(d.note);
       clicks.delete(d.note);
       if (run) run();
-      else if (typeof d.room === "string" && d.room.startsWith("!")) openWhenReady(d.room, user);
+      else if (typeof d.room === "string" && d.room.startsWith("!")) openWhenReady(d.room, user, thread);
     }
   });
 }

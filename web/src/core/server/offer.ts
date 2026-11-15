@@ -171,8 +171,14 @@ export const ACTION_GATES: ReadonlyArray<readonly [string, ServerFeature]> = [
   ["app.logship.toggle", "reports"],
 ];
 
+/** Actions of a gated family that every server keeps: Memories opens everywhere (its photos need nothing from the
+ *  server; without a recorder the window shows photos only, memories/photos.ts windowMode). The desktop's
+ *  ACTION_GATE_EXCEPTIONS is the same list. */
+export const ACTION_GATE_EXCEPTIONS: readonly string[] = ["memories.open"];
+
 /** The feature an action needs, or null. */
 export function gateOfAction(id: string): ServerFeature | null {
+  if (ACTION_GATE_EXCEPTIONS.includes(id)) return null;
   for (const [k, f] of ACTION_GATES) {
     if (k.endsWith(".") ? id.startsWith(k) : id === k) return f;
   }

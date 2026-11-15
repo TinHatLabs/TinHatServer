@@ -32,6 +32,8 @@ import {
   startDeviceVerification,
   startOver,
   startSasComparison,
+  checkClock,
+  useClockNote,
   useCryptoStatus,
   useSession,
   useVerification,
@@ -40,9 +42,11 @@ import { bus, toast, useBus } from "@/core/bus";
 import { isGuestAccount } from "@/core/server";
 import { keyFirst } from "@/core/matrix/moved";
 import { offersStartOver, START_OVER, USE_KEY } from "@/core/matrix/startOver";
-import { FirstKeyDialog } from "@/features/selfhost/FirstKeyDialog";
-import { BasicButton, BasicCheckBox, BasicTextField, BusyIndicator, Button, Dialog, Icon, TextArea, cx, useIsMobile } from "@/ui";
+import { FirstKeyDialog, downloadKeyFile } from "@/features/selfhost/FirstKeyDialog";
+import { KEY_DOWNLOAD, KEY_SKIP_BACK, KEY_SKIP_CONFIRM, KEY_SKIP_TEXT, KEY_SKIP_TITLE } from "@/features/selfhost/firstrun";
+import { BasicButton, BasicCheckBox, BasicTextField, BusyIndicator, Button, ConfirmDialog, Dialog, Icon, TextArea, cx, useIsMobile } from "@/ui";
 import s from "./dialogs.module.css";
+import * as linkLab from "@/lab/linkLab";
 
 interface VerifyUi {
   open: boolean;
@@ -75,13 +79,9 @@ export function runSetUpBackup(password: string): void {
   void setUpRecovery(password);
 }
 
-const noVerify = (() => {
-  try {
-    return /[?&]noverify\b/.test(location.search + location.hash);
-  } catch {
-    return false;
-  }
-})();
+// the lab's no-verify link switch (src/lab/linkLab.ts): compiled into lab builds only; a production build folds this to
+// false and drops the module, so no link can stop the sheet from opening (fix1216/weblinkfence)
+const noVerify = __TW_LAB__ ? linkLab.noVerify() : false;
 
 // SET-81's "once" is per signed-in device and module-level, so a remount of the host (the W1 overlay boundary
 // brings it back after a render error; a shell switch) does not auto-open the sheet again.
@@ -114,7 +114,7 @@ export function VerifyDeviceHost() {
     if (!st.thisDeviceVerified) vset({ open: true });
   }, [signedIn, session.userId, session.deviceId, st.loading, st.cryptoReady, st.thisDeviceVerified, st.firstDevicePending]);
 
-  // F2 the first device's new Security Key opens the dialog (?noverify too: the key is shown once, never skipped)
+  // F2 the first device's new Security Key opens the dialog (the lab's no-verify switch too: the key is shown once, never skipped)
   useEffect(() => {
     // (12.0.1: and any other new key — Start over's, Set up recovery's — if the dialog was closed meanwhile)
     if ((v.firstDevice || !!v.recoveryKey) && v.sasState === "recovery-done" && !ui.open) vset({ open: true });
@@ -185,9 +185,14 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
   const v = useVerification();
   // no identity to verify against (a moved server, core/matrix/moved.ts): the Security Key first, no "another device"
   const cs = useCryptoStatus();
+  const clockNote = useClockNote();
+  useEffect(() => {
+    if (open) void checkClock(); // fix/verify-request: fresh on every open (desktop: the sheet's onOpened)
+  }, [open]);
   const keyOnly = keyFirst(cs);
   const mobile = useIsMobile();
   const [key, setKey] = useState("");
+  const [showKey, setShowKey] = useState(false); // A28.2: check a typed key letter by letter (the desktop: the same box)
   const [pw, setPw] = useState("");
   const [saved, setSaved] = useState(false);
   // 12.0.1: "Lost your Security Key? Start over" (crypto.ts startOver)
@@ -196,6 +201,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
   useEffect(() => {
     if (!open) {
       setKey("");
+      setShowKey(false); // A28.2: masked again next time
       setPw("");
       setSoPw("");
       setSoOpen(false);
@@ -243,6 +249,10 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
   // S7: the verifier's title holds through waiting → emoji → confirming → done / cancelled
   const title = v.firstDevice && st === "recovery-done" ? FIRST_DEVICE_TITLE : v.sasIncoming && st !== "" && !st.startsWith("recovery") ? SAS_INCOMING_TITLE : "Verify this device";
   const hideClose = st === "recovery-done" && !saved;
+  // L1 A28.0: the key is shown once, so Escape / the phone's back button on the unsaved key screen ask first (the first
+  // device's FirstKeyDialog words) instead of closing it; "Close anyway" closes (desktop: VerifyDeviceDialog.qml keyAsk)
+  const [askKey, setAskKey] = useState(false);
+  const closeOrAsk = () => (st === "recovery-done" && !saved ? setAskKey(true) : onClose());
   // S9 (phones): the one-line states sit in the middle of the full-screen sheet behind a 64 px glyph
   const centered = mobile && (st === "waiting" || st === "confirming" || st === "done" || st === "cancelled" || st === "recovery-working");
   const spinner = mobile ? (
@@ -270,9 +280,10 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
   );
 
   return (
+    <>
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={closeOrAsk}
       title={title}
       width={mobile ? "100%" : "min(468px, calc(100vw - 36px))"}
       className={cx(mobile && s.mobileDialog, mobile && s.verifySheet)}
@@ -281,6 +292,12 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
       closeOnOutside={false}
     >
       <div className={cx(s.col8, centered && s.mCenter)} data-verify-state={st || "idle"}>
+        {/* fix/verify-request: a wrong clock breaks emoji verification both ways; said on every screen, never blocks */}
+        {clockNote && st !== "recovery-done" && (
+          <span className={cx(s.text, s.neg, mobile && s.center)} data-verify-clock>
+            {clockNote}
+          </span>
+        )}
         {st === "" && keyOnly && (
           <div className={s.col4}>
             <span className={s.text}>Unlock your encrypted messages on this device with your Security Key.</span>
@@ -309,8 +326,8 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
           <div className={s.col4}>
             {!keyOnly && <span className={s.dim}>It's the Security Key you saved when you first set up encryption (Tin Hat shows it only once, so look where you keep it: a password manager, a note, a printout).</span>}
             <BasicTextField
-              className={cx(s.full, MASK_BY_CSS && s.masked)}
-              type={MASK_BY_CSS ? "text" : "password"}
+              className={cx(s.full, MASK_BY_CSS && !showKey && s.masked)}
+              type={MASK_BY_CSS || showKey ? "text" : "password"}
               autoComplete="off"
               autoCapitalize="off"
               autoCorrect="off"
@@ -322,6 +339,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
               onChange={(e) => setKey(e.target.value)}
               onAccepted={() => void verifyKey()}
             />
+            <BasicCheckBox text="Show the key" checked={showKey} disabled={ui.busy} onToggled={setShowKey} />
             <BasicButton
               className={cx(s.full, keyOnly && s.hl)}
               highlighted={keyOnly}
@@ -441,7 +459,7 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
         {st === "recovery-done" && (
           <div className={s.col4}>
             <span className={cx(s.text, s.pos)}>{v.sasNote}</span>
-            {v.recoveryKey && <TextArea className={s.keyArea} readOnly value={v.recoveryKey} aria-label="Recovery key" onFocus={(e) => e.currentTarget.select()} />}
+            {v.recoveryKey && <TextArea className={s.keyArea} readOnly value={v.recoveryKey} aria-label="Security Key" onFocus={(e) => e.currentTarget.select()} />}
             {v.recoveryKey && (
               <div>
                 <Button
@@ -449,8 +467,18 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
                   onClick={() => {
                     void navigator.clipboard
                       .writeText(v.recoveryKey)
-                      .then(() => toast("Recovery key copied — paste it somewhere safe"))
+                      .then(() => toast("Security Key copied — paste it somewhere safe"))
                       .catch(() => toast("Couldn't copy — select the key and copy it by hand"));
+                  }}
+                />{" "}
+                {/* L1 A28.1: the first device's Download here too (the desktop's "Save as file…"); a file = saved */}
+                <Button
+                  icon="document-save-symbolic"
+                  text={KEY_DOWNLOAD}
+                  data-key-download=""
+                  onClick={() => {
+                    downloadKeyFile(v.recoveryKey, me);
+                    setSaved(true);
                   }}
                 />
               </div>
@@ -460,6 +488,17 @@ export function VerifyDeviceDialog({ open, onClose }: { open: boolean; onClose: 
         )}
       </div>
     </Dialog>
+    <ConfirmDialog
+      open={open && askKey}
+      onClose={() => setAskKey(false)}
+      dialogTitle={KEY_SKIP_TITLE}
+      message={KEY_SKIP_TEXT}
+      confirmText={KEY_SKIP_CONFIRM}
+      cancelText={KEY_SKIP_BACK}
+      destructive
+      onConfirmed={onClose}
+    />
+    </>
   );
 }
 

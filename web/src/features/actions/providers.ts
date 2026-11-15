@@ -207,7 +207,7 @@ function navPart(): SnapshotPart {
     "ui.phone": getFormFactor() === "mobile",
     "ui.navCorner": getNavMode() === "corner",
     "ui.rightPanelOpen": panel.open,
-    "ui.rightPanelTab": !panel.open ? "none" : panel.tab === 0 ? "info" : "members",
+    "ui.rightPanelTab": !panel.open ? "none" : panel.tab === 0 ? "info" : panel.tab === 1 ? "members" : String(panel.tab),
     "crypto.unverified": !cs.loading && cs.cryptoReady && !cs.thisDeviceVerified,
     "crypto.backup": cs.backupEnabled === true,
     "update.state": u.checking ? "checking" : u.available ? "available" : "none",
@@ -236,6 +236,7 @@ function prefsPart(): SnapshotPart {
       // 11.0.2: "Keep call buttons visible" (callui/chrome.ts; only "1" is on, default off)
       "prefs.callBarPinned": callBarPinned(),
       "prefs.desktopNotifications": getPref("desktop-notifications", "1") !== "0",
+      "prefs.diagnostics": true, // P18: no switch any more: a report can always be made (the desktop feeds the same)
       "prefs.gifAutoplay": getPref("gif-autoplay", "1") !== "0",
       "prefs.logship": getPref("logship", "") === "1",
       "prefs.overlay": getPref("overlay-enabled", "0") === "1",

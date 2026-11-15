@@ -27,23 +27,28 @@ export interface ReelButtonProps {
   style?: CSSProperties;
   onClick?: () => void;
   "aria-label"?: string;
+  /** QOL A19.1: why it is greyed out — shown on hover / focus; the button stays focusable (aria-disabled) so it can */
+  whyNot?: string;
 }
 
 export const ReelButton = forwardRef<HTMLButtonElement, ReelButtonProps>(function ReelButton(
-  { text, primary, quiet, checked, disabled, hint, radius = 8, width, height, className, style, onClick, ...rest },
+  { text, primary, quiet, checked, disabled, hint, radius = 8, width, height, className, style, onClick, whyNot, ...rest },
   ref,
 ) {
-  const tip = useTipRef<HTMLButtonElement>(hint || null, { delay: 500 });
+  // a native disabled <button> gets no pointer events (no tooltip): with a reason it is aria-disabled instead
+  const explain = !!disabled && !!whyNot;
+  const tip = useTipRef<HTMLButtonElement>((explain ? whyNot : hint) || null, { delay: 500 });
   return (
     <button
       ref={mergeRefs(ref, tip)}
       type="button"
       className={cx(s.rb, primary ? s.rbPrimary : checked ? s.rbChecked : quiet ? s.rbQuiet : s.rbDefault, disabled && s.rbDisabled, className)}
       style={{ borderRadius: radius, width, minWidth: width ?? undefined, height, ...style }}
-      disabled={disabled}
+      disabled={disabled && !explain}
+      aria-disabled={explain || undefined}
       aria-pressed={checked === undefined ? undefined : checked}
       aria-label={rest["aria-label"]}
-      onClick={onClick}
+      onClick={explain ? undefined : onClick}
     >
       <span className={s.rbText}>{text}</span>
     </button>

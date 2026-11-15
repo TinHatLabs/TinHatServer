@@ -4,7 +4,7 @@
 // text (no markdown, no echo, no send sound) and closes.
 import { useEffect, useRef, useState } from "react";
 import { apiJson } from "@/core/api";
-import { AnimatedImage, Icon, Popover, ScrollArea } from "@/ui";
+import { AnimatedImage, Button, Icon, Popover, ScrollArea } from "@/ui";
 import s from "./Composer.module.css";
 
 interface Gif {
@@ -93,6 +93,12 @@ export function GifPicker({ open, onClose, anchor, onPick }: { open: boolean; on
         </ScrollArea>
         {status !== "ok" && (
           <div className={s.gifStatus}>{status === "loading" ? "Loading…" : status === "error" ? "Couldn't load GIFs" : "No GIFs"}</div>
+        )}
+        {/* QOL A08.5: a failed load is no dead end (the same search again; the desktop's Try again) */}
+        {status === "error" && (
+          <div className={s.gifStatus}>
+            <Button text="Try again" flat onClick={() => load(q)} />
+          </div>
         )}
         <div className={s.giphy}>Powered by GIPHY</div>
       </div>

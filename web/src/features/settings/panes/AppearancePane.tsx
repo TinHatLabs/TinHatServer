@@ -4,6 +4,8 @@
 import { useState } from "react";
 import { setPref, usePref } from "@/core/prefs";
 import { UNFOCUSED_SAVER_PREF, unfocusedSaverOn } from "@/core/lowgpu";
+import { PREF_BACKGROUNDS, PREF_EFFECTS, PREF_PAUSE_UNFOCUSED, pauseRow, prefOn } from "@/features/chat/ambience/core";
+import { AMBIENCE_WORDS as AW } from "@/features/chat/ambience/words";
 import { PromptDialog, TextField, showToast } from "@/ui";
 import { chooseTheme, getThemeState, removeMyTheme, saveMyTheme, type MyTheme } from "@/ui/themeStore";
 import type { Theme } from "@/theme/engine";
@@ -17,6 +19,7 @@ import { ThemeGallery } from "../themes/ThemeGallery";
 import { ThemeSection, type MyThemeActions } from "../themes/ThemeSection";
 import { refusalText } from "../themes/text";
 import { ComboRow, Row, Section, SwitchRow } from "../rows";
+import { GAMEBG_WORDS as GW, PREF_GAME_ART } from "@/features/chat/gamebg";
 // ADDITIVE (editmode, 11.0): Settings → Appearance → Layout
 import { LayoutSection } from "@/features/editmode/LayoutSection";
 
@@ -66,7 +69,10 @@ export function AppearancePane() {
   const doRename = () => {
     const m = renaming;
     const name = newName.trim();
-    if (!m || !name || [...name].length > 80 || name === m.doc.name) return;
+    if (!m) return;
+    // A25.6: an empty name used to close the dialog silently (the desktop's AppearancePane.qml: the same words)
+    if (!name) return void showToast(`A theme needs a name — it keeps “${m.doc.name}”.`, "long");
+    if ([...name].length > 80 || name === m.doc.name) return;
     const doc = { ...m.doc, name };
     const r = saveMyTheme(doc);
     if (r !== "saved") {
@@ -170,6 +176,11 @@ function OtherSections() {
   const reduce = usePref("reduce-motion", "0");
   const gifs = usePref("gif-autoplay", "1");
   const saver = usePref(UNFOCUSED_SAVER_PREF, "0");
+  // chat backgrounds + particle effects (docs/AMBIENCE.md; the desktop's AppearancePane.qml has the same rows)
+  const bgs = prefOn(usePref(PREF_BACKGROUNDS, ""), true);
+  const gameArt = prefOn(usePref(PREF_GAME_ART, ""), true); // sun-gamebg: "Game art backgrounds", default ON
+  const fx = prefOn(usePref(PREF_EFFECTS, ""), true);
+  const pause = pauseRow(prefOn(usePref(PREF_PAUSE_UNFOCUSED, ""), true), unfocusedSaverOn(saver));
   const clock = usePref("clock", "system");
   const ff = usePref("formFactor", "auto");
   const fontset = usePref("fontset", "auto");
@@ -179,7 +190,8 @@ function OtherSections() {
           reset, named layouts, previous version */}
       <Section title="Layout">
         <ComboRow
-          label="Look"
+          id="appearance.style"
+          label="Style"
           description="Islands gives every part of the window its own rounded card. Flat puts them edge to edge, the way Tin Hat looked before."
           model={LOOKS}
           textRole="label"
@@ -214,6 +226,7 @@ function OtherSections() {
         />
         {/* GPU.md §2.6 (both apps): the pref `gif-autoplay`, default on */}
         <SwitchRow
+          id="appearance.gif-autoplay"
           label="Play GIFs automatically"
           description="GIFs play up to three times, then rest on their first frame. Hover one to play it again."
           checked={gifs !== "0"}
@@ -224,10 +237,22 @@ function OtherSections() {
       {/* 10.8.1 (GPU.md §1 amendment, both apps): the unfocused rules' master switch — the pref `call-unfocused-saver`, default OFF */}
       <Section title="Performance">
         <SwitchRow
+          id="appearance.gpu-saver"
           label="Save GPU while Tin Hat isn't focused"
           description="For lower-end PCs: while Tin Hat isn't the active window it pauses animations, previews and GIFs and shows cameras small."
           checked={unfocusedSaverOn(saver)}
           onToggled={(on) => setPref(UNFOCUSED_SAVER_PREF, on ? "1" : "0")}
+        />
+        <SwitchRow id="appearance.chat-backgrounds" label={AW.backgrounds} description={AW.backgroundsHelp} checked={bgs} onToggled={(on) => setPref(PREF_BACKGROUNDS, on ? "1" : "0")} />
+        <SwitchRow id="appearance.chat-game-art" label={GW.gameArt} description={GW.gameArtHelp} checked={bgs && gameArt} disabled={!bgs} onToggled={(on) => setPref(PREF_GAME_ART, on ? "1" : "0")} />
+        <SwitchRow id="appearance.chat-effects" label={AW.effects} description={AW.effectsHelp} checked={bgs && fx} disabled={!bgs} onToggled={(on) => setPref(PREF_EFFECTS, on ? "1" : "0")} />
+        <SwitchRow
+          id="appearance.chat-effects-pause"
+          label={AW.pause}
+          description={pause.enabled ? AW.pauseHelp : AW.pauseSaver}
+          checked={pause.checked}
+          disabled={!pause.enabled || !bgs || !fx}
+          onToggled={(on) => setPref(PREF_PAUSE_UNFOCUSED, on ? "1" : "0")}
         />
       </Section>
 

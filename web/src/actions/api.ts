@@ -7,7 +7,8 @@ import type { App } from "./table";
 import { APPS, TABLE, actionById, reg } from "./table";
 import type { EvalInput } from "./evaluate";
 import { defaultKeys, drawer as drawerOf, evalMenu, evalRow, present, validateTarget } from "./evaluate";
-import { aliasTier, choiceEntries, entriesOut, fold as foldText, keywordTier, nameTier, palette as paletteOf } from "./palette";
+import type { RoomFilterRow } from "./palette";
+import { aliasTier, choiceEntries, entriesOut, fold as foldText, keywordTier, nameTier, palette as paletteOf, roomFilterRun } from "./palette";
 import { parseSequence } from "./keys";
 import { checkUserBinding, effectiveBindings, matchKey, setUserBinding, shortcutsView } from "./bindings";
 
@@ -183,6 +184,38 @@ export function score(input: Json): JObj {
   return o;
 }
 
+/** roomFilter {query, rooms: [{name, aliases?, membership?, unread?, mention?}]} → {text, unread, mention, active, shown,
+ *  first} — the room list's filter (ACTIONS.md §10.8). A row's `name` and each alias that is not a string count as "" /
+ *  are left out, `membership` defaults to "join", `unread` / `mention` are true only when `true`. */
+export function roomFilter(input: Json): JObj {
+  if (!isObj(input) || !isStr(get(input, "query"))) return err("bad-input");
+  const rs = get(input, "rooms");
+  if (!Array.isArray(rs)) return err("bad-input");
+  const rows: RoomFilterRow[] = [];
+  for (const r of rs) {
+    if (!isObj(r)) return err("bad-input");
+    const al = get(r, "aliases");
+    const mb = get(r, "membership");
+    const nm = get(r, "name");
+    rows.push({
+      name: isStr(nm) ? nm : "",
+      aliases: Array.isArray(al) ? (al.filter((x) => isStr(x)) as string[]) : [],
+      membership: isStr(mb) ? mb : "join",
+      unread: get(r, "unread") === true,
+      mention: get(r, "mention") === true,
+    });
+  }
+  const run = roomFilterRun(input.query as string, rows);
+  const o = obj();
+  o.text = run.filter.text;
+  o.unread = run.filter.unread;
+  o.mention = run.filter.mention;
+  o.active = run.filter.active;
+  o.shown = run.shown;
+  o.first = run.first;
+  return o;
+}
+
 /** drawer {app, snapshot?, row} → {groups: [...]} — the edit-mode drawer of a row kind (ACTIONS.md §9.6). */
 export function drawer(input: Json): JObj {
   if (!isObj(input)) return err("bad-input");
@@ -305,6 +338,7 @@ export const API: Record<string, (input: Json) => JObj> = {
   choices,
   fold,
   score,
+  roomFilter,
   drawer,
   summary,
 };

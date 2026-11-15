@@ -546,13 +546,26 @@ function reportsCard(o) {
         h("div.s", `${it.user || "?"} · ${when(it.at)} · ${Math.max(1, Math.round(it.size / 1024))} KB`)),
       download(it));
   };
+  // D04.5: Done folds a report under "Handled (n)" and stops counting it; Not done brings it back
+  const keyOf = (it) => (it.source === "matrix" ? `matrix/${it.id}` : `${it.kind}/${it.name}`);
+  const doneBtn = (it) => {
+    const b = h("button.btn.ghost.small", { type: "button" }, it.handled ? "Not done" : "Done");
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await api("/admin/api/reports/done", { json: { key: keyOf(it), done: !it.handled } }); await load(); }
+      catch (ex) { toast(ex.message); b.disabled = false; }
+    });
+    return b;
+  };
+  const title = h("h3", `Reports${n ? ` (${n})` : ""}`);
+  let showHandled = false;
   let every = false;
   const load = async () => {
     try {
       const r = await api(every ? "/admin/api/reports?all=1" : "/admin/api/reports");
       const all = [...r.reports, ...(r.matrix || []).map((m) => ({ ...m, source: "matrix" }))].sort((a, b) => b.at - a.at);
       // one odd entry never hides the others
-      const safe = (it) => { try { return row(it); } catch { return h("div.item", h("div.grow.muted", `A report this page can't show (${it.name || it.id || "?"})`)); } };
+      const safe = (it) => { try { const el = row(it); el.append(doneBtn(it)); return el; } catch { return h("div.item", h("div.grow.muted", `A report this page can't show (${it.name || it.id || "?"})`)); } };
       const notes = [];
       if (r.matrix === null) notes.push(h("div.item", h("div.grow.muted", "Reports sent through Matrix couldn't be read just now (is chat running?). Refresh to try again.")));
       else if (r.matrixTotal > r.matrix.length) notes.push(h("div.item", h("div.grow.muted", `Showing the newest ${r.matrix.length} of ${r.matrixTotal} reports sent through Matrix.`)));
@@ -562,13 +575,20 @@ function reportsCard(o) {
       if (r.otherTotal > r.otherShown) cut.push(`${r.otherShown} of ${r.otherTotal} problem reports and logs`);
       if (cut.length) notes.unshift(h("div.item", h("div.grow.muted", `Showing the newest ${cut.join(" and ")}.`),
         h("button.btn.ghost.small", { type: "button", onclick: () => { every = true; load(); } }, "Show all")));
-      list.replaceChildren(...(all.length ? all.map(safe)
-        : [h("div.item", h("div.grow.muted", "Nothing yet. People send these from the app's Report a problem, Share logs and Report…; they stay on this server."))]), ...notes);
+      const open = all.filter((it) => !it.handled);
+      const done = all.filter((it) => it.handled);
+      title.textContent = `Reports${open.length ? ` (${open.length})` : ""}`;
+      const fold = done.length ? h("div.item", h("div.grow.muted", `Handled (${done.length})`),
+        h("button.btn.ghost.small", { type: "button", "aria-expanded": String(showHandled), onclick: () => { showHandled = !showHandled; load(); } }, showHandled ? "Hide" : "Show")) : null;
+      list.replaceChildren(...(open.length ? open.map(safe)
+        : [h("div.item", h("div.grow.muted", done.length ? "Nothing new. Every report here is marked done."
+          : "Nothing yet. People send these from the app's Report a problem, Share logs and Report…; they stay on this server."))]),
+      ...(fold ? [fold] : []), ...(showHandled ? done.map(safe) : []), ...notes);
     } catch (ex) {
       list.replaceChildren(h("div.item", h("div.grow.muted", ex.message)));
     }
   };
-  card.replaceChildren(h("div.row.between", h("h3", `Reports${n ? ` (${n})` : ""}`), h("button.btn.ghost.small", { type: "button", onclick: load }, "Refresh")), list);
+  card.replaceChildren(h("div.row.between", title, h("button.btn.ghost.small", { type: "button", onclick: load }, "Refresh")), list);
   load();
   return card;
 }
@@ -617,14 +637,18 @@ async function tabInvites(el) {
     return wrap;
   };
   const result = h("div");
+  // D04.4: who the code is for, so a month later the list still says which one went to whom
+  const note = h("input", { type: "text", maxlength: "80", placeholder: "For example: Robin", "aria-label": "Who it's for (a note to yourself)" });
   const create = h("button.btn.cta", { type: "button" }, "Create invite code");
   create.addEventListener("click", async () => {
     create.disabled = true;
     try {
-      const r = await api("/admin/api/invites", { json: { uses, days } });
+      const forWhom = note.value.trim();
+      const r = await api("/admin/api/invites", { json: forWhom ? { uses, days, note: forWhom } : { uses, days } });
       const code = r.invite.code;
+      note.value = "";
       result.replaceChildren(h("div.stack",
-        h("div.codebox", h("div.grow", h("div.small.muted", "New invite code"), h("div.code", { "data-code": code }, code)),
+        h("div.codebox", h("div.grow", h("div.small.muted", r.invite.note ? `New invite code for ${r.invite.note}` : "New invite code"), h("div.code", { "data-code": code }, code)),
           h("button.btn.ghost.small", { onclick: () => copy(code, "Code") }, "Copy code")),
         h("div.note.stack-sm", h("div.small.muted", "Send this to them:"), h("div", { "data-share": "" }, ...shareText(code, sn, web).split("\n").flatMap((l, i) => (i ? [h("br"), l] : [l])))),
         h("div.row.wrap", h("button.btn.ghost.small", { onclick: () => copy(shareText(code, sn, web), "Invitation") }, "Copy invitation"))));
@@ -659,7 +683,7 @@ async function tabInvites(el) {
         revoke.disabled = true;
         try {
           await api(`/admin/api/invites/${encodeURIComponent(inv.code)}`, { method: "DELETE" });
-          toast(`${inv.code} removed`);
+          toast(`${inv.code}${inv.note ? ` (${inv.note})` : ""} removed`);
           await drawList();
         } catch (ex) {
           revoke.disabled = false;
@@ -667,7 +691,8 @@ async function tabInvites(el) {
         }
       });
       const share = inv.active ? h("button.btn.ghost.small", { type: "button", onclick: () => copy(shareText(inv.code, sn, web), "Invitation") }, "Copy invitation") : null;
-      return h("div.item", h("div.grow", h("div.k.mono", inv.code), h("div.s", `${left} · ${exp}`)), chip, share, revoke);
+      return h("div.item", h("div.grow", inv.note ? h("div.k", inv.note) : null, h(inv.note ? "div.s.mono" : "div.k.mono", inv.code),
+        h("div.s", `${left} · ${exp}`)), chip, share, revoke);
     })));
   };
   el.replaceChildren(h("div.stack",
@@ -682,6 +707,7 @@ async function tabInvites(el) {
       h("div.row.wrap",
         h("div.stack-sm", h("div.small.muted", "Who can use it"), seg([[1, "1 person"], [5, "5 people"], [0, "Anyone with the code"]], () => uses, (v) => (uses = v))),
         h("div.stack-sm", h("div.small.muted", "Expires"), seg([[1, "1 day"], [7, "7 days"], [30, "30 days"], [0, "Never"]], () => days, (v) => (days = v)))),
+      h("label.stack-sm", h("span.small.muted", "Who it's for (optional, a note to yourself)"), note),
       h("div.row", create),
       result),
     h("div.card.flat.stack-sm", h("h3", "Invite codes"), list)));
@@ -702,25 +728,112 @@ async function tabPeople(el) {
     return failed(el, ex, () => tabPeople(el));
   }
   const initial = (n) => (n || "?").replace(/^@/, "").slice(0, 1).toUpperCase();
+  // D04.2: find someone once the list is long; newest or last seen first; removed people at the end either way
+  let query = "";
+  let order = "new";
+  const list = h("div");
+  const row = (p) => {
+    const mine = me && me.mxid === p.mxid;
+    const panel = h("div.stack-sm.pwpanel.hidden");
+    const open = (fill) => {
+      const same = !panel.classList.contains("hidden") && panel.dataset.kind === fill.name;
+      panel.replaceChildren();
+      panel.classList.toggle("hidden", same);
+      panel.dataset.kind = fill.name;
+      if (!same) fill(panel, p, () => tabPeople(el));
+    };
+    const acts = p.deactivated || mine ? []
+      : [h("button.btn.ghost.small", { type: "button", onclick: () => open(newPasswordPanel) }, "New password"),
+        p.owner ? null : h("button.btn.ghost.small", { type: "button", onclick: () => open(adminPanel) }, p.admin ? "Remove admin" : "Make admin"),
+        p.owner ? null : h("button.btn.ghost.small", { type: "button", onclick: () => open(removePanel) }, "Remove…")];
+    return h("div.stack-sm",
+      h("div.item",
+        h("span.ico.done", initial(p.name)),
+        h("div.grow", h("div.k", p.name), h("div.s.mono", p.mxid)),
+        p.owner ? h("span.chip.accent", "Owner") : p.admin ? h("span.chip.accent", "Admin") : null,
+        p.deactivated ? h("span.chip", "Removed") : null,
+        h("div.s.small.muted", p.lastSeen ? `seen ${ago(p.lastSeen)}` : `joined ${dateText(p.created)}`),
+        h("div.row.wrap", ...acts)),
+      panel);
+  };
+  const draw = () => {
+    const q = query.trim().toLowerCase();
+    const shown = d.people.filter((p) => !q || (p.name || "").toLowerCase().includes(q) || (p.mxid || "").toLowerCase().includes(q))
+      .sort((a, b) => (a.deactivated - b.deactivated) || (order === "seen" ? (b.lastSeen || 0) - (a.lastSeen || 0) : (b.created || 0) - (a.created || 0)));
+    list.replaceChildren(shown.length ? h("div.list", shown.map(row)) : h("div.empty", q ? "Nobody by that name." : "Nobody yet."));
+  };
+  const find = h("input", { type: "search", placeholder: "Find someone", "aria-label": "Find someone" });
+  find.addEventListener("input", () => { query = find.value; draw(); });
+  const seg = h("div.seg", { role: "group", "aria-label": "Order" });
+  const drawSeg = () => seg.replaceChildren(...[["new", "Newest"], ["seen", "Last seen"]].map(([v, label]) =>
+    h("button", { type: "button", "aria-pressed": String(order === v), onclick: () => { order = v; drawSeg(); draw(); } }, label)));
+  drawSeg();
+  draw();
   el.replaceChildren(h("div.card.flat.stack-sm",
     h("div.row.between", h("h3", `${d.people.filter((p) => !p.deactivated).length} people`), h("span.small.muted", "Everyone with an account on this server")),
-    d.people.length ? h("div.list", d.people.map((p) => {
-      const mine = me && me.mxid === p.mxid;
-      const panel = h("div.stack-sm.pwpanel.hidden");
-      const btn = p.deactivated || mine ? null
-        : h("button.btn.ghost.small", { type: "button", onclick: () => { panel.classList.toggle("hidden"); if (!panel.childNodes.length) newPasswordPanel(panel, p); } }, "New password");
-      return h("div.stack-sm",
-        h("div.item",
-          h("span.ico.done", initial(p.name)),
-          h("div.grow", h("div.k", p.name), h("div.s.mono", p.mxid)),
-          p.admin ? h("span.chip.accent", "Admin") : null,
-          p.deactivated ? h("span.chip", "Removed") : null,
-          h("div.s.small.muted", p.lastSeen ? `seen ${ago(p.lastSeen)}` : `joined ${dateText(p.created)}`),
-          btn),
-        panel);
-    })) : h("div.empty", "Nobody yet."),
+    d.people.length > 12 ? h("div.row.wrap", find, seg) : d.people.length > 1 ? h("div.row.wrap", seg) : null,
+    list,
+    guestsLine(d.guests, d.web),
     h("p.small.muted", "Forgot a password? This server sends no email, so you set a new one here: New password next to the " +
       "person. Your own password: in the Tin Hat app, Settings → Devices & security → Change password.")));
+}
+
+/** People → Guests (D04.8): who else is on the server besides the accounts above. Turning the room on or off and
+ *  letting people in stay in the Tin Hat app (Guests), which the server's API answers. */
+function guestsLine(g, web) {
+  if (!g) return h("div.item.small", h("div.grow", h("div.k", "Guests"), h("div.s", "No Guests room yet. Admins turn it on in the Tin Hat app (Guests), to let people in for a call without an account.")));
+  const what = g.on ? `The Guests room is open${g.since ? ` since ${dateText(g.since)}` : ""} · ${plural(g.count, "guest", "guests")} now`
+    : `The Guests room is closed${g.count ? ` · ${plural(g.count, "guest", "guests")} still in it` : ""}`;
+  return h("div.item.small", h("div.grow", h("div.k", "Guests"), h("div.s", what), h("div.s.muted", "Open or close it and let people in from the Tin Hat app (Guests).")),
+    web ? h("a.btn.ghost.small", { href: `https://${web}/#/room/${encodeURIComponent(g.room)}`, target: "_blank", rel: "noopener" }, "Open the Guests room") : null);
+}
+
+/** People → Make admin / Remove admin (D04.2): admins open this dashboard and manage people, invites and the server. */
+function adminPanel(panel, p, done) {
+  const err = h("div.error.hidden");
+  const go = h(p.admin ? "button.btn.danger.small" : "button.btn.small", { type: "button" }, p.admin ? `Remove admin from ${p.name}` : `Make ${p.name} an admin`);
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    err.classList.add("hidden");
+    try {
+      await api("/admin/api/people/admin", { json: { mxid: p.mxid, admin: !p.admin } });
+      toast(p.admin ? `${p.name} isn't an admin any more` : `${p.name} is an admin now`);
+      done();
+    } catch (ex) {
+      if (ex.status === 401) return viewLogin(ex.message);
+      err.textContent = ex.message;
+      err.classList.remove("hidden");
+      go.disabled = false;
+    }
+  });
+  panel.append(h("p.small", p.admin
+    ? `${p.name} can't open this dashboard any more, and is signed out of it now. Their account and chats stay as they are.`
+    : `${p.name} can then open this dashboard and do what you can here: invite and remove people, set passwords, install updates and change the server's settings.`),
+  h("div.row.wrap", go), err);
+}
+
+/** People → Remove from this server (D04.2): the account is closed; the name stays taken. */
+function removePanel(panel, p, done) {
+  const erase = h("input", { type: "checkbox" });
+  const err = h("div.error.hidden");
+  const go = h("button.btn.danger.small", { type: "button" }, `Remove ${p.name}`);
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    err.classList.add("hidden");
+    try {
+      await api("/admin/api/people/remove", { json: { mxid: p.mxid, erase: erase.checked } });
+      toast(`${p.name} was removed from this server`);
+      done();
+    } catch (ex) {
+      if (ex.status === 401) return viewLogin(ex.message);
+      err.textContent = ex.message;
+      err.classList.remove("hidden");
+      go.disabled = false;
+    }
+  });
+  panel.append(h("p.small", `${p.name} is signed out everywhere and can't sign in again. This can't be undone, and the name ${p.mxid} stays taken.`),
+    h("label.row.small", erase, h("span", "Also erase their name and picture, and hide their messages from people who join a room later (people already there still see them)")),
+    h("div.row.wrap", go), err);
 }
 
 /** People → New password: the server makes one, the owner hands it over; the person picks their own in the app. */

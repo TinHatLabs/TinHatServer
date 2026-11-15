@@ -9,6 +9,7 @@ import { useC } from "@/features/callui/store";
 import { addLinkToParty } from "@/features/media";
 import type { Embed } from "./lib/embeds";
 import s from "./Bubble.module.css";
+import { useNowPlaying } from "./lib/useNowPlaying";
 import { openExternal } from "@/core/openlink";
 
 /** Media Party 11.4 (DESIGN §2.2): while I'm in THIS room's call, a music / video link card offers "Add to Media
@@ -125,7 +126,7 @@ export function EmbedCard({ e, maxW, onOpenImage, roomId = "" }: { e: Embed; max
       ) : (
         <>
           {e.mode === "video" ? (
-            <video className={s.embedSurface} src={e.src} autoPlay controls playsInline />
+            <EmbedVideo src={e.src} />
           ) : (
             <iframe
               className={s.embedSurface}
@@ -168,4 +169,11 @@ function EmbedBtn({ tip, onClick, children }: { tip: string; onClick: () => void
       {children}
     </button>
   );
+}
+
+/** A direct video link playing in place: one of the players that play one at a time (QOL A00.1, nowPlaying.ts). */
+function EmbedVideo({ src }: { src: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const np = useNowPlaying("embed", ref);
+  return <video ref={ref} {...np} className={s.embedSurface} src={src} autoPlay controls playsInline />;
 }

@@ -29,7 +29,7 @@ export const PROMISE = [
   "On: people who share a room with you see Online, Away or In a call. Never a last-seen time, never what you're doing.",
   "Off again: the server stops sharing it at once, and it leaves other people's screens within about 20 seconds. Nothing is kept.",
 ] as const;
-export const SMALL_PRINT = "Messages, typing and read receipts are separate and work as before. Other Matrix apps you use may report your status on their own.";
+export const SMALL_PRINT = "Messages, typing and read receipts are separate and work as before. Other chat apps you use may report your status on their own.";
 export const POPOVER_OFF = "Off — nobody sees your status.";
 export const POPOVER_ON = "On — people you share a room with see Online, Away or In a call.";
 export const QUESTION = "Let others see when you're online? Only Online, Away or In a call — you can turn it off any time.";

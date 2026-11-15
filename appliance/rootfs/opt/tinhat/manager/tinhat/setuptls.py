@@ -29,6 +29,20 @@ CERT, KEY = DIR / "cert.pem", DIR / "key.pem"
 CADDY_CERT, CADDY_KEY = "/data/tinhat-setup/cert.pem", "/data/tinhat-setup/key.pem"
 FINGERPRINT_FILE = config.STATE_DIR / "setup-fingerprint"  # for install.sh and `tinhat setup-code` (not a secret)
 DAYS = 90
+#: the whole openssl config: a server certificate that passes Apple's TLS rules (build/cert-apple-check.py)
+CONFIG = """[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = leaf
+[dn]
+CN = Tin Hat Server setup
+[leaf]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = serverAuth
+subjectAltName = {sans}
+subjectKeyIdentifier = hash
+"""
 made = False  # this manager made a new certificate: Caddy must load it (a reload of an unchanged Caddyfile is a no-op)
 
 
@@ -103,12 +117,17 @@ def _make(openssl: str) -> None:
     DIR.mkdir(parents=True, exist_ok=True)
     os.chmod(DIR, 0o700)
     sans = ["IP:127.0.0.1"] + [f"IP:{a}" for a in hw.addresses() + hw.ipv6_addresses()]
-    tmp_key, tmp_cert = DIR / ".key.pem.new", DIR / ".cert.pem.new"
-    r = subprocess.run([openssl, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
-                        "-keyout", str(tmp_key), "-out", str(tmp_cert), "-days", str(DAYS), "-sha256",
-                        "-subj", "/CN=Tin Hat Server setup", "-addext", f"subjectAltName={','.join(dict.fromkeys(sans))}",
-                        "-addext", "extendedKeyUsage=serverAuth"],
-                       capture_output=True, text=True, timeout=30)
+    tmp_key, tmp_cert, tmp_cnf = DIR / ".key.pem.new", DIR / ".cert.pem.new", DIR / ".req.cnf"
+    # Every extension named in a config of its own (the system's openssl.cnf isn't read): a server certificate, not a
+    # CA (`req -x509` would otherwise take that file's v3_ca, CA:TRUE), the same with every openssl version.
+    tmp_cnf.write_text(CONFIG.format(sans=",".join(dict.fromkeys(sans))))
+    try:
+        r = subprocess.run([openssl, "req", "-x509", "-config", str(tmp_cnf), "-newkey", "ec", "-pkeyopt",
+                            "ec_paramgen_curve:prime256v1", "-nodes", "-keyout", str(tmp_key), "-out", str(tmp_cert),
+                            "-days", str(DAYS), "-sha256"],
+                           capture_output=True, text=True, timeout=30)
+    finally:
+        tmp_cnf.unlink(missing_ok=True)
     if r.returncode != 0:
         tmp_key.unlink(missing_ok=True)
         tmp_cert.unlink(missing_ok=True)

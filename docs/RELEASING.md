@@ -15,8 +15,11 @@ refused, and the newest *signed* version among the sources wins.
   `releases/latest/download/`) or the mirror. The bundle's name carries its version and the manifest its sha256, so
   a release that lands mid-update can't swap a file under a server. A signature that fails because "latest" moved
   between the two requests is fetched once more.
-- The mirror holds `stable.json`, its `.minisig`, `install.sh`, its `.minisig` and the bundle (~14 MB; its static
-  host takes files up to 25 MiB, which release.sh checks). Why the bundle: servers before 0.3.2 couldn't read
+- The mirror holds `stable.json`, its `.minisig`, `install.sh`, its `.minisig` and the bundle (~22 MB; its static
+  host takes files up to 25 MiB, which release.sh checks). The web app's pre-compressed copies (`FILE.br` next to
+  each script, stylesheet, WebAssembly and page; the server's web server hands them to browsers that take brotli) are
+  in the server's images (`build/precompress.py`, made by `build.sh push`) but not in the bundle: ~3 MB that don't
+  shrink in it. A server makes its own after an update (the manager's `websides.py`, in the background). Why the bundle: servers before 0.3.2 couldn't read
   GitHub at all (GitHub's release downloads send a ~9.2 KB header, over aiohttp's default 8190), so they update from
   the mirror alone; a newer server reads both and prefers GitHub on a tie. If GitHub ever goes away: `release.sh
   VERSION` without `--github` writes a manifest with relative names for every file, and the mirror carries them all.
@@ -52,7 +55,9 @@ refused, and the newest *signed* version among the sources wins.
 1. `build/bump.sh X.Y.Z` (the version is written in appliance/VERSION and in compose.yaml's tinhat/api images;
    build.sh refuses to start while they disagree). Build: `build/build.sh all` (and `ARCH=arm64 build/build.sh all`;
    with `REUSE_IMAGES_FROM=…` when our images didn't change, see above), the Windows installer
-   (`windows/build-windows.sh`). Commit, tag `vX.Y.Z`, push the code and the tag.
+   (`windows/build-windows.sh`). The build machine needs the `brotli` and `zstd` commands (the web's pre-compressed
+   copies: made and decoded by `build.sh push`, decoded again and recorded by `build.sh artifacts`; release.sh checks
+   the files against that record, so it needs neither). Commit, tag `vX.Y.Z`, push the code and the tag.
 2. `TINHAT_RELEASE_KEY=/path/tinhat-release.key build/release.sh X.Y.Z --github TinHatLabs/TinHatServer --prerelease --publish
    --note "What changed, in the owner's words"` (`--security` for a fix servers should install the next night,
    `--min-from V` when an older server must step through V first). The release is a prerelease: no server sees it.

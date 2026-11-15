@@ -478,7 +478,7 @@ function PermRow({
     chip,
     honour
       ? "Honour system: Tin Hat hides or blocks this, but a modified client could ignore it."
-      : "Server-enforced: the homeserver or the Tin Hat server refuses it — a modified client can't get around it.",
+      : "Server-enforced: your server refuses it — a modified client can't get around it.",
     { delay: 300 },
   );
   useTip(box, editable ? "" : "You can't edit a role ranked at or above yours.");

@@ -17,7 +17,7 @@ import { withRetry } from "../shared/retry";
 import s from "./Record.module.css";
 
 const RECORD_CONFIRM_MESSAGE =
-  'Calls in this room get recorded for the Memories tab — every stream and voice separately, so replays can switch points of view.\n\nNo extra participant appears: everyone in the call sees a 🔴 REC cue in their call header instead (and anyone who turned on "Never record me" in Settings → Calls is left out of the recording entirely — their cue says so). Stop any time with the ⏹ Rec button.';
+  'Calls in this room get recorded for the Memories tab — every stream and voice separately, so replays can switch points of view.\n\nNo extra participant appears: everyone in the call sees a 🔴 REC cue in their call header instead (and anyone who turned on "Never record me" in Settings → Privacy is left out of the recording entirely — their cue says so). Stop any time with the ⏹ Rec button.';
 
 // ---- record ------------------------------------------------------------------------------------
 
@@ -105,7 +105,7 @@ export function RecordDialogsHost() {
         onClose={closeDialogs}
         dialogTitle="Record calls in this room?"
         confirmText="Start recording"
-        destructive
+        destructive={false} // A18.2 (2026-11-13): starting a recording destroys nothing — the normal button, not the red one
         message={RECORD_CONFIRM_MESSAGE}
         onConfirmed={() => void setRecordCall(roomId, true)}
       />

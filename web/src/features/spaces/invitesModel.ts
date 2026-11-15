@@ -37,17 +37,36 @@ export function inviteBlip(code: string): string {
   return /^TH-/i.test(c) ? c.substring(3) : c;
 }
 
+/** The one-tap invite link a code is handed out as (A14.0; the desktop's InviteLink.qml registerLink):
+ *  `<web app>/#/register?token=CODE` — the web app opens its create-account form with the code filled in. */
+export function registerLink(webUrl: string, code: string): string {
+  let base = String(webUrl ?? "");
+  if (base.length > 0 && !base.endsWith("/")) base += "/";
+  return `${base}#/register?token=${encodeURIComponent(String(code ?? "").trim())}`;
+}
+
+/**
+ * The ready-to-paste invite message (A14.0; the desktop's InviteLink.qml inviteMessageText, the same text —
+ * testvectors/invite-message/vectors.json). It leads with the one-tap link; the manual steps stay under it.
+ * `until` = the expiry day already formatted ("December 1"), "" when the code never expires.
+ */
+export function inviteMessageText(server: string, webUrl: string, code: string, until: string, installUrl = ""): string {
+  const u = until ? ` It's good until ${until}.` : "";
+  const steps = installUrl
+    ? `1. Install Tin Hat: ${installUrl}\n` + '2. Open it and pick "Create an account" under the sign-in button.\n'
+    : `1. Open ${webUrl} in your browser (or install the Tin Hat app).\n` + '2. Pick "Create an account" under the sign-in button.\n';
+  return `You're invited to ${server} on Tin Hat.\n` + `Join here: ${registerLink(webUrl, code)}\n` + "Or set it up by hand:\n"
+    + steps + `3. Server: ${server} — invite code: ${inviteBlip(code)}.${u}` + (installUrl ? `\nOr open it in your browser: ${webUrl}` : "");
+}
+
 /**
  * The ready-to-paste instructions (native text + the web line, DECISIONS D10). Pure — the caller names the places:
  * `server` = the server people sign in to (the invite's, else core/bearer SERVER_LABEL), `webUrl` = where Tin Hat Web
  * lives (core/api webAppUrl()), `installUrl` = where the desktop app is downloaded (the hub's site; "" on a Tin Hat
- * Server, whose invite leads with the web address — docs/SELFHOST.md). The desktop's invites.rs mirrors both shapes.
+ * Server, whose invite leads with the web address — docs/SELFHOST.md). The desktop's InviteLink.qml mirrors both shapes.
  */
 export function inviteMessage(inv: Invite, server: string, webUrl: string, installUrl = ""): string {
-  const until = inv.expiresAt === null || inv.expiresAt === undefined ? "" : ` It's good until ${formatMonthDay(inv.expiresAt, true)}.`;
-  const steps = installUrl
-    ? `1. Install Tin Hat: ${installUrl}\n` + '2. Open it and pick "Create an account" under the sign-in button.\n'
-    : `1. Open ${webUrl} in your browser (or install the Tin Hat app).\n` + '2. Pick "Create an account" under the sign-in button.\n';
-  return `You're invited to ${server} on Tin Hat.\n` + steps + `3. Server: ${server} — invite code: ${inviteBlip(inv.code)}.${until}` + (installUrl ? `\nOr open it in your browser: ${webUrl}` : "");
+  const until = inv.expiresAt === null || inv.expiresAt === undefined ? "" : formatMonthDay(inv.expiresAt, true);
+  return inviteMessageText(server, webUrl, inv.code, until, installUrl);
 }
 

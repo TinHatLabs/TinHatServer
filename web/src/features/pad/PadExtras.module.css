@@ -73,6 +73,13 @@
   font-size: 13px;
   color: var(--th-soundboard-section-hint-fg);
 }
+/* "Leave your call on this … first." + Leave that call (QOL A21.3) */
+.leaveRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
 .shareBox {
   position: relative;
   width: 100%;

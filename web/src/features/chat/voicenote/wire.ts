@@ -15,6 +15,7 @@ import { setRecordingAudioSession } from "@/core/sounds";
 import { onMicYield } from "@/core/micyield";
 import { getFormFactor } from "@/core/device";
 import { inertBlob } from "@/core/mediatype";
+import { refusePictureBytes } from "@/core/photoUpload";
 import { createLogger } from "@/core/log";
 import { useChatStore } from "../store";
 import { failReason } from "../lib/model";
@@ -59,7 +60,8 @@ function announce(message: string): void {
 // ---- the upload limit (m.upload.size, cached per client; unknown = no refusal) --------------------------------------
 let limitFor: MatrixClient | null = null;
 let limit: Promise<number | null> | null = null;
-function uploadLimit(): Promise<number | null> {
+/** QOL A08.2: also the attachments' limit (actions.ts runUpload). */
+export function uploadLimit(): Promise<number | null> {
   const c = peekClient();
   if (!c) return Promise.resolve(null);
   if (limitFor !== c || !limit) {
@@ -123,6 +125,9 @@ export function wireVoice(): void {
       // core's uploadFile probes the file first): a plaintext upload never begins once the room is encrypted
       const encryptIt = encrypt || (await roomEncryptedForUpload(c, roomId));
       // the oracle awaited: a draft discarded meanwhile (Delete, leave, sign-out, another account) uploads nothing
+      if ((alive && !alive()) || peekClient() !== c) throw new Error("voice: discarded");
+      // R3-1: a voice note is never a picture: bytes that sniff as one are not sent
+      await refusePictureBytes(blob);
       if ((alive && !alive()) || peekClient() !== c) throw new Error("voice: discarded");
       if (!encryptIt && !encryptedNowSync(c, roomId)) {
         const res = await c.uploadContent(blob, { name: voiceFileName(mimetype), type: mimetype, includeFilename: true });

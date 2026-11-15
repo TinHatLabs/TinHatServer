@@ -31,18 +31,30 @@ export class RateLimit {
     constructor(max, windowMs, now = mono) { this.max = max; this.windowMs = windowMs; this.now = now; this.m = new Map(); }
     /** true = allowed (and counted). */
     hit(key) {
+        return this.take(key) !== null;
+    }
+    /** Like hit, but returns the stamp it counted (to give back with undo), or null when not allowed. */
+    take(key) {
         const t = this.now();
         const arr = (this.m.get(key) || []).filter((x) => t - x < this.windowMs);
-        if (arr.length >= this.max) { this.m.set(key, arr); return false; }
+        if (arr.length >= this.max) { this.m.set(key, arr); return null; }
         arr.push(t);
         this.m.set(key, arr);
         if (this.m.size > 5000) this.sweep();
-        return true;
+        return t;
     }
     /** Would hit(key) be allowed right now? (Counts nothing: lets a caller check several limits before spending any.) */
     can(key) {
         const t = this.now();
         return (this.m.get(key) || []).filter((x) => t - x < this.windowMs).length < this.max;
+    }
+    /** Give back exactly the hit `stamp` (take's answer) of `key`: a request that turned out to be counted by another
+     *  limit. Never another request's (stamps of the same instant are the same hit to the window). */
+    undo(key, stamp) {
+        const arr = this.m.get(key);
+        if (!arr || stamp === null || stamp === undefined) return;
+        const i = arr.lastIndexOf(stamp);
+        if (i >= 0) arr.splice(i, 1);
     }
     /** Seconds until `key` may hit again (>= 1). */
     retryAfter(key) {

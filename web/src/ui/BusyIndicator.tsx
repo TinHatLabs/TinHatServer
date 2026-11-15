@@ -20,6 +20,8 @@ export interface BusyIndicatorProps {
   style?: CSSProperties;
   /** a count (or any value) that changes on every real progress event: the mark advances one step per change */
   progress?: number | string;
+  /** QOL A29.0: what loads, for screen readers (default "Loading") */
+  label?: string;
 }
 
 /** The mark's step: -1 (at rest) until the first progress change, then one step per change, ≤ 1 per BUSY_STEP_MS,
@@ -39,7 +41,7 @@ function useBusyStep(progress: number | string | undefined): number {
   return step;
 }
 
-export function BusyIndicator({ size = 36, running = true, color = "var(--th-loader-busy-fill)", className, style, progress }: BusyIndicatorProps) {
+export function BusyIndicator({ size = 36, running = true, color = "var(--th-loader-busy-fill)", className, style, progress, label }: BusyIndicatorProps) {
   const r = Math.floor(size / 12);
   const step = useBusyStep(progress);
   const dots = Array.from({ length: 10 }, (_, i) => {
@@ -67,7 +69,7 @@ export function BusyIndicator({ size = 36, running = true, color = "var(--th-loa
       style={{ width: size, height: size, ...style }}
       role="progressbar"
       aria-busy={running}
-      aria-label="Loading"
+      aria-label={label || "Loading"}
     >
       {dots}
     </span>

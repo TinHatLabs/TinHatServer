@@ -11,7 +11,13 @@ import { utdRow } from "./utd";
 import { readDice } from "@/widgets/dice";
 import { START_TYPES, readStart } from "@/widgets/polls";
 import { currentRelation } from "@/core/matrix/moved";
+import type { MyReceipt } from "../threads/core";
+import { evLike, fallbackQuote, rootThread, threadPlan, type ThreadInfo } from "../threads/rows";
+export type { ThreadInfo } from "../threads/rows";
 import { isInlineImage, isScriptableType, mimeEssence } from "@/core/mediatype";
+import { PHOTO_LOCATION_FAIL } from "@/core/photoUpload";
+import { NETWORK_WAIT_TEXT } from "./resend";
+import { addReaction, type ReactGroup } from "./reactions";
 
 export interface Reaction {
   key: string;
@@ -20,6 +26,8 @@ export interface Reaction {
   /** my reaction event id (or a pending local id) — "" when not mine */
   myEventId: string;
   myEvent: MatrixEvent | null;
+  /** QOL A07.2 (review): every reaction of mine this chip holds (❤ and ❤️ both sent): taking it back removes them all */
+  myEvents: MatrixEvent[];
   who: string[];
 }
 
@@ -79,6 +87,10 @@ export interface Row {
   event: MatrixEvent | null;
   /** the displayed content (edit applied) */
   content: Record<string, unknown>;
+  /** threads: the thread this message is in ("" = the main timeline) */
+  threadId: string;
+  /** threads: set on a thread root in the main timeline */
+  thread: ThreadInfo | null;
 }
 
 export interface UploadEcho {
@@ -91,7 +103,14 @@ export interface UploadEcho {
   h: number;
   state: "uploading" | "failed";
   error: string;
+  /** why it failed (composerDraft failClass): a "network" failure uploads again when the connection is back (D08.2) */
+  cls?: string;
+  /** automatic re-uploads so far (lib/resend.ts MAX_AUTO_TRIES); a Retry starts over */
+  autoTries?: number;
   msgtype: "m.image" | "m.video" | "m.audio" | "m.file";
+  /** threads: the thread it is sent into ("" / absent = the main timeline) and that thread's newest event then */
+  thread?: string;
+  threadLatest?: string;
 }
 
 type C = Record<string, unknown>;
@@ -140,7 +159,9 @@ export function failReason(err: unknown): string {
   if (code === "M_FORBIDDEN" || e?.httpStatus === 403) return "You don't have permission to send here";
   if (code === "M_TOO_LARGE" || e?.httpStatus === 413) return "That file is too large for the server";
   if (code === "M_LIMIT_EXCEEDED" || e?.httpStatus === 429) return "Slow down — the server is rate-limiting sends";
-  if (e?.name === "ConnectionError" || /network|fetch|connection/i.test(e?.message ?? "")) return "No connection — will not retry on its own";
+  if (e?.name === "ExifStripError") return PHOTO_LOCATION_FAIL;
+  // L1 D08.2: it does now (actions.ts resendAfterReconnect)
+  if (e?.name === "ConnectionError" || /network|fetch|connection/i.test(e?.message ?? "")) return NETWORK_WAIT_TEXT;
   return "Couldn't send";
 }
 
@@ -189,13 +210,23 @@ export interface BuildOpts {
   events: MatrixEvent[];
   uploads: UploadEcho[];
   pinned: string[];
+  /** threads (docs/THREADS.md): view null = the main timeline (thread replies hidden, summaries on roots), a root =
+   *  that thread's panel (its events only, the spec's fallback quotes hidden); absent = no thread handling */
+  threads?: { view: string | null; receipts: MyReceipt[]; now?: number };
 }
 
-export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOpts): Row[] {
+
+export function buildRows({ room, me, myName, events, uploads, pinned, threads }: BuildOpts): Row[] {
   const pinnedSet = new Set(pinned);
+  // threads (threads/rows.ts): which thread each event is in, which are rows in this view, the replies per root
+  const live = threads ? events.filter((ev) => ev.status !== EventStatus.CANCELLED) : [];
+  const likes = live.map((ev) => evLike(ev, isLocallyRedacted(ev)));
+  const plan = threads ? threadPlan(likes, threads.view) : null;
+  const planOf = new Map<MatrixEvent, number>();
+  live.forEach((ev, i) => planOf.set(ev, i));
   // ---- pass 1: relations
   const edits = new Map<string, MatrixEvent[]>(); // target → its edits (sender checked in pass 2)
-  const reacts = new Map<string, Map<string, { users: Map<string, MatrixEvent>; order: number }>>();
+  const reacts = new Map<string, Map<string, ReactGroup<MatrixEvent>>>();
   let order = 0;
   for (const ev of events) {
     const t = ev.getType();
@@ -216,10 +247,8 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
       if (rel?.rel_type !== "m.annotation" || typeof rel.event_id !== "string" || typeof rel.key !== "string") continue;
       let per = reacts.get(rel.event_id);
       if (!per) reacts.set(rel.event_id, (per = new Map()));
-      let k = per.get(rel.key);
-      if (!k) per.set(rel.key, (k = { users: new Map(), order: order++ }));
-      const sender = ev.getSender() ?? "";
-      if (!k.users.has(sender)) k.users.set(sender, ev);
+      // QOL A07.2: grouped by the key's grouping form (❤ = ❤️); the chip shows the first one sent (reactions.ts)
+      addReaction(per, rel.key, ev.getSender() ?? "", ev, order++);
     }
   }
 
@@ -231,6 +260,10 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
   for (const ev of events) {
     if (!isRowEvent(ev)) continue;
     if (ev.status === EventStatus.CANCELLED) continue;
+    const pi = planOf.get(ev);
+    const threadId = plan && pi !== undefined ? plan.tids[pi] : "";
+    // threads: the main timeline leaves thread replies out (the spec's behaviour); a thread's panel shows its own
+    if (plan && pi !== undefined && !plan.inView[pi]) continue;
     const id = ev.getId() ?? ev.getTxnId() ?? "";
     const sender = ev.getSender() ?? "";
     const mine = sender === me;
@@ -267,7 +300,10 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
     const msgtype = pollStart ? POLL_MSGTYPE : typeof content.msgtype === "string" ? content.msgtype : "m.text";
     const rawBody = pollStart ? `Poll: ${readStart(ev.getType(), content)?.question ?? ""}` : typeof content.body === "string" ? content.body : "";
     const rel = currentRelation(relatesTo(ev.getOriginalContent() as C), ev.getUnsigned());
-    const inReply = rel && typeof rel["m.in_reply_to"] === "object" ? ((rel["m.in_reply_to"] as C).event_id as string | undefined) : undefined;
+    const inReplyRaw = rel && typeof rel["m.in_reply_to"] === "object" ? ((rel["m.in_reply_to"] as C).event_id as string | undefined) : undefined;
+    // threads: a thread message's m.in_reply_to with is_falling_back is only for clients without threads — no quote
+    const inReply = fallbackQuote(threadId, rel) ? undefined : inReplyRaw;
+    // the rich-reply fallback text only on a real reply (a thread message's fallback m.in_reply_to has none, review #10)
     const body = inReply ? stripReplyFallback(rawBody) : rawBody;
     const formatted = !redacted && content.format === "org.matrix.custom.html" && typeof content.formatted_body === "string" ? content.formatted_body : "";
     const status = ev.status;
@@ -317,21 +353,27 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
           : null,
       event: ev,
       content,
+      threadId,
+      thread: null,
     };
+    // threads: the summary under a root (the server's bundled aggregation + the replies seen since)
+    if (plan && threads && threads.view === null && row.eventId && !redacted && pi !== undefined)
+      row.thread = rootThread(likes[pi], plan.seen, me, threads.receipts, (u) => displayName(room, u), plan.tsOf);
     row.onlyEmbed = row.embeds.length > 0 && bodyIsOnlyEmbed(body);
     // reactions
     const per = ev.getId() ? reacts.get(ev.getId()!) : undefined;
     if (per && !redacted) {
       row.reactions = [...per.entries()]
         .sort((a, b) => a[1].order - b[1].order)
-        .map(([key, v]) => {
+        .map(([, v]) => {
           const myEv = v.users.get(me) ?? null;
           return {
-            key,
+            key: v.key,
             count: v.users.size,
             mine: !!myEv,
             myEventId: myEv ? (myEv.getId() ?? "") : "",
             myEvent: myEv,
+            myEvents: v.all.get(me) ?? [],
             // CB:1095-1106: the reacting members' display names (mine included, by name), NEWEST first —
             // room.rs:3053-3080 aggregates while walking the window newest → oldest
             who: [...v.users.keys()].reverse().map((u) => displayName(room, u)),
@@ -351,6 +393,8 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
   }
   // upload echoes
   for (const u of uploads) {
+    // threads: an upload echo shows where it is going (the main timeline, or its thread's panel)
+    if (threads && (u.thread ?? "") !== (threads.view ?? "")) continue;
     const kind = u.msgtype;
     const r: Row = {
       id: u.id,
@@ -391,6 +435,8 @@ export function buildRows({ room, me, myName, events, uploads, pinned }: BuildOp
       calendar: null,
       event: null,
       content: { msgtype: kind, body: u.file.name },
+      threadId: u.thread ?? "",
+      thread: null,
     };
     rows.push(r);
     byId.set(r.id, r);

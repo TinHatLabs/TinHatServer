@@ -8,10 +8,12 @@ import { useRoomState, useSession } from "@/core/matrix";
 import { Button, Icon, cx } from "@/ui";
 import { serverOf } from "@/features/nav/dmTarget";
 import { BAR_LABEL, GUESTS_TYPE, WAITING_TYPE, WORDS, barPlan, isGuestsRoom, localRole, mergeRole, parseGuestState, parseWaiting, waitingRows, type BarButton, type BarPlan, type Waiter } from "./model";
-import { copyGuestLink, letGuestIn, newGuestLink, refreshGuests, turnGuestAway, turnGuestRoomOff, turnGuestRoomOn, useGuestRoomOffered, useGuests } from "./store";
+import { copyGuestLink, letGuestIn, refreshGuests, turnGuestAway, turnGuestRoomOn, useGuestRoomOffered, useGuests } from "./store";
+import { useGuestConfirm } from "./GuestConfirm";
 import s from "./Guests.module.css";
 
-const RUN: Readonly<Record<BarButton, () => Promise<void>>> = { copy: copyGuestLink, newLink: newGuestLink, turnOff: turnGuestRoomOff, turnOn: turnGuestRoomOn };
+// P10: Turn off / New link ask first (GuestConfirm.tsx); Copy and Turn on act at once
+const RUN: Readonly<Record<"copy" | "turnOn", () => Promise<void>>> = { copy: copyGuestLink, turnOn: turnGuestRoomOn };
 
 /** r.roomBanners: draws only in THE Guests room (model.isGuestsRoom), and only when the server offers the guest room. */
 export function GuestsBar({ roomId }: { roomId: string }) {
@@ -39,18 +41,22 @@ function Bar({ roomId, me }: { roomId: string; me: string }) {
   }, [roomId, state?.on, state?.since]);
   const role = mergeRole(localRole({ userId: me, membership: typeof membership === "string" ? membership : null, powerLevels }), doc && doc.room === roomId ? doc : null);
   const plan = barPlan(on, role);
+  const confirm = useGuestConfirm(roomId);
   if (!plan) return null;
   return (
+    <>
+    {confirm.dialog}
     <GuestsBarView
       on={on}
       plan={plan}
       rows={waitingRows(on, role, waiting)}
       busy={busy}
       pending={pending}
-      onButton={(b) => void RUN[b]()}
+      onButton={(b) => (b === "turnOff" ? confirm.ask("off") : b === "newLink" ? confirm.ask("link") : void RUN[b]())}
       onLetIn={(w) => void letGuestIn(w)}
       onTurnAway={(w) => void turnGuestAway(w)}
     />
+    </>
   );
 }
 

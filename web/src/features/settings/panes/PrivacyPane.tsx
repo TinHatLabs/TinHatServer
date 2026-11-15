@@ -14,6 +14,7 @@ import { ZONE_CHOICES, zoneChoiceText } from "@/widgets/clocks";
 import { LOGSHIP_ENABLED, applyLogship, buildDiagnosticsReport } from "../logs";
 import { Buttons, ComboRow, Hint, NoteRow, Row, Section, SwitchRow } from "../rows";
 import { IgnoredPeopleSection } from "@/features/safety";
+import { localNowMs, reportFileName } from "../reportName";
 
 let reportUrl = "";
 let diagStatus = "";
@@ -23,17 +24,13 @@ export function PrivacyPane() {
   const memoriesOn = useServerFeature("memories");
   const presenceOn = useServerFeature("presence");
   const reportsOn = useServerFeature("reports"); // docs/SELFHOST.md: "Your status" and the time zone are the Reach service's
-  const diag = usePref("diagnostics-opt-in", "0");
   const ship = usePref("logship", "");
   const [status, setStatusText] = useState(diagStatus);
   const [url, setUrl] = useState(reportUrl);
   const say = (s: string) => setStatusText((diagStatus = s));
 
+  // P18: no opt-in switch (it gated nothing but this button); the report is made only when the user presses it
   const create = () => {
-    if (diag !== "1") {
-      say("Turn diagnostic reports on first — nothing is collected while it's off.");
-      return;
-    }
     try {
       const text = buildDiagnosticsReport();
       if (reportUrl) URL.revokeObjectURL(reportUrl);
@@ -41,11 +38,12 @@ export function PrivacyPane() {
       setUrl(reportUrl);
       const a = document.createElement("a");
       a.href = reportUrl;
-      a.download = "tinhat-diagnostics.txt";
+      const name = reportFileName(localNowMs()); // A34.3: its own name, so a new report never replaces the last
+      a.download = name;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      say("Saved to your Downloads as tinhat-diagnostics.txt — open it, then send it to your server's owner in chat if you're happy with it.");
+      say(`Saved to your Downloads as ${name} — open it, then send it to your server's owner in chat if you're happy with it.`);
     } catch (e) {
       say(`Couldn't write the report: ${(e as Error)?.message ?? e}`);
     }
@@ -62,7 +60,7 @@ export function PrivacyPane() {
           <SwitchRow
             id="privacy.never-record"
             label="Never record me"
-            description="When a call is recorded (🔴 REC), your camera, screen shares and voice are left out. Takes effect when you join a call."
+            description="When a call is recorded (🔴 REC), your camera, screen shares and voice are left out. Changes apply at once, also during a call."
             checked={optout === "1"}
             onToggled={(on) => setPref("record-optout", on ? "1" : "0")}
           />
@@ -70,24 +68,14 @@ export function PrivacyPane() {
       )}
 
       <Section title="Diagnostics">
-        <SwitchRow
-          id="privacy.diagnostics"
-          label="Diagnostic reports"
-          description="Off by default. Nothing is collected in the background and nothing is ever uploaded."
-          checked={diag === "1"}
-          onToggled={(on) => {
-            setPref("diagnostics-opt-in", on ? "1" : "0");
-            say(on ? "Diagnostic reports on. Nothing is sent — “Create report” writes a file you can read and share." : "Diagnostic reports off. Nothing is collected.");
-          }}
-        />
         <Row
+          id="privacy.diagnostics"
           label="Create a report"
           description="Saves a text file to your Downloads: your app log (tokens and keys stripped) and your audio/video settings. Messages are never logged."
-          disabled={diag !== "1"}
           control={
             <Buttons>
               {url && <Button flat text="Open report" onClick={() => window.open(url, "_blank", "noopener")} />}
-              <Button text="Create report" disabled={diag !== "1"} onClick={create} />
+              <Button text="Create report" onClick={create} />
             </Buttons>
           }
         >
@@ -140,7 +128,7 @@ function YourStatus() {
       {share && <SeenAs />}
       <NoteRow>
         Turning it off stops the sharing at once; it leaves other people's screens within about 20 seconds and nothing is kept. Messages, typing and read receipts are separate. Other
-        Matrix apps you use may report your status on their own.
+        chat apps you use may report your status on their own.
       </NoteRow>
       {error && <NoteRow tone="danger">{error}</NoteRow>}
     </Section>

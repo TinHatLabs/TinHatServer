@@ -519,6 +519,37 @@ def replace_contents(src: Path, dst: Path) -> None:
         (shutil.copytree if child.is_dir() else shutil.copy2)(child, dst / child.name)
 
 
+# The web folder's contents change only under this lock (websides.py: the manager puts a checked pre-compressed copy
+# FILE.br in under it too, and only while FILE is still the file it checked). So a copy made for one web build can't
+# land in the next one: a swap empties the folder (update bundles carry no copies), and a snapshot comes back with
+# the copies that belong to it.
+WEB_LOCK = "updates/.web.lock"  # under STATE (websides.WEB_LOCK), worked out when used: tests move STATE
+
+
+class _WebLock:
+    def __enter__(self):
+        lock = STATE / WEB_LOCK
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        self.fh = open(lock, "a")
+        fcntl.flock(self.fh, fcntl.LOCK_EX)  # the manager holds it only to put one copy in (no hashing under it)
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.fh, fcntl.LOCK_UN)
+        self.fh.close()
+
+
+def replace_web(src: Path, dst: Path = None) -> None:
+    """replace_contents into the web folder, under WEB_LOCK."""
+    with _WebLock():
+        replace_contents(src, dst or OPT / "web")
+
+
+def copy_web(dst: Path) -> None:
+    """The web folder copied for a snapshot, under WEB_LOCK (nothing moves in it meanwhile)."""
+    with _WebLock():
+        shutil.copytree(OPT / "web", dst)
+
+
 def snapshot(snap: Path) -> None:
     shutil.rmtree(snap, ignore_errors=True)
     (snap / "state").mkdir(parents=True)
@@ -536,7 +567,7 @@ def snapshot(snap: Path) -> None:
     for f in ("compose.yaml", "images.lock", "VERSION"):
         if (OPT / f).exists():
             shutil.copy2(OPT / f, snap / f)
-    shutil.copytree(OPT / "web", snap / "web")
+    copy_web(snap / "web")
 
 
 CLI = Path("/usr/local/sbin/tinhat")
@@ -549,7 +580,7 @@ def install_files(staged: Path, snap: Path) -> None:
         shutil.copy2(staged / f, OPT / f)
     # this processor's images.lock (an arm64 server's comes as images.lock.arm64 in the bundle)
     shutil.copy2(staged / LOCK_NAME if (staged / LOCK_NAME).exists() else staged / "images.lock", OPT / "images.lock")
-    replace_contents(staged / "web", OPT / "web")
+    replace_web(staged / "web")
     cli = staged / "host" / "usr" / "local" / "sbin" / "tinhat"
     if cli.exists():  # the `tinhat` command follows releases too (0.2.9+ bundles carry it)
         if CLI.exists():
@@ -566,7 +597,7 @@ def restore_files(snap: Path) -> None:
         if (snap / f).exists():
             shutil.copy2(snap / f, OPT / f)
     if (snap / "web").exists():
-        replace_contents(snap / "web", OPT / "web")
+        replace_web(snap / "web")
     if (snap / "tinhat-cli").exists():
         shutil.copy2(snap / "tinhat-cli", CLI)
     for item in STATE_ITEMS:
@@ -771,7 +802,7 @@ def apply_fresh(staged: Path, snap: Path, ver: str, frm: str) -> int:
     for f in ("compose.yaml", "images.lock", "VERSION"):
         if (OPT / f).exists():
             shutil.copy2(OPT / f, snap / f)
-    shutil.copytree(OPT / "web", snap / "web")
+    copy_web(snap / "web")
     MANAGER.stop()
     try:
         install_files(staged, snap)

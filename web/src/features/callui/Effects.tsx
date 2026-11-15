@@ -2,7 +2,8 @@
 // cleanup (CUI-14), volume re-apply after join (CUI-165), push-to-talk key (CUI-155), quit confirm
 // (CUI-163), "pulled you aside" toast (CUI-164), the phone's minimised call pill, and the devices
 // menu opened from outside the call bar (header gear → bus "openCallDevicesMenu").
-import { chordEndsHold, pressStartsHold, pttTextFocus } from "../calls/pttChord";
+import { chordEndsHold, otherModifiers, pressStartsIn, pttPopupFocus, pttTextFocus } from "../calls/pttChord";
+import { pttPopupOpened } from "../calls/pttPopupHold";
 import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { useBus, type BusEvents } from "@/core/bus";
@@ -86,15 +87,18 @@ export function CallEffects() {
     let held: string | null = null;
     const down = (e: KeyboardEvent) => {
       const ptt = isPtt(e);
-      if (ptt && !e.repeat && held === null) {
-        const name = eventKeyName(e) ?? "";
-        if (pressStartsHold(name, pttTextFocus())) {
-          held = name;
-          act("pttHold")(true);
-        }
-      } else if (chordEndsHold(held, ptt, e.repeat)) {
+      if (!ptt && chordEndsHold(held, ptt, e.repeat)) {
         held = null;
         act("pttHold")(false);
+      }
+    };
+    // 4-1: a hold starts in the bubble phase, after every handler (defaultPrevented) and only with no other modifier
+    const start = (e: KeyboardEvent) => {
+      if (!isPtt(e) || e.repeat || held !== null) return;
+      const name = eventKeyName(e) ?? "";
+      if (pressStartsIn(name, pttPopupFocus(), otherModifiers(e, name), e.defaultPrevented, pttTextFocus())) {
+        held = name;
+        act("pttHold")(true);
       }
     };
     const up = (e: KeyboardEvent) => {
@@ -108,14 +112,22 @@ export function CallEffects() {
         act("pttHold")(false);
       }
     };
+    // 12.1.16 (4-2, review round): a dialog, menu or popup that takes the keyboard during a key hold ends it
+    const focusIn = () => {
+      if (held !== null && pttPopupOpened()) blur();
+    };
     window.addEventListener("keydown", down, true);
+    window.addEventListener("keydown", start);
     window.addEventListener("keyup", up, true);
     window.addEventListener("blur", blur);
+    document.addEventListener("focusin", focusIn);
     return () => {
       blur();
       window.removeEventListener("keydown", down, true);
+      window.removeEventListener("keydown", start);
       window.removeEventListener("keyup", up, true);
       window.removeEventListener("blur", blur);
+      document.removeEventListener("focusin", focusIn);
     };
   }, [inCall, pushToTalk]);
 

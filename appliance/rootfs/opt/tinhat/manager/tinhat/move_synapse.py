@@ -140,6 +140,50 @@ def changed_columns(values, rename, new_id) -> list:
     return out
 
 
+def refused_versions(versions) -> set:
+    """The room versions in `versions` a move can't take (their room ids come from their creator: v12 on). A server
+    may hold several at once, e.g. v10 rooms from before 0.3.17 and v11 rooms made since."""
+    return {str(v) for v in versions} - ROOM_VERSIONS
+
+
+def _dump(d) -> str:
+    return json.dumps(d, separators=(",", ":"), ensure_ascii=False)
+
+
+def rebuild_event(stored: str, rv, eid: str, rename, new_id: dict, old: str, new: str, signing_key, sign, make,
+                  known) -> tuple[dict, bool]:
+    """One event of step 1, under the new name: renamed, the events it names by their new ids, hashed and signed by its
+    own room's version (rv: Synapse's RoomVersion; v10 and v11 redact differently, so they hash and sign differently),
+    its new id put in new_id. sign/make: Synapse's add_hashes_and_signatures and make_event_from_dict; known: every
+    event of the server. Returns (the event to store, whether its unsigned part names an event not rebuilt yet)."""
+    d, unsigned = rewrite_event(json.loads(stored), rename, new_id, old, new)
+    sign(rv, d, new, signing_key)
+    new_id[eid] = make(dict(d), rv).event_id
+    u = unsigned if isinstance(unsigned, dict) else {}
+    before = u.pop(MOVED, None)
+    late = any(x in known and x not in new_id for x in EVID.findall(_dump(u)))
+    u = json.loads(map_ids(rename(_dump(u)), new_id))
+    u[MOVED] = moved_note(eid, d, before)
+    d["unsigned"] = u
+    return d, late
+
+
+def fix_late_unsigned(d: dict, new_id: dict) -> dict:
+    """The end of step 1 for an event whose unsigned part named a later event (redacted_because): those ids by their
+    new ones now that all are known; the move note's former ids stay old on purpose."""
+    note = d["unsigned"].pop(MOVED)
+    d["unsigned"] = json.loads(map_ids(_dump(d["unsigned"]), new_id))
+    d["unsigned"][MOVED] = note
+    return d
+
+
+def id_matches(js: str, rv, eid: str, make) -> bool:
+    """Whether a stored event's id is the hash of its content by its room's version (the check before the commit)."""
+    d = json.loads(js)
+    d.pop("unsigned", None)
+    return make(d, rv).event_id == eid
+
+
 def say(**kw) -> None:
     print(json.dumps(kw), flush=True)
 
@@ -178,9 +222,9 @@ def main(argv) -> int:
 
     # ---- what this server holds, and whether it can move ---------------------------------------------------
     cur.execute("SELECT DISTINCT room_version FROM rooms")
-    versions = {r[0] for r in cur.fetchall()}
-    if versions - ROOM_VERSIONS:
-        say(error=f"Some rooms are on a newer room version ({', '.join(sorted(versions - ROOM_VERSIONS))}) whose ids "
+    refused = refused_versions(r[0] for r in cur.fetchall())
+    if refused:
+        say(error=f"Some rooms are on a newer room version ({', '.join(sorted(refused))}) whose ids "
                   "come from their creator: they can't move to a new name.", code="room-version")
         return 3
     cur.execute("SELECT count(*) FROM events WHERE sender NOT LIKE %s", (f"%:{old}",))
@@ -246,34 +290,25 @@ def main(argv) -> int:
         new_id: dict[str, str] = {}
         late: list[str] = []  # unsigned naming events after it (redacted_because): mapped once every id is known
         done = 0
-        dump = lambda d: json.dumps(d, separators=(",", ":"), ensure_ascii=False)  # noqa: E731
+        dump = _dump
         for i in range(0, len(order), BATCH):
             chunk = order[i:i + BATCH]
             cur.execute("SELECT event_id, json FROM event_json WHERE event_id = ANY(%s)", (chunk,))
             stored = dict(cur.fetchall())
             writes = []
             for eid in chunk:
-                rv = KNOWN_ROOM_VERSIONS[version_of[eid]]
-                d, unsigned = rewrite_event(json.loads(stored[eid]), rename, new_id, old, new)
-                add_hashes_and_signatures(rv, d, new, signing_key)
-                new_id[eid] = make_event_from_dict(dict(d), rv).event_id
-                u = unsigned if isinstance(unsigned, dict) else {}
-                before = u.pop(MOVED, None)
-                if any(x in version_of and x not in new_id for x in EVID.findall(dump(u))):
+                d, is_late = rebuild_event(stored[eid], KNOWN_ROOM_VERSIONS[version_of[eid]], eid, rename, new_id, old,
+                                           new, signing_key, add_hashes_and_signatures, make_event_from_dict,
+                                           version_of)
+                if is_late:
                     late.append(eid)
-                u = json.loads(map_ids(rename(dump(u)), new_id))
-                u[MOVED] = moved_note(eid, d, before)
-                d["unsigned"] = u
                 writes.append((dump(d), eid))
             psycopg2.extras.execute_batch(cur, "UPDATE event_json SET json = %s WHERE event_id = %s", writes)
             done += len(chunk)
             say(phase="events", done=done, total=total)
         for eid in late:
             cur.execute("SELECT json FROM event_json WHERE event_id = %s", (eid,))
-            d = json.loads(cur.fetchone()[0])
-            note = d["unsigned"].pop(MOVED)  # its former ids are old ids on purpose
-            d["unsigned"] = json.loads(map_ids(dump(d["unsigned"]), new_id))
-            d["unsigned"][MOVED] = note
+            d = fix_late_unsigned(json.loads(cur.fetchone()[0]), new_id)
             cur.execute("UPDATE event_json SET json = %s WHERE event_id = %s", (dump(d), eid))
 
         # ---- 2. everyone signed out, the old identities dropped --------------------------------------------
@@ -328,9 +363,7 @@ def main(argv) -> int:
                      "JOIN rooms r ON r.room_id = e.room_id")
         checked = 0
         for eid, js, rv in read:
-            d = json.loads(js)
-            d.pop("unsigned", None)
-            if make_event_from_dict(d, KNOWN_ROOM_VERSIONS[rv]).event_id != eid:
+            if not id_matches(js, KNOWN_ROOM_VERSIONS[rv], eid, make_event_from_dict):
                 mismatch += 1
             checked += 1
             if checked % BATCH == 0:

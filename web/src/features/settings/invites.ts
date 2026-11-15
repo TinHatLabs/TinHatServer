@@ -3,6 +3,7 @@
 // flag for every action, reset on sign-out. `?mockinvites=1` swaps in an in-memory server so the
 // pane can be exercised without making a test account an operator.
 import { webAppUrl } from "@/core/api";
+import { inviteMessageText } from "@/features/spaces/invitesModel";
 import { create } from "zustand";
 import { apiFetch, ApiError } from "@/core/api";
 import { SERVER_LABEL } from "@/core/bearer";
@@ -179,15 +180,9 @@ export function inviteSummary(inv: Invite, now = Date.now()): string {
   return parts.join(" · ");
 }
 
-/** The ready-to-paste instructions — the same shape as spaces/invitesModel.ts inviteMessage without a download site
- *  (docs/SELFHOST.md): a Tin Hat Server's leads with its own web address. */
+/** The ready-to-paste instructions — spaces/invitesModel.ts inviteMessage without a download site (docs/SELFHOST.md):
+ *  a Tin Hat Server's leads with its one-tap link, then its own web address (A14.0: one text, shared vectors). */
 export function inviteMessage(inv: Invite, server: string): string {
-  const srv = server || SERVER_LABEL;
-  const until = inv.expiresAt !== null ? (() => {
-    const d = new Date(inv.expiresAt!);
-    return ` It's good until ${MONTH[d.getMonth()]} ${d.getDate()}.`;
-  })() : "";
-  const webUrl = webAppUrl();
-  const steps = `1. Open ${webUrl} in your browser (or install the Tin Hat app).\n` + `2. Pick "Create an account" under the sign-in button.\n`;
-  return `You're invited to ${srv} on Tin Hat.\n` + steps + `3. Server: ${srv} — invite code: ${inviteBlip(inv.code)}.${until}`;
+  const until = inv.expiresAt !== null ? `${MONTH[new Date(inv.expiresAt).getMonth()]} ${new Date(inv.expiresAt).getDate()}` : "";
+  return inviteMessageText(server || SERVER_LABEL, webAppUrl(), inv.code, until, "");
 }

@@ -13,6 +13,18 @@ const UPDATE_STEPS = {
   rollback: "Going back to the version that worked…",
 };
 
+/** Who is in a call, as the Install now question says it (the server's `in_call`: names, more, calls, known). */
+function inCallText(ic) {
+  const tail = "Installing restarts the call server, so ";
+  if (!ic || ic.known === false) return "The server can't tell right now whether anyone is in a call. " + tail + "a call going on now would end for a minute or two.";
+  const names = (ic.names || []).slice();
+  const more = ic.more || 0;
+  const n = names.length + more;
+  if (more) names.push(names.length ? `${more} more` : plural(more, "person", "people"));
+  const who = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0] || "Someone";
+  return `${who} ${n === 1 ? "is" : "are"} in ${ic.calls > 1 ? "calls" : "a call"} right now. ` + tail + `${ic.calls > 1 ? "those calls" : "their call"} would end for a minute or two.`;
+}
+
 /** Updates: what's installed, what's new, install now or tonight, and how the last one went. */
 function updatesCard() {
   const card = h("div.card.flat.stack-sm", h("h3", "Updates"), h("div.row", h("span.spin"), h("span.muted", "Loading…")));
@@ -47,20 +59,45 @@ function updatesCard() {
         h("p.small", "Where this server's compose file is, run ", h("code", "docker compose pull && docker compose up -d"),
           ". It installs the new version, checks it, and goes back to this one by itself if it doesn't start properly.")));
     } else if (av) {
-      const install = h("button.btn.cta.small", { type: "button" }, "Install now");
-      install.addEventListener("click", async () => {
-        install.disabled = true;
-        install.replaceChildren(h("span.spin"), "Starting…");
+      // Install now never ends a live call unasked (D04.7): the server answers 409 with who is in a call, and the owner
+      // picks Install when the calls end, Install anyway or Not now.
+      const asked = h("div");
+      const send = async (body, btn, busyLabel) => {
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.replaceChildren(h("span.spin"), busyLabel);
         try {
-          const r = await api("/admin/api/updates/install", { json: {} });
-          following = r.installed;
+          const r = await api("/admin/api/updates/install", { json: body });
+          if (!body.when) following = r.installed;
           render(r);
-        } catch (ex) { toast(ex.message); install.disabled = false; install.textContent = "Install now"; }
-      });
+        } catch (ex) {
+          btn.disabled = false;
+          btn.textContent = label;
+          if (ex.status === 409 && ex.body && ex.body.in_call) asked.replaceChildren(inCallChoice(ex.body.in_call));
+          else toast(ex.message);
+        }
+      };
+      const inCallChoice = (ic) => {
+        const whenEnd = h("button.btn.cta.small", { type: "button" }, "Install when the calls end");
+        const anyway = h("button.btn.danger.small", { type: "button" }, "Install anyway");
+        whenEnd.addEventListener("click", () => send({ when: "calls-end" }, whenEnd, "Saving…"));
+        anyway.addEventListener("click", () => send({ confirm: true }, anyway, "Starting…"));
+        const notNow = h("button.btn.ghost.small", { type: "button", onclick: () => asked.replaceChildren() }, "Not now");
+        return h("div.note.stack-sm", { role: "alert" }, h("p", inCallText(ic)), h("div.row.wrap", whenEnd, anyway, notNow));
+      };
+      const install = h("button.btn.cta.small", { type: "button" }, "Install now");
+      install.addEventListener("click", () => send({}, install, "Starting…"));
+      const waiting = !!st.after_calls;
+      const later = h("button.btn.ghost.small", { type: "button" }, "Don't wait");
+      later.addEventListener("click", () => send({ when: "cancel" }, later, "Saving…"));
       parts.push(h("div.stack-sm",
         h("p", h("b", `Tin Hat Server ${av.version} is ready.`), av.security ? " It includes security fixes." : ""),
         (av.notes || []).length ? h("ul.small", av.notes.map((n) => h("li", n))) : null,
-        h("div.row.wrap", install, h("span.small.muted", d.settings.auto ? `Or tonight between ${d.window} (your time), when nobody's in a call.` : "Automatic updates are off."))));
+        waiting ? h("div.note.stack-sm", h("p", "It installs as soon as nobody has been in a call for a minute."), h("div.row.wrap", install, later))
+          : h("div.row.wrap", install, h("span.small.muted", d.settings.auto ? `Or tonight between ${d.window} (${d.settings.tz || "UTC"} time), when nobody's in a call.` : "Automatic updates are off.")),
+        h("p.small.muted", "Installing pauses chats and calls for a minute or two."),
+        asked));
+      if (waiting) poll(15000);
     }
     if (st.message && !busy) parts.push(h(`div.note${st.phase === "broken" ? ".bad" : ""}`, st.message));
     const auto = h("input", { type: "checkbox" });
@@ -74,7 +111,21 @@ function updatesCard() {
       check.replaceChildren(h("span.spin"), "Checking…");
       try { render(await api("/admin/api/updates/check", { json: {} })); } catch (ex) { toast(ex.message); check.disabled = false; check.textContent = "Check now"; }
     });
-    parts.push(h("label.row.small", auto, h("span", `Install updates automatically at night (${d.window}, your time)`)),
+    // The night window's time zone was taken silently from the first browser that opened this tab (D04.7): say which
+    // one it is, and offer this browser's when it differs (a trip abroad, or a friend's laptop did it).
+    const zone = d.settings.tz || "UTC";
+    let here = "";
+    try { here = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { /* none */ }
+    const useHere = here && here !== zone ? h("button.btn.ghost.small", { type: "button" }, `Use ${here}`) : null;
+    if (useHere) {
+      useHere.addEventListener("click", async () => {
+        useHere.disabled = true;
+        try { render(await api("/admin/api/updates/settings", { json: { tz: here } })); toast(`Night updates now follow ${here}`); }
+        catch (ex) { toast(ex.message); useHere.disabled = false; }
+      });
+    }
+    parts.push(h("label.row.small", auto, h("span", `Install updates automatically at night (${d.window}, ${zone} time)`)),
+      useHere ? h("div.row.wrap.small", h("span.muted", `This browser is on ${here} time.`), useHere) : null,
       busy ? null : h("div.row.wrap", check));
     const hist = (d.history || []).slice().reverse().slice(0, 3);
     if (hist.length) {
@@ -88,7 +139,7 @@ function updatesCard() {
     if (busy) poll();
   };
 
-  const poll = () => {
+  const poll = (ms = 3000) => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       if (!card.isConnected) return;
@@ -102,7 +153,7 @@ function updatesCard() {
         }
         poll();  // the manager restarts mid-update: keep asking
       }
-    }, 3000);
+    }, ms);
   };
 
   (async () => {
@@ -190,7 +241,7 @@ function backupsCard() {
       } catch (ex) { err.textContent = ex.message; err.classList.remove("hidden"); save.disabled = false; }
     });
     return h("div.stack",
-      h("p.small.muted", "A backup has everything needed to bring this server back on another computer: the database, the server's identity, its settings and the files people shared. It runs every night at 2:30 AM (your time)."),
+      h("p.small.muted", `A backup has everything needed to bring this server back on another computer: the database, the server's identity, its settings and the files people shared. It runs every night at ${d.nightAt || "2:30 AM"} (your time).`),
       h("div.stack-sm", h("div.k", "Where should backups go?"), opts,
         d.drives.length ? null : h("p.small.muted", "No USB drive is plugged into the server. Plug one in (any size that fits your files; 32 GB or more is a good start) and ", h("a", { href: "#", onclick: (e) => { e.preventDefault(); load(); } }, "look again"), "."),
         smbBox),
@@ -256,6 +307,8 @@ function backupsCard() {
         }, h("label.field.inline", h("span", "Your backup password"), tpw), tgo);
         const test = h("button.btn.ghost.small", { type: "button", onclick: () => { tform.classList.remove("hidden"); test.remove(); tpw.focus(); } }, "Test restore");
         parts.push(h("p.small.muted", "Test restore asks for your backup password (the one thing a restore on another computer needs), then opens the newest copy and checks what's in it, without touching this server."));
+        // D04.9: what a lost password means, said before it's needed (it can't be shown or changed once backups exist)
+        parts.push(h("p.small.muted", "Lost the password? This server remembers it, so its backups keep running, but no other computer can open them without it, and it can't be shown or changed here. Write it down somewhere safe now; if it's already gone, ask for help (Get help, below) before you need a restore."));
         parts.push(h("div.row.wrap", act("Back up now", "/admin/api/backups/run"), test,
           act("Download a copy", "/admin/api/backups/download", { media: true }),
           h("button.btn.ghost.small", { type: "button", onclick: () => { editing = true; render(d); } }, "Change")), tform);

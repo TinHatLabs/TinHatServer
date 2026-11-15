@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { create } from "zustand";
 import { useAccountData, useMxcUrl, useSession } from "@/core/matrix";
 import { useServerFeature } from "@/core/server";
+import { toast } from "@/core/bus";
+import { copyText } from "@/features/nav/actions";
 import { Avatar, BasicToolButton, Button, ComboBox, ConfirmDialog, Icon, SearchField, TextField, cx, localpart, useIsMobile } from "@/ui";
 import { addEmail, clearAvatar, confirmEmail, removeEmail, saveAccent, saveBio, saveDisplayName, saveJoinSound, uploadAvatar, useProfile } from "../profile";
 import { PERSONAL_TYPE, addPersonalSound, stopPreview, togglePreview, usePlayingUrl, useSoundSearch, type PersonalSound } from "../joinsound";
@@ -109,6 +111,8 @@ export function ProfilePane() {
           <Buttons className={p.headButtons}>
             <Button text="Change photo…" icon="insert-image-symbolic" disabled={busy} onClick={() => fileRef.current?.click()} />
             {prof.avatarMxc && <Button flat text="Remove" disabled={busy} onClick={() => setConfirmAvatar(true)} />}
+            {/* A02.4 (Sunday QoL): your address, to give a friend — not only inside the people pickers */}
+            <Button flat icon="edit-copy-symbolic" text="Copy my address" onClick={() => void copyText(userId).then((ok) => toast(ok ? "Copied your address" : "Couldn't copy"))} />
           </Buttons>
           <input
             ref={fileRef}

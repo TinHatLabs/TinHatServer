@@ -20,8 +20,10 @@ import type { FeatureModule } from "@/core/registry";
 import { bus } from "@/core/bus";
 import { peekClient } from "@/core/matrix";
 import { getFormFactor } from "@/core/device";
-import { onOutsideRoomLink } from "@/app/router";
-import { useMemberRoleImpl, type RoleTag } from "./roles";
+import { onOutsideRoomLink, parseHash } from "@/app/router";
+import { useMemberRoleImpl, useRoleTags, type RoleTag } from "./roles";
+import { useMemo } from "react";
+import { useContentInk } from "@/ui";
 import { closeRightPanel, openRightPanel, toggleRightPanel } from "./panelState";
 import { installSpaceSettingsBus, openSpaceSettingsIntent, SPACE_SETTINGS_WINDOW } from "./intents";
 import { spaceSettingsTitle } from "./spaceSettingsTitle";
@@ -87,6 +89,32 @@ export function useMemberRole(roomId: string | null | undefined, userId: string 
   return useMemberRoleImpl(roomId, userId);
 }
 
+/** The colour a role name is DRAWN in: the role's colour through the content ink, or "" when there is none or the
+ *  browser can't draw it or it depends on where it is drawn (then the name keeps its usual colour, like the desktop's
+ *  Qt.color(..).valid). ChatBubble and
+ *  the game-art veil (3-2) both use this, so the veil measures exactly the colours names are drawn in. */
+export function roleNameColour(color: string | null | undefined, ink: (c: string) => string): string {
+  if (!color) return "";
+  // a colour that depends on where it is drawn (currentColor, var(), inherit, …) can't be measured for the game-art veil
+  if (/currentcolor|var\(|env\(|attr\(|light-dark\(|\b(inherit|initial|unset|revert)\b/i.test(color)) return "";
+  if (typeof CSS !== "undefined" && typeof CSS.supports === "function" && !CSS.supports("color", color)) return "";
+  return ink(color);
+}
+
+/** Every role name colour that can be drawn in `roomId` (its space's name tags), sorted, unique. */
+export function useRoleNameColours(roomId: string | null | undefined): string[] {
+  const tags = useRoleTags(roomId);
+  const ink = useContentInk();
+  return useMemo(() => {
+    const out = new Set<string>();
+    for (const t of tags.values()) {
+      const c = roleNameColour(t.color, ink);
+      if (c) out.add(c);
+    }
+    return [...out].sort();
+  }, [tags, ink]);
+}
+
 // web-perf 2026-11-07: the Space settings window is its own chunk (ui/lazy.tsx), fetched after the start
 const SpaceSettingsWindow = lazyPart("SpaceSettingsWindow", () => import("./SpaceSettingsWindow").then((m) => m.SpaceSettingsWindow));
 
@@ -126,7 +154,8 @@ export const feature: FeatureModule = {
     installSpaceSettingsBus();
     bus.on("openRightPanel", ({ tab }) => {
       if (tab === "toggle") toggleRightPanel();
-      else openRightPanel(tab === "info" ? "info" : tab === "members" ? "members" : undefined);
+      // a contributed tab (r.rightPanelTabs, e.g. chat's "threads") opens by its id
+      else openRightPanel(tab === "info" ? "info" : tab === "members" ? "members" : tab && r.rightPanelTabs.list().some((x) => x.id === tab) ? tab : undefined);
     });
     bus.on("closeRightPanel", () => closeRightPanel());
     // phones: the panel is a full-screen sheet over its room, so a room opened while it is up (a notification tap: the
@@ -136,7 +165,13 @@ export const feature: FeatureModule = {
       if (getFormFactor() === "mobile") closeRightPanel();
     };
     bus.on("openRoom", roomUp);
-    onOutsideRoomLink(roomUp);
+    // threads: an outside #/room/…?thread= link opens the room WITH its thread panel (the shell opens it): that link
+    // keeps the panel (only the link's own handler: a later plain openRoom still closes it)
+    onOutsideRoomLink(() => {
+      const r = parseHash(location.hash);
+      if (r.name === "room" && (r as { thread?: string }).thread) return;
+      roomUp();
+    });
     // dev-only: the Invites pane in a window, for looking at it without an operator account (D18)
     if (import.meta.env.DEV)
       r.windows.add({ id: "spaces-invites-preview", order: 99, title: "Invites (preview)", component: InvitesPane, defaultSize: { width: 720, height: 560 } });

@@ -217,6 +217,8 @@ export interface ShortcutContribution extends Contribution {
   /** 11.0: the actions-table action these are the default keys of — they fire only while this device keeps them for it
    *  (Settings → Shortcuts, ACTIONS.md §8) */
   action?: string;
+  /** 12.1.16 (4-5): also while a modal dialog is open (shortcuts.ts ShortcutDef.inModal) */
+  inModal?: boolean;
 }
 
 /** A strip rendered at the top of a room's page (below the header), e.g. "watch party is on", REC banner. */
@@ -440,6 +442,7 @@ function syncShortcuts() {
         priority: -1 + c.order / 1e6,
         description: c.description,
         action: c.action,
+        inModal: c.inModal,
       }),
     );
   }

@@ -11,6 +11,8 @@ import { classicDesktop, classicPhone, type JObj } from "@/layout";
 import { newLayoutId, previousOf, saveLayout, setActive, useRendered } from "./layoutDoc";
 import { openEdit, resetOnThisDevice } from "./store";
 import { openPhoneEditor } from "./PhoneEditor";
+import { editLayoutHint } from "./hints";
+import { useShortcutsRaw, winningKeys } from "@/actions/shortcutsStore";
 
 function edit(name: string, desktop: JObj, phone: JObj): JObj {
   const e: JObj = Object.create(null);
@@ -29,6 +31,8 @@ function outcome(r: string, ok: string): void {
 }
 
 export function LayoutSection() {
+  useShortcutsRaw(); // A17.2: re-render when the keys change
+  const editKey = winningKeys("layout.edit")[0];
   const r = useRendered();
   const phone = useFormFactor() === "mobile";
   const [prompt, setPrompt] = useState<null | "new" | "rename">(null);
@@ -61,8 +65,9 @@ export function LayoutSection() {
         onActivated={(_, l) => setActive(l.id)}
       />
       <Row
+        id="appearance.layout"
         label="Edit layout"
-        description="Move and resize the islands. Ctrl+E or right-clicking a gap between islands opens edit mode anywhere."
+        description={editLayoutHint(editKey)}
         attrs={{ "data-layout-settings": "" }}
         control={
           <Buttons>

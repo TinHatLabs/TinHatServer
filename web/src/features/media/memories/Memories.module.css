@@ -1046,3 +1046,121 @@
 .mobile [role="slider"] {
   min-height: 44px;
 }
+
+/* ---- Memories photos (sun-memories): filter, day headings, the photo viewer ---- */
+.filterRow {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--th-radius);
+  background: var(--th-memories-card-bg);
+  border: 1px solid var(--th-memories-card-border);
+  margin-right: 4px;
+}
+.filterBtn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--th-memories-notice-fg);
+  font: inherit;
+  font-size: var(--th-font-size);
+  padding: 3px 9px;
+  border-radius: var(--th-radius-sm);
+  cursor: pointer;
+}
+.filterBtn:hover,
+.filterBtn:focus-visible {
+  background: var(--th-memories-card-bg-hover);
+}
+.filterOn {
+  background: var(--th-memories-card-bg-hover);
+  border-color: var(--th-memories-card-border-hover);
+  font-weight: 700;
+}
+.itemCol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dayHead {
+  font-weight: 700;
+  font-size: var(--th-font-size);
+  color: var(--th-memories-notice-fg);
+  opacity: 0.8;
+  margin: 6px 2px 0 2px;
+}
+.footNote {
+  font-size: var(--th-font-size);
+  color: var(--th-memories-notice-fg);
+  opacity: 0.7;
+  text-align: center;
+  padding: 4px;
+}
+.dialogText {
+  margin-bottom: 8px;
+}
+.photoViewer {
+  outline: none;
+}
+.photoStage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--th-radius);
+  background: var(--th-memories-theater-bg);
+  overflow: hidden;
+}
+.photoFull {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-orientation: from-image;
+}
+.photoNav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 56px;
+  border: 0;
+  border-radius: var(--th-radius);
+  background: var(--th-memories-card-duration-bg);
+  color: var(--th-memories-card-duration-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.photoNav:hover,
+.photoNav:focus-visible {
+  opacity: 1;
+}
+.photoNavPrev {
+  left: 8px;
+}
+.photoNavNext {
+  right: 8px;
+}
+.photoBar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 8px 0;
+}
+.mobile .filterRow {
+  margin-right: 0;
+}
+/* phones: the list header wraps (title, then the filter + Add photos + refresh on their own line) */
+.mobile .header {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+.mobile .photoNav {
+  width: 36px;
+  height: 48px;
+}

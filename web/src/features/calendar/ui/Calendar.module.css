@@ -287,6 +287,10 @@
   grid-template-rows: repeat(6, minmax(0, 1fr));
   gap: 6px;
 }
+/* a11y round 2 (M5): a week row of the month grid — no box of its own, its cells stay the grid's items */
+.week {
+  display: contents;
+}
 .cell {
   position: relative;
   overflow: hidden;

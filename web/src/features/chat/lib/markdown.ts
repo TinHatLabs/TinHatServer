@@ -310,13 +310,38 @@ export function mentionContent(text: string, picks: PickedMention[]): Record<str
   return c;
 }
 
-/** 4.2.6 — an edit: markdown(new text) as m.new_content; top level = the same with body "* " prefixed. */
-export function editContent(targetId: string, text: string): Record<string, unknown> {
-  const inner = textContent(text, "m.text");
+/** 4.2.6 — an edit: markdown(new text) as m.new_content; top level = the same with body "* " prefixed. L1 A09.2: an
+ *  edited /me stays an emote (msgtype of the original; it used to turn into m.text). */
+export function editContent(targetId: string, text: string, msgtype: "m.text" | "m.emote" = "m.text", mentions: PickedMention[] = [], notify: string[] = []): Record<string, unknown> {
+  // A09.3: the edit's mentions keep their links (lib/editMentions.ts), as a new message's picks do; the top level pings
+  // only the newly mentioned (`notify`, editNotifyIds), m.new_content carries them all
+  const inner = mentions.length ? { ...mentionContent(text, mentions), msgtype } : textContent(text, msgtype);
   const top: Record<string, unknown> = { ...inner, body: "* " + text };
+  if (mentions.length) top["m.mentions"] = notify.length ? { user_ids: notify } : {};
   top["m.new_content"] = inner;
   top["m.relates_to"] = { event_id: targetId, rel_type: "m.replace" };
   return top;
+}
+
+/** P21: the commands the composer knows (/me + the four faces). The desktop's ConversationView.qml _unknownSlash
+ *  keeps the same list. */
+export const SLASH_COMMANDS = ["me", "shrug", "tableflip", "unflip", "lenny"] as const;
+
+/** P21: "/word" at the start that isn't a known command → "word" (the composer asks before sending it as text).
+ *  "" for normal text, a known command, "//escaped" and paths like "/home/me" (no space or end after the word). */
+export function unknownSlash(t: string): string {
+  const m = /^\/([A-Za-z][\w-]*)(?:\s|$)/.exec(t.trimStart());
+  if (!m) return "";
+  return (SLASH_COMMANDS as readonly string[]).includes(m[1].toLowerCase()) ? "" : m[1];
+}
+
+/** P21: the question's words (the same in both apps). */
+export function unknownSlashWords(cmd: string): { title: string; message: string; confirm: string } {
+  return {
+    title: "Unknown command — send as text?",
+    message: `There's no /${cmd} command. The ones you can use: ${SLASH_COMMANDS.map((c) => "/" + c).join(", ")}.`,
+    confirm: "Send as text",
+  };
 }
 
 /** Slash-command faces (CV:1808-1847). */

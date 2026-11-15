@@ -21,20 +21,40 @@ export function isSep(cp: number): boolean {
   return false;
 }
 
-/** Lower-case, every separator run → one space, trimmed (ACTIONS.md §10.3). */
+/** A code point accent folding drops (the table's `fold.drop`: the combining marks). */
+function isDropped(cp: number): boolean {
+  for (const [lo, hi] of TABLE.palette.fold.drop) if (cp >= lo && cp <= hi) return true;
+  return false;
+}
+
+/** Lower-case, accents off (the table's `fold`: combining marks dropped, "é" → "e", "ß" → "ss"), every separator run →
+ *  one space, trimmed (ACTIONS.md §10.3). */
 export function fold(s: string): string {
+  const letters = TABLE.palette.fold.letters;
   let out = "";
   let pendingSpace = false;
   for (const ch of s.toLowerCase()) {
-    if (isSep(ch.codePointAt(0) as number)) {
+    const cp = ch.codePointAt(0) as number;
+    if (isSep(cp)) {
       pendingSpace = out.length > 0;
       continue;
     }
+    if (isDropped(cp)) continue;
     if (pendingSpace) out += " ";
     pendingSpace = false;
-    out += ch;
+    const base = reg(letters, ch);
+    out += base !== undefined ? base : ch;
   }
   return out;
+}
+
+/** The text with leading and trailing U+0020 spaces removed (only those: `str::trim_matches(' ')`). */
+export function trimSpaces(s: string): string {
+  let a = 0;
+  let b = s.length;
+  while (a < b && s[a] === " ") a++;
+  while (b > a && s[b - 1] === " ") b--;
+  return s.slice(a, b);
 }
 
 function subsequence(q: string, t: string): boolean {
@@ -87,8 +107,9 @@ export function aliasTier(t: string, q: string): number {
 
 // ---- entries --------------------------------------------------------------------------------------------------------
 
-/** `invite` = a pending invite to a room or a DM (2026-09-28: Ctrl+K lists them again, ACTIONS.md §10.1). */
-export type EntryKind = "invite" | "room" | "person" | "action" | "choice";
+/** `invite` = a pending invite to a room or a DM (2026-09-28: Ctrl+K lists them again, ACTIONS.md §10.1); `find` = person
+ *  mode's last row, "Find people named …" (2026-11-14, ACTIONS.md §10.5): never ranked, `id` = the query as typed. */
+export type EntryKind = "invite" | "room" | "person" | "action" | "choice" | "find";
 
 /** One candidate of the palette before ranking. */
 export interface Entry {
@@ -376,6 +397,15 @@ export function palette(app: App, snap: Snapshot, query: string, stage?: string)
   }
   const q = fold(rest);
   let entries: Entry[];
+  // person mode with something typed: a last row that searches everyone ("Find people named …" → New DM, the query in
+  // its field), after the DM partners that match (P6, 2026-11-14) — not counted in `total`, never cut by maxResults
+  const find: PaletteItem | null =
+    mode === "person" && q.length > 0
+      ? {
+          kind: "find", id: trimSpaces(rest), label: TABLE.palette.texts.findPeople.split("{query}").join(trimSpaces(rest)), icon: null,
+          hint: null, enabled: true, pick: false, active: null, emoji: null, a: "dm.new", target: null, score: 0,
+        }
+      : null;
   if (mode === "room" || (mode === "all" && q.length === 0)) entries = [...roomLikeEntries(snap, "invite"), ...roomLikeEntries(snap, "room")];
   else if (mode === "person") entries = personEntries(snap);
   else if (mode === "action") entries = actionEntries(app, snap);
@@ -385,7 +415,74 @@ export function palette(app: App, snap: Snapshot, query: string, stage?: string)
     entries = all;
   }
   const r = rank(entries, q);
-  return { mode, query: q, stage: null, total: r.total, items: r.items };
+  return { mode, query: q, stage: null, total: r.total, items: find ? [...r.items, find] : r.items };
+}
+
+// ---- the room list's filter (ACTIONS.md §10.8) ----------------------------------------------------------------------
+
+/** A parsed room filter: the folded text and the `is:` words. */
+export interface RoomFilter {
+  /** the folded text (the query without its `is:` words) */
+  text: string;
+  /** `is:unread`: rooms with something unread */
+  unread: boolean;
+  /** `is:mention` / `is:mentions`: rooms that mention you */
+  mention: boolean;
+  /** anything to filter by (text or an `is:` word) */
+  active: boolean;
+}
+
+/** Parse the room list's "Filter rooms…" field: words split on U+0020; `is:unread`, `is:mention` and `is:mentions`
+ *  (ASCII, any case) are flags; the other words, joined by one space, are folded (§10.3) into the text. */
+export function roomFilter(query: string): RoomFilter {
+  let unread = false;
+  let mention = false;
+  const words: string[] = [];
+  for (const w of query.split(" ")) {
+    const lw = w.toLowerCase();
+    if (lw === "is:unread") unread = true;
+    else if (lw === "is:mention" || lw === "is:mentions") mention = true;
+    else if (w.length > 0) words.push(w);
+  }
+  const text = fold(words.join(" "));
+  return { text, unread, mention, active: text.length > 0 || unread || mention };
+}
+
+/** One row of the room list as the filter sees it. */
+export interface RoomFilterRow {
+  name: string;
+  /** the room's address (`#name:server`) and a DM's other person (`@name:server`): matched by the part before the
+   *  first ":" (folded), so "alex" finds a DM with @alex:example.org and a server name never finds every DM */
+  aliases: string[];
+  /** "join" | "invite" | "none" (listed in a space, not joined) */
+  membership: string;
+  unread: boolean;
+  mention: boolean;
+}
+
+/** Does the filter show this row? Its flags must hold, and its text (when any) must match the name — prefix, word
+ *  start, every word, or substring (§10.4's name tiers without the subsequence) — or an alias's part before ":". */
+export function roomFilterShows(f: RoomFilter, r: RoomFilterRow): boolean {
+  if (f.unread && !r.unread) return false;
+  if (f.mention && !r.mention) return false;
+  if (f.text.length === 0) return true;
+  if (nameTier(fold(r.name), f.text, false) > 0) return true;
+  for (const al of r.aliases) {
+    const head = al.split(":")[0] as string;
+    if (nameTier(fold(head), f.text, false) > 0) return true;
+  }
+  return false;
+}
+
+/** The room list's filter over its rows (in list order): which rows show, and the FIRST — the row Enter acts on and
+ *  the one drawn highlighted: the first shown row that is not an invite (an invite waits for Accept / Decline), -1 when
+ *  the filter is empty (nothing is highlighted, Enter does nothing) or nothing matches. */
+export function roomFilterRun(query: string, rows: RoomFilterRow[]): { filter: RoomFilter; shown: boolean[]; first: number } {
+  const f = roomFilter(query);
+  const shown = rows.map((r) => !f.active || roomFilterShows(f, r));
+  let first = -1;
+  if (f.active) for (let i = 0; i < rows.length; i++) if (shown[i] && rows[i]!.membership !== "invite") { first = i; break; }
+  return { filter: f, shown, first };
 }
 
 /** A plain JSON copy of an entry list without the ranking inputs (for the vectors of the entry builders). */

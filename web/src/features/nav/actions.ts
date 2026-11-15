@@ -7,15 +7,19 @@
 import { EventType, Preset, type ICreateRoomOpts, type MatrixClient } from "matrix-js-sdk";
 import { SERVER_LABEL } from "@/core/bearer";
 import { toast } from "@/core/bus";
-import { childViaFor, ensureWritable, getClient, getSession, getState, inviterServerHere, peekClient, pickVia, provisionNewRoom, sendState } from "@/core/matrix";
+import { childViaFor, ensureWritable, errParts, getClient, getSession, getState, inviterServerHere, peekClient, pickVia, provisionNewRoom, sendState } from "@/core/matrix";
 import { sendReadMarkers } from "@/core/matrix/receipts";
+import { markMentionsSeen } from "@/features/widgets/mentions/store";
+import { markReadNote, markReadOwns } from "./markread";
 import { setRecordCall } from "@/features/media";
 import { invalidateHierarchy, noteLeft, notePendingChild, userDefinedMode, readSpaceOrder, refreshNow, scheduleRefresh, useNavStore, type NotifyMode } from "./model";
 import { openRoomId } from "./open";
 import { dmTarget, serverOf as serverPartOf } from "./dmTarget";
 import { newRoomInitialState } from "./newRoom";
 import { linkTarget } from "./joinLink";
+import { inviteFailure } from "@/features/people/people";
 import { shareLinkNow } from "@/core/server";
+import { photoBytesForUpload } from "@/core/photoUpload";
 
 export const status = (msg: string) => {
   if (msg) toast(msg, { timeoutMs: 4000 });
@@ -91,16 +95,27 @@ async function newestEventId(c: MatrixClient, roomId: string): Promise<string | 
 }
 
 export async function markRoomRead(roomId: string): Promise<void> {
+  await markOneRead(roomId);
+}
+
+/** One room's receipt on its newest event; false when it couldn't be sent (A11.2 counts them). */
+async function markOneRead(roomId: string): Promise<boolean> {
   const c = getClient();
+  const cutoff = Date.now(); // the mentions that had arrived when the newest event was looked up (nothing newer)
   const eid = await newestEventId(c, roomId);
-  if (!eid) return;
+  if (!eid) return false;
+  let ok = false;
   try {
     // m.fully_read + m.read only in a room of my own server, else m.read.private (core/matrix/receipts.ts)
     await sendReadMarkers(roomId, eid);
+    // D03.4: a room marked read takes its mentions with it — the Mentions widget no longer says "new" for them
+    markMentionsSeen({ r: roomId, upTo: cutoff });
+    ok = true;
   } catch {
     /* best effort (native ignores failures) */
   }
   scheduleRefresh();
+  return ok;
 }
 
 /** A5.3: once per session, after the first live sync — a read receipt on the newest event of each joined
@@ -115,36 +130,31 @@ export async function clearSpaceCounts(): Promise<number> {
   return ids.length;
 }
 
-/** nav.rs mark_space_read: every joined room with notification_count > 0 that `key` owns — A5.3: spaces
- *  included (Home clears every space's count, a space its own and its sub-spaces'). */
+/** nav.rs mark_space_read: every joined room with notification_count > 0 that `key` owns (markread.ts markReadOwns,
+ *  the shared vectors) — A5.3: spaces included (Home clears every space's count, a space its own and its sub-spaces').
+ *  A11.2 / D03.8: says what it did when done ("Marked 3 rooms in Home as read"). */
 export async function markSpaceRead(key: string, label: string): Promise<void> {
   toast(`Marking everything in ${label} as read…`, { timeoutMs: 4000 });
   const c = getClient();
   const st = useNavStore.getState();
-  const parented = new Set(st.roomSpace.keys());
+  const parentedIds = new Set(st.roomSpace.keys());
   const ids: string[] = [];
   const dms = new Set<string>(st.globalRooms.filter((r) => r.dm).map((r) => r.id));
   for (const r of c.getRooms()) {
     if (r.getMyMembership() !== "join") continue;
     if ((r.getUnreadNotificationCount() ?? 0) <= 0) continue;
     if (r.isSpaceRoom()) {
-      if (key === "home" || key === r.roomId || (key.startsWith("!") && isChildOf(c, key, r.roomId))) ids.push(r.roomId);
+      if (markReadOwns(key, { space: true, inKey: key === r.roomId || (key.startsWith("!") && isChildOf(c, key, r.roomId)) })) ids.push(r.roomId);
       continue;
     }
     const fav = !!r.tags?.["m.favourite"];
-    const owned =
-      key === "home"
-        ? !parented.has(r.roomId) || dms.has(r.roomId)
-        : key === "favourites"
-          ? fav
-          : key === "people"
-            ? dms.has(r.roomId)
-            : key === "orphans"
-              ? !parented.has(r.roomId) && !dms.has(r.roomId)
-              : isChildOf(c, key, r.roomId);
-    if (owned) ids.push(r.roomId);
+    const dm = dms.has(r.roomId);
+    const parented = parentedIds.has(r.roomId);
+    if (markReadOwns(key, { space: false, dm, fav, parented, inKey: isChildOf(c, key, r.roomId) })) ids.push(r.roomId);
   }
-  await Promise.all(ids.map((id) => markRoomRead(id)));
+  const done = await Promise.all(ids.map((id) => markOneRead(id)));
+  const marked = done.filter(Boolean).length;
+  toast(markReadNote(label, marked, ids.length - marked), { timeoutMs: 4000 });
 }
 
 function isChildOf(c: MatrixClient, spaceId: string, roomId: string): boolean {
@@ -331,23 +341,31 @@ export function personTarget(raw: string): string | null {
   return isUserId(t) ? t : dmTarget(raw, serverPartOf(getSession().userId));
 }
 
-export async function inviteToRoom(roomId: string, mxidRaw: string): Promise<void> {
+/** A failed invite → plain words for `mxid` (people.ts inviteFailure; the server's own text is matched, never shown). */
+export function inviteFailWords(e: unknown, mxid: string, verb: "Invite" | "Message"): string {
+  const p = errParts(e);
+  return inviteFailure(p.status ?? 0, p.errcode, p.message, mxid, serverPartOf(getSession().userId), verb).text;
+}
+
+export type InviteResult = { ok: boolean; text: string };
+
+/** Invite someone to a room; the answer (also shown as a toast) says how it went: the picker keeps a failed person
+ *  pickable with the reason under their name (2026-11-13, A02.0). `name` = how the picker showed them. */
+export async function inviteToRoom(roomId: string, mxidRaw: string, name = ""): Promise<InviteResult> {
   const mxid = personTarget(mxidRaw) ?? mxidRaw.trim();
   const c = getClient();
-  if (!isUserId(mxid)) {
-    status(`${mxid} isn't a username or an address like @name:their.server`);
-    return;
-  }
-  if (!c.getRoom(roomId)) {
-    status("That room isn't loaded yet");
-    return;
-  }
+  const done = (ok: boolean, text: string): InviteResult => {
+    status(text);
+    return { ok, text };
+  };
+  if (!isUserId(mxid)) return done(false, `${mxid} isn't a username or an address like @name:their.server`);
+  if (!c.getRoom(roomId)) return done(false, "That room isn't loaded yet");
   status("Inviting…");
   try {
     await c.invite(roomId, mxid);
-    status(`Invited ${mxid}`);
-  } catch {
-    status(`Couldn't invite ${mxid}`);
+    return done(true, `Invited ${name.trim() || mxid}`);
+  } catch (e) {
+    return done(false, inviteFailWords(e, mxid, "Invite"));
   }
 }
 
@@ -447,7 +465,8 @@ export async function createDm(mxidRaw: string): Promise<string | null> {
     void provisionNewRoom(room_id);
     return room_id;
   } catch (e) {
-    status(`Couldn't start that chat: ${errText(e)}`);
+    // the server's answer in plain words (2026-11-13, D09.2): a refused invite fails the whole create
+    status(inviteFailWords(e, mxid, "Message"));
     return null;
   }
 }
@@ -539,7 +558,8 @@ export async function setRoomPhoto(roomId: string, file: File): Promise<void> {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   const type = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "gif" ? "image/gif" : ext === "webp" ? "image/webp" : "image/png";
   try {
-    const up = await c.uploadContent(file, { type, name: file.name, includeFilename: false });
+    // the room photo loses its location + identifying metadata too (core/photoUpload; can't be cleaned = not uploaded)
+    const up = await c.uploadContent(await photoBytesForUpload(file, type), { type, name: file.name, includeFilename: false });
     await c.sendStateEvent(roomId, EventType.RoomAvatar, { url: up.content_uri } as never, "");
   } catch (e) {
     status(`Couldn't change the photo: ${errText(e)}`);

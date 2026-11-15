@@ -4,10 +4,11 @@
 #   - backports/ (apply_backports.py, the list in backports/SERIES): GHSA-6wjm, -27p5, -qcjr, -r66v, -95fh, -fp53
 #     (1.157.2) and GHSA-8q93 (1.152.1), upstream's own changes, plus 0006, our size limit on the actions of built-in
 #     push rules (upstream's GHSA-fp53 fix leaves them out), and 0007, our per-user rate limit on push rule writes;
-#     0008, upstream's fix for m.mentions on a frozen event (1.154.0); every file pinned before and after;
+#     0008, upstream's fix for m.mentions on a frozen event (1.154.0), and 0009, ours: 0008's validator answers 400 for a
+#     string or a non-string item in user_ids (th3); every file pinned before and after;
 #   - requirements-pins.txt: Pillow 13.0.0 and msgpack 1.2.4 (what upstream moved to in 1.163.2 / 1.164.1), by hash.
 # Upgrading Synapse to 1.164.1 or later replaces this image with the stock one again (the patches refuse any other code),
-# unless upstream still lacks 0006's or 0007's limit: see docs/SYNAPSE-PATCHES.md.
+# unless upstream still lacks 0006's or 0007's limit or 0009's answers: see docs/SYNAPSE-PATCHES.md.
 # pinned to the digest every 0.3.x release has run (images.lock: matrixdotorg/synapse:v1.145.0 sha256:9e33e40f6e69ac7dbac331a5fa29f39b7a4f8b7765476c76fe22055014dcccb1)
 FROM matrixdotorg/synapse:v1.145.0@sha256:9e33e40f6e69ac7dbac331a5fa29f39b7a4f8b7765476c76fe22055014dcccb1
 COPY patch_todevice_spoof.py apply_backports.py requirements-pins.txt /tmp/th-synapse/

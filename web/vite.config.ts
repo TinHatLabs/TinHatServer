@@ -97,6 +97,9 @@ function startPreloads(): Plugin {
   };
 }
 
+/** Modules the main build may drop when nothing uses their exports (see build.rolldownOptions.treeshake). */
+const SIDE_EFFECT_FREE = /[\\/]matrix-widget-api[\\/]|[\\/]matrix-js-sdk[\\/]lib[\\/]embedded\.js$/;
+
 export default defineConfig(({ command }) => {
   if (command === "serve" && !API) {
     throw new Error(
@@ -106,10 +109,21 @@ export default defineConfig(({ command }) => {
   }
   const to = { target: API, changeOrigin: true, secure: true };
   const proxy = { "/api": to, "/_matrix": to, "/.well-known/matrix": to, "/livekit": { ...to, ws: true } };
+  // R3-5: the gallery's lab switches (src/app/galleryLab.ts) exist only in a lab build: `vite dev`, or a build with
+  // TW_LAB_BUILD=1 (the measurement runs: tools/ambience/perf.py, soak.py, win/serve.ps1). Every other build folds
+  // __TW_LAB__ to false and drops the module; tools/release-hooks-check.mjs proves it on the production bundle.
+  const lab = command === "serve" || process.env.TW_LAB_BUILD === "1";
   return {
     base: "./",
+    define: { __TW_LAB__: JSON.stringify(lab) },
     plugins: [react(), bootScript(), cspMarker(), startPreloads()],
-    resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+    resolve: {
+      alias: [
+        { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
+        // the bare SDK name → its browser entry without the `globalThis.matrixcs` namespace leak (src/core/matrix/sdkEntry.ts)
+        { find: /^matrix-js-sdk$/, replacement: fileURLToPath(new URL("./src/core/matrix/sdkEntry.ts", import.meta.url)) },
+      ],
+    },
     optimizeDeps: {
       // The Rust crypto WASM loads itself via new URL("…wasm", import.meta.url): never pre-bundle it.
       exclude: ["@matrix-org/matrix-sdk-crypto-wasm"],
@@ -139,7 +153,14 @@ export default defineConfig(({ command }) => {
       // and ~10 stylesheets, and on a phone's slow link the render-blocking CSS then shares the line with all of them
       // (the "Starting up" card painted ~1 s later). Only the lazy parts (ui/lazy.tsx) and the existing dynamic
       // imports are separate files (web-perf 2026-11-07).
-      rolldownOptions: { output: { codeSplitting: { groups: [{ name: "app", tags: ["$initial" as const] }] } } },
+      rolldownOptions: {
+        output: { codeSplitting: { groups: [{ name: "app", tags: ["$initial" as const] }] } },
+        // The SDK's index re-exports its embedded-widget client (lib/embedded.js → matrix-widget-api, 104 KB raw), which
+        // Tin Hat never uses (it is the widget HOST side's client, not ours). With the bare SDK name on sdkEntry.ts (no
+        // namespace global, see resolve.alias) and only these two counted as side-effect free, they drop out (web-perf-2
+        // #9; tools/perf/bundle-check.mjs fails the build if matrix-widget-api comes back).
+        treeshake: { moduleSideEffects: (id: string) => !SIDE_EFFECT_FREE.test(id) },
+      },
       // a script or WebAssembly asset imported with ?url (the AudioWorklets, the noise suppressor) is ALWAYS a file: Vite
       // inlines small assets as data: URLs, which the app's CSP (script-src 'self') refuses — the 3 KB level-tap worklet
       // was one (security review 2026-10-26, M3). Other small assets keep the default rule.

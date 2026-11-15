@@ -34,6 +34,11 @@ import {
 } from "livekit-client";
 import E2EEWorker from "livekit-client/e2ee-worker?worker";
 import { videoTileShown } from "./tilerules";
+import { holdSpeaks, pttTargetMuted, releaseTailMs } from "./pttChord";
+import { MAX_AUTO_REJOINS, autoRejoin } from "./rejoinRule";
+import { leaveHold, pttToggled } from "./micMode";
+import { meterWhyOf } from "@/features/settings/meterHint";
+import { startNote } from "./callannounce";
 import { getSession, ensureWritable, CALL_MEMBER_STATE_EVENTS, getState, sendState, peekClient, fetchMedia, acquireMxcUrl, onClientChanged } from "@/core/matrix";
 import { holdsTabLock } from "@/core/matrix/client";
 import { RoomStateEvent, type MatrixClient, type MatrixEvent } from "matrix-js-sdk";
@@ -56,6 +61,7 @@ import { getCall, patch, setStatus, useCallStore } from "./store";
 import { sess, sessFor, setSess, type Sess } from "./session";
 import { advanceKeyIndex, announceKeys, currentRecipients, mintKey, type AnnounceResult, type OwnKey, replayKeys, setKeySink, TinHatKeyProvider, clearKeysFor, onPeerKey, recheckPending, keysReceiveOnly, setKeysReceiveOnly, addKeyAlias, dropKeyAlias, clearKeyAliases } from "./keys";
 import { padCameraOffered, padMicOffered, padWatchOffered } from "@/core/server";
+import { padCameraVideo } from "./pad/camera";
 import {
   mintSfuToken,
   mintWatchToken,
@@ -81,13 +87,16 @@ import {
 } from "./rtc";
 import * as audio from "./audio";
 import { AFK_TYPE, MEMBER_TYPE, avatarMxc, b64encode, deviceOf, displayName, errText, isRecorder, mxidOf, sleep, withTimeout } from "./util";
-import { REFUSE_TEXT, RESEND_AFTER_USE_MS, createPlanner, jwtPayloadText, mintAtStep, resendPlan, type FocusDecision, type PlanAction } from "./callrules";
+import { REFUSE_TEXT, joinFailWords, RESEND_AFTER_USE_MS, createPlanner, jwtPayloadText, mintAtStep, resendPlan, type FocusDecision, type PlanAction } from "./callrules";
 import { askCallHost, dismissHostAsk, trustCallHost } from "./hostsheet";
 import { buildMicOptions, micProcessorFor, rnnoiseAvailable } from "./mic";
 import { av1Probe, av1Watch } from "./av1";
 import { shareFit, SHARE_MAX_DIM } from "./shareFit";
+import { SHARE_GONE_STATUS, SHARE_REJOINED_STATUS, SHARE_VIEWER_GRACE_MS, viewerShareEnded } from "./shareStopped";
+import { LinkWatch, linkOf, NOT_CONNECTED_ERR, PUBLISH_TIMEOUT_MS, SHARE_NOT_CONNECTED, shareRefusal } from "./callHealth";
 import { companions, foldCompanions } from "./companions";
 import { setCallAudioSession } from "@/core/sounds";
+import { SHARE_AUDIO_WORDS, shareStartStatus } from "./shareAudio";
 import { releaseMicForCall } from "@/core/micyield";
 import type { Stamp } from "./envclock";
 // Tin Hat apps (bridge 2): the phone's native device does the call — Join goes to the app, never this engine
@@ -106,6 +115,14 @@ let userHungUp = false;
 let healthySince = 0;
 let rejoinAttempts = 0;
 let restoreMute: boolean | null = null;
+// D02.2 (12.1.16): a share live when the call dropped. The auto-rejoin can't bring it back (a browser capture needs a
+// new click), so the rejoined call says so with the "Share again" notice (shareStopped.ts: SHARE_REJOINED_STATUS).
+// The desktop brings it back on the same source by itself (docs/WEB-EXCEPTIONS.md).
+let restoreShare = false;
+let shareNoticeGen = 0;
+// 5-6 (fix1216): a share whose quality re-publish failed because the call isn't connected (sharing already reads false
+// when the link watch then ends the call): the drop still counts it as live, so the rejoin says "Share again".
+let shareLostTo: Sess | null = null;
 let pressedMuteWhileConnecting: boolean | null = null;
 let lockRelease: (() => void) | null = null;
 let lastDropRoom = "";
@@ -157,13 +174,7 @@ class CallRefused extends Error {}
 
 export function friendly(e: unknown): string {
   if (e instanceof CallRefused) return e.message;
-  const raw = errText(e);
-  const t = raw.toLowerCase();
-  if (/timed out|timeout|deadline/.test(t)) return "the call server didn't answer. Check your connection and try again.";
-  if (t.includes("already") && /call|participant|identity/.test(t)) return "you're already in this call on another device.";
-  if (/dns|resolve|connection refused|unreachable|network|connect/.test(t)) return "couldn't reach the call server. Check your connection and try again.";
-  if (t.includes("not signed in")) return "you're not signed in.";
-  return raw;
+  return joinFailWords(errText(e));
 }
 
 // ---- one call per device (Web Locks) ----------------------------------------------------------------------
@@ -888,7 +899,8 @@ function boundedCapture<T extends { stop(): unknown }>(p: Promise<T>): Promise<T
  */
 export function micShouldMute(): boolean {
   const st = getCall();
-  return st.micMuted || st.serverMuted || (st.pushToTalk && !st.pttSpeaking);
+  // BRB privacy (2026-11-13): with push to talk a held key never opens the mic while I am away (pttChord.pttTargetMuted)
+  return st.micMuted || st.serverMuted || (st.pushToTalk && pttTargetMuted(true, st.pttSpeaking, st.micMuted, st.localAfk));
 }
 
 /**
@@ -1178,19 +1190,50 @@ export function forceMicMuted(muted: boolean): void {
   if (s?.mic) void reconcileMic(s);
 }
 
-export function applyPushToTalk(on: boolean): void {
-  setPref("push-to-talk", on);
-  patch({ pushToTalk: on, pttSpeaking: false });
-  if (on) forceMicMuted(true);
+/** P15: a release tail still pending (every press/release cancels it). */
+let pttTail: ReturnType<typeof setTimeout> | undefined;
+function cancelPttTail(): void {
+  if (pttTail !== undefined) {
+    clearTimeout(pttTail);
+    pttTail = undefined;
+  }
 }
 
+export function applyPushToTalk(on: boolean): void {
+  setPref("push-to-talk", on);
+  // 4-9 (2026-11-14): either way a hold ends and the mic is muted (micMode.ts). Turning it OFF mid-hold used to keep the
+  // hold's open mic, and the release then returned early (push to talk off): a hot mic. The page's own button too.
+  cancelPttTail();
+  const t = pttToggled(on);
+  patch({ pushToTalk: on, pttSpeaking: t.speaking });
+  forceMicMuted(t.muted);
+  // (review) the change is the person's mic choice: BRB's "unmute when back" claim goes (afk.ts), or coming back from BRB
+  // would reopen the mic the change had just muted
+  for (const h of hooks.onUserMicToggle) h();
+}
 export function pttHold(down: boolean): void {
   const st = getCall();
   if (!st.pushToTalk) return;
-  if (st.pttSpeaking === down) return;
-  patch({ pttSpeaking: down });
-  if (!st.inCall && !st.connecting) return;
-  forceMicMuted(!down);
+  // BRB privacy (2026-11-13): a press while I am away opens nothing (the default key is Ctrl)
+  const speaking = holdSpeaks(down, st.localAfk);
+  if (down && !speaking) log.info("ptt press ignored: away (BRB)");
+  if (pttTail !== undefined) {
+    clearTimeout(pttTail);
+    pttTail = undefined;
+  }
+  if (st.pttSpeaking === speaking) return;
+  const apply = () => {
+    pttTail = undefined;
+    if (getCall().pttSpeaking === speaking) return;
+    patch({ pttSpeaking: speaking });
+    const now = getCall();
+    if (!now.inCall && !now.connecting) return;
+    forceMicMuted(!speaking);
+  };
+  // P15: the mic stays open releaseTailMs more so the last word isn't cut (immediate while away); pttSpeaking stays true
+  const tail = speaking ? 0 : releaseTailMs(st.localAfk);
+  if (tail > 0) pttTail = setTimeout(apply, tail);
+  else apply();
 }
 
 export async function reconnectMic(): Promise<boolean> {
@@ -1366,6 +1409,7 @@ export async function startMicMonitor(restart = false): Promise<void> {
   monitors.micTrack = null;
   if (monitorBarred()) {
     log.info("mic monitor: not started — watching (Talk here first)");
+    patch({ micMonitorWhy: "watching" });
     return;
   }
   const gen = monitorGen;
@@ -1373,6 +1417,7 @@ export async function startMicMonitor(restart = false): Promise<void> {
   const lease = leases.take("meter", null);
   if (!lease) {
     log.info("mic monitor: not started — watching (Talk here first)");
+    patch({ micMonitorWhy: "watching" });
     return;
   }
   try {
@@ -1383,8 +1428,11 @@ export async function startMicMonitor(restart = false): Promise<void> {
     }
     (monitors.micTrack as LocalAudioTrack | null)?.stop(); // (an overlapping start that committed first)
     monitors.micTrack = t;
+    patch({ micMonitorWhy: "" });
     void tapMic(t.mediaStreamTrack);
   } catch (e) {
+    // A13.2: say why (a refused permission is not "unplugged"; settings/meterHint.ts)
+    if (!(e instanceof Revoked)) patch({ micMonitorWhy: meterWhyOf(e) });
     if (!(e instanceof Revoked)) log.warn(`mic monitor: ${errText(e)}`);
   } finally {
     lease.done();
@@ -1524,7 +1572,7 @@ async function startCamera(s: Sess): Promise<boolean> {
       return false;
     }
     try {
-      await s.room.localParticipant.publishTrack(track, camPublishOptions());
+      await boundedPublish(s, s.room.localParticipant.publishTrack(track, camPublishOptions()), "camera");
     } catch (e) {
       track.stop();
       throw e;
@@ -1812,6 +1860,12 @@ export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
   const s = sess();
   if (!s) return;
   if (watchRefuses()) return;
+  // 12.1.13 (reconnect-wedge): a share pressed during a reconnect only waited on it; say so, before the browser's picker
+  const refusal = shareRefusal(getCall().reconnecting || linkOf(String(s.room.state)) === "reconnecting");
+  if (refusal) {
+    setStatus(refusal);
+    return;
+  }
   // Inside the Android app the WebView can't capture: the app shares as a companion of this page's call device
   // (features/native/screenShare.ts); its consent replaces the picker. Its share is a room participant, so "for the
   // recording only" can't be kept: refused rather than broadcast.
@@ -1875,14 +1929,22 @@ export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
         },
         publish: async () => {
           track = new LocalVideoTrack(vt, undefined, true);
-          await s.room.localParticipant.publishTrack(track, sharePublishOptions(q, box));
+          await boundedPublish(s, s.room.localParticipant.publishTrack(track, sharePublishOptions(q, box)), "screen-share");
           return track;
         },
         unpublish: (t) => s.room.localParticipant.unpublishTrack(t, true).then(() => undefined),
       });
     } catch (e) {
       dropStream();
-      if (!(e instanceof Revoked) && errText(e) !== SUPERSEDED && !superseded()) setStatus(`Share failed: ${errText(e)}`);
+      // 12.1.13 (reconnect-wedge): a publish that timed out has already ended the call (its status first), and still
+      // says why the share didn't start: "Share failed: the call isn't connected" (the desktop's words and order)
+      // (only this share's own call: never over a newer share, a newer call or a join that runs since; Astra r3)
+      if (errText(e) === NOT_CONNECTED_ERR) {
+        // (Astra r4) it replaces only its own "Preparing…" line or the drop's own status (the desktop's same list)
+        const cur = getCall().status;
+        if (op === shareOp && ["Preparing screen share…", "Connection lost — reconnecting…", "Call ended (connection lost)"].includes(cur)) setStatus(SHARE_NOT_CONNECTED);
+      }
+      else if (!(e instanceof Revoked) && errText(e) !== SUPERSEDED && !superseded()) setStatus(`Share failed: ${errText(e)}`);
       return;
     }
     if (superseded() || s.screen || !lease.commit()) {
@@ -1899,20 +1961,22 @@ export async function shareScreen(opts: ShareOptions = {}): Promise<void> {
   vt.addEventListener("ended", () => {
     // (compare the MediaStreamTrack: a codec change re-wraps it in a new LocalVideoTrack)
     if (sess()?.screen?.mediaStreamTrack === vt) {
-      void stopScreen().then(() => setStatus("Screen share ended — the shared window closed"));
+      void stopScreen().then(() => setStatus(SHARE_GONE_STATUS));
     }
   });
   patch({ sharing: true, shareRecOnly: !!opts.recordingOnly || getCall().shareRecOnly });
   const at = stream.getAudioTracks()[0];
   if (at) {
     s.screenAudio = at;
+    patch({ musicSourceName: SHARE_AUDIO_WORDS.tabAudio }); // A06.3: the preview names what is sent
     const mop = ++musicOp;
     void publishMusicTrack(at, "share audio", undefined, s, mop).catch((e) => setStatus(`Audio share failed: ${errText(e)}`));
   }
   else if (opts.audio === "device" && opts.audioDeviceId) void startMusicSource(opts.audioDeviceId);
   reattach("vid_selfshare");
   for (const h of hooks.onShareChanged) h(s);
-  setStatus("Sharing screen");
+  // A06.3 (12.1.16): sound asked for and none given (the browser's "Share audio" unticked) is said, not silently skipped
+  setStatus(shareStartStatus(opts.audio, !!at));
 }
 
 export async function stopScreen(quiet = false): Promise<void> {
@@ -1994,7 +2058,7 @@ async function reapplyShareNow(codecChanged: boolean, s: Sess): Promise<void> {
       await s.room.localParticipant.unpublishTrack(old, false);
       if (superseded()) return;
       const track = new LocalVideoTrack(mst, undefined, true);
-      await s.room.localParticipant.publishTrack(track, sharePublishOptions(q, box));
+      await boundedPublish(s, s.room.localParticipant.publishTrack(track, sharePublishOptions(q, box)), "screen-share restart");
       if (op !== shareOp || !live(s) || s.screen !== old) {
         // stopped / replaced / hung up while re-publishing: this publication must not stay live (unpublish
         // only — the capture underneath belongs to whoever owns the share now, or was already stopped)
@@ -2023,6 +2087,7 @@ async function reapplyShareNow(codecChanged: boolean, s: Sess): Promise<void> {
       }
     }
   } catch (e) {
+    if (errText(e) === NOT_CONNECTED_ERR) shareLostTo = s; // 5-6: the drop that follows still owes "Share again"
     patch({ sharing: false });
     setStatus(`Share restart failed: ${errText(e)}`);
   }
@@ -2164,7 +2229,7 @@ export async function startMusic(src: File | string): Promise<void> {
 }
 
 /** Can this browser capture tab/system audio through getDisplayMedia? (Chromium yes; Firefox/Safari no.) */
-function displayAudioSupported(): boolean {
+export function displayAudioSupported(): boolean {
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) return false;
   const ua = navigator.userAgent;
   return /Chrome\/|Chromium\/|Edg\//.test(ua) && !/Mobile/.test(ua);
@@ -2177,7 +2242,9 @@ export async function refreshAudioSources(): Promise<void> {
   const inputs = await enumerate("audioinput");
   const list = [...(displayAudioSupported() ? [TAB_SOURCE] : []), ...inputs];
   const id = getPref("music-source", "");
-  patch({ audioSources: list, musicSourceName: list.find((d) => d.id === id)?.name ?? "" });
+  // (A06.3: while a screen share's own sound is live, the name stays the one the preview shows)
+  if (sess()?.screenAudio) patch({ audioSources: list }); // (also while that sound's publish is still running)
+  else patch({ audioSources: list, musicSourceName: list.find((d) => d.id === id)?.name ?? "" });
 }
 
 /** Share audio: tab/system capture (getDisplayMedia audio) or an audio input device (music slot). */
@@ -2730,7 +2797,7 @@ async function padMediaStart(s: Sess, mode: "mic" | "camera", epoch: number): Pr
       async () => {
         const stream = await navigator.mediaDevices.getUserMedia(mode === "mic"
           ? { audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }
-          : { audio: false, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } });
+          : { audio: false, video: padCameraVideo(getPref("call-facing", "user")) });
         const t = (mode === "mic" ? stream.getAudioTracks() : stream.getVideoTracks())[0];
         for (const x of stream.getTracks()) if (x !== t) x.stop();
         if (!t) throw new Error("no track");
@@ -2901,6 +2968,8 @@ function beginJoin(id: number, roomId: string): void {
   userHungUp = false;
   const restore = restoreMute;
   restoreMute = null;
+  shareNoticeGen = restoreShare ? gen : 0; // D02.2: only the auto-rejoin that follows the drop
+  restoreShare = false;
   pressedMuteWhileConnecting = null;
   const pttUp = st.pushToTalk && !st.pttSpeaking;
   patch({
@@ -2966,6 +3035,9 @@ function failStuckJoin(gen: number, reason: string): void {
   userHungUp = true; // (no auto-rejoin for this one)
   joinTarget = null;
   restoreMute = null;
+  restoreShare = false;
+  shareNoticeGen = 0;
+  shareLostTo = null;
   rejoinAttempts = 0;
   healthySince = 0;
   const s = sess();
@@ -3220,14 +3292,33 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null, watc
       worker,
       chimesArmedAt: 0,
       closing: false,
+      link: new LinkWatch(),
     };
     prov = s;
     wireRoom(s);
-    await withTimeout(room.connect(tok.url, tok.jwt, { autoSubscribe: true }), 15000, "connect timed out — the call may be stale, try again");
+    await withTimeout(room.connect(tok.url, tok.jwt, { autoSubscribe: true }), 15000, "the call didn't connect within 15 seconds — try again");
     if (stale(gen)) return fail("superseded");
     // 9. moderation state at join
     const block = hooks.micPublishBlocked(roomId);
     setSess(s);
+    // 12.1.13 (reconnect-wedge): the link watch. Once a second the room's REAL connection state into callHealth (the
+    // desktop's watchdog, same rule): reconnecting 60 s without a break, or disconnected with no terminal drop 3 s
+    // later = the call is over; it then ends the way a lost connection does (auto-rejoin, or "Call ended — connection
+    // lost" + Rejoin), and the teardown stops every capture.
+    {
+      s.timers.push(
+        setInterval(() => {
+          if (sess() !== s || s.closing || s.link.isDone()) return;
+          const l = linkOf(String(s.room.state));
+          if (!l) return;
+          const why = s.link.observe(performance.now(), l);
+          if (why) {
+            log.warn(`the call is no longer connected (${why}): ending it so it can be rejoined`);
+            void onTerminalDrop(s, undefined);
+          }
+        }, 1000),
+      );
+    }
     // tracks already published were subscribed DURING connect, while sess() was still null, so their tiles got no
     // track (a tile kept from an earlier call, or one mounted meanwhile, showed a <video> without a picture until a
     // remount): give every attached tile its track now
@@ -3281,6 +3372,19 @@ async function doJoin(roomId: string, gen: number, restore: boolean | null, watc
       recActive: [...room.remoteParticipants.values()].some((x) => isRecorder(x.identity)),
     });
     setStatus("In call");
+    // D09.5 (2026-11-13): I started it in a room with members on other servers: they will meet "Join a call hosted
+    // elsewhere?" — tell me (callannounce.ts startNote)
+    {
+      const room = peekClient()?.getRoom(s.roomId);
+      const alone = ![...s.room.remoteParticipants.values()].some((x) => !isRecorder(x.identity));
+      const note = room ? startNote(s.me, room.getJoinedMembers().map((m) => m.userId), alone) : "";
+      if (note) setStatus(note);
+    }
+    // after an auto-rejoin of a call that was sharing, the notice with Share again comes last, so it is the one shown
+    if (shareNoticeGen === gen) {
+      shareNoticeGen = 0;
+      setStatus(SHARE_REJOINED_STATUS); // D02.2: the notice with "Share again" (one click and it is back)
+    }
     startLoops(s);
     // Re-send our key to the people already in the call once we are connected too (the pre-connect
     // announce can reach a peer before our membership has synced there; its intake holds it ≤ 30 s,
@@ -3819,7 +3923,21 @@ function wireRoom(s: Sess) {
     .on(RoomEvent.ParticipantAttributesChanged, () => sess() === s && rebuildTiles())
     .on(RoomEvent.TrackUnmuted, () => sess() === s && rebuildTiles())
     .on(RoomEvent.TrackPublished, () => sess() === s && rebuildTiles())
-    .on(RoomEvent.TrackUnpublished, () => sess() === s && rebuildTiles())
+    .on(RoomEvent.TrackUnpublished, (pub: RemoteTrackPublication, p: RemoteParticipant) => {
+      if (sess() !== s) return;
+      rebuildTiles();
+      // D02.7 (12.1.16): someone's share ended — say so (unless they left: the leave has its own cue)
+      if (pub.source === Track.Source.ScreenShare && p) {
+        const who = p.identity;
+        window.setTimeout(() => {
+          if (sess() !== s) return;
+          const rp = s.room.remoteParticipants.get(who);
+          const again = !!rp && [...rp.trackPublications.values()].some((x) => x.source === Track.Source.ScreenShare);
+          const text = viewerShareEnded(displayName(s.roomId, who), !!rp, isRecorder(who), again);
+          if (text) setStatus(text);
+        }, SHARE_VIEWER_GRACE_MS);
+      }
+    })
     .on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
       if (sess() !== s) return;
       patch({ speakers: { me: s.myIdentity, active: speakers.map((p) => p.identity).filter((i) => !isRecorder(i)) } });
@@ -3842,11 +3960,16 @@ function wireRoom(s: Sess) {
       }
     })
     .on(RoomEvent.Reconnecting, () => {
-      if (sess() !== s) return;
+      if (sess() !== s || s.link.isDone()) return; // 12.1.13: already ended (the link watch / the terminal drop)
       patch({ reconnecting: true, speakers: { me: s.myIdentity, active: [] } });
     })
     .on(RoomEvent.Reconnected, () => {
       if (sess() !== s) return;
+      if (s.link.isDone()) {
+        log.info("reconnected after the call was ended — ignored"); // 12.1.13
+        return;
+      }
+      s.link.observe(performance.now(), "connected"); // 12.1.13: a short reconnect between two polls resets the clock
       s.sfuGone.clear(); // our own reconnect: no false departures (DESIGN §3.7)
       planStep(s);
       patch({ reconnecting: false, callFailed: false });
@@ -3861,6 +3984,7 @@ function wireRoom(s: Sess) {
     .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
       if (s.closing) return;
       if (sess() !== s) return;
+      if (!s.link.terminal()) return; // 12.1.13: exactly one terminal drop per call (the link watch may have ended it)
       void onTerminalDrop(s, reason);
     })
     .on(RoomEvent.ParticipantPermissionsChanged, (_prev, participant) => {
@@ -4010,6 +4134,15 @@ export function padStop(): void {
 }
 
 export function leaveCall(): void {
+  // 4-9 (2026-11-14): leaving ends a push-to-talk hold (micMode.ts): a hold kept across the leave opened the next call's
+  // mic at its join
+  cancelPttTail();
+  {
+    const c = getCall();
+    const h = leaveHold(c.pushToTalk, c.micMuted);
+    patch({ pttSpeaking: h.speaking });
+    if (h.muted && !c.micMuted) forceMicMuted(true);
+  }
   // an explicit leave ends the episode: a recovery or a queued join of it never runs (12.1.7: also during a teardown)
   watchLedger.pressLeave();
   const st = getCall();
@@ -4046,6 +4179,9 @@ function hangUp(): void {
   dismissHostAsk();
   joinTarget = null; // the canceled join's claim (a switch's target lives in pendingSwitch)
   restoreMute = null;
+  restoreShare = false;
+  shareNoticeGen = 0;
+  shareLostTo = null;
   rejoinAttempts = 0;
   healthySince = 0;
   const roomId = activeCallRoom ?? st.callRoomId;
@@ -4120,14 +4256,34 @@ const NON_RECOVERABLE = new Set<DisconnectReason | undefined>([
   DisconnectReason.USER_UNAVAILABLE,
 ]);
 
+/** 12.1.13 (reconnect-wedge): a publish bounded by callHealth's PUBLISH_TIMEOUT_MS (the desktop's publish_bounded). One
+ *  that can't finish means the call isn't connected: the call ends visibly, and the caller gets NOT_CONNECTED_ERR
+ *  (the share path shows "Share failed: the call isn't connected"). */
+async function boundedPublish<T>(s: Sess, p: Promise<T>, what: string): Promise<T> {
+  try {
+    return await withTimeout(p, PUBLISH_TIMEOUT_MS, NOT_CONNECTED_ERR);
+  } catch (e) {
+    // a publish the SDK itself gave up on while the link is down: the same words (the link watch ends the call)
+    if (errText(e) !== NOT_CONNECTED_ERR && linkOf(String(s.room.state)) !== "connected") {
+      log.warn(`the ${what} publish failed while the call isn't connected: ${errText(e)}`);
+      throw new Error(NOT_CONNECTED_ERR);
+    }
+    if (errText(e) === NOT_CONNECTED_ERR && sess() === s && !s.closing && s.link.publishTimedOut()) {
+      log.warn(`the ${what} publish did not finish in ${PUBLISH_TIMEOUT_MS / 1000} s: the call isn't connected — ending it`);
+      void onTerminalDrop(s, undefined);
+    }
+    throw e;
+  }
+}
+
 async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false): Promise<void> {
   const roomId = s.roomId;
   const recoverable = !NON_RECOVERABLE.has(reason);
   const healthy = healthySince > 0 && Date.now() - healthySince >= 45000;
   if (healthy || force) rejoinAttempts = 0;
-  const followUp = rejoinAttempts > 0;
-  // force: back from the background with a dead SFU session — the user was in this call, take them back
-  const auto = (force || recoverable) && !userHungUp && (force || healthy || followUp) && rejoinAttempts < 2;
+  // force: back from the background with a dead SFU session — the user was in this call, take them back. P14 (rejoinRule):
+  // a young call heals too once its join had completed (healthySince is set only when the join reached live).
+  const auto = force ? !userHungUp && rejoinAttempts < MAX_AUTO_REJOINS : autoRejoin(recoverable, userHungUp, healthy, healthySince > 0, rejoinAttempts);
   // the ticket a recovery must present: the episode that dropped (null: no recovery — none, or it is being left)
   const ticket = watchLedger.dropped(roomId, auto);
   let removedBy = "";
@@ -4136,6 +4292,8 @@ async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false)
     removedBy = removedBy || "A moderator";
   }
   const preMute = getCall().micMuted;
+  const preShare = getCall().sharing || shareLostTo === s; // 5-6: or a re-publish that lost this call
+  shareLostTo = null;
   log.warn(`terminal disconnect (reason ${reason ?? "?"}) — ${auto ? "auto-rejoin" : "call ended"}`);
   ++joinGen;
   lastDropRoom = roomId;
@@ -4167,6 +4325,7 @@ async function onTerminalDrop(s: Sess, reason?: DisconnectReason, force = false)
     const d = !userHungUp && joinGen === myGen && !st.inCall && !st.connecting && !st.hangingUp ? watchLedger.recover(ticket) : null;
     if (d && d.kind === "join" && d.room === roomId) {
       restoreMute = preMute;
+      restoreShare = preShare;
       patch({ reconnecting: false });
       beginJoin(d.id, d.room);
     } else {
@@ -4588,6 +4747,9 @@ export function endCallForSessionLoss(why: string): Promise<void> {
   joinTarget = null;
   pendingSwitch = null;
   restoreMute = null;
+  restoreShare = false;
+  shareNoticeGen = 0;
+  shareLostTo = null;
   rejoinAttempts = 0;
   healthySince = 0;
   shareOp++;

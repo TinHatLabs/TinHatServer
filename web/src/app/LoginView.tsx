@@ -39,12 +39,16 @@ import { askPasswordReset } from "@/core/server/store";
 import { expandServerName, serverHost, serverNameHint } from "@/core/servername";
 import { chooseServer, hasNativeCap } from "@/features/native";
 import { LoginField } from "./LoginField";
-import { inviteFieldValue } from "./invite";
+import { clearPasswordsAfter, signupHint } from "./createForm";
+import { inviteFieldValue, inviteFromPaste } from "./invite";
+import { otherServerHost, otherServerText, otherServerUrl } from "./otherServer";
 import { navigate, useRoute } from "./router";
 import s from "./LoginView.module.css";
 
 type Face = "signin" | "create" | "reset";
 
+/** This page's host: the one server Tin Hat Web signs in to (core/bearer.ts). */
+const PAGE_HOST = typeof location !== "undefined" ? location.host : "";
 const hostOf = (url: string) => url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 
 export function LoginView() {
@@ -54,6 +58,7 @@ export function LoginView() {
   const setFace = (f: Face) => navigate(f === "create" ? "#/register" : f === "reset" ? "#/forgot" : "#/login", { replace: true });
 
   const [homeserver, setHomeserver] = useState(() => hostOf(session.hsUrl || DEFAULT_HOMESERVER));
+  const elsewhere = otherServerHost(homeserver, PAGE_HOST); // A14.5
   const [busy, setBusy] = useState(false);
   const [slow, setSlow] = useState(false);
   // sign in
@@ -98,6 +103,7 @@ export function LoginView() {
     };
   }, [face, homeserver]);
 
+  const serverRef = useRef<HTMLInputElement>(null);
   const userRef = useRef<HTMLInputElement>(null);
   const passRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
@@ -152,6 +158,9 @@ export function LoginView() {
   // (TH-FIRST-17) the caret lands where you type next.
   const focusFirst = useCallback(() => {
     if (face === "reset") emailRef.current?.focus();
+    // A01.3 (the desktop's focusFirst): an empty Server field comes first (read from the field: no dependency on
+    // every keystroke, which would move the caret while the server is typed)
+    else if (!serverRef.current?.value.trim()) serverRef.current?.focus();
     else if (face === "create") (linkCode ? newUserRef : codeRef).current?.focus(); // the link filled the code
     else if (userRef.current?.value) passRef.current?.focus();
     else userRef.current?.focus();
@@ -207,6 +216,12 @@ export function LoginView() {
       return;
     }
     if (pick.fromUserId) setHomeserver(pick.server);
+    // A14.5 (otherServer.ts): this page signs in to its own server only — another server's password never goes here
+    const elsewhere = otherServerHost(pick.server, PAGE_HOST);
+    if (elsewhere) {
+      setStatus(otherServerText(elsewhere));
+      return;
+    }
     setBusy(true);
     setStatus(pick.fromUserId ? `Signing in to ${pick.server}, the server in your user ID…` : "Connecting…");
     try {
@@ -220,7 +235,8 @@ export function LoginView() {
     }
   };
 
-  const createReady = !busy && code.trim().length > 0 && newUser.trim().length > 0 && newPw.length >= 8 && newPw === newPw2;
+  const hint = signupHint(newUser, newPw, newPw2); // D01.7
+  const createReady = !busy && code.trim().length > 0 && newUser.trim().length > 0 && Array.from(newPw).length >= 8 && newPw === newPw2; // characters, as the hint counts them (D01.7)
   const tryCreate = async () => {
     if (!createReady) return;
     if (replaceConfirmNeeded(hasSavedSession(), false)) {
@@ -231,6 +247,11 @@ export function LoginView() {
   };
   const doCreate = async () => {
     if (!createReady) return;
+    const elsewhere = otherServerHost(homeserver, PAGE_HOST); // A14.5: never create the account on the wrong server
+    if (elsewhere) {
+      setRegisterStatus(otherServerText(elsewhere));
+      return;
+    }
     const problem = validateRegistration({ username: newUser.trim(), password: newPw, token: code.trim() });
     if (problem) {
       setRegisterStatus(problem);
@@ -249,6 +270,11 @@ export function LoginView() {
         onCreated: () => {
           // the account exists and the normal sign-in is running: show that on the sign-in face
           setRegisterStage("created");
+          // A14.1 (createForm.ts): the passwords go once the account exists; a failed try keeps them
+          if (clearPasswordsAfter("created")) {
+            setNewPw("");
+            setNewPw2("");
+          }
           setRegisterStatus("Account created — signing you in…");
           setUsername(newUser.trim().toLowerCase());
           setStatus("Account created — signing you in…");
@@ -259,8 +285,6 @@ export function LoginView() {
       setRegisterStatus((e as Error)?.message || String(e));
       if (registerStage === "created") setStatus((e as Error)?.message || String(e));
     } finally {
-      setNewPw("");
-      setNewPw2("");
       setBusy(false);
     }
   };
@@ -325,7 +349,6 @@ export function LoginView() {
   };
 
   const subtitle = face === "reset" ? "Reset your password" : face === "create" ? "Create your account" : "Sign in to continue";
-  const pwMismatch = newPw2.length > 0 && newPw2 !== newPw;
   // a moved server: the notice above says what happened, not "you were signed out"
   const statusShown = face === "signin" && !moved && (status.length > 0 || (busy && slow));
   const statusText = busy && slow ? `Still trying to reach ${homeserver}…` : status;
@@ -350,18 +373,47 @@ export function LoginView() {
             <LoginField
               label="Server"
               icon="network-server-symbolic"
+              ref={serverRef}
               value={homeserver}
-              onChange={setHomeserver}
+              onChange={(t) => {
+                // an invite link pasted here is an invite, not a server (the desktop's Server field): its code goes to the
+                // Invite code field (the create form opens) and its server to this field (A14.3)
+                const link = inviteFromPaste(t);
+                if (link !== null) {
+                  setCode(link.code);
+                  setHomeserver(link.host ?? homeserver);
+                  setFace("create");
+                  window.setTimeout(() => newUserRef.current?.focus(), 0);
+                  return;
+                }
+                setHomeserver(t);
+              }}
               onAccepted={() => (face === "signin" ? userRef.current?.focus() : face === "create" ? codeRef.current?.focus() : emailRef.current?.focus())}
               disabled={busy}
               name="homeserver"
               autoComplete="url"
             />
-            {/* a bare name is a tinhat.me name: say which server it opens (the desktop's serverHint, the phones' words) */}
-            {serverNameHint(homeserver) && (
-              <div className={`${s.small} ${s.center} ${s.dim}`} data-server-hint="">
-                {serverNameHint(homeserver)}
+            {/* A01.3: an empty Server field says what goes there (the desktop's line, the same words) */}
+            {!homeserver.trim() && (
+              <div className={`${s.small} ${s.center} ${s.dim}`} data-server-explainer="">
+                Your server is where your account lives. Its address is in your invite, like yourname.tinhat.me.
               </div>
+            )}
+            {/* a bare name is a tinhat.me name: say which server it opens (the desktop's serverHint, the phones' words) */}
+            {elsewhere && !(face === "signin" && moved) ? (
+              <>
+                {/* A14.5: another server's own web app, never this page's server under its name (WEB-EXCEPTIONS) */}
+                <div className={`${s.small} ${s.center}`} role="status" data-other-server="">
+                  {otherServerText(elsewhere)}
+                </div>
+                <GlowButton className={s.wide} text={`Go to ${elsewhere}`} onClick={() => location.assign(otherServerUrl(elsewhere, face, code))} />
+              </>
+            ) : (
+              serverNameHint(homeserver) && (
+                <div className={`${s.small} ${s.center} ${s.dim}`} data-server-hint="">
+                  {serverNameHint(homeserver)}
+                </div>
+              )
             )}
             {face === "signin" && moved && (
               <div className={`${s.small} ${s.center}`} role="status">
@@ -372,7 +424,9 @@ export function LoginView() {
               <GlowButton className={s.wide} text={`Go to ${moved.to}`} onClick={() => location.assign(`https://${moved.to}/`)} />
             )}
             {face === "signin" && !moved && (
-              <>
+              // A01.4: a real <form> (never submitted: every button is type="button" and Enter is the fields' own) lets
+              // password managers pair the username and password and offer to save them
+              <form className={s.contents} method="post" action="#" onSubmit={(e) => e.preventDefault()} data-signin-form="">
                 <LoginField
                   ref={userRef}
                   label="Username"
@@ -410,10 +464,10 @@ export function LoginView() {
                     Switch server
                   </button>
                 )}
-              </>
+              </form>
             )}
             {face === "create" && (
-              <div className={s.group}>
+              <form className={s.group} method="post" action="#" onSubmit={(e) => e.preventDefault()} data-create-form="">
                 <LoginField
                   ref={codeRef}
                   label="Invite code"
@@ -421,7 +475,12 @@ export function LoginView() {
                   prefix="TH-"
                   placeholder="XXXX-XXXX"
                   value={code}
-                  onChange={(t) => setCode(/^\s*th-/i.test(t) ? t.replace(/^\s*th-/i, "") : t)}
+                  onChange={(t) => {
+                    // A14.2: a whole invite link pasted here puts its code in the field (the desktop's codeFromPaste)
+                    const link = inviteFromPaste(t);
+                    setCode(link !== null ? link.code : /^\s*th-/i.test(t) ? t.replace(/^\s*th-/i, "") : t);
+                    if (link?.host) setHomeserver(link.host); // A14.3: the link's server is where the code works
+                  }}
                   onAccepted={() => newUserRef.current?.focus()}
                   disabled={busy}
                   name="invite"
@@ -475,10 +534,9 @@ export function LoginView() {
                   name="new-password-again"
                   autoComplete="new-password"
                 />
-                <div className={`${s.small} ${s.center}`} style={{ color: pwMismatch ? "var(--th-login-error-fg)" : "var(--th-login-hint-fg)" }}>
-                  {pwMismatch
-                    ? "The passwords don't match."
-                    : "Usernames are lowercase letters, numbers, dots, dashes and underscores. Passwords are at least 8 characters."}
+                {/* D01.7 (createForm.ts signupHint): which field is wrong, while it is typed */}
+                <div className={`${s.small} ${s.center}`} style={{ color: hint.error ? "var(--th-login-error-fg)" : "var(--th-login-hint-fg)" }}>
+                  {hint.text}
                 </div>
                 <GlowButton className={s.wide} text="Create account" busy={busy} disabled={!createReady} onClick={tryCreate} />
                 {registerStatus && (
@@ -492,7 +550,7 @@ export function LoginView() {
                 <button type="button" className={s.link} disabled={busy} onClick={leaveCreate}>
                   Back to sign in
                 </button>
-              </div>
+              </form>
             )}
             {face === "reset" && resetMode !== "email" && (
               <div className={s.group}>

@@ -64,6 +64,10 @@
 }
 
 /* ---- list ---- */
+/* a11y round 2 (M5): the "Rooms" list role sits on a wrapper of the rows only; it takes no box of its own */
+.rowsList {
+  display: contents;
+}
 .list {
   position: relative;
   flex: 1 1 auto;
@@ -88,6 +92,31 @@
   color: var(--th-rooms-empty-fg);
   font-size: var(--th-font-size);
   line-height: var(--th-line);
+}
+.empty:has(.emptyAction) {
+  flex-direction: column;
+  gap: 10px;
+}
+.emptyAction {
+  flex: none;
+}
+
+/* A01.0 / P4: the phone list's "No rooms yet" */
+.noRooms {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.noRoomsTitle {
+  font-weight: 700;
+  color: var(--th-rooms-item-fg);
+}
+.noRoomsButtons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .row {
@@ -118,6 +147,7 @@
   pointer-events: none;
 }
 .row:hover > .wash,
+.row[data-filter-first] > .wash,
 .row:focus-visible > .wash {
   background: var(--th-rooms-item-bg-hover);
 }
@@ -155,6 +185,24 @@
   font-size: var(--th-font-size);
   line-height: var(--th-line);
   color: var(--th-rooms-item-fg);
+}
+/* D09.4: a DM invite's name + the inviter's full address under it */
+.nameCol {
+  flex: 1 1 auto;
+  min-width: 72px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.nameCol > .name {
+  min-width: 0;
+}
+.inviterAddr {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--th-font-size-small);
+  color: var(--th-rooms-item-not-joined-fg);
 }
 .pill {
   flex: none;

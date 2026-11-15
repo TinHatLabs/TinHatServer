@@ -135,7 +135,7 @@ stage() {
   # The pinned aiohttp (build/wheels.lock): downloaded here (or from out/wheels-cache), each file refused unless its
   # sha256 is the lock's. provision.sh installs them into the image's venv; the bundle carries the same files.
   python3 "$HERE/build/wheels.py" fetch "$P/rootfs/opt/tinhat/manager/wheels" --cache "$OUT/wheels-cache"
-  cp "$HERE/appliance/VERSION" "$HERE/appliance/provision.sh" "$HERE/appliance/seal.sh" "$P/"
+  cp "$HERE/appliance/VERSION" "$HERE/appliance/provision.sh" "$HERE/appliance/seal.sh" "$HERE/appliance/image-pins.txt" "$P/"
   need WEB_DIR
   [ -f "$WT/tmp/selfhost-dist/index.html" ] || { echo "no web build — run: build.sh web" >&2; exit 1; }
   rsync -a --exclude='*.map' "$WT/tmp/selfhost-dist/" "$P/web/"
@@ -188,6 +188,9 @@ PY
   ver=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$WT/package.json")
   printf '{"version":"%s","hash":"%s","build":"%s","builtAt":"%s","notes":"Tin Hat Web, self-hosted build (Tin Hat Server %s)."}\n' \
     "$ver" "$hash" "$hash" "$(date -u +%FT%TZ)" "$VERSION" > "$P/web/version.json"
+  # Last, once every web file is in place: FILE.br next to each compressible file (build/precompress.py; Caddy hands it
+  # to browsers that take brotli: templates.WEB_FILES), each checked to decode to exactly its file.
+  python3 "$HERE/build/precompress.py" make "$P/web" && python3 "$HERE/build/precompress.py" verify "$P/web" || exit 1
   chown -R root:root "$P"
 }
 
@@ -216,6 +219,8 @@ cmd_artifacts() {
     vm_ssh docker save "$ref" | gzip -1 > "$R/tinhat-$name.tar.gz"
   done
   cp -a "$OUT/payload/web" "$R/web"
+  # what release.sh signs is checked against this (it may run where there's no brotli): each side file decoded here
+  python3 "$HERE/build/precompress.py" record "$R/web" "$R/web-sidefiles.sha256" || exit 1
   # the pinned aiohttp's wheels exactly as the image has them (release.sh puts them into the bundle's manager/)
   mkdir -p "$R/wheels"
   vm_ssh tar -C /opt/tinhat/manager/wheels -cf - . | tar -C "$R/wheels" --no-same-owner -xf -

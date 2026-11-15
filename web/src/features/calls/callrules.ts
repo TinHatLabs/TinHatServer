@@ -318,6 +318,25 @@ export async function postSfuGet(
   return { url: j.url, jwt: j.jwt };
 }
 
+/**
+ * The words after "Couldn't join the call — " (the desktop's call_ctl.rs join_fail_reason; shared vectors
+ * testvectors/join-fail.json). A36.1: the call service's (lk-jwt-service) own errors get plain words, never its raw text.
+ */
+export function joinFailWords(raw: string): string {
+  const t = raw.toLowerCase();
+  if (/timed out|timeout|deadline/.test(t)) return "the call server didn't answer. Check your connection and try again.";
+  if (t.includes("already") && /call|participant|identity/.test(t)) return "you're already in this call on another device.";
+  if (t.includes("lk-jwt-service http ")) {
+    return t.includes("lk-jwt-service http 401") || t.includes("lk-jwt-service http 403")
+      ? "the call server didn't accept your sign-in. Try again in a moment."
+      : "the call server had a problem. Try again in a moment.";
+  }
+  if (/dns|resolve|connection refused|unreachable|network|connect/.test(t)) return "couldn't reach the call server. Check your connection and try again.";
+  if (t.includes("not signed in")) return "you're not signed in.";
+  if (t.includes("lk-jwt-service")) return "the call server had a problem. Try again in a moment.";
+  return raw;
+}
+
 // ---- M1: the decision ---------------------------------------------------------------------------------------------
 
 export type FocusVerdict = "own" | "trusted" | "ask" | "refuse";

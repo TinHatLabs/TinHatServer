@@ -46,16 +46,18 @@ export function knownPeople(c: MatrixClient | null = peekClient()): KnownPerson[
   return [...out.values()];
 }
 
-export async function searchDirectory(term: string): Promise<DirectoryHit[]> {
+/** null = the search failed (the picker says so and offers Try again; 2026-11-13, A02.2/A02.3) */
+export async function searchDirectory(term: string): Promise<DirectoryHit[] | null> {
   const c = peekClient();
-  if (!c || !atrim(term)) return [];
+  if (!c) return null;
+  if (!atrim(term)) return [];
   try {
     const r = await c.searchUserDirectory({ term: atrim(term), limit: DIRECTORY_MAX });
     return r.results.map((u) => ({ mxid: u.user_id, name: u.display_name ?? "", avatar: u.avatar_url ?? "" }));
   } catch (e) {
     const p = errParts(e);
     log.warn(`directory search failed: ${p.status ?? 0} ${p.errcode} ${p.message}`);
-    return [];
+    return null;
   }
 }
 

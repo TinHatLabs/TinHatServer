@@ -94,7 +94,7 @@ export function forwardKeys(win: Window) {
   const fwd = (e: KeyboardEvent) => {
     if (e.key === "Escape") return;
     document.dispatchEvent(
-      new KeyboardEvent(e.type, { key: e.key, code: e.code, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey, repeat: e.repeat, bubbles: true, cancelable: true }),
+      new KeyboardEvent(e.type, { key: e.key, code: e.code, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey, modifierAltGraph: e.getModifierState?.("AltGraph") === true, repeat: e.repeat, bubbles: true, cancelable: true } as KeyboardEventInit), // (12.1.16: AltGr too, push to talk reads it)
     );
   };
   win.addEventListener("keydown", fwd);

@@ -27,10 +27,7 @@ export function InvitePopover({ onClose }: { onClose: () => void }) {
           <PeoplePicker
             verb="Invite"
             roomId={spaceId || null}
-            onPick={(mxid) => {
-              spaceActions.invite(mxid);
-              return true;
-            }}
+            onInvite={(mxid) => spaceActions.inviteResult(mxid)}
           />
         </div>
         <div className={s.inviteFooter}>

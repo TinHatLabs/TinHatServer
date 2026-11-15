@@ -232,7 +232,7 @@ export function chimePerson(identity: string, attrs: Attrs): string {
   return head.includes(":") ? head : identity;
 }
 
-/** How long a Pad connection's leave waits for the same person's next connection (a mode switch = leave + rejoin). */
+/** How long a person's last connection's leave waits for their next one (a Pad mode switch, or since D02.3 any blip). */
 export const PAD_LEAVE_GRACE_MS = 5_000;
 
 /**
@@ -264,11 +264,10 @@ export class PersonChimes {
   leave(identity: string, attrsOf: (id: string) => Attrs, present: readonly string[], now: number): "leave" | "" {
     const p = chimePerson(identity, attrsOf(identity));
     if (present.some((o) => o !== identity && chimePerson(o, attrsOf(o)) === p)) return "";
-    if (isPadIdentity(identity)) {
-      this.pending.set(p, now + PAD_LEAVE_GRACE_MS);
-      return "";
-    }
-    return "leave";
+    // D02.3 (2026-11-13): every person's last connection waits the grace (was: a Pad one only), so a blip — the same
+    // person back within it — plays neither the leave nor the join chime; a real leave chimes when the grace ends
+    this.pending.set(p, now + PAD_LEAVE_GRACE_MS);
+    return "";
   }
 
   /** The held-back leaves that are due: each person still away = one leave chime. */

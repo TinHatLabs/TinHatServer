@@ -27,10 +27,21 @@ export const KEY_ERRORS: Record<string, string> = {
 
 const labelOf = (id: string) => actionById(id)?.label ?? id;
 
+/** A22.5 (2026-11-13): a setting's "Change key…" opens this pane with the search filled in (the desktop's
+ *  SettingsWindow.shortcutsPreset); taken once by the next pane that opens. */
+let preset = "";
+export function presetShortcutsSearch(q: string): void {
+  preset = q;
+}
+
 export function ShortcutsPane() {
   const raw = useShortcutsRaw();
   const view = useMemo(() => shortcutsList(), [raw]);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => {
+    const q = preset;
+    preset = "";
+    return q;
+  });
   const [editing, setEditing] = useState<ShortcutItem | null>(null);
   const q = fold(query);
   const anyChanged = view.groups.some((g) => g.items.some((it) => it.changed));

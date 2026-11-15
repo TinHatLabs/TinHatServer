@@ -70,6 +70,21 @@ export const CALLTOKEN = Object.freeze({
                                 // addresses; PER_CLIENT_PER_MIN covers one address): 429 for that account, never the room
     LOOKUPS_PER_SIGNIN_MIN: 60, // Synapse lookups for one sign-in (the Pad / Watch routes look up every time), counted
                                 // BEFORE the shared budget: one account's spam is a 429 for it, never everyone's
+    // 0.3.17 (launch-gate 2026-11-12, assembly-0316 Astra r2): lookups are counted per RESOLVED account too, so one
+    // account minting many sign-ins (OpenID tokens) from many addresses can't drain LOOKUPS_GLOBAL_MIN, and a member
+    // behind a shared address (a NAT) can't use up that address's allowances for the others behind it.
+    LOOKUPS_PER_ACCOUNT_MIN: 60, // lookups whose answer names one account (this server's or another's). Within it the
+                                // lookup is the account's, not its address's; past it the request is a 429 for that
+                                // account and the lookup leaves the shared budget but stays on its address (the answer
+                                // is still kept: the same sign-in again costs no lookup)
+    LOOKUPS_CEILING_MIN: 3000,  // every lookup together, whoever's (Synapse's own protection)
+    LOOKUPS_MEMBERS_PER_CLIENT_MIN: 120, // per address, besides its LOOKUPS_PER_CLIENT_MIN: lookups this server's own
+    LOOKUPS_MEMBER_AT_CLIENT_MIN: 60,    // accounts answer for within their lookups, each account at most 60 of them
+                                // (so one member's sign-ins never use up the others' behind a NAT, and one address
+                                // makes at most 120 + 120 lookups a minute whoever answers for them)
+    PER_ACCOUNT_AT_CLIENT_MIN: 60, // one account's share of an address's PER_CLIENT_PER_MIN (a NAT's members keep theirs)
+    OWNER_TTL_MS: 3_600_000,    // how long a sign-in's account is remembered (Synapse's OpenID tokens live 1 h): its
+                                // next lookup is that account's before Synapse is asked
     // PAD-5's flood bound for mute records (launch-gate 2026-11-12): who may mute is worked out from the room's parent
     // links (space states + link history read from the homeserver). Kept per room, keyed by the room's parent-link,
     // power-level and create event ids: reused for ROLE_FRESH_MS; space states and history reads are kept as long.
@@ -469,17 +484,98 @@ export function createCallToken(deps) {
     const rotated = deps.rotated !== false;
     const perClient = new RateLimit(CALLTOKEN.PER_CLIENT_PER_MIN, 60_000, now);
     const perUser = new RateLimit(CALLTOKEN.PER_USER_PER_MIN, 60_000, now);
-    /** The per-account limit (PAD-5 flood ruling): true = a 429 was sent (to this account only). */
-    const userLimited = (res, user) => {
-        if (perUser.hit(user)) return false;
-        res.set("Retry-After", String(perUser.retryAfter(user)));
+    const perUserAtClient = new RateLimit(CALLTOKEN.PER_ACCOUNT_AT_CLIENT_MIN, 60_000, now);
+    /** The per-account limits (PAD-5 flood ruling; 0.3.17: and its share of one address): true = a 429 was sent (to
+     *  this account only). `ip` + `slot`: the address and the PER_CLIENT_PER_MIN stamp this request was counted with
+     *  (undefined: none) — a request refused here is the account's, so exactly that count is given back. */
+    const userLimited = (res, user, ip, slot) => {
+        const at = `${ip}\0${user}`;
+        if (perUser.can(user) && (ip === undefined || perUserAtClient.can(at))) {
+            perUser.hit(user);
+            if (ip !== undefined) perUserAtClient.hit(at);
+            return false;
+        }
+        if (ip !== undefined) perClient.undo(ip, slot);
+        res.set("Retry-After", String(Math.max(perUser.can(user) ? 1 : perUser.retryAfter(user), ip === undefined || perUserAtClient.can(at) ? 1 : perUserAtClient.retryAfter(at))));
         send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins for this account, try again shortly" });
         return true;
     };
     const lookupsClient = new RateLimit(CALLTOKEN.LOOKUPS_PER_CLIENT_MIN, 60_000, now);
     const lookupsGlobal = new RateLimit(CALLTOKEN.LOOKUPS_GLOBAL_MIN, 60_000, now);
     const lookupsSignin = new RateLimit(CALLTOKEN.LOOKUPS_PER_SIGNIN_MIN, 60_000, now);
+    const lookupsAccount = new RateLimit(CALLTOKEN.LOOKUPS_PER_ACCOUNT_MIN, 60_000, now);
+    const lookupsCeiling = new RateLimit(CALLTOKEN.LOOKUPS_CEILING_MIN, 60_000, now);
+    const lookupsMembers = new RateLimit(CALLTOKEN.LOOKUPS_MEMBERS_PER_CLIENT_MIN, 60_000, now);
+    const lookupsMemberAt = new RateLimit(CALLTOKEN.LOOKUPS_MEMBER_AT_CLIENT_MIN, 60_000, now);
     const users = new Map();     // sha256(access token) -> {user|null, exp}
+    const owners = new Map();    // the same key -> {user, exp}: whose sign-in it is (OWNER_TTL_MS), for the next lookup
+    /** A 429 that is the caller's own (its sign-in's or its account's lookups): not counted against its address. */
+    const ownBusy = () => Object.assign(new Error("busy"), { own: true });
+
+    /** Whose sign-in `key` is, when this server answered for it before (OWNER_TTL_MS). Only this server's own sign-ins:
+     *  another server decides its own answers and could name someone else next time (Astra 0.3.17 r2). */
+    function ownerOf(key, local) {
+        if (!local) return null;
+        const k = owners.get(key);
+        return k && k.exp > now() ? k.user : null;
+    }
+    /** The caller's own share of its address, checked per caller BEFORE a lookup it may share with others (once()):
+     *  a known sign-in's account past its share of THIS address gets its 429 here, never through another's request. */
+    function shareOk(key, ip, local) {
+        const owner = ownerOf(key, local);
+        if (owner && !perUserAtClient.can(`${ip}\0${owner}`)) throw ownBusy();
+    }
+
+    /**
+     * Spend one Synapse lookup of sign-in `key` from `ip`, or throw "busy" (`own`: the sign-in's or the account's limit).
+     * Per address, a lookup counts in one of two places, both bounded (so one address makes at most 120 + 120 lookups a
+     * minute, whoever answers for them, and can't use up the shared budget):
+     *   - its MEMBERS' count (LOOKUPS_MEMBERS_PER_CLIENT_MIN, each account at most LOOKUPS_MEMBER_AT_CLIENT_MIN): a sign-in
+     *     known to be one of this server's accounts' counts there from the start; a new one moves there once one of this
+     *     server's accounts answers for it within its lookups (if there is room);
+     *   - its own count (LOOKUPS_PER_CLIENT_MIN), as before 0.3.17: every other lookup (new sign-ins until answered,
+     *     another server's, refused ones, an account past its lookups, or no room among the members).
+     * The account's own count (LOOKUPS_PER_ACCOUNT_MIN) is spent up front for a known sign-in, after the answer for a new
+     * one; past it the request is that account's 429 and the lookup leaves the shared budget (it stays on its address).
+     * Returns settle(user|null): true = go on, false = the account is past its lookups. Every check runs before anything is
+     * counted; every give-back is the exact count this lookup made. A known sign-in refused now is forgotten.
+     */
+    function spendLookup(key, ip, local) {
+        const owner = ownerOf(key, local);
+        const at = owner ? `${ip}\0${owner}` : "";
+        if (!lookupsSignin.can(key) || (owner && !lookupsAccount.can(owner))) throw ownBusy();
+        const asMember = !!owner && lookupsMembers.can(ip) && lookupsMemberAt.can(at);
+        // (a known sign-in refused by the address or the shared budgets is still its account's request: lookupBusy counts
+        // it in the account's share of the address, and past that share gives it back to the address)
+        if ((!asMember && !lookupsClient.can(ip)) || !lookupsGlobal.can("all") || !lookupsCeiling.can("all")) throw Object.assign(new Error("busy"), { owner });
+        lookupsSignin.take(key);
+        const tOwner = owner ? lookupsAccount.take(owner) : null;
+        let tClient = null;
+        if (asMember) { lookupsMembers.take(ip); lookupsMemberAt.take(at); } else tClient = lookupsClient.take(ip);
+        const tGlobal = lookupsGlobal.take("all");
+        lookupsCeiling.take("all");
+        return (user) => {
+            if (!user) {                                       // refused now: forgotten; the lookup stays counted on the
+                if (owner) { lookupsAccount.undo(owner, tOwner); owners.delete(key); }  // address (bounded there)
+                return true;
+            }
+            if (local) { owners.set(key, { user, exp: now() + CALLTOKEN.OWNER_TTL_MS }); trim(owners); }
+            if (owner === user) return true;                   // known: counted up front
+            if (owner) lookupsAccount.undo(owner, tOwner);    // (not for this server's own sign-ins: defensive)
+            if (!lookupsAccount.hit(user)) {
+                lookupsGlobal.undo("all", tGlobal);            // past its lookups: not everyone's (its address keeps it)
+                return false;
+            }
+            // one of THIS server's accounts answers for a new sign-in within its lookups: from the address's own count to
+            // its members' count, when there is room (another server's never: it can name a new account each time)
+            const atU = `${ip}\0${user}`;
+            if (local && tClient !== null && lookupsMembers.can(ip) && lookupsMemberAt.can(atU)) {
+                lookupsMembers.take(ip); lookupsMemberAt.take(atU); lookupsClient.undo(ip, tClient);
+            }
+            return true;
+        };
+    }
+
     const inflight = new Map();  // "u:"+key | "r:"+room -> Promise
 
     function once(key, fn) {
@@ -502,18 +598,21 @@ export function createCallToken(deps) {
         if (!fresh && hit && hit.exp > now()) return hit.user;
         // fresh (the Watch route, which signs by itself: no second check by lk-jwt; Astra design round 2 #2): Synapse is
         // asked now, never a cached answer whose life the caller's expires_in set
+        shareOk(key, ip, true);
         return once(`${fresh ? "f" : "u"}:${key}`, async () => {
-            if (!lookupsSignin.hit(key) || !lookupsClient.hit(ip) || !lookupsGlobal.hit("all")) throw new Error("busy");
+            const settle = spendLookup(key, ip, true);
             const r = await hs.get(`/_matrix/federation/v1/openid/userinfo?access_token=${encodeURIComponent(o.access_token)}`);
             if (r.ok && typeof r.body?.sub === "string" && serverOf(r.body.sub) === serverName) {
                 const life = o.expires_in > 0 ? Math.min(CALLTOKEN.USER_TTL_MS, o.expires_in * 1000) : CALLTOKEN.USER_TTL_MS;
                 users.set(key, { user: r.body.sub, exp: now() + life });
                 trim(users);
+                if (!settle(r.body.sub)) throw ownBusy();
                 return r.body.sub;
             }
             if (r.status === 401 || r.status === 403 || r.ok) {
                 users.set(key, { user: null, exp: now() + CALLTOKEN.BAD_TTL_MS });
                 trim(users);
+                settle(null);
                 return null;
             }
             throw new Error(`userinfo said ${r.status}`);
@@ -527,12 +626,13 @@ export function createCallToken(deps) {
         const hit = users.get(key);
         if (hit && hit.exp > now()) return hit.user;
         return once(`u:${key}`, async () => {
-            if (!lookupsSignin.hit(key) || !lookupsClient.hit(ip) || !lookupsGlobal.hit("all")) throw new Error("busy");
+            const settle = spendLookup(key, ip, false);
             const r = await federation.userinfo(o.matrix_server_name, o.access_token);
             const user = r && serverOf(r.sub) === o.matrix_server_name ? r.sub : null;
             const life = user ? (o.expires_in > 0 ? Math.min(CALLTOKEN.USER_TTL_MS, o.expires_in * 1000) : CALLTOKEN.USER_TTL_MS) : CALLTOKEN.BAD_TTL_MS;
             users.set(key, { user, exp: now() + life });
             trim(users);
+            if (!settle(user)) throw ownBusy();
             return user;
         });
     }
@@ -581,6 +681,17 @@ export function createCallToken(deps) {
     }
 
     const send = (res, status, obj) => res.status(status).json(obj);
+    /** A lookup refused (spendLookup): an `own` one is the caller's sign-in's or account's, not its address's (`ip` +
+     *  `slot`: the address and the exact count this request made there, given back). */
+    const lookupBusy = (res, e, ip, slot) => {
+        res.set("Retry-After", "10");
+        if (!e?.own && e?.owner && ip !== undefined && perUserAtClient.take(`${ip}\0${e.owner}`) === null) perClient.undo(ip, slot);
+        if (e?.own) {
+            if (ip !== undefined) perClient.undo(ip, slot);
+            return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-in checks for this account, try again shortly" });
+        }
+        return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-in checks, try again shortly" });
+    };
     const refuse = (res, reason) => send(res, 403, { errcode: "M_FORBIDDEN", error: "not in that room", reason });
 
     /** path: "/sfu/get" | "/get_token" (lk-jwt's). */
@@ -593,7 +704,8 @@ export function createCallToken(deps) {
             if (req.method !== "POST") return res.status(405).end();
             const ip = clientKey(req);
             const on = enabled();  // the owner's switch off: no limit of this route's own (lk-jwt alone decides)
-            if (on && !perClient.hit(ip)) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
+            const slot = on ? perClient.take(ip) : undefined;
+            if (on && slot === null) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
             const raw = await readBody(req);
             if (!raw) return send(res, 413, { errcode: "M_TOO_LARGE", error: "request too large" });
             /** lk-jwt's answer, or null after a 502 was sent. */
@@ -628,7 +740,7 @@ export function createCallToken(deps) {
                 if (on && !local && !ROOM_ID_RE.test(room)) { log("[calltoken] refused: not a room id (remote caller)"); return refuse(res, "not-member"); }
                 user = local ? await localUser(o, ip) : await remoteUser(o, ip);
                 if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
-                if (on && userLimited(res, user)) return undefined;
+                if (on && userLimited(res, user, ip, slot)) return undefined;
                 // MSC4195: the member it claims to be must be the caller (lk-jwt's own rule for /get_token)
                 if (r.msc4195 && r.claimed_user_id !== user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
                 if (on && !(local && isOwnConnTestRoom(room, user))) {  // (the connection test's scratch room: this caller's own)
@@ -637,7 +749,7 @@ export function createCallToken(deps) {
                     if (!ok) { log(`[calltoken] refused: not a joined member (${where} caller)`); return refuse(res, "not-member"); }
                 }
             } catch (e) {
-                if (e?.message === "busy") { res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-in checks, try again shortly" }); }
+                if (e?.message === "busy") return lookupBusy(res, e, on ? ip : undefined, slot);
                 if (e?.status === 403) { log(`[calltoken] refused: ${e.reason || "remote server"} (remote caller)`); return refuse(res, "remote-refused"); }
                 log(`[calltoken] check failed: ${e?.message || e}`);
                 return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the room", reason: "check-failed" });
@@ -1074,7 +1186,8 @@ export function createCallToken(deps) {
             // the apps offer Pad Mic / Camera only once the key pair has been replaced (apiconf features): held here too
             if (!rotated) { req.resume?.(); return send(res, 503, { errcode: "M_UNKNOWN", error: "Pad isn't ready on this server until its next update", reason: "not-rotated" }); }
             const ip = clientKey(req);
-            if (!perClient.hit(ip)) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
+            const slot = perClient.take(ip);
+            if (slot === null) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
             const raw = await readBody(req);
             if (!raw) return send(res, 413, { errcode: "M_TOO_LARGE", error: "request too large" });
             let v;
@@ -1095,14 +1208,14 @@ export function createCallToken(deps) {
             try {
                 user = await localUser(o, ip, true);
                 if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
-                if (userLimited(res, user)) return undefined;
+                if (userLimited(res, user, ip, slot)) return undefined;
                 if (!ROOM_ID_RE.test(room)) return no("not-member", "not a room id");
                 if (!(await isMember(room, (set) => set.has(user)))) return no("not-member", "not a joined member");
                 const d = await hs.get(`/_synapse/admin/v2/users/${encodeURIComponent(user)}/devices/${encodeURIComponent(device)}`, adminToken);
                 if (d.status === 404) return no("not-your-device", "the device isn't the caller's");
                 if (!d.ok || d.body?.device_id !== device) throw new Error(`device lookup said ${d.status}`);
             } catch (e) {
-                if (e?.message === "busy") { res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-in checks, try again shortly" }); }
+                if (e?.message === "busy") return lookupBusy(res, e, ip, slot);
                 log(`[calltoken] pad check failed: ${e?.message || e}`);
                 return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
             }
@@ -1154,7 +1267,8 @@ export function createCallToken(deps) {
             if (req.method === "OPTIONS") return res.status(200).end();
             if (req.method !== "POST") return res.status(405).end();
             const ip = clientKey(req);
-            if (!perClient.hit(ip)) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
+            const slot = perClient.take(ip);
+            if (slot === null) { req.resume?.(); res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-ins, try again shortly" }); }
             const raw = await readBody(req);
             if (!raw) return send(res, 413, { errcode: "M_TOO_LARGE", error: "request too large" });
             const r = parseRequest(raw.toString("utf8"), true);
@@ -1168,7 +1282,7 @@ export function createCallToken(deps) {
             try {
                 user = await localUser(o, ip, true);
                 if (!user) return send(res, 401, { errcode: "M_UNAUTHORIZED", error: "The request could not be authorised." });
-                if (userLimited(res, user)) return undefined;
+                if (userLimited(res, user, ip, slot)) return undefined;
                 if (!ROOM_ID_RE.test(room)) return no("not-member", "not a room id");
                 if (!(await isMember(room, (set) => set.has(user)))) return no("not-member", "not a joined member");
                 const d = await hs.get(`/_synapse/admin/v2/users/${encodeURIComponent(user)}/devices/${encodeURIComponent(device)}`, adminToken);
@@ -1183,7 +1297,7 @@ export function createCallToken(deps) {
                 // security property (DESIGN T6), and it refused the intended use: watching while your computer isn't in
                 // the call. A joined member's own device gets subscribe-only rights: strictly less than /sfu/get gives it.)
             } catch (e) {
-                if (e?.message === "busy") { res.set("Retry-After", "10"); return send(res, 429, { errcode: "M_LIMIT_EXCEEDED", error: "too many call sign-in checks, try again shortly" }); }
+                if (e?.message === "busy") return lookupBusy(res, e, ip, slot);
                 log(`[calltoken] watch check failed: ${e?.message || e}`);
                 return send(res, 502, { errcode: "M_UNKNOWN", error: "couldn't check the call", reason: "check-failed" });
             }

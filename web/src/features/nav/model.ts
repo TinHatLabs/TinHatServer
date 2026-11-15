@@ -7,6 +7,8 @@
 // are coalesced to one per animation frame; every sync, state/tag/account-data/receipt change and
 // a 3 s participant tick while a call is visible re-run it.
 import { create } from "zustand";
+import { sortRooms } from "./roomsort";
+export { sortRooms };
 import {
   ClientEvent,
   EventType,
@@ -500,31 +502,6 @@ function rowFor(c: MatrixClient, room: Room, membership: "join" | "invite", dms:
   return row;
 }
 
-/** nav.rs sort_rooms — stable, highest first. */
-export function sortRooms(rows: RoomRow[]): RoomRow[] {
-  const unreadOf = (r: RoomRow) => !r.muted && r.unread > 0;
-  const idx = new Map(rows.map((r, i) => [r.id, i]));
-  return [...rows].sort((a, b) => {
-    const t = (x: boolean, y: boolean) => Number(y) - Number(x);
-    return (
-      t(a.membership === "invite", b.membership === "invite") ||
-      t(unreadOf(a) && a.dm, unreadOf(b) && b.dm) ||
-      t(a.favourite, b.favourite) ||
-      t(a.call, b.call) ||
-      t(unreadOf(a), unreadOf(b)) ||
-      (a.recency !== null && b.recency !== null
-        ? b.recency - a.recency
-        : a.recency !== null
-          ? -1
-          : b.recency !== null
-            ? 1
-            : 0) ||
-      a.name.toLowerCase().localeCompare(b.name.toLowerCase()) ||
-      idx.get(a.id)! - idx.get(b.id)!
-    );
-  });
-}
-
 export function readSpaceOrder(): string[] {
   const v: unknown = getPref("space_order", [] as string[]);
   if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
@@ -740,7 +717,9 @@ export function buildNav(c: MatrixClient, activeKey: string): NavSnapshot {
     invitedSpaceKeys: invitedSpaces.map((s) => s.key),
     dmStrip: dmStrip(stripRooms),
     unreadRooms,
-    loaded: all.length > 0,
+    // A01.0 (Sunday QoL): a new account has no rooms at all — the list is loaded once the first sync is in, not only once a
+    // room exists (it said "Catching up…" forever)
+    loaded: all.length > 0 || c.isInitialSyncComplete(),
   };
 }
 

@@ -32,3 +32,21 @@ export type MarkersBody = { "m.fully_read": string; "m.read"?: string; "m.read.p
 export function markersBody(event: string, publicOk: boolean): MarkersBody {
   return { "m.fully_read": event, [receiptKey(publicOk)]: event };
 }
+
+/** threads: my receipts in one m.receipt event's content (public and private alike), each with its thread_id ("" =
+ *  unthreaded). Here with the other receipt keys (receipts.ts re-exports it). */
+export function myReceiptsIn(content: unknown, me: string): { thread: string; eventId: string; ts: number; type: string }[] {
+  const out: { thread: string; eventId: string; ts: number; type: string }[] = [];
+  if (!content || typeof content !== "object") return out;
+  for (const [eventId, byType] of Object.entries(content as Record<string, unknown>)) {
+    if (!byType || typeof byType !== "object") continue;
+    for (const type of ["m.read", "m.read.private"]) {
+      const byUser = (byType as Record<string, unknown>)[type];
+      const r = byUser && typeof byUser === "object" ? (byUser as Record<string, unknown>)[me] : undefined;
+      if (!r || typeof r !== "object") continue;
+      const rr = r as { ts?: unknown; thread_id?: unknown };
+      out.push({ eventId, ts: typeof rr.ts === "number" ? rr.ts : 0, thread: typeof rr.thread_id === "string" ? rr.thread_id : "", type });
+    }
+  }
+  return out;
+}

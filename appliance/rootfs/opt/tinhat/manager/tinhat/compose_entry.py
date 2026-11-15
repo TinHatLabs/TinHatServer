@@ -111,7 +111,7 @@ def fresh_install() -> None:
         shutil.rmtree(OPT / "manager")
     shutil.copytree(REL / "manager", OPT / "manager")
     # the web app's folder is the web server's bind mount: replace what's in it, never the folder itself
-    updater.replace_contents(REL / "web", OPT / "web")
+    updater.replace_web(REL / "web", OPT / "web")
     for f in ("compose.yaml", "VERSION"):
         shutil.copy2(REL / f, OPT / f)
     shutil.copy2(tmp_lock, OPT / "images.lock")  # with this machine's ids for our own images

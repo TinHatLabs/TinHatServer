@@ -13,6 +13,7 @@ import { onWinState, winState } from "@/core/winstate";
 import { rxNumbers, SPARK_SAMPLES, type RxSample, type TrackKind, type TrackNumbers } from "@/widgets/quality";
 import { decodeRxq, encodeRxq, RxqGate, RXQ_MAX_BYTES, RXQ_SEND_MS, RXQ_TOPIC, type Rxq } from "@/widgets/rxq";
 import { hooks } from "./engine";
+import { countersFromInbound, formatRecvLine, RecvBaselines, recvLogDue, type RecvCounters } from "./recvStats";
 import { sess, type Sess } from "./session";
 import { isRecorder, mxidOf } from "./util";
 
@@ -63,7 +64,7 @@ const KIND_OF: Array<[TrackKind, Track.Source]> = [
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
 /** One subscribed track's inbound-rtp sample (+ codec mimeType + the transport's current round trip). */
-async function sampleTrack(p: RemoteParticipant, kind: TrackKind, source: Track.Source): Promise<{ key: string; s: RxSample } | null> {
+async function sampleTrack(p: RemoteParticipant, kind: TrackKind, source: Track.Source): Promise<{ key: string; s: RxSample; sid: string; recv: RTCRtpReceiver; rc: RecvCounters | null } | null> {
   const pub = p.getTrackPublication(source);
   const track = pub?.isSubscribed ? pub.track : undefined;
   const recv = track?.receiver;
@@ -91,6 +92,9 @@ async function sampleTrack(p: RemoteParticipant, kind: TrackKind, source: Track.
   const codec = byId.get(String(inbound.codecId ?? ""));
   return {
     key: `${p.identity}|${kind}|${pub.trackSid}`,
+    sid: pub.trackSid ?? "",
+    recv,
+    rc: kind === "a" ? null : countersFromInbound(inbound),
     s: {
       k: kind,
       at: num(inbound.timestamp) ?? performance.now(),
@@ -111,6 +115,8 @@ hooks.onConnected.push((s: Sess) => {
   const gate = new RxqGate();
   const dispPrev = new Map<string, RxSample>();
   const rxqPrev = new Map<string, RxSample>();
+  const recvBase = new RecvBaselines<RTCRtpReceiver>();
+  let lastRecvLog: number | null = null;
   let lastDisplay = 0;
   // the first rxq tick 1 s in takes the baseline samples; the first report goes out 5 s later
   let lastRxq = performance.now() - RXQ_SEND_MS + 1000;
@@ -130,7 +136,9 @@ hooks.onConnected.push((s: Sess) => {
     const now = performance.now();
     const doDisplay = watchers > 0 && winState() !== "hidden" && now - lastDisplay >= displayPeriod() - 50;
     const doRxq = now - lastRxq >= RXQ_SEND_MS - 50;
+    const doRecvLog = doRxq && recvLogDue(lastRecvLog, now);
     if (doDisplay || doRxq) {
+      if (doRecvLog) lastRecvLog = now;
       const people = [...s.room.remoteParticipants.values()].filter((p) => !isRecorder(p.identity));
       const perPerson = new Map<string, { incoming: TrackNumbers[]; rxq: TrackNumbers[] }>();
       for (const p of people) {
@@ -138,6 +146,10 @@ hooks.onConnected.push((s: Sess) => {
         for (const [kind, source] of KIND_OF) {
           const got = await sampleTrack(p, kind, source);
           if (!got || !alive()) continue;
+          if (doRecvLog && got.rc) {
+            const before = recvBase.step(got.key, got.recv, got.rc, now);
+            log.info(formatRecvLine(p.identity, kind, got.sid, got.rc, before?.prev ?? null, before?.dt ?? null));
+          }
           if (doDisplay) {
             const n = rxNumbers(dispPrev.get(got.key), got.s);
             dispPrev.set(got.key, got.s);
@@ -152,6 +164,16 @@ hooks.onConnected.push((s: Sess) => {
         perPerson.set(p.identity, entry);
       }
       if (!alive()) return;
+      if (doRecvLog) {
+        const live = new Set<string>();
+        for (const p of people) {
+          for (const [kind, source] of KIND_OF) {
+            const pub = p.getTrackPublication(source);
+            if (pub?.isSubscribed) live.add(`${p.identity}|${kind}|${pub.trackSid}`);
+          }
+        }
+        recvBase.retain(live);
+      }
       if (doRxq) {
         lastRxq = now;
         for (const p of people) {

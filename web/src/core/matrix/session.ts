@@ -54,8 +54,9 @@ import {
   wipeLocalStores,
   type Credentials,
 } from "./client";
-import { friendlyLoginError, matrixErrorMessage, UserFacingError } from "./errors";
+import { friendlyLoginError, matrixErrorMessage, unreachableText, UserFacingError } from "./errors";
 import { installMatrixResume } from "./resume";
+import { sessionEndedText } from "./endedText";
 import { MATRIX_ORIGIN, SERVER_LABEL, bearerAllowed, homeserverAllowed } from "@/core/bearer";
 import { bus } from "@/core/bus";
 import { createLogger } from "@/core/log";
@@ -249,8 +250,18 @@ export function syncAgeMs(now: number = Date.now()): number | null {
   return Math.max(0, now - Math.max(lastSyncOkAt, syncWatchFrom));
 }
 
+/** L1 D08.2: every good sync from the network (chat resends what failed for lack of connection). Returns the unsubscribe. */
+const syncOkListeners = new Set<() => void>();
+export function onSyncOk(cb: () => void): () => void {
+  syncOkListeners.add(cb);
+  return () => void syncOkListeners.delete(cb);
+}
+
 function onSyncState(state: SyncState, _prev: SyncState | null, data?: SyncStateData) {
-  if ((state === SyncState.Prepared || state === SyncState.Syncing || state === SyncState.Catchup) && !data?.fromCache) lastSyncOkAt = Date.now();
+  if ((state === SyncState.Prepared || state === SyncState.Syncing || state === SyncState.Catchup) && !data?.fromCache) {
+    lastSyncOkAt = Date.now();
+    for (const cb of syncOkListeners) cb();
+  }
   const s = getSession();
   const patch: Partial<SessionInfo> = { syncState: state };
   if (state === SyncState.Prepared || state === SyncState.Syncing || state === SyncState.Catchup) {
@@ -288,7 +299,7 @@ function onSessionLoggedOut() {
     logout({
       server: false,
       byUser: false, // the server ended this session (dead token, signed out elsewhere, deactivated): not the person's choice
-      status: "You were signed out: this session expired or was ended from another device. Sign in again.",
+      status: sessionEndedText(getSession().userId), // A27.1: a guest's visit ended (no password to sign in again with)
     });
   if (starting) void starting.catch(() => undefined).then(go);
   else void go();
@@ -649,7 +660,9 @@ async function http(url: string, init: RequestInit, server: string, timeoutMs = 
   } catch (e) {
     const name = (e as { name?: string })?.name;
     if (name === "TimeoutError" || name === "AbortError") throw new UserFacingError("The server didn't answer in time.");
-    throw new UserFacingError(`Couldn't reach ${server}: ${(e as Error)?.message ?? e}`);
+    // A14.6: one sentence on the form, the raw failure in the log
+    log.warn(`couldn't reach ${server}: ${(e as Error)?.message ?? e}`);
+    throw new UserFacingError(unreachableText(server));
   }
   let json: Record<string, unknown> = {};
   try {

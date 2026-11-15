@@ -17,7 +17,7 @@ import { activityDebug, installActivity } from "./active";
 import { installNoteActions } from "./actions";
 
 export { ThisDeviceSection } from "./ThisDevice";
-export { useNotifyCardVisible, askNotificationPermission, snoozeNotifyAsk, PERMISSION_QUESTION } from "./PermissionCard";
+export { useNotifyCardKind, useNotifyCardVisible, askNotificationPermission, snoozeNotifyAsk, PERMISSION_QUESTION } from "./PermissionCard";
 export { usePushStore, enablePush, disablePush, sendTest, setQuiet } from "./client";
 
 export const feature: FeatureModule = {

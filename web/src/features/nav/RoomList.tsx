@@ -1,6 +1,6 @@
 // RoomList.tsx — ThRoomList.qml: the room panel next to the rail. Header (active space label, the
-// hover gear, "+" → app menu), the "Filter rooms…" field (Ctrl+F, Esc clears, Down → list, 100 ms
-// auto-accept opens the first match on desktop), the rows (invites pinned, joinable "Not joined"
+// hover gear, "+" → app menu), the "Filter rooms…" field (Ctrl+F, Esc clears, Down → list; the first
+// match highlighted, Enter acts on it — typing never opens a room, P1 2026-11-14), the rows (invites pinned, joinable "Not joined"
 // rows, call participant strip, now-playing line + inline editor, statuses), empty states, the
 // invited-space card, and the floating footer card (you · bug · nav toggle · ☰).
 // 11.0 (islands C6/C7): on the desktop the dock host places three islands out of this file — `rooms` (RoomsIsland: the
@@ -38,11 +38,14 @@ import {
 import { PadRoomListBar } from "@/features/pad";
 import { acceptInvite, rejectInvite, setActivity } from "./actions";
 import { openNavDialog } from "./dialogs";
+import { NO_ROOMS_LABEL, noRoomsPlan, type NoRoomsPlan } from "./firstrun";
+import { newRoomOpen } from "./newMenu";
 import { AppMenu, NewMenu, RegistryMenuItems, RoomMenu, openBugReport } from "./menus";
 import { setEditingRoom, useNavStore, type Participant, type RoomRow, type SpaceEntry } from "./model";
 import { useNavMode, toggleSidebar } from "./navmode";
 import { openRoomId } from "./open";
 import { rowGesture } from "./rowGesture";
+import { filterEnter, filterRooms } from "./roomFilter";
 import { runAction } from "@/actions/run";
 import { usePartGlyphs } from "./callinfo";
 import { ParticipantVolumeMenu } from "@/features/callui";
@@ -50,7 +53,7 @@ import { useServerFeature } from "@/core/server";
 import { accountName } from "@/features/guests/model";
 import { MyStatusLine, StatusPopover, avatarDot, useMyPresence, usePresence, viewOf } from "@/features/presence";
 import { TourOfferCard } from "@/features/selfhost/asks";
-import { openQuickSwitcher } from "./QuickSwitcher";
+import { openQuickSwitcher, searchEverywhere } from "./QuickSwitcher";
 import { useIsTouch } from "@/core/device";
 import { swallowNextClick } from "./touch";
 import { listPlan, type PhoneSections } from "./sections";
@@ -196,9 +199,16 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
     frozen.current = ordered.map((r) => r.id);
   }, [ordered]);
 
-  // ---- filter ----
-  const q = query.trim().toLowerCase();
-  const matches = useCallback((r: RoomRow) => !q || r.name.toLowerCase().includes(q), [q]);
+  // ---- filter (ACTIONS.md §10.8: the shared matcher — accents, the address / the DM's handle, is:unread, is:mention) ----
+  const q = query.trim();
+  const filtered = useMemo(() => filterRooms(query, ordered), [query, ordered]);
+  const matches = useCallback((r: RoomRow) => filtered.shown.has(r.id), [filtered]);
+  // P1 (2026-11-14): the row Enter acts on, drawn highlighted while the filter has text; typing never opens it
+  const firstId = filtered.first?.id ?? "";
+  // the row the keyboard is on (the Tab stop moves with it while inside the list; leaving the list resets it)
+  const [kbRow, setKbRow] = useState("");
+  // a11y round 2 (M2, the desktop's RoomsIsland does the same): the room list is ONE Tab stop — the row of the room on
+  // screen when the filter shows it, else the first row it shows (the other rows: ↑/↓/Home/End from there)
   const matchCount = ordered.filter(matches).length;
 
   const pick = useCallback(
@@ -208,34 +218,14 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
     },
     [onPicked],
   );
-  const openFirstMatch = useCallback(
-    (text: string) => {
-      const qq = text.trim().toLowerCase();
-      for (const r of useNavStore.getState().rooms) {
-        if (r.membership !== "join") continue; // invites never open; "Not joined" must confirm first
-        if (!qq || r.name.toLowerCase().includes(qq)) return pick(r.id);
-      }
-    },
-    [pick],
-  );
-  // Kirigami SearchField autoAccept: `accepted` 100 ms after every text change (desktop only, D5)
-  const accTimer = useRef(0);
-  const openFirstRef = useRef(openFirstMatch);
-  openFirstRef.current = openFirstMatch;
+  // P1 (2026-11-14, replaces D5's 100 ms auto-accept, which opened — and marked read — every room you typed past): the
+  // field only filters; Enter acts on the first match as a click on it would (open, or the join dialog)
   const lastQuery = useRef(query);
   useEffect(() => {
     if (lastQuery.current === query) return; // mount / StrictMode re-run: nothing was typed
     lastQuery.current = query;
     listRef.current?.scrollTo({ top: 0 });
-    if (mobile) return;
-    window.clearTimeout(accTimer.current);
-    // through a ref: a new onPicked identity (the dock re-renders) must not cancel the debounce
-    accTimer.current = window.setTimeout(() => {
-      holdFilterFocus(filterRef.current);
-      openFirstRef.current(query);
-    }, 100);
-    return () => window.clearTimeout(accTimer.current);
-  }, [query, mobile]);
+  }, [query]);
 
   useShortcut(
     "Ctrl+F",
@@ -248,6 +238,12 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
   );
   const filterWrap = useRef<HTMLSpanElement>(null);
   useTip(filterWrap, query ? "" : "Ctrl+F", { delay: 700 });
+
+  // A01.0 / P4 (Sunday QoL): phones have no start page beside the list — an account with no rooms at all gets the same
+  // "No rooms yet" + New DM / New room here (the desktop layout shows it in the timeline island, Shell.tsx)
+  const joinedRooms = useNavStore((st) => st.globalRooms.filter((r) => r.membership === "join").length);
+  const invitedRooms = useNavStore((st) => st.globalRooms.filter((r) => r.membership === "invite").length);
+  const noRooms = loaded && session.state === "ready" ? noRoomsPlan(joinedRooms, invitedRooms) : null;
 
   // ---- empty label ----
   let empty = "";
@@ -262,6 +258,8 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
   const [headHover, setHeadHover] = useState(false);
   const plusRef = useRef<HTMLButtonElement>(null);
 
+  const rovingId =
+    (ordered.find((r) => r.id === kbRow && matches(r)) ?? ordered.find((r) => r.id === currentRoomId && matches(r)) ?? ordered.find((r) => matches(r)))?.id ?? "";
   return (
     <div
       ref={panelRef}
@@ -311,10 +309,10 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
               value={query}
               onValueChange={setQuery}
               onAccepted={(v) => {
-                window.clearTimeout(accTimer.current);
-                // phones (D5): only an explicit search-key press with text opens a room; the ✕ never does
-                if (mobile && !v.trim()) return;
-                openFirstMatch(v);
+                // Enter (phones: the search key) = a click on the first match; an empty field (the ✕) does nothing
+                const go = filterEnter(v, ordered);
+                if (go?.kind === "askJoin") openNavDialog({ kind: "joinConfirm", roomId: go.row.id, name: go.row.name });
+                else if (go?.kind === "open") pick(go.row.id);
               }}
               onKeyDown={(e) => {
                 if (e.key === "Escape" && query) {
@@ -336,18 +334,33 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
         <div
           ref={listRef}
           className={s.list}
+          data-rooms-list=""
           onPointerEnter={(e) => e.pointerType !== "touch" && setHovered(true)}
           onPointerLeave={() => setHovered(false)}
-          role="list"
-          aria-label="Rooms"
         >
           {(!plan || plan.rooms) && <PadRoomListBar />}
           {plan?.widgets === "before" && <RailExtras mobile />}
+          {/* a11y round 2 (M5): the "Rooms" list holds only its rows (the Pad bar, the widgets and the empty line are not
+              list items — screen readers mis-counted it); display: contents, so nothing moves */}
+          <div
+            className={s.rowsList}
+            role="list"
+            aria-label="Rooms"
+            onFocus={(e) => {
+              const id = (e.target as HTMLElement).closest?.("[data-row]")?.getAttribute("data-room-id");
+              if (id && (e.target as HTMLElement).hasAttribute("data-row")) setKbRow(id);
+            }}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setKbRow("");
+            }}
+          >
           {(!plan || plan.rooms) && ordered.map((r) => (
             <RoomRowView
               key={r.id}
               row={r}
+              roving={r.id === rovingId}
               hidden={!matches(r)}
+              first={r.id === firstId}
               selected={r.id === currentRoomId}
               isOpen={r.id === currentRoomId}
               editing={r.id === editingRoomId}
@@ -357,7 +370,16 @@ export function RoomPanel({ currentRoomId, inDock, active = true, mobile, onPick
               onPartMenu={(userId, x, y) => setPartMenu({ userId, roomId: r.id, x, y })}
             />
           ))}
-          {empty && (!plan || plan.rooms) && <div className={s.empty}>{empty}</div>}
+          </div>
+          {empty && (!plan || plan.rooms) && (mobile && noRooms && !q ? (
+            <NoRoomsCard plan={noRooms} />
+          ) : (
+            <div className={s.empty}>
+              {empty}
+              {/* A10.3: no room matches — the same text in Ctrl+K, which also finds people and actions */}
+              {q && <Button className={s.emptyAction} text="Search everywhere" icon="edit-find" onClick={() => searchEverywhere(query)} />}
+            </div>
+          ))}
           {mobile && (!plan || plan.widgets === "after") && <RailExtras mobile />}
         </div>
       )}
@@ -443,7 +465,11 @@ export function AccountIsland({ onPicked, flat }: { onPicked?: () => void; flat?
 
 interface RowProps {
   row: RoomRow;
+  /** a11y round 2 (M2): this row is the list's one Tab stop */
+  roving: boolean;
   hidden: boolean;
+  /** P1: the filter's first match — drawn highlighted, the one Enter in the filter acts on */
+  first?: boolean;
   selected: boolean;
   isOpen: boolean;
   editing: boolean;
@@ -453,7 +479,7 @@ interface RowProps {
   onPartMenu: (userId: string, x: number, y: number) => void;
 }
 
-const RoomRowView = memo(function RoomRowView({ row, hidden, selected, isOpen, editing, mobile, onPick, onMenu, onPartMenu }: RowProps) {
+const RoomRowView = memo(function RoomRowView({ row, roving, hidden, first, selected, isOpen, editing, mobile, onPick, onMenu, onPartMenu }: RowProps) {
   const ink = useContentInk();
   const isInvite = row.membership === "invite";
   const notJoined = row.membership === "none";
@@ -515,8 +541,9 @@ const RoomRowView = memo(function RoomRowView({ row, hidden, selected, isOpen, e
       data-room-id={row.id}
       data-presence={pres?.state}
       data-selected={selected ? "" : undefined}
+      data-filter-first={first ? "" : undefined}
       role="listitem"
-      tabIndex={-1}
+      tabIndex={roving ? 0 : -1}
       hidden={hidden}
       aria-label={row.name}
       onClick={(e) => {
@@ -533,11 +560,20 @@ const RoomRowView = memo(function RoomRowView({ row, hidden, selected, isOpen, e
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return; // keys inside the now-playing editor / buttons are theirs
         if (e.key === "Enter") click();
-        else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        else if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End") {
           e.preventDefault();
           const rows = [...(e.currentTarget.parentElement?.querySelectorAll<HTMLElement>("[data-row]:not([hidden])") ?? [])];
           const i = rows.indexOf(e.currentTarget);
-          rows[i + (e.key === "ArrowDown" ? 1 : -1)]?.focus();
+          const to = e.key === "Home" ? 0 : e.key === "End" ? rows.length - 1 : i + (e.key === "ArrowDown" ? 1 : -1);
+          rows[to]?.focus();
+        } else if (e.key === "Escape") {
+          // a11y round 2 (M2): back to the filter (the desktop's room list does the same)
+          const f = e.currentTarget.closest(`.${s.panel}`)?.querySelector<HTMLElement>("input[aria-label='Filter rooms']");
+          if (f) {
+            e.preventDefault();
+            e.stopPropagation();
+            f.focus();
+          }
         }
       }}
       onContextMenu={(e) => {
@@ -591,16 +627,29 @@ const RoomRowView = memo(function RoomRowView({ row, hidden, selected, isOpen, e
           {...(pres ? avatarDot(pres, "var(--row-surface)") : { showDot: row.call, dotColor: "var(--th-rooms-item-call-dot)" })}
         />
         {row.favourite && <Icon name="starred-symbolic" size={12} color="var(--th-rooms-item-favourite-icon)" className={s.star} />}
-        <span
-          className={s.name}
-          style={{
-            color: notJoined ? "var(--th-rooms-item-not-joined-fg)" : undefined,
-            fontWeight: row.unread > 0 || isInvite ? 700 : undefined,
-            opacity: row.muted ? 0.55 : undefined,
-          }}
-        >
-          {row.name}
-        </span>
+        {isInvite && row.dm && row.peer ? (
+          // D09.4 (Sunday QoL): a DM invite shows who is really asking — the inviter's full address, server included, in
+          // grey under the name (a display name alone can copy anyone's; the desktop's RoomsIsland.qml)
+          <span className={s.nameCol}>
+            <span className={s.name} style={{ color: "var(--th-rooms-item-not-joined-fg)", fontWeight: 700 }}>
+              {row.name}
+            </span>
+            <span className={s.inviterAddr} data-inviter-addr="">
+              {row.peer}
+            </span>
+          </span>
+        ) : (
+          <span
+            className={s.name}
+            style={{
+              color: notJoined ? "var(--th-rooms-item-not-joined-fg)" : undefined,
+              fontWeight: row.unread > 0 || isInvite ? 700 : undefined,
+              opacity: row.muted ? 0.55 : undefined,
+            }}
+          >
+            {row.name}
+          </span>
+        )}
         {row.muted && !isInvite && <Icon name="notifications-disabled-symbolic" size={14} color="var(--th-rooms-item-muted-icon)" className={s.flex0} />}
         {(isInvite || notJoined) && <span className={cx(s.pill, isInvite ? s.pillInvite : s.pillNone)}>{isInvite ? "Invited" : "Not joined"}</span>}
         {isInvite && !mobile && (
@@ -737,35 +786,6 @@ function ActivityEditor({ row }: { row: RoomRow }) {
   );
 }
 
-/** The filter's 100 ms auto-accept opens a room WHILE the user may still be typing ("Par" … pause …
- *  "ity"). The room page focuses its composer when it opens, which would send the rest of the typing
- *  (and Esc) into the conversation. While the filter had focus, keep it there for the moment the page
- *  takes to open; a click anywhere, or an explicit Enter (a different path), lets the composer have it. */
-let releaseFilterHold: (() => void) | null = null;
-function holdFilterFocus(field: HTMLInputElement | null) {
-  releaseFilterHold?.();
-  if (!field || document.activeElement !== field) return;
-  const onFocusIn = (e: FocusEvent) => {
-    const t = e.target as HTMLElement | null;
-    if (t && t !== field && t.closest?.("[data-room-page]")) field.focus({ preventScroll: true });
-  };
-  // any explicit move (a click, Enter, Tab, arrows into the list) ends the hold at once
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp") off();
-  };
-  const off = () => {
-    document.removeEventListener("focusin", onFocusIn, true);
-    document.removeEventListener("pointerdown", off, true);
-    document.removeEventListener("keydown", onKey, true);
-    window.clearTimeout(timer);
-    if (releaseFilterHold === off) releaseFilterHold = null;
-  };
-  document.addEventListener("focusin", onFocusIn, true);
-  document.addEventListener("pointerdown", off, true);
-  document.addEventListener("keydown", onKey, true);
-  const timer = window.setTimeout(off, 600);
-  releaseFilterHold = off;
-}
 
 function ParticipantRow({ roomId, p, onMenu }: { roomId: string; p: Participant; onMenu: (userId: string, x: number, y: number) => void }) {
   const g = usePartGlyphs(roomId, p.mxid);
@@ -1011,6 +1031,31 @@ function AccountCard({ onBug, onMenu, mobile, island, active = true }: { onBug: 
       </EditableRow>
       {/* the desktop statusPop sits on the footer card's left edge, 8 px above it */}
       {statusOpen && presenceOn && <StatusPopover anchor={cardRef.current} onClose={() => setStatusOpen(false)} />}
+    </div>
+  );
+}
+
+/** A01.0 / P4: the phone list's "No rooms yet" (Shell.tsx draws the same plan in the desktop layout's timeline island). */
+function NoRoomsCard({ plan }: { plan: NoRoomsPlan }) {
+  return (
+    <div className={s.empty} data-no-rooms-card="">
+      <div className={s.noRooms}>
+        <div className={s.noRoomsTitle}>{plan.title}</div>
+        <div>{plan.explanation}</div>
+        {plan.buttons.length > 0 && (
+          <div className={s.noRoomsButtons}>
+            {plan.buttons.map((b) => (
+              <Button
+                key={b}
+                text={NO_ROOMS_LABEL[b]}
+                highlighted={b === "newDm"}
+                onClick={() => openNavDialog(b === "newDm" ? { kind: "newChat" } : newRoomOpen("home", "Home"))}
+                data-no-rooms={b}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

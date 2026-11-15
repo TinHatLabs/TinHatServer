@@ -4,6 +4,8 @@
 //
 //   #/home                     the nav (no room)            #/login  #/register  #/forgot
 //   #/room/<!id|#alias>[/$ev]  a room (optionally at an event)
+//   #/room/<!id>[/$ev]?thread=<$root>   threads (docs/THREADS.md): the room with that thread open in its Threads panel
+//                              (centred on $ev when given) — the shells' push clicks land here; keep this shape stable
 //   #/user/<@mxid>             a profile                    #/__gallery[/section]  the UI gallery
 // Navigations push history entries, so the phone back button / edge swipe walks back (mobile stack).
 import { useSyncExternalStore } from "react";
@@ -11,7 +13,7 @@ import { wasOwnPop } from "../ui/backStack"; // (relative: the unit tests load t
 
 export type Route =
   | { name: "home" }
-  | { name: "room"; target: string; eventId?: string; via: string[] }
+  | { name: "room"; target: string; eventId?: string; via: string[]; thread?: string }
   | { name: "user"; userId: string }
   | { name: "login" }
   | { name: "register"; token?: string }
@@ -69,7 +71,10 @@ export function parseHash(hash: string): Route {
       const [target, ev] = raw.split(/\/(?=\$)/);
       const t = target.replace(/\/+$/, "").trim();
       if (isRoomId(t) || (t.startsWith("#") && t.includes(":"))) {
-        return { name: "room", target: t, eventId: ev || undefined, via: query.getAll("via") };
+        const thread = query.get("thread") ?? "";
+        const r: Route = { name: "room", target: t, eventId: ev || undefined, via: query.getAll("via") };
+        // threads: only an event id (a "$…" without white space) opens a thread
+        return /^\$\S+$/.test(thread) ? { ...r, thread } : r;
       }
       if (t.startsWith("@") && t.includes(":")) return { name: "user", userId: t };
       return { name: "unknown", path };
@@ -84,8 +89,8 @@ export function routeToHash(r: Route): string {
     case "home":
       return "#/home";
     case "room": {
-      const via = r.via.length ? "?" + r.via.map((v) => `via=${encodeURIComponent(v)}`).join("&") : "";
-      return `#/room/${r.target}${r.eventId ? "/" + r.eventId : ""}${via}`;
+      const q = [...r.via.map((v) => `via=${encodeURIComponent(v)}`), ...(r.thread ? [`thread=${encodeURIComponent(r.thread)}`] : [])];
+      return `#/room/${r.target}${r.eventId ? "/" + r.eventId : ""}${q.length ? "?" + q.join("&") : ""}`;
     }
     case "user":
       return `#/user/${r.userId}`;

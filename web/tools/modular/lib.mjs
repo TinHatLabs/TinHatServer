@@ -98,6 +98,12 @@ export const LITERAL_OK = {
     "#5865f2": "sample status colour (content)", "#3ba55c": "sample status colour (content)",
     "#faa81a": "sample status colour (content)", "#eb459e": "sample status colour (content)",
   },
+  // content colours: a room's shared background is a picture the room chose (docs/AMBIENCE.md), not UI chrome — its
+  // scenes' colours are pinned by the shared vectors testvectors/ambience (byte-identical in the desktop)
+  "src/features/chat/ambience/core.ts": { "#": "the built-in scenes' colours (content, shared vectors)" },
+  "src/features/chat/ambience/core.test.ts": { "#": "test colours (content)" },
+  "src/features/chat/ambience/layer.tsx": { "#000000": "parse fallback for a missing theme colour", "rgba(": "a scene's glow colour → CSS" },
+  "src/features/chat/ambience/room.ts": { "#000": "the matte under a transparent image before JPEG (content)" },
 };
 
 export function readJson(p) {

@@ -83,7 +83,7 @@ export function MonthView() {
     const el = gridRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      const c = el.firstElementChild as HTMLElement | null;
+      const c = el.querySelector<HTMLElement>('[role="gridcell"]'); // (a11y round 2: the cells sit in week rows now)
       if (c) {
         setCellH(c.clientHeight);
         setCellW(c.clientWidth);
@@ -136,7 +136,10 @@ export function MonthView() {
           if (Math.abs(dx) > 60 && Math.abs(dx) > 2 * Math.abs(dy)) shiftMonth(dx < 0 ? 1 : -1);
         }}
       >
-        {days.map((d) => {
+        {/* a11y round 2 (M5): a grid's cells sit in rows (one per week; display: contents — the CSS grid is unchanged) */}
+        {Array.from({ length: Math.ceil(days.length / 7) }, (_, w) => (
+          <div key={w} className={s.week} role="row">
+        {days.slice(w * 7, w * 7 + 7).map((d) => {
           const key = dayKey(d);
           const inMonth = d.getMonth() === viewMonth;
           const evs = byDay.get(key) ?? [];
@@ -168,6 +171,8 @@ export function MonthView() {
             />
           );
         })}
+          </div>
+        ))}
       </div>
     </>
   );

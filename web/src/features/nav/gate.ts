@@ -2,8 +2,8 @@
 // 4397-4450, 8279-8286): `TINHAT_GUI_OPENROOM=index|!id|panel|info|space:<id>:<tab>|selectspace:<id>`,
 // `TINHAT_GUI_DOCK=corner`, `--tinhat-settings`, `--tinhat-pane=N`. On the web they are URL query
 // params (search or the hash query), honoured only in dev builds or with `gate=1`:
-//   navmode=persistent|corner   force the nav mode (persisted, like the Appearance radios)
-//   dock=corner                 = navmode=corner; dock=open additionally pins the dock open
+//   navmode=persistent|corner   force the nav mode (persisted, like the Appearance radios; LAB builds only: src/lab/linkLab.ts)
+//   dock=corner                 = navmode=corner (LAB builds only); dock=open additionally pins the dock open
 //   openroom=<n>|!id|panel|info open the n-th room of the nav list / a room id; panel/info open the
 //                               first room with its right panel (members / info)
 //   openroom=space:<id>:<tab>   Space settings of <id> on <tab>
@@ -12,9 +12,9 @@
 //   settings=1 [&pane=N]        open Settings (optionally on pane id/number N)
 //   notour=1                    never auto-show the tour
 import { bus, openSettings } from "@/core/bus";
-import { setPref } from "@/core/prefs";
 import { selectSpace, useNavStore } from "./model";
 import { openRoomId } from "./open";
+import * as linkLab from "@/lab/linkLab";
 
 function params(): URLSearchParams {
   const p = new URLSearchParams(location.search);
@@ -29,8 +29,9 @@ export const gateParam = (k: string): string | null => (gateOn() ? params().get(
 /** Before the first render: the layout-affecting hooks (nav mode). */
 export function applyEarlyGateHooks(): void {
   if (!gateOn()) return;
-  const mode = params().get("navmode") ?? (params().get("dock") ? "corner" : null);
-  if (mode === "corner" || mode === "persistent") setPref("nav_mode", mode);
+  // the nav mode pref from a link (src/lab/linkLab.ts): lab builds only; a production build never writes a saved pref
+  // from a link (fix1216/weblinkfence)
+  if (__TW_LAB__) linkLab.navMode(params());
 }
 
 /** After the first sync (r.onReady): room / space / settings hooks. */

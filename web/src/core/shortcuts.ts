@@ -27,6 +27,15 @@ export interface ShortcutDef {
   /** 11.0: the actions-table action these keys are the default keys of (ACTIONS.md §8): the shortcut fires only while
    *  the key still belongs to that action on this device (Settings → Shortcuts may have moved it) */
   action?: string;
+  /** 12.1.16 fix round (4-5): runs while a modal dialog is open too. Without it a shortcut waits until the dialog is gone:
+   *  the window listener runs before the dialog sees the key, so Ctrl+F used to focus the room filter BEHIND
+   *  "Send as text?" (typing and Enter then went there). */
+  inModal?: boolean;
+}
+
+/** A modal dialog or sheet is open (aria-modal): background shortcuts and custom key bindings wait (4-5). */
+export function modalOpen(): boolean {
+  return typeof document !== "undefined" && !!document.querySelector('[aria-modal="true"]');
 }
 
 interface Parsed {
@@ -184,7 +193,9 @@ export function eventChordText(e: KeyboardEvent): string | null {
   parts.push(k);
   return parts.join("+");
 }
-type ActionKeyHook = (e: KeyboardEvent, text: string, typing: boolean) => boolean;
+type ActionKeyHook = (e: KeyboardEvent, text: string, typing: boolean, modal: boolean) => boolean;
+/** 12.1.16 (4-5): the actions a person's own key still runs while a modal dialog is open (the mic stays theirs). */
+export const MODAL_SAFE_ACTIONS = ["call.mic.toggle", "call.deafen.toggle"];
 let actionKeyHook: ActionKeyHook | null = null;
 let defaultLiveCheck: ((action: string, registered: string) => boolean) | null = null;
 let suspended = 0;
@@ -222,7 +233,8 @@ function onKeyDown(e: KeyboardEvent) {
   if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
   const typing = isTyping(e);
   const text = eventChordText(e);
-  if (text !== null && actionKeyHook && actionKeyHook(e, text, typing)) {
+  const modal = modalOpen();
+  if (text !== null && actionKeyHook && actionKeyHook(e, text, typing, modal)) {
     e.preventDefault();
     e.stopPropagation();
     return;
@@ -232,6 +244,7 @@ function onKeyDown(e: KeyboardEvent) {
   );
   for (const en of list) {
     if (typing && !en.def.whenTyping) continue;
+    if (modal && !en.def.inModal) continue;
     const mi = en.parsed.findIndex((p) => matches(p, e));
     if (mi < 0) continue;
     // a default key runs only while it still belongs to its action here (Settings → Shortcuts may have moved it)
@@ -268,7 +281,7 @@ export function installShortcuts(): void {
 export function useShortcut(
   keys: string | string[],
   run: (e: KeyboardEvent) => boolean | void,
-  opts: { enabled?: boolean; whenTyping?: boolean; priority?: number; id?: string; action?: string } = {},
+  opts: { enabled?: boolean; whenTyping?: boolean; priority?: number; id?: string; action?: string; inModal?: boolean } = {},
 ): void {
   const runRef = useRef(run);
   runRef.current = run;
@@ -285,8 +298,9 @@ export function useShortcut(
       whenTyping: opts.whenTyping,
       priority: opts.priority,
       action: opts.action,
+      inModal: opts.inModal,
     });
-  }, [enabled, keyStr, opts.whenTyping, opts.priority, opts.id, opts.action]);
+  }, [enabled, keyStr, opts.whenTyping, opts.priority, opts.id, opts.action, opts.inModal]);
 }
 
 /** Human label for a sequence in the platform's style ("Ctrl+K" / "⌘K"). */

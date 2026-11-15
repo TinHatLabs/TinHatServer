@@ -32,6 +32,7 @@ import {
   type VodSession,
   type VodTrack,
 } from "./model";
+import { clipSeekOf } from "./clipjump";
 import { loadResume, loadVolume, saveResume, saveVolume, type Clip } from "./prefs";
 import { Pill } from "./Pill";
 import { canRemux, setRecordingSource, wantRemux } from "./remux";
@@ -972,7 +973,7 @@ export function MemoriesPlayer({ roomId, roomName, session, clips, resumeAt, onB
             .filter((c) => session.start_ms && c.at >= Number(session.start_ms) && c.at <= Number(session.end_ms || Infinity))
             .map((c) => {
               const off = (c.at - Number(session.start_ms)) / 1000;
-              return <ClipMark key={c.at} off={off} dur={durSecs} by={c.by} onSeek={() => commitSeek(off)} />;
+              return <ClipMark key={c.at} off={off} dur={durSecs} by={c.by} onSeek={() => commitSeek(clipSeekOf(off))} />;
             })}
         </div>
         <div className={s.buttons}>
@@ -1060,7 +1061,7 @@ export function MemoriesPlayer({ roomId, roomName, session, clips, resumeAt, onB
               .map((c) => {
                 const off = (c.at - Number(session.start_ms)) / 1000;
                 return (
-                  <button key={c.at} type="button" className={s.clipChip} onClick={() => commitSeek(off)}>
+                  <button key={c.at} type="button" className={s.clipChip} onClick={() => commitSeek(clipSeekOf(off))}>
                     {`🔖 ${fmtTime(off)} · ${shortName(c.by)}`}
                   </button>
                 );

@@ -73,7 +73,9 @@ import { freshMembers } from "./store";
 import { useLongPress } from "./longPress";
 import { setRightPanelTab, useRightPanelStore, closeRightPanel } from "./panelState";
 import s from "./RightPanel.module.css";
+import { useRegistry } from "@/core/registry";
 import { linkContainerEvents } from "@/core/linkgate";
+import { roleChoices, roleConfirmWords, roleNeedsConfirm } from "./roleChoices";
 
 export interface RightPanelProps {
   roomId: string;
@@ -215,10 +217,14 @@ export function RightPanel({ roomId, mobile, framed }: RightPanelProps) {
 function IslandPanel({ roomId, shown, overlay, framed }: { roomId: string; shown: boolean; overlay: boolean; framed: boolean }) {
   useEffect(() => {
     overlaid = overlay;
+    useRightPanelStore.setState({ overlay });
     return () => {
       overlaid = false;
+      useRightPanelStore.setState({ overlay: false });
     };
   }, [overlay]);
+  // an overlaid panel (phone widths) is a level of the back stack: Back closes it before leaving the room
+  useBackToClose(shown && overlay, closeRightPanel);
   if (!shown) return null;
   return (
     <div className={framed ? cx(s.islandPanel, s.islandPanelFramed) : s.islandPanel}>
@@ -250,10 +256,14 @@ function DesktopDock({ roomId, shown }: { roomId: string; shown: boolean }) {
   const docked = pageW >= DOCK_MIN;
   useEffect(() => {
     overlaid = !docked;
+    useRightPanelStore.setState({ overlay: !docked });
     return () => {
       overlaid = false;
+      useRightPanelStore.setState({ overlay: false });
     };
   }, [docked]);
+  // an overlaid panel (a narrow page) is a level of the back stack: Back closes it before leaving the room
+  useBackToClose(shown && !docked, closeRightPanel);
   const w = shown ? PANEL_WIDTH : 0;
   return (
     <div ref={wrap} className={s.dock} style={{ width: docked ? w : 0 }} data-docked={docked ? "1" : "0"} aria-hidden={!shown}>
@@ -270,15 +280,18 @@ function DesktopDock({ roomId, shown }: { roomId: string; shown: boolean }) {
 
 function MobileSheet({ roomId }: { roomId: string }) {
   const name = useRoomName(roomId);
+  // a contributed tab (chat's Threads) names the sheet
+  const tab = useRightPanelStore((st) => st.tab);
+  const extra = useRegistry("rightPanelTabs").find((t) => t.id === tab);
   // phones: the browser / Android back button closes room info instead of leaving the room (fix/polish 5)
   useBackToClose(true, closeRightPanel);
   return (
-    <div className={s.sheet} role="dialog" aria-label="Room info">
+    <div className={s.sheet} role="dialog" aria-label={extra ? extra.title : "Room info"}>
       <div className={s.sheetHeader}>
         <button type="button" className={s.back} aria-label="Back" onClick={closeRightPanel}>
           <Icon name="go-previous-symbolic" size={22} />
         </button>
-        <span className={s.sheetTitle}>{name || "Room info"}</span>
+        <span className={s.sheetTitle}>{extra ? extra.title : name || "Room info"}</span>
       </div>
       <div className={s.sheetBody}>
         <PanelBody roomId={roomId} mobile />
@@ -307,12 +320,19 @@ function PanelBody({ roomId, mobile }: { roomId: string; mobile?: boolean }) {
   const perms = useRoomPerms(roomId);
   const spaceId = useMemo(() => spaceOf(roomId), [roomId, container]); // eslint-disable-line react-hooks/exhaustive-deps
   const inSpace = spaceId.startsWith("!");
+  // tabs other features contribute (r.rightPanelTabs: chat's Threads), after Info and Members
+  const extraTabs = useRegistry("rightPanelTabs").filter((t) => !t.visible || t.visible(roomId));
+  const extra = typeof tab === "string" ? extraTabs.find((t) => t.id === tab) : undefined;
+  const Extra = extra?.component;
 
   return (
     <div className={cx(s.column, mobile && s.mColumn)}>
       <div className={s.header}>
         <BasicButton text="Info" checked={tab === 0} onClick={() => setRightPanelTab(0)} className={s.tabBtn} />
         <BasicButton text={`Members${joinedCount > 0 ? ` · ${joinedCount}` : ""}`} checked={tab === 1} onClick={() => setRightPanelTab(1)} className={s.tabBtn} />
+        {extraTabs.map((t) => (
+          <BasicButton key={t.id} text={t.title} checked={tab === t.id} onClick={() => setRightPanelTab(t.id)} className={s.tabBtn} />
+        ))}
         <span className={s.fill} />
         {tab === 0 && (perms.canChangeName || perms.canChangeTopic) && (
           <BasicToolButton
@@ -324,7 +344,9 @@ function PanelBody({ roomId, mobile }: { roomId: string; mobile?: boolean }) {
         )}
         {tab === 1 && inSpace && <ToolButton iconName="configure-symbolic" tip="Space settings — roles and who's in the space" onClick={() => openSpaceSettingsIntent(spaceId, "overview")} />}
       </div>
-      {tab === 0 ? (
+      {Extra ? (
+        <Extra roomId={roomId} />
+      ) : tab === 0 ? (
         <InfoPane roomId={roomId} editing={editing} setEditing={setEditing} perms={perms} />
       ) : (
         <MembersPane roomId={roomId} rows={rows} perms={perms} inSpace={inSpace} spaceId={spaceId} />
@@ -467,6 +489,7 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
   // member menu state (actor captured when the menu opens)
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; row: RoomMemberRow } | null>(null);
   const [powerMenu, setPowerMenu] = useState<{ at: { x: number; y: number }; row: RoomMemberRow } | null>(null);
+  const [roleConfirm, setRoleConfirm] = useState<{ row: RoomMemberRow; t: string; v: number } | null>(null);
   const [confirm, setConfirm] = useState<{ kind: "kick" | "ban"; row: RoomMemberRow } | null>(null);
   const [card, setCard] = useState<{ mxid: string; name: string; avatar: string | null } | null>(null);
 
@@ -583,15 +606,19 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
       )}
       {powerMenu && (
         <Menu open modal anchor={powerMenu.at} onClose={() => setPowerMenu(null)} title="Change role">
-          {[
-            { t: "Admin", v: 100 },
-            { t: "Moderator", v: 50 },
-            { t: "Member", v: 0 },
-          ]
-            .filter((x) => x.v < perms.myPower)
-            .map((x) => (
-              <CheckMenuItem key={x.v} text={x.t} checked={powerMenu.row.power === x.v} onTriggered={() => void setMemberPower(roomId, powerMenu.row.mxid, x.v)} />
-            ))}
+          {/* P13: up to my own level (Matrix allows equal); my own level can't be undone by me, so it asks first */}
+          {roleChoices(perms.myPower).map((x) => (
+            <CheckMenuItem
+              key={x.v}
+              text={x.t}
+              checked={powerMenu.row.power === x.v}
+              onTriggered={() =>
+                roleNeedsConfirm(x.v, perms.myPower, powerMenu.row.power)
+                  ? setRoleConfirm({ row: powerMenu.row, t: x.t, v: x.v })
+                  : void setMemberPower(roomId, powerMenu.row.mxid, x.v)
+              }
+            />
+          ))}
         </Menu>
       )}
       <ConfirmDialog
@@ -600,12 +627,13 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
         dialogTitle={confirm?.row.membership === "invite" ? "Withdraw invite?" : "Kick member?"}
         confirmText={confirm?.row.membership === "invite" ? "Withdraw" : "Kick"}
         destructive
+        askReason={confirm?.row.membership !== "invite"}
         message={
           confirm?.row.membership === "invite"
             ? `Withdraw the invite for ${confirm?.row.name}? They can be invited again later.`
             : `Remove ${confirm?.row.name} from this room? They can rejoin if it's public or re-invited.`
         }
-        onConfirmed={() => confirm && void kickFromRoom(roomId, confirm.row.mxid, "")}
+        onConfirmed={(reason) => confirm && void kickFromRoom(roomId, confirm.row.mxid, reason ?? "")}
       />
       <ConfirmDialog
         open={confirm?.kind === "ban"}
@@ -613,8 +641,18 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
         dialogTitle="Ban member?"
         confirmText="Ban"
         destructive
+        askReason
         message={`Ban ${confirm?.row.name} from this room? They won't be able to rejoin until unbanned.`}
-        onConfirmed={() => confirm && void banFromRoom(roomId, confirm.row.mxid, "")}
+        onConfirmed={(reason) => confirm && void banFromRoom(roomId, confirm.row.mxid, reason ?? "")}
+      />
+      <ConfirmDialog
+        open={!!roleConfirm}
+        onClose={() => setRoleConfirm(null)}
+        dialogTitle={roleConfirm ? roleConfirmWords(roleConfirm.row.name, roleConfirm.t).title : ""}
+        confirmText={roleConfirm ? roleConfirmWords(roleConfirm.row.name, roleConfirm.t).confirm : ""}
+        destructive
+        message={roleConfirm ? roleConfirmWords(roleConfirm.row.name, roleConfirm.t).message : ""}
+        onConfirmed={() => roleConfirm && void setMemberPower(roomId, roleConfirm.row.mxid, roleConfirm.v)}
       />
       {card && <ProfileCardPopup roomId={roomId} mxid={card.mxid} name={card.name} avatar={card.avatar} onClose={() => setCard(null)} />}
     </>

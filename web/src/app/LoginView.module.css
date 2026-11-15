@@ -105,6 +105,11 @@
 .wide {
   width: 100%;
 }
+/* A01.4: the sign-in <form> adds no box of its own (its fields stay items of the card's column) */
+.contents {
+  display: contents;
+}
+
 .group {
   display: flex;
   flex-direction: column;

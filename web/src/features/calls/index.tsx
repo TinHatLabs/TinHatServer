@@ -16,7 +16,9 @@
 //   setRankProvider(fn)        spaces: (roomId, mxid) => effectivePerms(roomId, mxid).rank (moderation packets
 //                              are honoured only from a sender ranked above the target; PL fallback)
 //   republishMembership()      "Never record me" flipped mid-call (DECISIONS D11)
-import { chordEndsHold, pressStartsHold, pttTextFocus } from "./pttChord";
+import { chordEndsHold, otherModifiers, pressStartsIn, pttPopupFocus, pttTextFocus } from "./pttChord";
+import { pttPopupOpened } from "./pttPopupHold";
+import { isShareStopped, shareStoppedNotice } from "./shareStopped";
 import { create } from "zustand";
 import type { FeatureModule } from "@/core/registry";
 import { bus, toast } from "@/core/bus";
@@ -26,13 +28,15 @@ import { createLogger } from "@/core/log";
 import type { CallStore, HearSnapshot } from "./contract";
 import { useCallStore, getCall, patch, setStatus } from "./store";
 import * as engine from "./engine";
+import type { Sess } from "./session";
+import type { RemoteParticipant } from "livekit-client";
 import * as audio from "./audio";
 import { applyGameChat, applyShareRecordingOnly, joinCorner, leaveCorner, pullAside, setTileTunedIn } from "./topics";
 import { installAfk, setAfk } from "./afk";
 import { answerAsk, cancelAsk, installSameRoom, linkWith, setHearThrough, unlink } from "./sameroom/link";
 export { rememberedPairs, forgetPair, PAIRS_KEY as SAME_ROOM_PAIRS_KEY } from "./sameroom/link";
 import { disconnectParticipant, serverMute, serverUnmute, setPermsProvider, setRankProvider } from "./moderation";
-import { answerIncoming, dismissIncoming, installCallWatch, roomCall, useIncomingCalls, useIncomingRing, useRoomCall } from "./callwatch";
+import { answerIncoming, declinableRing, declineIncoming, dismissIncoming, installCallWatch, roomCall, useIncomingCalls, useIncomingRing, useRoomCall } from "./callwatch";
 import { heardSummary, I_HEAR_REASON, NOT_ME_REASON, noteMute } from "./hear";
 import "./stats";
 import "./rxstats";
@@ -56,7 +60,40 @@ export const { rejoin, dismissFailure, flipCamera, setPopouts, setPopoutTiles, r
 export { outputRoutingSupported, followCallOutput } from "./audio";
 /** The engine publishes the join sound itself (joinsound.rs port in extras.ts) — media's fallback stays off. */
 export const joinSoundHandledByEngine = true;
+/** Accessibility round 2 (M3): someone (never the recorder: the engine stops before its hooks) joined / left the call I
+ *  am in — callui says it. `mxid` is the person; `stillHere` = another device of the same person is (still) in the call. */
+export function onCallRoster(f: (kind: "join" | "leave", mxid: string, roomId: string, stillHere: boolean) => void): () => void {
+  const other = (s: Sess, p: RemoteParticipant) => {
+    const m = mxidOf(p.identity);
+    return [...s.room.remoteParticipants.values()].some((x) => x.identity !== p.identity && mxidOf(x.identity) === m);
+  };
+  const j = (s: Sess, p: RemoteParticipant) => f("join", mxidOf(p.identity), s.roomId, other(s, p));
+  const l = (s: Sess, p: RemoteParticipant) => f("leave", mxidOf(p.identity), s.roomId, other(s, p));
+  engine.hooks.onParticipantJoined.push(j);
+  engine.hooks.onParticipantLeft.push(l);
+  return () => {
+    for (const [list, h] of [[engine.hooks.onParticipantJoined, j], [engine.hooks.onParticipantLeft, l]] as const) {
+      const i = list.indexOf(h);
+      if (i >= 0) list.splice(i, 1);
+    }
+  };
+}
 export { rnnoiseAvailable } from "./mic";
+let ncProbe: Promise<void> | null = null;
+/** Probe the RNNoise worklet + WASM once per session and store the answer (`ncAvailable`): called by what shows it —
+ *  Settings → Audio, the noise-test sheet, the call's mic popover. Until then `ncAvailable` keeps its default. */
+export function probeNoiseSuppression(): void {
+  if (ncProbe) return;
+  ncProbe = rnnoiseAvailableProbe().then(
+    (ok) => {
+      useCallStore.setState({ ncAvailable: ok });
+      if (!ok) ncProbe = null; // a later look may try again (offline at the first)
+    },
+    () => {
+      ncProbe = null;
+    },
+  );
+}
 // widgets (Call stats) — ADDITIVE: receiver stats per person, ConnectionQuality, tinhat.rxq (WIDGETS.md §5/§6)
 export { useRxStats, useRxStore, watchRxStats, type RxPerson, type RxState } from "./rxstats";
 export { foldPeers, type FoldedPeer } from "./companions";
@@ -182,6 +219,8 @@ useCallStore.setState({
   setMuted: audio.setMuted,
   reapplyAll: audio.reapply,
   dismissIncoming,
+  declineIncoming,
+  declinableRing,
   resumeFromTap,
   sameRoomLink: linkWith,
   sameRoomUnlink: unlink,
@@ -222,7 +261,11 @@ function install() {
   // them), so no call status or error was shown at all — fix/polish restored the single owner.
   useCallStore.subscribe((st, prev) => {
     // (a status line that repeats the error just raised is already on screen as the 6 s error toast)
-    if (st.statusRev !== prev.statusRev && st.status && !st.fake && st.status !== st.lastError) toast(st.status, { timeoutMs: 3000 });
+    if (st.statusRev !== prev.statusRev && st.status && !st.fake && st.status !== st.lastError) {
+      // a share that ended on its own: a notice with a way back, not a line that passes in three seconds
+      if (isShareStopped(st.status)) toast(st.status, shareStoppedNotice(() => bus.emit("openSharePicker", {})));
+      else toast(st.status, { timeoutMs: 3000 });
+    }
     if (st.errorRev !== prev.errorRev && st.lastError) toast(st.lastError, { kind: "error", timeoutMs: 6000 });
     if (st.micMuted !== prev.micMuted) noteMute(st.micMuted);
   });
@@ -287,23 +330,35 @@ function install() {
     const name = eventKeyName(e);
     return name !== null && pttKeys().includes(name);
   };
+  // A chord during a hold ends it as early as possible (capture); a hold STARTS only in the bubble phase, after every
+  // handler had its say (4-1: a press a shortcut / menu took — defaultPrevented — and a modified key never start one)
   window.addEventListener(
     "keydown",
     (e) => {
       const isPtt = isPttKey(e);
-      if (isPtt && !e.repeat && getCall().pushToTalk) {
-        const name = eventKeyName(e) ?? "";
-        if (pressStartsHold(name, pttTextFocus())) {
-          pttHeldKey = name;
-          engine.pttHold(true);
-        }
-      } else if (chordEndsHold(pttHeldKey, isPtt, e.repeat) && getCall().pttSpeaking) {
+      if (!isPtt && chordEndsHold(pttHeldKey, isPtt, e.repeat) && getCall().pttSpeaking) {
         pttHeldKey = null;
         engine.pttHold(false);
       }
     },
     true,
   );
+  // 12.1.16 (4-2, review round): a dialog, menu or popup that takes the keyboard during a key hold ends it (the ordinary
+  // release; a mouse-opened menu too) — a held key isn't meant for what has just opened
+  document.addEventListener("focusin", () => {
+    if (pttHeldKey !== null && pttPopupOpened()) {
+      pttHeldKey = null;
+      if (getCall().pttSpeaking) engine.pttHold(false);
+    }
+  });
+  window.addEventListener("keydown", (e) => {
+    if (!isPttKey(e) || e.repeat || !getCall().pushToTalk || pttHeldKey !== null) return;
+    const name = eventKeyName(e) ?? "";
+    if (pressStartsIn(name, pttPopupFocus(), otherModifiers(e, name), e.defaultPrevented, pttTextFocus())) {
+      pttHeldKey = name;
+      engine.pttHold(true);
+    }
+  });
   window.addEventListener(
     "keyup",
     (e) => {
@@ -418,6 +473,7 @@ export const feature: FeatureModule = {
       keys: "Ctrl+Shift+M",
       description: "Mute / unmute the mic (in a call)",
       whenTyping: true,
+      inModal: true, // (12.1.16, 4-5) the mic stays yours with a dialog open, also while connecting
       enabled: () => getCall().inCall || getCall().connecting,
       run: () => engine.toggleMic(),
     });
@@ -440,8 +496,9 @@ export const feature: FeatureModule = {
         void engine.refreshOutputs();
         void engine.refreshCameras();
         void engine.refreshAudioSources();
-        // "Strong (not installed)": probe the RNNoise worklet + WASM once, off the boot path.
-        setTimeout(() => void rnnoiseAvailableProbe().then((ok) => useCallStore.setState({ ncAvailable: ok })), 5000);
+        // "Strong (not installed)": the RNNoise probe runs when something shows its answer (probeNoiseSuppression):
+        // it used to run 5 s after every start — 129 KB of worklet + WASM and a 48 kHz AudioContext on each phone start
+        // that only fed a Settings label (web-perf-2 #8). A call with Strong on loads it in the mic setup anyway.
       },
     });
   },

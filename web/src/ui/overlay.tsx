@@ -53,7 +53,7 @@ function install() {
   document.addEventListener(
     "keydown",
     (e) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || e.isComposing) return; // (12.1.16, 4-7) Escape cancelling an IME composition is the IME's
       const top = stack[stack.length - 1];
       if (top?.onEscape) {
         e.preventDefault();

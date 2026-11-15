@@ -52,6 +52,10 @@
 .danger:hover:not(:disabled) {
   box-shadow: inset 0 0 0 2px var(--th-dialog-button-danger-border-hover);
 }
+/* A31.2: a keyboard user sees where they are (the dialogs' danger button: the same focus token) */
+.danger:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--th-dialog-button-danger-border-focus);
+}
 .danger:disabled {
   opacity: 0.5;
   cursor: default;

@@ -115,6 +115,8 @@
 .chevDisc {
   width: 20px;
   height: 20px;
+  /* taps belong to .chev's own box (the disc never reaches outside it) */
+  pointer-events: none;
   border-radius: 10px;
   border: 1px solid;
   display: flex;
@@ -126,9 +128,15 @@
   transition: transform var(--th-dur) linear;
 }
 :global(html[data-touch]) .chev {
-  /* 44 px touch target centred on the 20 px disc (ARCHITECTURE mobile rules) */
+  /* 44 px touch target (ARCHITECTURE mobile rules) kept inside the button's own column (A37.1): centred on the disc it
+     reached 17 px past the button into the next one (Camera on the phone bar) and covered the top-right of the button
+     itself (Mute) down to 27 px. Now it spans the button's width (right edge flush) and reaches only as far down as
+     the disc it draws (the button's top 15 px); the disc sits wholly inside it, 5 px further left than the pointer
+     layout's (it would hang past the button's edge). phone.test.ts checks this geometry. */
   width: 44px;
-  height: 44px;
-  right: -17px;
-  top: -17px;
+  height: 49px;
+  right: 0;
+  top: -34px;
+  align-items: flex-end;
+  justify-content: flex-end;
 }

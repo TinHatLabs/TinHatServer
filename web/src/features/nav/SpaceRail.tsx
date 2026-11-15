@@ -9,7 +9,7 @@ import { Avatar, Icon, Menu, MenuItem, MenuSectionLabel, UnreadBadge, avatarSeed
 import { selectSpace, setDragging, setSpaceOrder, useNavStore, type SpaceEntry } from "./model";
 import { SpaceMenu } from "./menus";
 import { DmStrip } from "./DmStripBar";
-import { acceptInvite, rejectInvite } from "./actions";
+import { acceptInvite, markSpaceRead, rejectInvite } from "./actions";
 import { openNavDialog } from "./dialogs";
 import { swallowNextClick } from "./touch";
 import { railOrder, type PhoneSections } from "./sections";
@@ -243,13 +243,21 @@ function SpaceMenus({ menu, onClose }: { menu: RailMenu; onClose: () => void }) 
   return <SpaceMenu spaceId={menu.entry.key} label={menu.entry.label} anchor={{ x: menu.x, y: menu.y }} onClose={onClose} />;
 }
 
-/** The meta spaces' bubbles (Home, Favourites, People, Rooms). */
+/** The meta spaces' bubbles (Home, Favourites, People, Rooms). A11.3: right-click / long-press = Mark all as read, when
+ *  something is unread (their only menu item). */
 function MetaBubbles({ meta, activeKey }: { meta: SpaceEntry[]; activeKey: string }) {
+  const [menu, setMenu] = useState<{ entry: SpaceEntry; x: number; y: number } | null>(null);
   return (
     <>
       {meta.map((m) => (
-        <Bubble key={m.key} entry={m} selected={activeKey === m.key} />
+        <Bubble key={m.key} entry={m} selected={activeKey === m.key} onContext={m.unread > 0 ? (x, y) => setMenu({ entry: m, x, y }) : undefined} />
       ))}
+      {menu && (
+        <Menu open modal onClose={() => setMenu(null)} anchor={{ x: menu.x, y: menu.y }} title={menu.entry.label}>
+          <MenuSectionLabel text={<span className={s.sectionName}>{menu.entry.label}</span>} />
+          <MenuItem text="Mark all as read" icon="checkmark-symbolic" onTriggered={() => void markSpaceRead(menu.entry.key, menu.entry.label)} />
+        </Menu>
+      )}
     </>
   );
 }
@@ -333,7 +341,7 @@ function Bubble({
       onPointerLeave={() => setHover(false)}
       onPointerDown={(e) => {
         onPointerDown?.(e);
-        if (e.pointerType !== "touch" || meta || !onContext) return;
+        if (e.pointerType !== "touch" || !onContext) return;
         const x = e.clientX,
           y = e.clientY;
         lp.current = {
@@ -374,7 +382,7 @@ function Bubble({
       onContextMenu={(e) => {
         e.preventDefault();
         if (lpFired.current) return; // Android fires contextmenu after our long-press
-        if (!meta && onContext) onContext(e.clientX, e.clientY);
+        if (onContext) onContext(e.clientX, e.clientY); // A11.3: a meta bubble has one only with something unread
       }}
     >
       <span className={s.pill} style={{ height: pillH, ["--pill-len" as string]: `${pillH}px` }} />

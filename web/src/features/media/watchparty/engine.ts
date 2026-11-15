@@ -15,7 +15,7 @@ import { apiFetch } from "@/core/api";
 import { createLogger } from "@/core/log";
 import { withRetry } from "../shared/retry";
 import { HISTORY_DEBOUNCE_MS, HISTORY_EVENT, historyPush, normHistory } from "./model";
-import { asU64, clearPlayed as clearPlayedOp, moveToNext as moveToNextOp, nextQueueUrl, normParty, normQueueItem, normalizeWatchResults, shuffleUpcoming as shuffleUpcomingOp, type Party, type QueueItem, type SearchResult } from "./queue";
+import { asU64, clearPlayed as clearPlayedOp, moveToNext as moveToNextOp, nextQueueUrl, normParty, normQueueItem, normalizeWatchResults, shuffleUpcoming as shuffleUpcomingOp, undoClear, type Party, type QueueItem, type SearchResult } from "./queue";
 
 export { nextQueueUrl, normParty, normQueueItem, normalizeWatchResults, SONG_SERVICES, fmtTime, upcomingLabel } from "./queue";
 export type { Party, QueueItem, QueueKind, QueueSource, SearchResult, SongService } from "./queue";
@@ -567,6 +567,17 @@ export function moveItem(from: number, to: number): void {
 }
 export function clearQueue(): void {
   editQueue((q) => (q.length ? [] : null));
+}
+/** QOL A16.2 (P11): Undo after Clear — `cleared` = the queue as it was when Clear was pressed (queue.ts undoClear),
+ *  `roomId` = the party it was cleared in: nothing is written into another party (I moved on meanwhile). Always one
+ *  write (review: the base can still be the pre-Clear copy, which would read as "nothing to restore"). */
+export function restoreQueue(cleared: QueueItem[], roomId: string): void {
+  if (!cleared.length || !roomId || get().roomId !== roomId || !get().inParty) return;
+  editQueue((q) => undoClear(q, cleared));
+}
+/** The party the queue edits go to ("" = none). */
+export function partyRoomId(): string {
+  return get().inParty ? get().roomId : "";
 }
 /** The playing url as the next queue edit must see it (our newest clock write, else the room's). */
 function playingUrl(): string {

@@ -2,14 +2,15 @@
 // (Main.qml:5245-5291, exported as CallHeaderChips) + the room's live-call roster read from
 // MatrixRTC membership state (used by the join banner and the nav call strip).
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { GlowButton, Icon, OverlayPortal, RING_OPACITY, RING_STEP_MS, ToolButton, ringHigh, ringOn, useIsMobile, useReducedMotion } from "@/ui";
+import { announce, GlowButton, Icon, OverlayPortal, RING_OPACITY, RING_STEP_MS, ToolButton, ringHigh, ringOn, useIsMobile, useReducedMotion } from "@/ui";
 import { useRealWinState } from "@/core/winstate";
 import { openRoom } from "@/core/bus";
 import { OnThisPhone } from "@/features/native";
-import { playUiSound, startRing, stopRing } from "@/core/sounds";
+import { playUiSound, soundsUnlocked, startRing, stopRing } from "@/core/sounds";
 import { RoomMemberEvent, type MatrixClient, type RoomMember } from "matrix-js-sdk";
 import { peekClient, useRoomStateEvents } from "@/core/matrix";
 import { callerMembership, onMemberProbe } from "@/features/calls/memberprobe";
+import { incomingAnnouncement, incomingCard } from "@/features/calls/callannounce";
 import { rosterCounts } from "@/features/calls/callrules";
 import { isRecorder } from "@/core/server";
 import { act, getC, useC } from "./store";
@@ -161,19 +162,40 @@ export function JoinBanner({ roomId }: { roomId: string }) {
   const pad = usePadTargets(roomId);
   const padT = pickTarget(pad);
   const padDev = useDeviceName(padT?.device ?? "");
-  // Main.qml:5249 — hidden while we're in (or joining) any call; the incoming card offers Switch.
-  if (fake || inCall || (connecting && !joining) || parts.length === 0) return null;
+  // Main.qml:5249 — hidden while we're joining another call or in THIS one. A15.1 (2026-11-13): in another room's call it
+  // shows with Switch (it was hidden: a room with a live call had no way in short of hanging up, unless it rang)
+  const otherCall = inCall && callRoom !== roomId;
+  if (fake || (inCall && !otherCall) || (connecting && !joining) || parts.length === 0) return null;
   const text = padT ? padCallText(padDev, parts.filter((p) => p !== me).map((p) => displayName(roomId, p))) : joinBannerText(roomId, others);
   return (
     <div className={s.banner} data-testid="join-banner">
       <span className={s.bannerText}>{text}</span>
       {padT && <PadButton roomId={roomId} targets={pad} />}
-      <GlowButton text={joining ? "Joining…" : "Join"} busy={joining} disabled={connecting} onClick={() => act("joinCall")(roomId)} />
+      {otherCall ? (
+        <GlowButton text="Switch" tip="Leave your call and join this one" onClick={() => act("switchCall")(roomId)} />
+      ) : (
+        <GlowButton text={joining ? "Joining…" : "Join"} busy={joining} disabled={connecting} onClick={() => act("joinCall")(roomId)} />
+      )}
     </div>
   );
 }
 
 // ---- incoming call cards (r.overlays) ----------------------------------------------------------
+
+/** A15.2/A15.6 (2026-11-13): the card's two lines — a DM names the caller, a group says who is in the call now
+ *  (callannounce.ts incomingCard = the desktop's callannounce.rs incoming_card, shared vectors). */
+function CardLines({ roomId, roomName, who, inCall }: { roomId: string; roomName: string; who: string; inCall: boolean }) {
+  const parts = useCallParticipants(roomId);
+  const me = peekClient()?.getUserId() ?? "";
+  const dm = !!act("declinableRing")(roomId) || peekClient()?.getRoom(roomId)?.getJoinedMemberCount() === 2;
+  const t = incomingCard(dm, roomName, who, parts.filter((p) => p !== me).map((p) => displayName(roomId, p)), inCall);
+  return (
+    <div className={s.texts}>
+      <div className={s.title}>{t.title}</div>
+      <div className={s.sub} data-sub>{t.sub}</div>
+    </div>
+  );
+}
 
 export function IncomingCallCards() {
   const calls = useC("incomingCalls");
@@ -195,6 +217,10 @@ export function IncomingCallCards() {
       if (!arrived.current.has(c.roomId)) {
         arrived.current.set(c.roomId, now);
         fresh = true;
+        // a11y round 2 (M3): a screen reader hears the card at once (urgent), not only the ringtone; the focus stays
+        // where it is (typing is never interrupted) — the card's Join is a named button in the "Incoming calls" region
+        const a = incomingAnnouncement(c.roomName, c.who ?? "", getC().inCall);
+        announce(a.text, { urgent: a.urgent });
       }
     for (const k of [...arrived.current.keys()]) if (!calls.some((c) => c.roomId === k)) arrived.current.delete(k);
     if (!calls.length) {
@@ -220,7 +246,10 @@ export function IncomingCallCards() {
   // refresh-rate 1.8 s fade). Focused: static (the card's entrance is a normal transition); hidden: nothing runs,
   // not even this timer — the OS notification and the ring sound carry the alert; reduce motion: the static glow.
   const now = Date.now();
-  const ringing = (roomId: string) => ringOn(arrived.current.get(roomId) ?? null, now, win, reduced);
+  // D06.1 (2026-11-13): before the first tap no ring sound can play, so the card pulses even on a focused page (a phone
+  // that just opened Tin Hat showed a silent, still card)
+  const ringWin = !soundsUnlocked() && win === "focused" ? "unfocused" : win;
+  const ringing = (roomId: string) => ringOn(arrived.current.get(roomId) ?? null, now, ringWin, reduced);
   const anyRing = calls.some((c) => ringing(c.roomId));
   useEffect(() => {
     if (!anyRing) return;
@@ -228,25 +257,25 @@ export function IncomingCallCards() {
     return () => window.clearInterval(iv);
   }, [anyRing]);
   if (!calls.length) return null;
+  // A15.3 (2026-11-13): every card is past its ring (RING_LIMIT 25 s): the cards settle into the top-right corner,
+  // narrower, one line (they stayed big at top centre until Join, Dismiss or the call's end). = the desktop's settled.
+  const settled = calls.every((c) => {
+    const since = arrived.current.get(c.roomId);
+    return since !== undefined && now - since >= 25000;
+  });
   // Portalled into the overlay layer: the shell is its own stacking context, so a card rendered inside it
   // sat under every modal sheet's scrim (unclickable Join). Native: Overlay z 1000, above every page and window.
   return (
     <OverlayPortal>
-    <div className={`${s.host} ${mobile ? s.hostMobile : ""}`} role="region" aria-label="Incoming calls">
+    <div className={`${s.host} ${mobile ? s.hostMobile : ""} ${settled && !mobile ? s.hostSettled : ""}`} data-settled={settled ? "1" : undefined} role="region" aria-label="Incoming calls">
       {calls.map((c) => {
         const since = arrived.current.get(c.roomId) ?? now;
         const glow = ringing(c.roomId) ? (ringHigh(since, now) ? RING_OPACITY.high : RING_OPACITY.low) : RING_OPACITY.rest;
         return (
-          <div key={c.roomId} className={s.card} data-testid="incoming-card">
+          <div key={c.roomId} className={s.card} data-testid="incoming-card" role="group" aria-label={`Incoming call · ${c.roomName}`}>
             <div className={s.pulse} style={{ opacity: glow }} data-ring={ringing(c.roomId) ? "on" : "off"} />
             <Icon name="call-start-symbolic" size={32} color="var(--th-call-incoming-icon)" />
-            <div className={s.texts}>
-              <div className={s.title}>Incoming call · {c.roomName}</div>
-              <div className={s.sub}>
-                {c.who ? `${c.who} started a call` : "Someone started a call"}
-                {inCall ? " — you're in another call" : ""}
-              </div>
-            </div>
+            <CardLines roomId={c.roomId} roomName={c.roomName} who={c.who ?? ""} inCall={inCall} />
             <GlowButton
               icon="call-start-symbolic"
               text={inCall ? "Switch" : "Join"}
@@ -257,6 +286,10 @@ export function IncomingCallCards() {
                 act("switchCall")(c.roomId);
               }}
             />
+            {act("declinableRing")(c.roomId) && (
+              // P8 (2026-11-13): a DM ring can be declined — the caller sees "<name> declined", my other devices stop
+              <ToolButton iconName="call-stop-symbolic" tip="Decline" aria-label="Decline" data-testid="incoming-decline" onClick={() => act("declineIncoming")(c.roomId)} />
+            )}
             <ToolButton iconName="window-close-symbolic" tip="Dismiss" aria-label="Dismiss" onClick={() => act("dismissIncoming")(c.roomId)} />
           </div>
         );

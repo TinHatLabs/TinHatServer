@@ -8,21 +8,23 @@
 // (`boxCard`): the island is flat and the box draws its own card again (fill, frame, radius, 4 px sides, 9 px below).
 import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { toast } from "@/core/bus";
 import { peekClient, useMembers, useRoomName, useTyping } from "@/core/matrix";
 import { useRegistry } from "@/core/registry";
 import { useContainer, useRolesState } from "@/features/spaces";
 import { buildMemberRows } from "@/features/spaces/RightPanel";
-import { AnimatedImage, Avatar, GlowButton, Icon, Menu, MenuItem, ToolButton, cx, useTip } from "@/ui";
+import { AnimatedImage, Avatar, ConfirmDialog, GlowButton, Icon, Menu, MenuItem, ToolButton, cx, useTip } from "@/ui";
 import type { ItemOut } from "@/actions/evaluate";
 import type { Handler } from "@/actions/run";
 import { Dim, EditableRow, RowButton, bespokeOk, shownItems, useRow, type RowState } from "@/actions/ui/rowHost";
 import { persistChatMemory, useChatStore, type StagedFile } from "./store";
 import { completeEmoji, type EmojiItem } from "./lib/emoji";
-import { expandSlash, type PickedMention } from "./lib/markdown";
+import { expandSlash, unknownSlash, unknownSlashWords, type PickedMention } from "./lib/markdown";
 import { displayName, snippetOf, type Row } from "./lib/model";
-import { pastedName } from "./lib/format";
+import { fmtSize, pastedName } from "./lib/format";
 import { inertBlob, isScriptableType } from "@/core/mediatype";
-import { editMessage, playSend, roomReadyToSend, sendAttachment, sendEmote, sendPlain, sendReply, sendText, sendTyping, sendWithMentions } from "./actions";
+import { draftSame, type SendSnap, draftStep, draftToKeep, failText, type DraftOp, type DraftState, type DraftStash } from "./lib/composerDraft";
+import { editMessage, playSend, roomReadyToSend, sendAttachment, sendEmote, sendPlain, sendReply, sendText, sendTyping, sendWithMentions, type ThreadCtx } from "./actions";
 import { EmojiPicker } from "./EmojiPicker";
 import { useConvToast } from "./convToast";
 import { GifPicker } from "./GifPicker";
@@ -57,6 +59,16 @@ export interface ComposerProps {
   portal?: HTMLElement | null;
   /** 10.8 Flat layout: the box draws its own card in the island (as it did before islands) */
   boxCard?: boolean;
+  /** threads (docs/THREADS.md): the composer of this thread's panel (its root); every send goes into the thread */
+  thread?: string;
+}
+
+/** threads: the send context of a thread's composer — the newest real event shown in its panel is the spec's
+ *  fallback reply target (the root when the thread has no replies yet). */
+function threadCtx(root: string | undefined, rows: Row[]): ThreadCtx | null {
+  if (!root) return null;
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i].eventId && !rows[i].echo) return { root, latest: rows[i].eventId! };
+  return { root, latest: root };
 }
 
 interface Target {
@@ -80,7 +92,9 @@ function toStaged(f: File): StagedFile {
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(p, ref) {
   const { roomId, primary, rows } = p;
   const roomName = useRoomName(roomId);
-  const mem = useChatStore.getState().memory[roomId];
+  // threads: a thread's composer keeps its own draft / reply target / staged files
+  const memKey = p.thread ? `${roomId}#thread:${p.thread}` : roomId;
+  const mem = useChatStore.getState().memory[memKey];
   const [text, setText] = useState(mem?.draft ?? "");
   const [target, setTarget] = useState<Target | null>(mem?.replyToId ? { kind: "reply", id: mem.replyToId, body: mem.replyToBody, name: mem.replyToName } : null);
   // a floating chat never picks up the main view's staged files (they would be sent twice)
@@ -90,6 +104,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [gifOpen, setGifOpen] = useState(false);
   const [popup, setPopup] = useState<{ kind: "mention" | "emoji"; start: number; items: Array<{ key: string; label: string; mention?: PickedMention & { room?: boolean }; emoji?: EmojiItem; seed?: string; avatar?: string | null }>; cur: number } | null>(null);
   const picked = useRef<PickedMention[]>([]);
+  // L1 (A09.1): the unsent draft set aside while an edit uses the box (lib/composerDraft.ts, shared with the desktop)
+  const stash = useRef<DraftStash<PickedMention> | null>(null);
+  // a refused edit answers after the send; it only goes back into a composer that is still there
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   const field = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const emojiBtn = useRef<HTMLButtonElement>(null);
@@ -120,7 +144,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const startRow = useRow("composer", "start", { form: "desktop", context: rowCtx });
   const endRow = useRow("composer", "end", { form: p.mobile ? "phone" : "desktop", context: rowCtx });
   // voice notes (docs/VOICE-NOTES.md): while the room has a voice draft the recorder row replaces the box's content
-  const voice = useVoiceDraft(roomId);
+  // threads: voice notes stay in the main composer for now (the recorder's draft belongs to the room)
+  const voiceDraft = useVoiceDraft(roomId);
+  const voice = p.thread ? undefined : voiceDraft;
   // Escape in review sets the draft aside (kept, shown as a pill above the box) and gives the text field back, focused;
   // the pill (or Ctrl/⌘+Enter on it) brings the review row back
   const [voiceAside, setVoiceAside] = useState(false);
@@ -133,11 +159,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   // per-room memory: synced (debounced) while mounted, flushed on unmount and when the page goes away
   const live = useRef({ text, target, staged });
   live.current = { text, target, staged };
+  // L1: the draft rules' state from the composer's own (the reply's name stays here, the rules don't need it)
+  const draftNow = (t: string, tg: Target | null): DraftState<PickedMention> => ({
+    text: t,
+    marks: picked.current,
+    target: tg?.kind ?? "",
+    id: tg?.id ?? "",
+    body: tg?.body ?? "",
+    stash: stash.current,
+  });
+  /** One draft change through the shared rules (A09.0/A09.1/A09.4/A20.0); `name` = the reply's sender. */
+  const step = (op: DraftOp<PickedMention>, name = "") => {
+    const r = draftStep(draftNow(live.current.text, live.current.target), op);
+    const n = r.st;
+    stash.current = n.stash;
+    picked.current = n.marks;
+    const tg: Target | null = n.target ? { kind: n.target, id: n.id, body: n.body, name: n.target === "reply" ? name || (live.current.target?.kind === "reply" ? live.current.target.name : "") : "" } : null;
+    live.current = { ...live.current, text: n.text, target: tg };
+    setTarget(tg);
+    setText(n.text);
+    return r.fx;
+  };
   const snapshot = useCallback(() => {
     const l = live.current;
-    const cur = useChatStore.getState().memory[roomId];
+    const cur = useChatStore.getState().memory[memKey];
     return {
-      draft: l.target?.kind === "edit" ? "" : l.text,
+      draft: draftToKeep(draftNow(l.text, l.target)),
       replyToId: l.target?.kind === "reply" ? l.target.id : "",
       replyToBody: l.target?.kind === "reply" ? l.target.body : "",
       replyToName: l.target?.kind === "reply" ? l.target.name : "",
@@ -149,14 +196,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   }, [roomId]);
   useEffect(() => {
     if (p.floating) return;
-    const t = window.setTimeout(() => useChatStore.getState().remember(roomId, snapshot()), 400);
+    const t = window.setTimeout(() => useChatStore.getState().remember(memKey, snapshot()), 400);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, target, staged]);
   useEffect(() => {
     if (p.floating) return;
     const flush = () => {
-      useChatStore.getState().remember(roomId, snapshot());
+      useChatStore.getState().remember(memKey, snapshot());
       persistChatMemory();
     };
     window.addEventListener("pagehide", flush);
@@ -166,9 +213,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   useEffect(
     () => () => {
       if (p.floating) live.current.staged.forEach((f) => f.url && URL.revokeObjectURL(f.url));
-      useChatStore.getState().remember(roomId, snapshot());
+      useChatStore.getState().remember(memKey, snapshot());
       stopTyping();
-      leaveVoiceView(roomId); // a room switch stops a recording into review (the draft waits in this room's composer)
+      if (!p.thread) leaveVoiceView(roomId); // a room switch stops a recording into review (the draft waits in this room's composer)
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [roomId],
@@ -245,13 +292,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     ref,
     () => ({
       startReply: (row) => {
-        setTarget({ kind: "reply", id: row.eventId ?? row.id, body: snippetOf(row), name: displayName(peekClient()?.getRoom(roomId) ?? null, row.sender) });
+        step({ op: "reply", id: row.eventId ?? row.id, body: snippetOf(row) }, displayName(peekClient()?.getRoom(roomId) ?? null, row.sender));
         window.setTimeout(focus, 0);
       },
       startEdit: (row) => {
-        setTarget({ kind: "edit", id: row.eventId ?? row.id, body: row.body, name: "" });
-        setText(row.body);
-        picked.current = [];
+        step({ op: "edit", id: row.eventId ?? row.id, body: row.body });
         window.setTimeout(focus, 0);
       },
       focus,
@@ -306,62 +351,91 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   };
 
   // ---- send (3.7)
-  const send = () => {
+  // P21: "/word" that isn't a command asks first ("Unknown command — send as text?"); the text stays in the box
+  const [slashAsk, setSlashAsk] = useState("");
+  // 4-4: what the question is about, taken when it opens; "Send as text" sends only that (draftSame)
+  const slashAsked = useRef<SendSnap<PickedMention> | null>(null);
+  const sendSnap = (): SendSnap<PickedMention> =>
+    JSON.parse(JSON.stringify({ room: roomId, state: draftNow(live.current.text, live.current.target), files: live.current.staged.map((f) => f.id) }));
+  const send = () => sendMessage(false);
+  const sendMessage = (asText: boolean) => {
     const t = text;
     const hasText = t.trim() !== "";
-    if (!hasText && staged.length === 0) return;
-    if (!hasText && target?.kind === "reply") {
+    // L1: what this send does comes from the shared draft rules (lib/composerDraft.ts); nothing changes until it goes
+    const plan = draftStep(draftNow(t, target), { op: "send", files: staged.length }).fx;
+    if (plan === "none") return;
+    // P21: "Send as text" sends exactly what was typed (no face expansion: "/shrug-test" stays "/shrug-test")
+    const expand = asText ? (x: string) => x.trim() : expandSlash;
+    // 4-4: taken synchronously from what THIS send decides on, before the question can open (a later commit could
+    // already hold a refused edit put back into the box)
+    if (!asText) slashAsked.current = JSON.parse(JSON.stringify({ room: roomId, state: draftNow(t, target), files: staged.map((f) => f.id) }));
+    if (hasText && !asText && target?.kind !== "edit" && unknownSlash(t)) {
+      setSlashAsk(unknownSlash(t));
+      return;
+    }
+    if (plan === "reply-needs-text") {
       notify("Type something to go with the reply, or cancel the reply first");
+      return;
+    }
+    if (plan === "empty-edit") {
+      notify("An edit can't be empty. To remove the message, use Delete in its menu.");
       return;
     }
     // 2026-10-23: a room this client hasn't synced yet would get it in the clear (actions.ts roomKnown) — keep the text
     if (!roomReadyToSend(roomId)) return;
+    const th = threadCtx(p.thread, rows);
     if (hasText) {
-      if (target?.kind === "edit") void editMessage(roomId, target.id, t);
-      else if (target?.kind === "reply")
+      if (plan === "edit" && target) {
+        const id = target.id;
+        // A20.0: a refused edit comes back into the box (or, if the box is busy, says so); the row snaps back either way.
+        // A09.3: the people picked while editing go with it.
+        void editMessage(roomId, id, t, picked.current.slice()).then((cls) => {
+          if (cls === null) return;
+          if (!alive.current) return void toast(failText("edit", cls, false));
+          notify(failText("edit", cls, step({ op: "failed", id, text: t }) === "put-back"));
+          window.setTimeout(focus, 0);
+        });
+      } else if (plan === "unchanged") {
+        // A09.4: nothing changed, nothing is sent (no "(edited)" on an identical message)
+      } else if (target?.kind === "reply")
         // A5.2: the picked mentions keep their links (they used to be dropped while replying)
         sendReply(
           roomId,
           target.id,
-          /^\/me\s+\S/i.test(t) ? "* " + expandSlash(t.replace(/^\/me\s+/i, "")) : expandSlash(t),
+          /^\/me\s+\S/i.test(t) ? "* " + expand(t.replace(/^\/me\s+/i, "")) : expand(t),
           picked.current.filter((m) => t.includes("@" + m.name)),
+          th,
+          rows.find((r) => r.eventId === target.id)?.sender,
         );
-      else if (/^\/me\s+\S/i.test(t)) sendEmote(roomId, t.replace(/^\/me\s+/i, ""));
+      else if (/^\/me\s+\S/i.test(t)) sendEmote(roomId, t.replace(/^\/me\s+/i, ""), th);
       else if (picked.current.length) {
         const livePicks = picked.current.filter((m) => t.includes("@" + m.name));
-        if (livePicks.length) sendWithMentions(roomId, expandSlash(t), livePicks);
-        else sendText(roomId, expandSlash(t));
-      } else sendText(roomId, expandSlash(t));
+        if (livePicks.length) sendWithMentions(roomId, expand(t), livePicks, th);
+        else sendText(roomId, expand(t), th);
+      } else sendText(roomId, expand(t), th);
     }
-    for (const f of staged) void sendAttachment(roomId, f.file);
+    for (const f of staged) void sendAttachment(roomId, f.file, th);
     for (const f of staged) if (f.url) URL.revokeObjectURL(f.url); // the upload echo has its own URL
-    playSend();
-    setTarget(null);
+    if (plan !== "unchanged" || staged.length > 0) playSend();
+    step({ op: "send", files: staged.length }); // the target is consumed; an edit gives the draft set aside back (A09.1)
     setStaged([]);
-    setText("");
-    picked.current = [];
     setPopup(null);
     setEmojiOpen(false);
     stopTyping();
     p.onSent();
   };
 
-  const cancelCompose = () => {
-    setTarget(null);
-    setText("");
-    picked.current = [];
-    for (const f of staged) if (f.url) URL.revokeObjectURL(f.url);
-    setStaged([]);
-    stopTyping();
-    focus();
+  // A09.0: the bar's ✕ ("Cancel (Esc)") and Escape are the same: drop the reply/edit target, keep the typed text and the
+  // staged files (it used to wipe both on one click). Leaving an edit gives back the draft it set aside (A09.1).
+  const cancelTarget = () => {
+    step({ op: "cancel" });
   };
 
   const editLast = (): boolean => {
     for (let i = rows.length - 1; i >= 0; i--) {
       const r = rows[i];
       if (r.mine && !r.echo && !r.redacted && !r.media && (r.msgtype === "m.text" || r.msgtype === "m.emote") && r.eventId) {
-        setTarget({ kind: "edit", id: r.eventId, body: r.body, name: "" });
-        setText(r.body);
+        step({ op: "edit", id: r.eventId, body: r.body });
         requestAnimationFrame(() => focus());
         return true;
       }
@@ -375,10 +449,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       e.preventDefault();
       e.stopPropagation();
       if (pp) setPopup(null);
-      else if (target) {
-        if (target.kind === "edit") setText("");
-        setTarget(null);
-      } else p.onEscapeEmpty();
+      else if (target) cancelTarget();
+      else p.onEscapeEmpty();
       return;
     }
     if (pp && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
@@ -490,14 +562,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         );
         // an empty composer offers the mic instead (not while editing); where voice notes can't be recorded: Send as before
         // (a voice draft set aside: Send stays — the mic would start a second draft in this room)
-        return !canSend && target?.kind !== "edit" && !voice ? <MicButton key={key} roomId={roomId} mobile={p.mobile} className={s.tb} fallback={sendNode} /> : sendNode;
+        return !canSend && target?.kind !== "edit" && !voice && !p.thread ? <MicButton key={key} roomId={roomId} mobile={p.mobile} className={s.tb} fallback={sendNode} /> : sendNode;
       }
       default:
         return <RowButton key={key} row={row} item={it} handlers={rowHandlers} className={s.tb} />;
     }
     return it.state === "dimmed" ? <Dim key={key}>{node}</Dim> : <Fragment key={key}>{node}</Fragment>;
   };
-  const placeholder = target?.kind === "edit" ? "Edit your message…" : target?.kind === "reply" ? "Reply…" : roomName ? `Message ${roomName}` : "Message";
+  const placeholder = target?.kind === "edit" ? "Edit your message…" : target?.kind === "reply" ? "Reply…" : p.thread ? "Reply in thread…" : roomName ? `Message ${roomName}` : "Message";
 
   const section = (
     <>
@@ -509,7 +581,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               <span className={s.barTitle}>{target.kind === "edit" ? "Editing message" : target.name ? `Replying to ${target.name}` : "Replying to a message"}</span>
               <span className={s.barText}>{target.body}</span>
             </div>
-            <ToolButton iconName="window-close-symbolic" tip="Cancel (Esc)" className={s.barClose} onClick={cancelCompose} />
+            <ToolButton iconName="window-close-symbolic" tip="Cancel (Esc)" className={s.barClose} onClick={() => { cancelTarget(); focus(); }} />
           </div>
         )}
       </div>
@@ -636,13 +708,26 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           )}
         </Menu>
       )}
+      <ConfirmDialog
+        open={slashAsk !== ""}
+        onClose={() => (setSlashAsk(""), focus())}
+        dialogTitle={unknownSlashWords(slashAsk).title}
+        message={unknownSlashWords(slashAsk).message}
+        confirmText={unknownSlashWords(slashAsk).confirm}
+        onConfirmed={() => {
+          const asked = slashAsked.current;
+          slashAsked.current = null;
+          if (asked && draftSame(asked, sendSnap())) sendMessage(true);
+          else notify("The message box changed, so nothing was sent. Check it and send again.");
+        }}
+      />
       <PinnedPopover roomId={roomId} open={pinsOpen} onClose={() => (setPinsOpen(false), setPickAnchor(null))} anchor={pickAnchor ?? plusBtn.current} onJump={p.onJump} />
       <GifPicker
         open={gifOpen}
         onClose={() => (setGifOpen(false), setPickAnchor(null))}
         anchor={pickAnchor ?? gifBtn.current ?? plusBtn.current}
         onPick={(url) => {
-          sendPlain(roomId, url);
+          sendPlain(roomId, url, threadCtx(p.thread, rows));
           focus();
         }}
       />
@@ -693,7 +778,9 @@ function SheetAction({ children, onDone }: { children: React.ReactNode; onDone: 
 
 function StagedItem({ f, onRemove }: { f: StagedFile; onRemove: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  useTip(ref, f.file.name, { delay: 500 });
+  // QOL A08.7: the size too (the desktop's staged chip)
+  const size = fmtSize(f.file.size);
+  useTip(ref, size ? `${f.file.name} · ${size}` : f.file.name, { delay: 500 });
   return (
     <div ref={ref} className={cx(s.stItem, f.isImage ? s.stImage : s.stFile)}>
       {f.isImage ? (
@@ -702,6 +789,7 @@ function StagedItem({ f, onRemove }: { f: StagedFile; onRemove: () => void }) {
         <div className={s.stFileRow}>
           <Icon name="document-send-symbolic" size={18} color="var(--th-composer-staged-icon)" />
           <span>{f.file.name}</span>
+          {size && <span className={s.stSize}>{size}</span>}
         </div>
       )}
       <button type="button" className={s.stX} aria-label="Remove" onClick={onRemove}>

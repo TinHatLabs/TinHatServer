@@ -355,6 +355,21 @@
   margin-top: 1px;
   flex: none;
 }
+/* A28.3: "Verify this device…" after a locked message's words — a link-look button (keyboard: Tab + Enter) */
+.lockedVerify {
+  all: unset;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--th-bubble-retry-fg);
+  cursor: pointer;
+  border-radius: 3px;
+}
+.lockedVerify:hover {
+  text-decoration: underline;
+}
+.lockedVerify:focus-visible {
+  box-shadow: 0 0 0 2px var(--th-button-basic-border-focus);
+}
 
 /* timestamp: round(S·0.92) (15), opacity .7, right-aligned, line 21 */
 .stamp {
@@ -370,6 +385,15 @@
 }
 .stamp > span {
   cursor: default;
+}
+/* P19: a grouped follow-up's clock shows on hover / focus only (lib/stamp.ts; the desktop's clockQuiet). The line keeps
+   its height, so nothing moves when it appears. */
+.stampQuiet {
+  opacity: 0;
+}
+.row:hover .stampQuiet,
+.row:focus-within .stampQuiet {
+  opacity: 0.7;
 }
 .stampFailed {
   color: var(--th-bubble-fg-error);
@@ -440,18 +464,33 @@
 .failReason {
   color: var(--th-bubble-fg-error);
 }
+/* L1 A31.0: <button>s drawn as the plain words they were */
+.retry,
+.del {
+  all: unset;
+  cursor: pointer;
+  border-radius: 2px;
+}
 .retry {
   font-weight: 700;
   color: var(--th-bubble-retry-fg);
-  cursor: pointer;
 }
 .del {
   color: var(--th-bubble-discard-fg);
-  cursor: pointer;
 }
 .retry:hover,
 .del:hover {
   text-decoration: underline;
+}
+.retry:focus-visible {
+  text-decoration: underline;
+  outline: 1px solid var(--th-bubble-retry-fg);
+  outline-offset: 2px;
+}
+.del:focus-visible {
+  text-decoration: underline;
+  outline: 1px solid var(--th-bubble-discard-fg);
+  outline-offset: 2px;
 }
 
 /* reactions */
@@ -1055,4 +1094,55 @@
 .embedPartyBtn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* threads (docs/THREADS.md): the summary under a thread root — the desktop's ThreadSummary.qml (same sizes) */
+.threadSum {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-top: 3px;
+  padding: 0 8px 0 4px;
+  border-radius: 13px;
+  background: var(--th-bubble-reaction-bg);
+  border: 1px solid var(--th-bubble-reaction-border);
+  cursor: pointer;
+  min-width: 0;
+  transition: background-color var(--th-dur);
+}
+.threadSum:hover {
+  background: var(--th-bubble-reaction-bg-hover);
+}
+.threadSum:focus-visible {
+  outline: 2px solid var(--th-bubble-reaction-own-border);
+  outline-offset: 1px;
+}
+.threadSumUnread {
+  border-color: var(--th-bubble-reaction-own-border);
+}
+.threadFaces {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.threadFace {
+  position: relative;
+}
+.threadText {
+  font-size: var(--th-font-size-small);
+  color: var(--th-bubble-reaction-count-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.threadDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--th-bubble-reaction-own-border);
 }

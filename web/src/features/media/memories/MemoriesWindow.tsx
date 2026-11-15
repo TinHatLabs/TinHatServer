@@ -5,10 +5,14 @@ import { openWindow } from "@/core/bus";
 import { CLIP_TYPE, getStateAll, useRoomName } from "@/core/matrix";
 import { loadResume, saveResume, useClips, type ResumeMap } from "./prefs";
 import { Avatar, EmptyState, GlowButton, Heading, HeaderIconButton, Icon, ScrollArea, avatarSeed, cx, useIsMobile } from "@/ui";
-import { fmtBytes, fmtDate, fmtTime, shortError, shortName } from "../shared/format";
+import { fmtBytes, fmtDate, fmtDateLong, fmtTime, shortError, shortName } from "../shared/format";
 import { countKinds, fetchSessions, peopleOf, posterUrl, type VodSession } from "./model";
 import { lazyPart } from "@/ui/lazy";
 import { Pill } from "./Pill";
+import { countText, step, timeline, windowMode, type Filter } from "./photos";
+import { useServerFeature } from "@/core/server";
+import { refreshPhotos, useMemoryPhotos } from "./photosStore";
+import { AddPhotosButton, PHOTO_WORDS, PhotoCard, PhotoViewer, UnencryptedConfirm, addPhotoFiles, mayAddPhotos, roomUnencrypted } from "./PhotoParts";
 import s from "./Memories.module.css";
 
 // web-perf 2026-11-07: the player (+ its remuxer) is its own chunk (ui/lazy.tsx), fetched after the start
@@ -27,9 +31,34 @@ export function MemoriesWindow({ roomId, open: openId }: { roomId: string; open?
   const [resume, setResume] = useState<ResumeMap>(() => loadResume());
   const clips = useClips(roomId);
   const loadSeq = useRef(0);
+  // Memories photos (docs/MEMORIES-PHOTOS.md): the room's photos as I may see them, one timeline with the recordings
+  // a server without a call recorder: photos only (no recordings fetched, no Recordings filter, no recording words)
+  const recordsHere = useServerFeature("memories");
+  const mode = windowMode(recordsHere);
+  const [photoTick, setPhotoTick] = useState(0);
+  const photos = useMemoryPhotos(roomId, photoTick);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [selPhoto, setSelPhoto] = useState("");
+  // "Add photos" in an unencrypted room waits for the line about the server: the files remember THEIR room
+  const [pending, setPending] = useState<{ roomId: string; files: File[] } | null>(null);
+  const items = timeline(memories ?? [], photos.photos, filter);
+  const addFiles = (files: File[]) => {
+    const imgs = files.filter((f) => f.type.startsWith("image/") && f.type !== "image/svg+xml");
+    if (!imgs.length || !mayAddPhotos(roomId)) return;
+    if (roomUnencrypted(roomId)) setPending({ roomId, files: imgs });
+    else addPhotoFiles(roomId, imgs);
+  };
 
   const refresh = useCallback(async () => {
+    refreshPhotos(roomId);
+    setPhotoTick((t) => t + 1);
     const seq = ++loadSeq.current;
+    if (!recordsHere) {
+      setMemories([]);
+      setError("");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     const cap = window.setTimeout(() => seq === loadSeq.current && setLoading(false), 8000);
     try {
@@ -45,11 +74,13 @@ export function MemoriesWindow({ roomId, open: openId }: { roomId: string; open?
       window.clearTimeout(cap);
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [roomId]);
+  }, [roomId, recordsHere]);
 
   // the window's room changed: back to the list and reload
   useEffect(() => {
     setSel(null);
+    setSelPhoto("");
+    setPending(null);
     setMemories(null);
     setError("");
     void refresh();
@@ -133,19 +164,83 @@ export function MemoriesWindow({ roomId, open: openId }: { roomId: string; open?
     );
   }
 
+  const viewing = selPhoto ? photos.photos.find((p) => p.event_id === selPhoto) : undefined;
+  if (viewing) {
+    const prev = step(items, viewing.event_id, -1);
+    const next = step(items, viewing.event_id, 1);
+    return (
+      <PhotoViewer
+        key={viewing.event_id}
+        roomId={roomId}
+        p={viewing}
+        hasPrev={!!prev}
+        hasNext={!!next}
+        onStep={(d) => {
+          const to = d === 1 ? next : prev;
+          if (to) setSelPhoto(to);
+        }}
+        onBack={() => setSelPhoto("")}
+      />
+    );
+  }
+
   const n = memories?.length ?? 0;
+  const np = photos.photos.length;
+  const shownCount = items.length;
+  const photoById = new Map(photos.photos.map((p) => [p.event_id, p]));
+  const recIncluded = mode.recordings && filter !== "photos";
+  const recFailed = memories === null && !!error;
+  const recLoading = !recFailed && (memories === null || (loading && n === 0));
+  const recById = new Map((memories ?? []).map((m) => [m.id, m]));
   return (
-    <div className={cx(s.root, mobile && s.mobile)}>
+    <div
+      className={cx(s.root, mobile && s.mobile)}
+      onPaste={(e) => {
+        const files = Array.from(e.clipboardData?.files ?? []);
+        if (files.some((f) => f.type.startsWith("image/"))) {
+          e.preventDefault();
+          addFiles(files);
+        }
+      }}
+      onDragOver={(e) => {
+        if (Array.from(e.dataTransfer?.types ?? []).includes("Files")) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        const files = Array.from(e.dataTransfer?.files ?? []);
+        if (files.length) {
+          e.preventDefault();
+          addFiles(files);
+        }
+      }}
+    >
       <div className={s.header}>
         <div className={s.titleCol}>
           <Heading level={1} className={s.heading}>
             Memories
           </Heading>
-          <div className={s.subtitle}>{`${roomName ? `${roomName} · ` : ""}${n === 0 ? "recordings of this room's calls" : `${n} ${n === 1 ? "memory" : "memories"}`}`}</div>
+          <div className={s.subtitle}>{`${roomName ? `${roomName} · ` : ""}${n + np === 0 ? mode.subtitle_empty : countText(n, np)}`}</div>
         </div>
         <span className={s.spacer} />
+        {mode.filters.length > 0 && (
+          <div className={s.filterRow} role="group" aria-label="Show">
+            {mode.filters.map((f) => (
+              <button key={f} type="button" className={cx(s.filterBtn, filter === f && s.filterOn)} aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                {f === "all" ? "All" : f === "recordings" ? "Recordings" : "Photos"}
+              </button>
+            ))}
+          </div>
+        )}
+        <AddPhotosButton roomId={roomId} onFiles={addFiles} />
         <HeaderIconButton iconName="view-refresh-symbolic" tip="Refresh the list" onClick={() => void refresh()} />
       </div>
+      <UnencryptedConfirm
+        files={pending && pending.roomId === roomId ? pending.files : null}
+        onCancel={() => setPending(null)}
+        onSend={() => {
+          if (pending && pending.roomId === roomId) addPhotoFiles(pending.roomId, pending.files);
+          setPending(null);
+        }}
+      />
       {notice && (
         <div className={cx(s.notice, notice.kind === "live" && s.noticeLive, notice.kind === "warn" && s.noticeWarn)}>
           {`${notice.kind === "live" ? "🔴 " : notice.kind === "warn" ? "⏳ " : ""}${notice.text}`}
@@ -153,7 +248,7 @@ export function MemoriesWindow({ roomId, open: openId }: { roomId: string; open?
       )}
       <ScrollArea className={s.library} contentClassName={s.libraryScroll}>
         <div className={s.libCol}>
-          {memories === null && error ? (
+          {shownCount === 0 && recIncluded && recFailed ? (
             <div className={s.stateBox}>
               <EmptyState
                 iconName="network-disconnect-symbolic"
@@ -162,25 +257,62 @@ export function MemoriesWindow({ roomId, open: openId }: { roomId: string; open?
               />
               <GlowButton className={s.tryAgain} text="Try again" icon="view-refresh-symbolic" onClick={() => void refresh()} />
             </div>
-          ) : memories === null || (loading && n === 0) ? (
+          ) : shownCount === 0 && ((recIncluded && recLoading) || (filter !== "recordings" && photos.loading)) ? (
             <div className={s.stateBox}>
               <EmptyState loading title="Loading memories…" />
             </div>
-          ) : n === 0 ? (
+          ) : shownCount === 0 ? (
             <div className={s.stateBox}>
-              <EmptyState
-                iconName="camera-video-symbolic"
-                title="No memories here yet"
-                explanation="Press ⏺ Rec in a call and every stream and voice is saved for reliving later — with 🔖 Clip to bookmark the good bits."
-              />
+              {filter === "photos" ? (
+                <EmptyState
+                  iconName="image-x-generic"
+                  title={photos.loading ? "Loading photos…" : mode.photos_empty_title}
+                  loading={photos.loading}
+                  explanation={mode.photos_empty_text}
+                />
+              ) : (
+                <EmptyState
+                  iconName={mode.recordings ? "camera-video-symbolic" : "image-x-generic"}
+                  title={mode.empty_title}
+                  explanation={mode.empty_text}
+                />
+              )}
             </div>
           ) : (
-            memories.map((m, i) => <SessionCard key={m.id} m={m} index={i} resumeAt={resume[m.id] ?? 0} onOpen={() => tryOpen(m)} />)
+            items.map((it, i) => {
+              const day = dayLabel(it.at);
+              const head = i === 0 || dayLabel(items[i - 1].at) !== day;
+              const rec = it.kind === "recording" ? recById.get(it.id) : undefined;
+              const ph = it.kind === "photo" ? photoById.get(it.id) : undefined;
+              return (
+                <div key={`${it.kind}:${it.id}`} className={s.itemCol}>
+                  {head && <div className={s.dayHead}>{day}</div>}
+                  {rec && <SessionCard m={rec} index={i} resumeAt={resume[rec.id] ?? 0} onOpen={() => tryOpen(rec)} />}
+                  {ph && <PhotoCard p={ph} onOpen={() => setSelPhoto(ph.event_id)} />}
+                </div>
+              );
+            })
           )}
+          {photos.unavailable > 0 && filter !== "recordings" && <div className={s.footNote}>{PHOTO_WORDS.unavailable(photos.unavailable)}</div>}
         </div>
       </ScrollArea>
     </div>
   );
+}
+
+/** A day heading: "Today", "Yesterday", else "Saturday, November 14" (+ ", 2025" in another year; the desktop says the
+ *  same). */
+export function dayLabel(ms: number, now = Date.now()): string {
+  const d = new Date(ms);
+  const t = new Date(now);
+  const midnight = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((midnight(t) - midnight(d)) / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  const long = fmtDateLong(ms);
+  const cut = long.lastIndexOf(" · ");
+  const base = cut > 0 ? long.slice(0, cut) : long;
+  return d.getFullYear() === t.getFullYear() ? base : `${base}, ${d.getFullYear()}`;
 }
 
 // title plumbing: the WindowHost reads the registry title function with the window props; we keep

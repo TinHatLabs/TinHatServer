@@ -87,6 +87,13 @@ export function pttKeys(): string[] {
   return winningKeys("call.pushToTalk.hold");
 }
 
+/** A12.2 (2026-11-13; the desktop's ActionsHost.helpKey): the key to name in a tooltip — the default `def` unless this
+ *  device gave the action keys of its own, then those ("no key" when it removed them all). */
+export function helpKey(action: string, def: string): string {
+  if (!changedActions().has(action)) return def;
+  return keysOf(action).join(" / ") || "no key";
+}
+
 /** The actions this device gave keys of its own (an entry in the document, [] included). */
 export function changedActions(): Set<string> {
   return new Set(Object.keys(readUserBindings("web", shortcutsDoc()).entries));

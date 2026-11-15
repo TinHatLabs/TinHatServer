@@ -99,16 +99,23 @@ docker run --rm "$API_TAG" python3 -c 'import urllib.request; print("api image: 
 docker run --rm "$API_TAG" ffmpeg -version | head -1
 docker image rm -f node:22-bookworm-slim >/dev/null 2>&1 || true  # only the build's base: servers never run it
 docker builder prune -af >/dev/null 2>&1 || true
+# Every other image by its pinned digest (image-pins.txt), never by what its tag points at today; no pin = no build.
+pin() { awk -v r="$1" '$1 == r {print $2}' "$P/image-pins.txt"; }
 for img in $(awk '$1 == "image:" {print $2}' /opt/tinhat/compose.yaml); do
   case "$img" in tinhat/*) continue ;; esac
-  docker pull -q "$img"
+  d=$(pin "$img"); case "$d" in sha256:????????????????????????????????????????????????????????????????) ;;
+    *) echo "image-pins.txt has no digest for $img: refusing to pull it by its tag" >&2; exit 1 ;; esac
+  docker pull -q "${img%:*}@$d" || { echo "couldn't pull ${img%:*}@$d" >&2; exit 1; }
+  docker tag "${img%:*}@$d" "$img" || { echo "couldn't tag $img" >&2; exit 1; }
 done
 docker image rm -f caddy:2.10.2 >/dev/null 2>&1 || true  # only the build's base: servers never run it
 docker image prune -f >/dev/null
 # The lock lists exactly what compose.yaml runs (servers on their own machines download every line of it).
 { for img in $(awk '$1 == "image:" {print $2}' /opt/tinhat/compose.yaml); do
     case "$img" in tinhat/*) continue ;; esac
-    echo "$img $(docker image inspect -f '{{index .RepoDigests 0}}' "$img" | cut -d@ -f2)"
+    d=$(pin "$img"); docker image inspect -f '{{join .RepoDigests " "}}' "$img" | tr ' ' '\n' | grep -qxF "${img%:*}@$d" ||
+      { echo "$img isn't the pinned $d" >&2; exit 1; }
+    echo "$img $d"
   done
   echo "tinhat/caddy:2.10.2-dns $(docker image inspect -f '{{.Id}}' tinhat/caddy:2.10.2-dns) ($(docker run --rm tinhat/caddy:2.10.2-dns caddy version | cut -d' ' -f1), caddy-dns: acmedns v0.7.0 cloudflare v0.2.4 porkbun v0.3.1 desec v1.1.0 duckdns v0.5.0)"
   echo "$API_TAG $(docker image inspect -f '{{.Id}}' "$API_TAG") (the Tin Hat API, node 22)"

@@ -30,14 +30,16 @@ export interface BusEvents {
   startCall: { roomId: string; video?: boolean };
   /** Call UI (callui): the "Call & device settings" menu at an anchor (room header gear). */
   openCallDevicesMenu: { anchor?: HTMLElement | { x: number; y: number; width: number; height: number } | null; roomId?: string };
+  /** Call UI (callui): open the share picker (the "Share again" button of a share that stopped on its own). */
+  openSharePicker: Record<string, never>;
   /** Call UI (callui): pop a call tile out into its own window (needs a user gesture for Document PiP). */
   openPip: { tileId: string };
   /** Transient notice (Toast host in the shell). */
   toast: { message: string; kind?: "info" | "success" | "error"; timeoutMs?: number; action?: ToastAction };
   /** Lightbox over images/videos (chat agent). */
   openLightbox: { roomId?: string; eventId?: string; items?: Array<{ src: string; mimetype?: string; name?: string }>; index?: number };
-  /** Reply/thread focus on an event (chat agent). Tin Hat has no thread view: this focuses the event. */
-  openThread: { roomId: string; eventId: string };
+  /** threads (docs/THREADS.md): open the room and its Threads panel on the thread whose root is eventId (chat). */
+  openThread: { roomId: string; eventId: string; focus?: string };
   /** Right panel (room info / members …) toggles — spaces agent. */
   openRightPanel: { roomId: string; tab?: string };
   closeRightPanel: Record<string, never>;

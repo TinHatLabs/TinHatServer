@@ -24,11 +24,18 @@ import { closeNotes, noteRegistration, pushCoversNow, showNote } from "@/core/no
 import { onPageResume } from "@/core/lifecycle";
 import { getPref } from "@/core/prefs";
 import { playUiSound } from "@/core/sounds";
-import { bus, openRoom } from "@/core/bus";
+import { bus, openRoom, openThread } from "@/core/bus";
+import { threadOf } from "@/features/chat/threads/core";
+import { THREADS_TAB, useThreadsPanel } from "@/features/chat/threads/state";
+import { useRightPanelStore } from "@/features/spaces/panelState";
+import { useChatStore } from "@/features/chat/store";
 import { createLogger } from "@/core/log";
 import { parseHash } from "@/app/router";
-import { pushCovers, stepRoom, type Mode, type RoomRule, type RoomSeen } from "./notifyrules";
+import { planScan, pushCovers, type Mode, type RoomRule, type RoomSeen } from "./notifyrules";
 import { webActions } from "@/features/push/notifactions";
+import { noteIcon } from "./noteicon";
+import { toastNote } from "./toastpreview";
+import { forgetPosts, isNewestPost, pickNotified, postTicket, type Notified } from "./notifypick";
 
 const log = createLogger("notify");
 
@@ -83,6 +90,8 @@ export interface DesktopNote {
   pushCovered?: boolean;
   /** docs/NOTIF-ACTIONS.md: the event the note shows → Reply / Mark as read buttons */
   event?: string;
+  /** threads: the thread that event is in — Reply and the click open it */
+  thread?: string;
 }
 
 /** Post one browser notification. Returns false when the browser can't / won't. REACH §3.2: through the push
@@ -91,7 +100,7 @@ export interface DesktopNote {
 export function notifyDesktop(n: DesktopNote): boolean {
   if (notificationPermission() !== "granted") return false;
   const actions = n.room && n.event !== undefined ? webActions(n.event) : undefined;
-  const ok = showNote({ title: n.title, body: n.body, icon: n.icon, tag: n.tag, silent: true, requireInteraction: n.requireInteraction, timeoutMs: n.timeoutMs, room: n.room, onClick: n.onClick, pushCovered: n.pushCovered, actions, event: n.event });
+  const ok = showNote({ title: n.title, body: n.body, icon: n.icon, tag: n.tag, silent: true, requireInteraction: n.requireInteraction, timeoutMs: n.timeoutMs, room: n.room, onClick: n.onClick, pushCovered: n.pushCovered, actions, event: n.event, thread: n.thread });
   if (!ok) log.debug("Notification failed");
   return ok;
 }
@@ -119,6 +128,32 @@ function attendedRooms(): Set<string> {
 
 function isAttended(roomId: string): boolean {
   return attendedRooms().has(roomId);
+}
+
+/** threads (desktop review #5/#6): the thread of the room's newest event that NOTIFIED under the push rules ("" =
+ *  main) — not of its latest event (a main message after a thread mention must not hide the mention). */
+function notifyingThread(room: Room): string {
+  const c = peekClient();
+  const evs = room.getLiveTimeline().getEvents();
+  for (let i = evs.length - 1; i >= 0 && i >= evs.length - 30; i--) {
+    const ev = evs[i];
+    if (ev.getSender() === c?.getUserId()) continue;
+    if (!c?.getPushActionsForEvent(ev)?.notify) continue;
+    return threadOf(ev.getWireContent() ?? ev.getContent());
+  }
+  return "";
+}
+
+/** threads (review #15): a room on screen still notifies for a reply in a thread that isn't the one open in its
+ *  Threads panel (thread replies don't show in the main timeline). */
+function threadNewsHidden(room: Room): boolean {
+  const t = notifyingThread(room);
+  if (!t) return false;
+  const panel = useRightPanelStore.getState();
+  // the right panel belongs to the main view's room (round 2 #11: another room's open thread doesn't count)
+  const panelHere = panel.open && panel.tab === THREADS_TAB && useChatStore.getState().mainRoom === room.roomId;
+  const shown = panelHere ? (useThreadsPanel.getState().open[room.roomId] ?? null) : null;
+  return shown !== t;
 }
 
 // ---- modes -----------------------------------------------------------------------------------
@@ -177,69 +212,78 @@ function directIds(c: MatrixClient): Set<string> {
 
 // ---- toast content ---------------------------------------------------------------------------
 
-function latestBody(room: Room): { sender: string; text: string; eventId: string } | null {
-  const evs = room.getLiveTimeline().getEvents();
-  for (let i = evs.length - 1; i >= 0 && i >= evs.length - 30; i--) {
-    const ev: MatrixEvent = evs[i];
-    const t = ev.getType();
-    if (t !== "m.room.message" && t !== "m.sticker" && t !== "m.room.encrypted") continue;
-    const body = ev.getContent()?.body;
-    if (typeof body === "string" && body.trim()) return { sender: ev.getSender() ?? "", text: body.trim(), eventId: ev.getId() ?? "" };
-  }
-  return null;
+function latestBody(room: Room): Notified | null {
+  // threads (round 2 #10): the text is the newest NOTIFYING message's when there is one (the click opens its thread);
+  // 6-9: a blank one keeps its event, sender and thread (notifypick.ts)
+  const c = peekClient();
+  const me = c?.getUserId();
+  return pickNotified(room.getLiveTimeline().getEvents(), (e) => e.getSender() !== me && !!c?.getPushActionsForEvent(e as MatrixEvent)?.notify);
 }
 
-export function toastBody(room: Room, isDm: boolean, rise: number): { body: string; sender: string; eventId: string } {
+export function toastBody(room: Room, isDm: boolean, rise: number): { body: string; sender: string; eventId: string; thread: string } {
   const last = latestBody(room);
   let body = "";
   let sender = "";
   let eventId = "";
+  let thread = "";
+  // the whole line is toastNote (toastpreview.ts = the desktop's toast_note, shared vectors toast-preview.json `notes`):
+  // the shared preview rule cuts the text, threads add their wording ("Ana (in thread): …" / "In thread: …"), and an
+  // uncached sender is named by the id's localpart (1-10)
+  const text = last ? toastNote(isDm ? null : room.getMember(last.sender)?.rawDisplayName, last.sender, isDm, last.thread !== "", last.text) : null;
   if (last) {
-    sender = last.sender;
+    // 6-9: Mark as read and Reply target the notified event even when it shows the generic wording (as on the desktop)
     eventId = last.eventId;
-    let text = last.text.replace(/\s+/g, " ");
-    if ([...text].length > 160) text = [...text].slice(0, 160).join("") + "…";
-    if (!isDm) {
-      const m = room.getMember(last.sender);
-      const name = m?.rawDisplayName || last.sender.replace(/^@/, "").split(":")[0];
-      text = `${name}: ${text}`;
-    }
+    thread = last.thread;
+  }
+  if (last && text) {
+    sender = last.sender; // the picture goes with a preview (as on the desktop)
     body = rise > 1 ? `${text} (+${rise - 1} more)` : text;
   } else {
     body = rise > 1 ? `${rise} new messages` : "New message";
   }
-  return { body, sender, eventId };
+  return { body, sender, eventId, thread };
 }
 
-// Avatars as object URLs for the classic `new Notification` path only (the worker path can't use a page blob: URL —
-// core/notes.ts drops it — so nothing is fetched for it). Bounded, revoked on eviction and on teardown (web review #20).
+// The sender's picture (Messages-style): a small data: URL on the worker path (the notification service can't read a
+// page blob: URL — core/notes.ts drops those), an object URL on the classic `new Notification` path (noteicon.ts).
+// Bounded; object URLs revoked on eviction and on teardown (web review #20).
 const AVATARS_MAX = 24;
 const avatarCache = new Map<string, string>();
 
+function release(url: string): void {
+  if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+}
+
 function dropAvatars(): void {
-  for (const url of avatarCache.values()) URL.revokeObjectURL(url);
+  for (const url of avatarCache.values()) release(url);
   avatarCache.clear();
 }
 
 async function avatarFor(c: MatrixClient, room: Room, userId: string, gen: number): Promise<string | undefined> {
-  if (noteRegistration()) return undefined;
+  const worker = !!noteRegistration();
   const mxc = room.getMember(userId)?.getMxcAvatarUrl() ?? c.getUser(userId)?.avatarUrl;
   if (!mxc) return undefined;
-  const hit = avatarCache.get(mxc);
+  const key = `${worker ? "d" : "b"}|${mxc}`;
+  const hit = avatarCache.get(key);
   if (hit) {
-    avatarCache.delete(mxc); // most recently used last
-    avatarCache.set(mxc, hit);
+    avatarCache.delete(key); // most recently used last
+    avatarCache.set(key, hit);
     return hit;
   }
   try {
     const blob = await fetchMedia(mxc, { width: 96, height: 96, method: "crop" });
     if (gen !== engineGen) return undefined; // the engine stopped meanwhile: nothing new for a gone session
-    const url = URL.createObjectURL(blob);
-    avatarCache.set(mxc, url);
+    const url = await noteIcon(blob, worker);
+    if (!url) return undefined; // not an image, or too big for a data: URL: the app icon
+    if (gen !== engineGen) {
+      release(url);
+      return undefined;
+    }
+    avatarCache.set(key, url);
     while (avatarCache.size > AVATARS_MAX) {
       const [k, old] = avatarCache.entries().next().value!;
       avatarCache.delete(k);
-      URL.revokeObjectURL(old);
+      release(old);
     }
     return url;
   } catch {
@@ -255,8 +299,10 @@ let engineGen = 0;
 const seen = new Map<string, RoomSeen>();
 /** Each room's highlight count at the last scan (pushCovers: did this rise bring a mention the push sees?). */
 const seenHighlights = new Map<string, number>();
+/** Each room's count as last OBSERVED (a held rise keeps `seen` at the alerted level; read detection needs this). */
+const seenCounts = new Map<string, number>();
 let seeded = false;
-let fireLog: number[] = [];
+const fireLog: number[] = [];
 
 function countFor(c: MatrixClient, room: Room, dms: Set<string>): number {
   const mode = roomMode(c, room.roomId, dms.has(room.roomId));
@@ -270,6 +316,9 @@ function baselineReady(): boolean {
   return getSession().liveSyncDone;
 }
 
+/** A03.0: when a rise held back by the 5 s room gap (or the cap) may fire — the engine re-scans then (null = none). */
+let lastWakeAt: number | null = null;
+
 export function scanOnce(c: MatrixClient, now = Date.now()): string[] {
   const dms = directIds(c);
   const fired: Array<{ room: Room; rise: number; isDm: boolean; highlightRose: boolean }> = [];
@@ -277,6 +326,8 @@ export function scanOnce(c: MatrixClient, now = Date.now()): string[] {
   const read: string[] = [];
   if (!baselineReady()) seeded = false;
   const onScreen = attendedRooms();
+  const obs: Array<{ id: string; count: number; mode: Mode; attended: boolean }> = [];
+  const extra = new Map<string, { room: Room; isDm: boolean; highlightRose: boolean; highlights: number }>();
   for (const room of c.getRooms()) {
     if (room.getMyMembership() !== "join") continue;
     const id = room.roomId;
@@ -288,22 +339,27 @@ export function scanOnce(c: MatrixClient, now = Date.now()): string[] {
     const prev = seen.get(id);
     const highlights = room.getUnreadNotificationCount(NotificationCountType.Highlight);
     const highlightRose = highlights > (seenHighlights.get(id) ?? 0);
-    if (prev && prev.count > 0 && count === 0) read.push(id); // A5.4: read → its notification goes
-    const { next, rise } = stepRoom(prev, { count, mode, attended: onScreen.has(id) }, seeded, now);
-    if (rise > 0) {
-      fireLog = fireLog.filter((t) => now - t < 10000);
-      if (fireLog.length < 8) {
-        fireLog.push(now);
-        next.lastFire = now;
-        delete next.fresh;
-        fired.push({ room, rise, isDm, highlightRose });
-      }
-    }
-    seen.set(id, next);
-    seenHighlights.set(id, highlights);
+    if ((seenCounts.get(id) ?? prev?.count ?? 0) > 0 && count === 0) read.push(id); // A5.4: read → its notification goes
+    seenCounts.set(id, count);
+    obs.push({ id, count, mode, attended: onScreen.has(id) && !threadNewsHidden(room) }); // threads: news in a hidden thread still notifies
+    extra.set(id, { room, isDm, highlightRose, highlights });
+  }
+  const plan = planScan(seen, obs, seeded, now, fireLog);
+  lastWakeAt = plan.wakeAt;
+  // a HELD rise keeps its highlight baseline too: its trailing alert still knows a mention came with it (pushCovers)
+  // (a held room keeps the lower of its baseline and now: a mention read meanwhile still lowers it)
+  for (const o of obs) {
+    const h = extra.get(o.id)!.highlights;
+    const held = (seen.get(o.id)?.count ?? o.count) < o.count;
+    seenHighlights.set(o.id, held ? Math.min(seenHighlights.get(o.id) ?? h, h) : h);
+  }
+  for (const f of plan.fires) {
+    const x = extra.get(f.id)!;
+    fired.push({ room: x.room, rise: f.rise, isDm: x.isDm, highlightRose: x.highlightRose });
   }
   for (const id of [...seen.keys()]) if (!present.has(id)) seen.delete(id);
   for (const id of [...seenHighlights.keys()]) if (!present.has(id)) seenHighlights.delete(id);
+  for (const id of [...seenCounts.keys()]) if (!present.has(id)) seenCounts.delete(id);
   seeded = baselineReady();
   for (const id of read) void closeNotes(`room:${id}`);
   if (fired.length === 0) return [];
@@ -317,18 +373,22 @@ export function scanOnce(c: MatrixClient, now = Date.now()): string[] {
     const user = getSession().userId ?? "";
     for (const f of own) {
       const { body, sender, eventId } = toastBody(f.room, f.isDm, f.rise);
+      const thread = notifyingThread(f.room); // a click opens the thread of what notified
       const roomId = f.room.roomId;
       const title = f.room.name || "Tin Hat";
+      const ticket = postTicket(roomId); // 6-3: taken now, before the picture wait
       // A5.4: no timed close — a room's notification stays until the room is read
       void (sender ? avatarFor(c, f.room, sender, gen) : Promise.resolve(undefined)).then((icon) => {
+        if (!isNewestPost(roomId, ticket)) return; // 6-3: a newer post of this room was planned meanwhile
         // web review #7: still the same engine + account, still wanted, the room still unread and not on screen
         if (gen !== engineGen || running?.client !== c || (getSession().userId ?? "") !== user) return;
         if (getPref("desktop-notifications", "1") === "0") return;
         const room = c.getRoom(roomId);
-        if (!room || room.getMyMembership() !== "join" || countFor(c, room, directIds(c)) === 0 || isAttended(roomId)) return;
+        if (!room || room.getMyMembership() !== "join" || countFor(c, room, directIds(c)) === 0 || (isAttended(roomId) && !threadNewsHidden(room))) return;
         const covered = pushWillCover(c, room, f.isDm, f.highlightRose);
         if (covered && pushCoversNow()) return;
-        notifyDesktop({ title, body, icon, tag: `room:${roomId}`, room: roomId, pushCovered: covered, event: eventId });
+        // threads: a thread reply's notification opens its thread too (the room opens first, as before)
+        notifyDesktop({ title, body, icon, tag: `room:${roomId}`, room: roomId, pushCovered: covered, event: eventId, thread, onClick: thread ? () => openThread(roomId, thread) : undefined });
       });
     }
   }
@@ -372,14 +432,21 @@ export function startNotifyEngine(): void {
   stopNotifyEngine();
   seen.clear();
   seenHighlights.clear();
+  seenCounts.clear();
   seeded = false;
-  fireLog = [];
+  fireLog.length = 0;
+  lastWakeAt = null;
+  // A03.0: a follow-up inside a room's 5 s gap is held, not dropped — one timer re-scans when the gap (or the cap
+  // window) ends, so it gets its trailing alert even when nothing else happens meanwhile
+  let wakeTimer = 0;
   const scan = () => {
     try {
       scanOnce(c);
     } catch (e) {
       log.warn("scan failed", e);
     }
+    window.clearTimeout(wakeTimer);
+    if (lastWakeAt !== null) wakeTimer = window.setTimeout(scan, Math.max(0, lastWakeAt - Date.now()) + 50);
   };
   const onSync = (state: string) => {
     if (state === "PREPARED" || state === "SYNCING") scan();
@@ -428,6 +495,7 @@ export function startNotifyEngine(): void {
       for (const r of bound) r.off(RoomEvent.UnreadNotifications, soon);
       bound.clear();
       window.clearTimeout(t);
+      window.clearTimeout(wakeTimer);
       offResume();
       document.removeEventListener("visibilitychange", onVisible);
     },
@@ -441,6 +509,7 @@ export function stopNotifyEngine(): void {
   running?.off();
   running = null;
   dropAvatars();
+  forgetPosts();
 }
 
 bus.on("loggedOut", () => stopNotifyEngine());

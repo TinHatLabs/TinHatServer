@@ -11,10 +11,10 @@ from test_manager_limits import caddyfiles, CADDY
 
 SERVING = ("home network", "from anywhere", "from anywhere, relay, lab roots", "own domain", "own reverse proxy",
            "own reverse proxy on this machine", "moved, former names")
-BLOCK = ("\t\t@oldguest {\n\t\t\tpath /call/legacy.html /guest /guest/*\n\t\t}\n"
-         "\t\t@oldjoin {\n\t\t\tpath / /index.html\n\t\t\tquery join=*\n\t\t}\n"
-         "\t\trewrite @oldguest /call/index.html\n\t\trewrite @oldjoin /call/index.html\n"
-         "\t\ttry_files {path} {path}index.html /index.html\n")
+BLOCK = ("\t\t\t@oldguest {\n\t\t\t\tpath /call/legacy.html /guest /guest/*\n\t\t\t}\n"
+         "\t\t\t@oldjoin {\n\t\t\t\tpath / /index.html\n\t\t\t\tquery join=*\n\t\t\t}\n"
+         "\t\t\trewrite @oldguest /call/index.html\n\t\t\trewrite @oldjoin /call/index.html\n"
+         "\t\t\ttry_files {path} {path}index.html /index.html\n")
 
 
 class EveryMode(unittest.TestCase):

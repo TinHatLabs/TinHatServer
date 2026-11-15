@@ -17,6 +17,7 @@
 // Every mutation (turn on, the start-up check/repair, quiet, turn off, sign-out) runs one at a time through
 // `enqueue`, with the session that started it (its Matrix client + token — web review #4); turning off and
 // signing out bump `opGen`, so a turn-on or repair still running stops at its next step and undoes what it did.
+import { roomsRead, syncHidden } from "./badgesync";
 import { create } from "zustand";
 import type { MatrixClient } from "matrix-js-sdk";
 import { apiFetch } from "@/core/api";
@@ -659,11 +660,26 @@ function writeUnreadSet(ids: string[]): Promise<void> {
   return writing;
 }
 
+/** Hidden: the worker owns the badge (it also counts pushed rooms), so it recounts from the set just written. */
+function syncHiddenBadge(read: string[], written: Promise<void>): void {
+  if (permNow() !== "granted") return;
+  void syncHidden(read, written, async () => (await workerReady())?.active, () => applyBadge(lastIds.length));
+}
+
 /** The nav's unread room ids changed (or sign-out: []). */
 export function updateBadge(ids: string[]): void {
+  const read = roomsRead(lastIds, ids);
   lastIds = ids;
-  void writeUnreadSet(ids);
+  const written = writeUnreadSet(ids);
   if (typeof document === "undefined" || document.visibilityState === "visible") applyBadge(ids.length);
+  else syncHiddenBadge(read, written);
+}
+
+/** Mark as read from a notification while hidden: the room may never have reached the nav's set (it can arrive and be
+ *  read in the same sync), so the pushed set is told directly. */
+export function badgeRoomRead(room: string): void {
+  if (typeof document === "undefined" || document.visibilityState === "visible") return;
+  syncHiddenBadge([room], writing);
 }
 
 /** A visible moment: a new epoch (the worker's pushed set starts over), the exact badge again. */

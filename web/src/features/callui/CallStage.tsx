@@ -27,6 +27,7 @@ import { SameRoomAsk } from "./SameRoomAsk";
 import { JoinBanner, useHeaderChipsMounted } from "./Incoming";
 import { OnThisPhone } from "@/features/native";
 import { MobileCallStage, MobileCallPill } from "./Mobile";
+import { useFsGhost, usePinCarry } from "./carry";
 import { recClipRoom } from "@/actions/decisions";
 import { useChatStore } from "@/features/chat/store";
 import s from "./CallStage.module.css";
@@ -86,7 +87,8 @@ function DesktopStage({ roomId, columnH, leftInset }: { roomId: string; columnH?
   const collapsed = collapsedPref && !maximized;
   useEffect(() => setUiState({ collapsed: collapsedPref, paneFrac: savedFrac }), [collapsedPref, savedFrac]);
 
-  const tiles = useC("tiles");
+  // D02.3: a full-screen share stays mounted through its sharer's blip (carry.ts)
+  const { tiles, keyOf } = useFsGhost(useC("tiles"));
   const localAfk = useC("localAfk");
   const connecting = useC("connecting");
   const inCall = useC("inCall");
@@ -103,10 +105,9 @@ function DesktopStage({ roomId, columnH, leftInset }: { roomId: string; columnH?
   useHideMemorySync();
   useHiddenWindowPause();
 
-  // unpin a pinned tile that left
-  useEffect(() => {
-    if (pinned && !tiles.some((t) => t.id === pinned)) ui().set({ pinned: null });
-  }, [tiles, pinned]);
+  // unpin a pinned tile that left — D02.3: held for the grace, and the same participant's tile of the same kind coming
+  // back in that time (a blip) is pinned again (tilecarry.ts, the desktop's AppCore _pinHeld)
+  usePinCarry(tiles, pinned);
 
   const gridTiles = useMemo(() => tiles.filter((t) => t.id !== SELF_SHARE_ID && !isRecorderTile(t)), [tiles]);
   const hasShare = gridTiles.some((t) => isShareTile(t));
@@ -214,7 +215,7 @@ function DesktopStage({ roomId, columnH, leftInset }: { roomId: string; columnH?
               const isHidden = hiddenArr.includes(t.id) && !slot.pip && slot.w === 0;
               return (
                 <Tile
-                  key={t.id}
+                  key={keyOf(t)}
                   tile={t}
                   slot={slot}
                   hidden={isHidden || slot.w <= 0 || !gridVisible}
@@ -267,7 +268,9 @@ function StatusBar({ roomId, maximized, collapsed, hiddenCount, leftInset }: { r
   const reconnecting = useC("reconnecting");
   // D6: native keeps "In call" (it only checks `connecting`) after a terminal drop / failed join while the red
   // banner says the call ended (docs/native-bugs/calls.md). The web says what is true.
-  const title = connecting ? "Connecting…" : inCall ? "In call" : reconnecting ? "Reconnecting…" : "Disconnected";
+  // D02.5 (2026-11-13): "Still connecting…" after 10 s (the house busy rule; the desktop's CallIsland _connStill)
+  const connectingLabel = useStillLabel("Connecting…", connecting);
+  const title = connecting ? connectingLabel : inCall ? "In call" : reconnecting ? "Reconnecting…" : "Disconnected";
   const live = inCall && !connecting;
   const tiles = useC("tiles");
   const sharing = useC("sharing");
@@ -404,7 +407,7 @@ function HiddenChip({ count, open, onOpen }: { count: number; open: boolean; onO
 // ---- Rec / Clip fallbacks (media registers the real ones in "statusRight") ---------------------
 
 const REC_CONFIRM =
-  'Calls in this room get recorded for the Memories tab — every stream and voice separately, so replays can switch points of view.\n\nNo extra participant appears: everyone in the call sees a 🔴 REC cue in their call header instead (and anyone who turned on "Never record me" in Settings → Calls is left out of the recording entirely — their cue says so). Stop any time with the ⏹ Rec button.';
+  'Calls in this room get recorded for the Memories tab — every stream and voice separately, so replays can switch points of view.\n\nNo extra participant appears: everyone in the call sees a 🔴 REC cue in their call header instead (and anyone who turned on "Never record me" in Settings → Privacy is left out of the recording entirely — their cue says so). Stop any time with the ⏹ Rec button.';
 
 function FallbackRec({ roomId }: { roomId: string }) {
   const rec = useRoomState(roomId, "dev.tinhat.record", "") as { active?: boolean } | undefined;

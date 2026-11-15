@@ -80,6 +80,10 @@ downloads() {
   done
   return 0
 }
+# Before anything is signed: the web's pre-compressed side files are exactly the ones build.sh artifacts decoded and
+# recorded (no stale, extra or changed one; this machine needs no brotli for it)
+python3 "$HERE/build/precompress.py" check "$R/web" "$R/web-sidefiles.sha256" ||
+  { echo "the web build's side files don't match $R/web-sidefiles.sha256: run build.sh artifacts again" >&2; exit 1; }
 # GitHub refuses a release file of 2 GiB or more (0.3.0 had to hold its .vhdx and .vmdk back): with a margin, before
 # anything is signed. build.sh export zips the two disks; an unzipped one from an older build is left out, loudly.
 MAX_ASSET=1932735283  # 1.8 GiB, as build.sh
@@ -158,6 +162,9 @@ cp -a "$R/wheels" "$B/b/manager/wheels"  # checked above; servers check each fil
 cp "$HERE/appliance/rootfs/opt/tinhat/compose.yaml" "$R/images.lock" "$B/b/"
 echo "$VER" > "$B/b/VERSION"
 cp -a "$R/web" "$B/b/web"
+# The bundle carries no pre-compressed copies (~3 MB that don't shrink in it; the mirror takes 24 MiB): a server makes
+# its own after an update (websides.py). The server's images (build.sh) have them.
+python3 "$HERE/build/precompress.py" strip "$B/b/web" || { echo "couldn't take the side files out of the bundle's web" >&2; exit 1; }
 # An arm64 build of the same version (ARCH=arm64 build.sh … artifacts): its images.lock rides along in the bundle, and
 # its Caddy image goes in the channel next to the amd64 one.
 RA=$HERE/out/release-$VER-arm64

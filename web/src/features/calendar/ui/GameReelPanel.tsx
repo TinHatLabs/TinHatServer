@@ -17,6 +17,7 @@ import { ReelButton, ReelCover, TierList, Art, art } from "./ReelParts";
 import { MyGamesEditor } from "./MyGamesEditor";
 import { GameNightAdmin } from "./GameNightAdmin";
 import s from "./Reel.module.css";
+import { reelWhyNot } from "../model/reelQol";
 
 const COVER_W = 132;
 const COVER_GAP = 14;
@@ -198,6 +199,8 @@ export function GameReelPanel() {
       : liveIds.size + " here" + (coming > 0 ? " · " + coming + " more coming" : "");
   const log = (snap?.log ?? []).filter((e) => !e.current).slice(0, 12);
   const respinsLeft = snap?.respinsLeft ?? 0;
+  // QOL A19.1: what a greyed Spin / Veto says on hover (reelQol.ts, shared vectors)
+  const whySnap = { hasResult, notice, respinsLeft, myVetoesLeft: snap?.myVetoesLeft ?? 0, canSpin: snap?.canSpin === true, canVeto: snap?.canVeto === true };
   const canReset = isAdmin && (hasResult || (spin?.respinsUsed ?? 0) > 0);
 
   return (
@@ -260,6 +263,7 @@ export function GameReelPanel() {
               text={animating ? "Spinning…" : hasResult ? "Re-spin" : "Spin"}
               disabled={animating || busy || spinningWrite || resetting || (hasResult ? respinsLeft <= 0 : snap?.canSpin !== true)}
               hint={hasResult ? `Spin again, keeping tonight's vetoes — ${respinsLeft} left` : ""}
+              whyNot={animating || busy || spinningWrite || resetting ? "" : reelWhyNot("spin", whySnap)}
               onClick={() => (hasResult ? void respin() : void doSpin())}
             />
             {hasResult && (
@@ -267,6 +271,7 @@ export function GameReelPanel() {
                 text="Veto"
                 disabled={snap?.canVeto !== true || animating || busy || spinningWrite || resetting}
                 hint={"One per person per night; the reel re-spins without this game" + (snap ? ` — ${snap.myVetoesLeft} left` : "")}
+                whyNot={animating || busy || spinningWrite || resetting ? "" : reelWhyNot("veto", whySnap)}
                 onClick={() => void veto()}
               />
             )}
