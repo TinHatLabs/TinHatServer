@@ -1,7 +1,7 @@
 """Run by provision.sh inside the built (or reused) Synapse image (python - < this file): exits 1 unless the image
 carries every fix of build/synapse/backports/ (GHSA-6wjm, -27p5, -qcjr, -r66v, -95fh, -fp53, -8q93, our size limit
-on the actions of built-in push rules, our rate limit on push rule writes, frozen m.mentions and its error answers) and
-the pinned Pillow / msgpack. The patched files must hash to the series' results (the same table as backports/FILES;
+on the actions of built-in push rules, our rate limit on push rule writes, frozen m.mentions and its error answers, frozen power levels in the push
+evaluator) and the pinned Pillow / msgpack. The patched files must hash to the series' results (the same table as backports/FILES;
 test_synapse_backports.py keeps the two equal), and each one's default .pyc must be a checked-hash cache of exactly
 that source: this Python's magic number, the source's hash, and code equal to the source compiled here (a header
 alone proves nothing about the code behind it). A few fixes are also checked by behaviour: a remote 401 / M_UNKNOWN_TOKEN is no longer relayed as such, the push rule limits exist with
@@ -25,6 +25,7 @@ PATCHED = {
     "handlers/federation.py": "6e01123f44196d9582ca2470f65f40010b470d08e44336292d6dcbf86db21f1d",
     "handlers/worker_lock.py": "e1384fc2f85f1104ab5b8d99a23866826e21410bd3195f8ab578401138ac77ea",
     "http/site.py": "0a2d751f79a2efcc64aec30b5b892eb5917dcb6f16f16864be8acb932e171e2f",
+    "push/bulk_push_rule_evaluator.py": "29bb31f2c9a8f904ae84458aba3891c2ff197e5c74269d17ce659f33e8910594",
     "replication/http/_base.py": "9ed4f374252b22bfdf8adaafdb94453f95daacd545c33c869e34a43367038a26",
     "rest/client/push_rule.py": "5d0c543ffe3342985f17463c3c1e75c18391cdf4d051184e57ab85bda65131c6",
     "storage/databases/main/event_federation.py": "091fc74081f2119c4dfa0d5468136287a8a647ecf4f7a4d5fddc680837c2fb01",

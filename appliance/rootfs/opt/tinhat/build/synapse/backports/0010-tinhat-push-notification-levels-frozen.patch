@@ -1,0 +1,17 @@
+diff --git a/push/bulk_push_rule_evaluator.py b/push/bulk_push_rule_evaluator.py
+index 7cf89200a8c753897a13dbe93b13f23e7caa392b..293a447f84c438444a2bd38a548102cc274d9665 100644
+--- a/push/bulk_push_rule_evaluator.py
++++ b/push/bulk_push_rule_evaluator.py
+@@ -448,6 +448,12 @@ class BulkPushRuleEvaluator:
+         # _get_power_levels_and_sender_level in its call to get_user_power_level
+         # (even for room V10.)
+         notification_levels = power_levels.get("notifications", {})
++        # Tin Hat: a power levels event this server created is frozen (a check_event_allowed module freezes every
++        # new event) and stays frozen in the event cache, so this is an immutabledict until a restart. The Rust
++        # PushRuleEvaluator takes only a dict (500 for every later event in the room), and the in-place fix-up
++        # below can't write to it either: work on a plain copy.
++        if isinstance(notification_levels, Mapping):
++            notification_levels = dict(notification_levels)
+         if not event.room_version.enforce_int_power_levels:
+             keys = list(notification_levels.keys())
+             for key in keys:

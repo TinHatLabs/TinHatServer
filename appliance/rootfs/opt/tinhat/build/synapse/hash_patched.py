@@ -11,7 +11,7 @@ from pathlib import Path
 
 FILES = ["handlers/devicemessage.py", "api/errors.py", "config/_base.pyi", "config/_util.py", "config/homeserver.py",
          "config/push_rules.py", "events/validator.py", "federation/federation_server.py", "handlers/federation.py", "handlers/worker_lock.py",
-         "http/site.py", "replication/http/_base.py", "rest/client/push_rule.py", "storage/databases/main/event_federation.py",
+         "http/site.py", "push/bulk_push_rule_evaluator.py", "replication/http/_base.py", "rest/client/push_rule.py", "storage/databases/main/event_federation.py",
          "storage/databases/main/push_rule.py"]
 root = Path(importlib.util.find_spec("synapse").submodule_search_locations[0])
 ok = True
