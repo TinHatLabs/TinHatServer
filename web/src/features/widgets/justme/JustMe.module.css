@@ -153,13 +153,13 @@
   gap: 10px;
 }
 .body[data-mobile] .name {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .reason,
 .body[data-mobile] .when,
 .body[data-mobile] .linkBtn,
 .body[data-mobile] .note {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .foot {
   height: 44px;

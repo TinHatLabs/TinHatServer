@@ -63,8 +63,8 @@
   gap: 6px;
   min-width: 0;
   font-weight: 700;
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
 }
 .panel .topTitle {
   font-size: calc(var(--th-font-pt) + 2pt);
@@ -104,8 +104,8 @@
   align-items: center;
   min-width: 0;
   color: var(--th-call-status-bar-count-fg);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
   white-space: nowrap;
 }
 .panel .topSub {
@@ -138,7 +138,7 @@
   cursor: default;
 }
 .caret {
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
 }
 .link {
   min-width: 0;
@@ -175,7 +175,7 @@
   border-radius: 8px;
   border: 1px solid transparent;
   color: var(--th-call-conn-banner-title-fg);
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -268,8 +268,8 @@
   min-width: 56px;
 }
 .cellLabel {
-  font-size: 13px;
-  line-height: 16px;
+  font-size: calc(13px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   color: var(--th-call-status-bar-count-fg);
   white-space: nowrap;
 }
@@ -278,7 +278,7 @@
 }
 .myNote {
   margin: 8px 6px 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   color: var(--th-call-status-bar-count-fg);
   text-align: center;
 }
@@ -302,7 +302,7 @@
 .sectionTitle {
   flex: none;
   font-weight: 700;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
   color: var(--th-soundboard-section-fg);
 }
 .panel .sectionTitle {
@@ -311,7 +311,7 @@
 .sectionHint {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-soundboard-section-hint-fg);
   white-space: nowrap;
   overflow: hidden;
@@ -322,12 +322,12 @@
 }
 .empty {
   margin: 0 4px;
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   color: var(--th-soundboard-empty-fg);
 }
 .roleLine {
   margin: 0 4px;
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   color: var(--th-soundboard-status-fg-error);
 }
 
@@ -390,7 +390,7 @@
 }
 .personName {
   font-weight: 600;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
   color: var(--th-call-volume-label-fg);
   white-space: nowrap;
   overflow: hidden;
@@ -400,7 +400,7 @@
   font-size: var(--th-font-size);
 }
 .personSub {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-call-volume-value-fg);
   white-space: nowrap;
   overflow: hidden;
@@ -411,7 +411,7 @@
 }
 .badge {
   flex: none;
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 .chev {
   flex: none;
@@ -419,7 +419,7 @@
 }
 .more {
   padding: 4px 10px;
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   color: var(--th-call-volume-value-fg);
 }
 
@@ -437,11 +437,11 @@
 }
 .stateText {
   font-weight: 700;
-  font-size: 17px;
+  font-size: calc(17px * var(--th-text-scale, 1));
 }
 .stateHint {
   max-width: 360px;
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   color: var(--th-call-empty-fg);
 }
 .stateButtons {
@@ -453,7 +453,7 @@
 .myHead {
   margin: 0 4px 6px;
   font-weight: 700;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-soundboard-section-hint-fg);
 }
 .linkBtn {

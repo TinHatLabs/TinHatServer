@@ -40,11 +40,11 @@
   align-items: center;
   gap: 6px;
   font-weight: 700;
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 .topSub {
   color: var(--th-call-status-bar-count-fg);
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -63,7 +63,7 @@
   background: var(--th-call-hidden-chip-bg);
   border: 1px solid var(--th-call-hidden-chip-border);
   color: var(--th-call-hidden-chip-fg);
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
 }
 .banner {
   flex: none;
@@ -73,7 +73,7 @@
   background: var(--th-call-afk-banner-bg);
   border: 1px solid var(--th-call-afk-banner-border);
   color: var(--th-call-afk-banner-fg);
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
   font-weight: 700;
   text-align: left;
   display: flex;
@@ -123,7 +123,7 @@
   text-align: center;
   color: var(--th-call-empty-fg);
   padding: 32px 16px;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .bar {
   flex: none;
@@ -134,6 +134,11 @@
   background: var(--th-callbar-mobile-bg);
   border-top: 1px solid var(--th-callbar-mobile-border);
   transition: opacity var(--th-dur-slow) linear, transform var(--th-dur-slow) cubic-bezier(0.33, 1, 0.68, 1);
+}
+/* 12.1.18: the buttons zoom down to fit a narrow phone (Mobile.tsx fitPhoneBar sets --th-phone-bar-fit; unset = 1) */
+.bar > :not([data-button-row]),
+.bar > [data-button-row] > * {
+  zoom: var(--th-phone-bar-fit, 1);
 }
 .hideDown {
   opacity: 0;
@@ -157,7 +162,7 @@
 }
 .pillText {
   font-weight: 700;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -58,7 +58,7 @@
 }
 .dieMobile {
   height: 40px;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 
 /* ---- the expression (L) ---- */
@@ -215,11 +215,11 @@
 }
 .rowMobile {
   height: 44px;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .rowMobile .rowExpr,
 .rowMobile .rowWhen {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 
 /* ---- clear ---- */
@@ -301,5 +301,5 @@
 
 /* ---- phones ---- */
 .body[data-mobile] .cardHead {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }

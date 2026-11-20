@@ -8,7 +8,8 @@ import { Icon, Slider, Menu, MenuItem } from "@/ui";
 import { getPref, setPref } from "@/core/prefs";
 import { registerAuxWindow } from "@/core/winstate";
 import { setPopouts, setPopoutTiles } from "@/features/calls";
-import { act, getC, isShareTile, tileName, ui, useC, useCallUi, type PipEntry, type Tile } from "./store";
+import { act, getC, isShareTile, tileMxid, tileName, ui, useC, useCallUi, type PipEntry, type Tile } from "./store";
+import { PrestigeFor } from "@/features/spaces/PersonName";
 import s from "./Pip.module.css";
 
 const MIN_W = 260,
@@ -253,6 +254,7 @@ export function PipWindow({ entry, docWindow }: { entry: PipEntry; docWindow: bo
     return () => window.clearInterval(iv);
   }, [entry.tileId]);
   const stripOn = hov || intro || !!menuAt;
+  const callRoom = useC("roomId");
   // another surface (tile menu, nav strip) may have changed this person's dial meanwhile
   useEffect(() => {
     if (!stripOn) return;
@@ -269,6 +271,7 @@ export function PipWindow({ entry, docWindow }: { entry: PipEntry; docWindow: bo
         </div>
       )}
       <div className={s.caption}>
+        <PrestigeFor mxid={tileMxid(entry.participant)} roomId={callRoom} />
         {entry.name}
         {entry.isShare ? " — stream" : ""}
       </div>

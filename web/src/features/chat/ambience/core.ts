@@ -306,6 +306,13 @@ export function imageShown(bg: Background, room: string, ev: ImageEvent | null):
 }
 /** Custom image limits: re-encoded as JPEG (no metadata can survive), ≤ 2560 px on the long side, ≤ 1.5 MB. */
 export const IMAGE_MAX_SIDE = 2560;
+/** What "Your own image…" offers (12.1.17): every picture format the image is re-encoded from, HEIC / HEIF too (an
+ *  iPhone camera's format: the 12.1.16 list left them out, so the Files picker greyed them out without a word). A
+ *  picked picture this device can't decode gets AMBIENCE_WORDS.customFormat, never a silent nothing. The desktop's
+ *  file dialog filters by the same extensions (image_pick_exts). */
+export const IMAGE_PICK_EXTS: readonly string[] = ["png", "jpg", "jpeg", "gif", "webp", "avif", "heic", "heif"];
+/** The web picker's accept list for those (MIME types: iOS Photos then hands over the picture as is or converted). */
+export const IMAGE_PICK_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/avif,image/heic,image/heif";
 export const IMAGE_MAX_BYTES = 1_500_000;
 /** JPEG qualities tried in turn; after the last, the image is scaled by IMAGE_SHRINK and the ladder starts again. */
 export const IMAGE_QUALITIES: readonly number[] = [0.85, 0.75, 0.65];
@@ -643,7 +650,8 @@ function clamp(x: number, a: number, b: number): number {
 
 // ---- the simulation -----------------------------------------------------------------------------------------------
 export interface Collider {
-  /** stable id (the message's event id, "composer", …): pools / snow lines follow it while it moves */
+  /** stable id ending in ":<kind>" (the row's key + SURFACE_KINDS, e.g. "$ev:b"): pools / snow lines follow it while it
+   *  moves; an id without a card kind is no surface (setColliders drops it) */
   id: string;
   x: number;
   y: number;
@@ -652,6 +660,19 @@ export interface Collider {
   /** the top-left / top-right corner radii (a bubble's rounded top): pools and snow follow the curve there */
   rl?: number;
   rr?: number;
+}
+/** What particles may settle on: the visible message cards only. A collider's id ends in ":<kind>" with kind b (a
+ *  message bubble), n (a sender name), d (a day pill) or r (a message's reaction chips, their own rect). Never a
+ *  container, a divider or a whole row: 12.1.17, the web's NEW line (a full-width 18 px box whose only ink is a 1 px
+ *  rule) caught the phone's rain on an invisible line and kept it off every card below. Shared rule:
+ *  testvectors/ambience/surfaces.json (the desktop's surface_kind). */
+export const SURFACE_KINDS: readonly string[] = ["b", "n", "d", "r"];
+/** The card kind an id ends in (after its last ":"), or null: not a surface. */
+export function surfaceKind(id: string): string | null {
+  const i = id.lastIndexOf(":");
+  if (i < 0) return null;
+  const k = id.slice(i + 1);
+  return SURFACE_KINDS.includes(k) ? k : null;
 }
 /** The y of a collider's top edge at x (its rounded corners curve down; square = c.y). */
 export function topAt(c: Collider, x: number): number {
@@ -741,12 +762,12 @@ export class AmbienceSim {
     this.w = w;
     this.h = h;
   }
-  /** The colliders this frame, top to bottom as drawn. Ledges of colliders that left are dropped; a column count that
-   *  changed (a bubble resized) starts its ledge again. */
+  /** The colliders this frame, top to bottom as drawn: the cards among them (surfaceKind), nothing else. Ledges of
+   *  colliders that left are dropped; a column count that changed (a bubble resized) starts its ledge again. */
   setColliders(cols: readonly Collider[]): void {
-    this.cols = cols.slice();
+    this.cols = cols.filter((c) => surfaceKind(c.id) !== null);
     const keep = new Set<string>();
-    for (const c of cols) {
+    for (const c of this.cols) {
       keep.add(c.id);
       const n = Math.max(1, Math.floor(c.w / COL_W));
       const l = this.ledges.get(c.id);

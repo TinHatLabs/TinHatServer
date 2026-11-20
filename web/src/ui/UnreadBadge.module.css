@@ -3,15 +3,15 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  height: 17px;
+  height: calc(17px * var(--th-text-scale, 1));
   min-width: 17px;
   padding: 0 4px;
   border-radius: 8.5px;
   background: var(--th-badge-count-bg);
   color: var(--th-badge-count-fg);
   font-weight: 700;
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   white-space: nowrap;
 }
 .hl {

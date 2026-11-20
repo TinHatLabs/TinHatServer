@@ -7,6 +7,7 @@ import { bus, openSettings, openWindow, toast } from "@/core/bus";
 import { getSession, getCryptoStatus, peekClient, useCryptoStatus } from "@/core/matrix";
 import { getFormFactor } from "@/core/device";
 import { serverFeatureOn } from "@/core/server";
+import { pickFiles } from "@/core/filePick";
 import {
   menuValue,
   useRegistry,
@@ -100,10 +101,11 @@ export function RegistryMenuItems<Ctx>({ items, ctx }: { items: MenuContribution
                 {sub.map((si) => (
                   <Fragment key={si.id}>
                     {si.separatorBefore && <MenuSeparator />}
+                    {si.section && <MenuSectionLabel text={si.section} />}
                     {si.checked !== undefined ? (
                       <CheckMenuItem text={si.label} icon={si.icon} checked={si.checked} disabled={si.enabled === false} trailing={si.swatch && <ThemeSwatch colours={si.swatch} />} onTriggered={si.run} />
                     ) : (
-                      <MenuItem text={si.label} icon={si.icon} disabled={si.enabled === false} trailing={si.swatch && <ThemeSwatch colours={si.swatch} />} onTriggered={si.run} />
+                      <MenuItem text={si.label} icon={si.icon} disabled={si.enabled === false} trailing={si.swatch && <ThemeSwatch colours={si.swatch} />} className={si.note ? mc.note : undefined} onTriggered={si.run} />
                     )}
                   </Fragment>
                 ))}
@@ -378,16 +380,8 @@ export function registerNavMenus(r: Registries): void {
     label: "Change photo…",
     icon: "insert-image-symbolic",
     visible: yieldTo(m, 80, (c) => isOpen(c.roomId) && canChangeAvatar(c.roomId)),
-    run: (c) => {
-      const inp = document.createElement("input");
-      inp.type = "file";
-      inp.accept = "image/png,image/jpeg,image/gif,image/webp";
-      inp.onchange = () => {
-        const f = inp.files?.[0];
-        if (f) void setRoomPhoto(c.roomId, f);
-      };
-      inp.click();
-    },
+    // 12.1.17: through pickFiles (an input kept in the document: iOS drops a detached one's pick from Photos)
+    run: (c) => pickFiles({ accept: "image/png,image/jpeg,image/gif,image/webp" }, ([f]) => void setRoomPhoto(c.roomId, f)),
   });
   m.add({
     id: "nav.removePhoto",

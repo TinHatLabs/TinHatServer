@@ -8,6 +8,7 @@ import { useState } from "react";
 import { create } from "zustand";
 import { toast } from "@/core/bus";
 import { usePref } from "@/core/prefs";
+import { pickFiles } from "@/core/filePick";
 import { recorderMxid, serverFeatureOn, useServerFeature } from "@/core/server";
 import { canSendState, CLIP_TYPE, ensureWritable, getClient, inviteWithoutHistory, peekClient, RECORD_TYPE, sendState, useRoomState } from "@/core/matrix";
 import type { Registries } from "@/core/registry";
@@ -144,15 +145,8 @@ export function startMusic(fileOrUrl: File | string): void {
 }
 
 export function pickMusicFile(): void {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".mp3,.flac,.ogg,.opus,.wav,.m4a,.aac,audio/*";
-  input.title = "Play music in call";
-  input.onchange = () => {
-    const f = input.files?.[0];
-    if (f) startMusic(f);
-  };
-  input.click();
+  // 12.1.17: through pickFiles (an input kept in the document: iOS drops a detached one's pick)
+  pickFiles({ accept: ".mp3,.flac,.ogg,.opus,.wav,.m4a,.aac,audio/*", title: "Play music in call" }, ([f]) => startMusic(f));
 }
 
 // ---- call-header pieces ------------------------------------------------------------------------------

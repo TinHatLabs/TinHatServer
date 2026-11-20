@@ -61,8 +61,8 @@
   cursor: default;
 }
 .tbdGlyph {
-  font-size: 18px;
-  line-height: 22px;
+  font-size: calc(18px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
 }
 .tbdText {
   font-size: calc(var(--th-font-size) * 0.75);
@@ -249,7 +249,7 @@
   height: 84px;
 }
 .body[data-mobile] .title {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .game,
 .body[data-mobile] .when,
@@ -257,7 +257,7 @@
 .body[data-mobile] .day,
 .body[data-mobile] .rowGame,
 .body[data-mobile] .rowTime {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .row {
   height: 44px;

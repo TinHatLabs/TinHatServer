@@ -84,7 +84,7 @@
   background: transparent;
   color: var(--th-dock-tab-fg);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   font-weight: 600;
   overflow: hidden;
   white-space: nowrap;

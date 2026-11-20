@@ -151,10 +151,10 @@
   gap: 10px;
 }
 .body[data-mobile] .name {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .when,
 .body[data-mobile] .line2,
 .body[data-mobile] .moreLine {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }

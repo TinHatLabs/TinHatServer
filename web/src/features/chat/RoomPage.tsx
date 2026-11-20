@@ -9,21 +9,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBus, bus, startCall } from "@/core/bus";
 import { useRegistry } from "@/core/registry";
-import { useDmFace, useRoomName, useRoomAvatar, useMembers, useRoomState, useSession } from "@/core/matrix";
+import { useDmFace, useRoomName, useRoomAvatar, useMembers, useMyMembership, useRoomState, useSession } from "@/core/matrix";
 import { useCall } from "@/features/calls";
 import { CallHeaderChips } from "@/features/callui";
 import { PadButton, padCallText, pickTarget, useDeviceName, usePadTargets } from "@/features/pad";
 import * as spacesFeature from "@/features/spaces";
-import { Avatar, GlowButton, HeaderIconButton, Icon, OverlayPortal, Popover, avatarSeed, cx } from "@/ui";
+import { Avatar, GlowButton, HeaderButtonLabel, HeaderIconButton, Icon, OverlayPortal, Popover, avatarSeed, cx } from "@/ui";
 import type { ItemOut } from "@/actions/evaluate";
 import { Dim, EditableRow, RowButton, bespokeOk, shownItems, useRow, type RowState } from "@/actions/ui/rowHost";
 import type { RoomHeaderActionContribution } from "@/core/registry";
 import { OnThisPhone } from "@/features/native";
 import { ConversationView } from "./ConversationView";
 import { mainView } from "./store";
+import { phoneMoreMenuRows } from "./moreMenuRows";
 import { callBannerText, useRoomCallInfo } from "./roomCall";
 import type { RoomPageProps } from "./types";
 import s from "./RoomPage.module.css";
+import { PersonName } from "@/features/spaces/PersonName";
 
 export function RoomPage({ roomId, eventId, callSlot, rightPanelSlot, leftInset = 0, mobile = false, onBack }: RoomPageProps) {
   const callShown = useCall((c) => c.shown);
@@ -118,6 +120,10 @@ export function RoomHeaderBar({ roomId, leftInset = 0, mobile, onBack, bgRadius 
     return () => ro.disconnect();
   }, [mobile]);
   const item = (it: ItemOut, i: number) => headerItem(row, hosts, it, i, roomId);
+  // phones: the room menu rows the More sheet repeats (PHONE_MORE_ROOM_MENU), read when they change (my membership)
+  const roomMenu = useRegistry("roomMenu");
+  const membership = useMyMembership(roomId);
+  const menuRows = useMemo(() => (mobile ? phoneMoreMenuRows(roomMenu, { roomId }) : []), [mobile, roomMenu, roomId, membership]);
   if (mobile) {
     // phones: the call button in the bar, everything else (the features' chips first) in the "More" popover
     const shown = shownItems(row);
@@ -143,19 +149,33 @@ export function RoomHeaderBar({ roomId, leftInset = 0, mobile, onBack, bgRadius 
             bus.emit("openRightPanel", { roomId });
           }}
         >
-          <span className={s.title}>{name || "Room"}</span>
+          <span className={s.title}>{dm.peer ? <PersonName mxid={dm.peer} roomId={roomId}>{name || "Room"}</PersonName> : name || "Room"}</span>
           {sub && <span className={s.sub}>{sub}</span>}
         </div>
         {primary.map(({ item: it, i }) => item(it, i))}
-        {rest.length + extras.length > 0 && (
+        {rest.length + extras.length + menuRows.length > 0 && (
           <>
             <HeaderIconButton ref={moreBtn} iconName="overflow-menu-symbolic" tip="More" size={44} onClick={() => setMore((m) => !m)} />
             <Popover open={more} onClose={() => setMore(false)} anchor={moreBtn.current} title={name || "Room"}>
+              {/* every button a labelled row (12.1.17: icons alone were confusing): a row item says the actions
+                  contract's words (its shortLabel, else its label — what the labelled row looks draw); a feature's own
+                  button (Threads) its own tip, the words the desktop header uses for it */}
               <div className={s.moreRow} onClick={() => setMore(false)}>
                 {extras.map((a) => (
-                  <a.component key={a.id} roomId={roomId} />
+                  <HeaderButtonLabel key={a.id}>
+                    <a.component roomId={roomId} />
+                  </HeaderButtonLabel>
                 ))}
-                {rest.map(({ item: it, i }) => item(it, i))}
+                {rest.map(({ item: it, i }) => (
+                  <HeaderButtonLabel key={`${it.a}:${i}`} label={it.shortLabel ?? it.label}>
+                    {item(it, i)}
+                  </HeaderButtonLabel>
+                ))}
+                {menuRows.map((m) => (
+                  <HeaderButtonLabel key={m.id} label={m.label}>
+                    <HeaderIconButton iconName={m.icon} tip={m.label} size={44} data-more-menu-row={m.id} onClick={m.run} />
+                  </HeaderButtonLabel>
+                ))}
               </div>
             </Popover>
           </>
@@ -170,7 +190,7 @@ export function RoomHeaderBar({ roomId, leftInset = 0, mobile, onBack, bgRadius 
     <header ref={headRef} className={s.header} data-room-header={roomId} style={bgRadius > 0 ? { paddingLeft: 8 + leftInset, borderRadius: bgRadius } : { paddingLeft: 8 + leftInset }}>
       <Avatar size={32} name={name || "Room"} seed={avatarSeed(roomId, dm.peer)} imageSource={avatar || dm.avatar} />
       <div className={s.titleCol}>
-        <span className={s.title}>{name || "Room"}</span>
+        <span className={s.title}>{dm.peer ? <PersonName mxid={dm.peer} roomId={roomId}>{name || "Room"}</PersonName> : name || "Room"}</span>
         {sub && <span className={s.sub}>{sub}</span>}
       </div>
       {headW > 612 &&

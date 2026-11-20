@@ -72,8 +72,8 @@
   min-width: 0;
 }
 .cal {
-  font-size: 14px;
-  line-height: 19px;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  line-height: calc(19px * var(--th-text-scale, 1));
 }
 .kind {
   flex: 1 1 auto;
@@ -231,16 +231,16 @@ html[data-ff="mobile"] .chipHost {
   text-align: left;
 }
 .nextUpRowTitle {
-  font-size: 16px;
-  line-height: 20px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .nextUpRowSub {
-  font-size: 13px;
-  line-height: 17px;
+  font-size: calc(13px * var(--th-text-scale, 1));
+  line-height: calc(17px * var(--th-text-scale, 1));
   color: var(--th-header-next-up-sub-fg);
   white-space: nowrap;
   overflow: hidden;

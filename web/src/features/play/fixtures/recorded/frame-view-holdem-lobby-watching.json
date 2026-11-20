@@ -1,0 +1,46 @@
+{
+ "t": "view",
+ "table": "tHSkMyPt5zikh4in",
+ "vseq": 24,
+ "view": {
+  "game": "holdem",
+  "table": "tHSkMyPt5zikh4in",
+  "room": "!table:example.org",
+  "space": "!gamenight:example.org",
+  "owner": "example.org",
+  "vseq": 24,
+  "now": 1795132584225,
+  "status": "lobby",
+  "host": "@cy:example.org",
+  "opts": {
+   "sb": 1,
+   "bb": 2,
+   "seats": 8,
+   "turn_s": 30
+  },
+  "seats": [
+   {
+    "seat": 2,
+    "u": "@cy:example.org",
+    "stack": 10,
+    "bet": 0,
+    "state": "waiting",
+    "cards": 0,
+    "connected": true
+   },
+   {
+    "seat": 3,
+    "u": "@ben:example.org",
+    "stack": 27,
+    "bet": 0,
+    "state": "waiting",
+    "cards": 0,
+    "connected": true
+   }
+  ],
+  "hand": null,
+  "result": null,
+  "closed": null,
+  "spectators": 2
+ }
+}

@@ -16,6 +16,7 @@ import { isErrorStatus, useSettingsUi } from "../store";
 import { Buttons, Card, Hint, Row, Section } from "../rows";
 import p from "./panes.module.css";
 import dlg from "../dialogs.module.css";
+import { PersonName } from "@/features/spaces/PersonName";
 
 const SWATCHES = ["#7aa2f7", "#bb9af7", "#9ece6a", "#e0af68", "#f7768e", "#2ac3de"];
 
@@ -105,7 +106,9 @@ export function ProfilePane() {
         <div className={p.headRow} data-setting="profile.photo">
           <Avatar size={72} name={prof.displayName || localpart(userId)} seed={userId} imageSource={avatarUrl} />
           <div className={p.headText}>
-            <span className={p.headName}>{prof.displayName || localpart(userId)}</span>
+            <span className={p.headName}>
+              <PersonName mxid={userId}>{prof.displayName || localpart(userId)}</PersonName>
+            </span>
             <span className={p.headSub}>{userId}</span>
           </div>
           <Buttons className={p.headButtons}>

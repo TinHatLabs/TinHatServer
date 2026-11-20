@@ -32,6 +32,10 @@
 .swatch:disabled {
   cursor: default;
 }
+/* 12.1.17: a choice someone who can't change the background can't pick (the desktop's tileOpacity, same 0.5) */
+.locked {
+  opacity: 0.5;
+}
 .swatch:focus-visible,
 .selected {
   outline-color: var(--th-accent-base);

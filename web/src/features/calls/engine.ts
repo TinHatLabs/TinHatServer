@@ -133,7 +133,8 @@ export const hooks = {
   onTeardown: [] as Array<(roomId: string) => void>,
   onParticipantJoined: [] as Array<(s: Sess, p: RemoteParticipant) => void>,
   onParticipantLeft: [] as Array<(s: Sess, p: RemoteParticipant) => void>,
-  onData: [] as Array<(s: Sess, topic: string, payload: Record<string, unknown>, from: string) => void>,
+  // `text` = the packet as decoded UTF-8 (12.1.17: unmuteask.ts applies the desktop's exact text rule to it)
+  onData: [] as Array<(s: Sess, topic: string, payload: Record<string, unknown>, from: string, text: string) => void>,
   onPermissionChanged: [] as Array<(s: Sess) => void>,
   onRemoved: [] as Array<(s: Sess) => string>, // returns the moderator label if known
   micPublishBlocked: (_roomId: string): { muted: boolean; by: string } => ({ muted: false, by: "" }),
@@ -3945,15 +3946,17 @@ function wireRoom(s: Sess) {
     .on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
       if (sess() !== s || !topic || !participant) return;
       let obj: unknown;
+      // (the hooks get the text with any byte-order mark kept, as the desktop sees it; the object as before)
+      const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(payload);
       try {
-        obj = JSON.parse(new TextDecoder().decode(payload));
+        obj = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
       } catch {
         return;
       }
       if (!obj || typeof obj !== "object" || Array.isArray(obj)) return;
       for (const h of hooks.onData) {
         try {
-          h(s, topic, obj as Record<string, unknown>, participant.identity);
+          h(s, topic, obj as Record<string, unknown>, participant.identity, text);
         } catch (e) {
           log.debug(`data ${topic} from ${participant.identity}: ${errText(e)}`);
         }

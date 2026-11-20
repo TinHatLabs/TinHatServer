@@ -7,6 +7,7 @@
 // FRACTIONAL value can't be stored — such a row is flagged and Save is disabled with the hint.
 import { useEffect, useRef, useState } from "react";
 import { cx } from "@/ui";
+import { PersonName } from "@/features/spaces/PersonName";
 import { useGames, saveSettings, simulate, resetCredits, voidSpin, adjustCredit, zeroCredit } from "../gamesStore";
 import { FLOAT_REFUSAL } from "../model/games";
 import { ReelButton } from "./ReelParts";
@@ -75,6 +76,7 @@ export function GameNightAdmin() {
   const busy = useGames((x) => x.busy);
   const spin = useGames((x) => x.snap?.spin ?? null);
   const people = useGames((x) => x.snap?.credits ?? []);
+  const container = useGames((x) => x.containerId);
   const [settings, setSettings] = useState<Json>(stored);
   const [dirty, setDirty] = useState(false);
   const simTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,7 +182,7 @@ export function GameNightAdmin() {
           {people.map((p) => (
             <div key={p.mxid} className={s.creditRow} data-mxid={p.mxid}>
               <span className={s.admLabel} title={p.hasFavorite ? p.mxid : p.mxid + " — no favourite, so no credit counts yet"}>
-                {p.name}
+                <PersonName mxid={p.mxid} roomId={container}>{p.name}</PersonName>
               </span>
               <span className={cx(s.creditVal, !p.hasFavorite && s.creditNone)} data-testid="reel-credit-value">
                 {String(p.credit)}

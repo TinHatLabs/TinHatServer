@@ -23,6 +23,26 @@ export function newPillShown(hasLine: boolean, waiting: boolean, seen: boolean):
   return (hasLine || waiting) && !seen;
 }
 
+/** 12.1.17 round 2 (memories-hide-chat review #6 + its review): the row carrying NEW left the chat (its photo went into
+ *  Memories): NEW moves to the first row strictly later than it (a row at the same time may be older: NEW never moves
+ *  back) that is someone else's and no echo, never past the freeze-time tail (its row, else its time tailTs; 0 = no
+ *  limit); none left = "" (NEW goes). A divider still among the rows (or none) stays. */
+export function dividerAfterHide(rows: ReadonlyArray<{ id: string; sender: string; ts: number; echo?: boolean }>, divider: string, dividerTs: number, me: string, tail: string, tailTs: number): string {
+  if (!divider || rows.some((r) => r.id === divider)) return divider;
+  let end = rows.length;
+  if (tail)
+    for (let t = rows.length - 1; t >= 0; t--)
+      if (rows[t]!.id === tail) {
+        end = t + 1;
+        break;
+      }
+  for (let i = 0; i < end; i++) {
+    const r = rows[i]!;
+    if (r.id !== divider && r.ts > dividerTs && (tailTs <= 0 || r.ts <= tailTs) && r.sender !== me && r.echo !== true) return r.id;
+  }
+  return "";
+}
+
 /** A05.2: a day separator names the year when the day isn't in this year ("Tue, Jun 15, 2025"). */
 export function dayNeedsYear(ts: number, now: number): boolean {
   return new Date(ts).getFullYear() !== new Date(now).getFullYear();

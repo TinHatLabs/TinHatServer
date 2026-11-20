@@ -9,7 +9,7 @@
 // must read as on/off). A danger action's glyph and label are red; a primary action is the CTA (GlowButton).
 // Colours only from theme tokens; nothing animates at rest (hover / press transitions are the house buttons').
 import { forwardRef, useEffect, useRef, type CSSProperties, type MouseEvent, type PointerEvent as RPointerEvent } from "react";
-import { Avatar, GlowButton, HeaderIconButton, Icon, ToolButton, cx, useIsMobile } from "@/ui";
+import { Avatar, GlowButton, HeaderIconButton, Icon, ToolButton, cx, useInHeaderButtonLabel, useIsMobile } from "@/ui";
 import type { ItemOut } from "../evaluate";
 import type { Look, Scale } from "../table";
 import { HoldLatch, holdTargetGone } from "./holdLatch";
@@ -41,6 +41,8 @@ export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(fun
   ref,
 ) {
   const mobile = useIsMobile();
+  // the phone room header's ⋯ More sheet (HeaderButtonLabel): a labelled list row whatever the row's look
+  const sheetRow = useInHeaderButtonLabel();
   const dimmed = item.state !== "shown" || !item.known;
   const faint = item.state === "hidden";
   const tip = item.tip ?? item.label;
@@ -115,7 +117,7 @@ export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(fun
       />
     );
   }
-  if (rowStyle === "header" && glyph && look === "icon") {
+  if (rowStyle === "header" && glyph && (look === "icon" || sheetRow)) {
     return (
       <HeaderIconButton
         ref={ref}
@@ -127,6 +129,7 @@ export const ActionButton = forwardRef<HTMLButtonElement, ActionButtonProps>(fun
         size={scale === "M" || mobile ? 44 : 36}
         disabled={dimmed && !editing}
         onClick={click}
+        {...(sheetRow ? holdHandlers : {})}
         {...common}
       />
     );

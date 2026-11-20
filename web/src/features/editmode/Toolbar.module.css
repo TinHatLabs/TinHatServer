@@ -27,7 +27,7 @@
   max-width: calc(100% - 16px);
 }
 .name {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-text-secondary);
   padding: 0 6px;
   overflow: hidden;
@@ -58,7 +58,7 @@
   background: transparent;
   color: var(--th-text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   cursor: pointer;
   flex: none;
 }
@@ -96,15 +96,15 @@
 }
 .badge {
   min-width: 16px;
-  height: 16px;
+  height: calc(16px * var(--th-text-scale, 1));
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 8px;
   background: var(--th-badge-bg);
   color: var(--th-text-on-accent);
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
   font-weight: 600;
-  line-height: 16px;
+  line-height: calc(16px * var(--th-text-scale, 1));
   text-align: center;
 }
 .confirm {
@@ -112,7 +112,7 @@
   flex-direction: column;
   gap: 10px;
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-text-primary);
 }
 .confirmRow {
@@ -152,12 +152,12 @@
   line-height: 1.25;
 }
 .rowText b {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   font-weight: 600;
   color: var(--th-text-primary);
 }
 .rowText span {
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   color: var(--th-text-secondary);
   overflow: hidden;
   white-space: nowrap;
@@ -165,7 +165,7 @@
 }
 .empty {
   padding: 12px;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   color: var(--th-text-secondary);
   white-space: normal;
 }
@@ -230,7 +230,7 @@
   gap: 4px;
 }
 .lookLabel {
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   color: var(--th-text-secondary);
   padding-right: 4px;
 }
@@ -243,7 +243,7 @@
   background: transparent;
   color: var(--th-text-primary);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   cursor: pointer;
   flex: none;
 }
@@ -276,7 +276,7 @@
 }
 .btnNone {
   padding: 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   color: var(--th-text-secondary);
   white-space: normal;
 }
@@ -287,7 +287,7 @@
   display: flex;
   align-items: flex-end;
   padding: 0 8px 4px;
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
   font-weight: 600;
   text-transform: uppercase;
   color: var(--th-text-secondary);
@@ -325,7 +325,7 @@
   position: absolute;
   left: 34px;
   right: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -344,7 +344,7 @@
   gap: 6px;
 }
 .drawerIntro {
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   color: var(--th-text-secondary);
   white-space: normal;
 }

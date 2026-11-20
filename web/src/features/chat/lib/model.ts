@@ -13,6 +13,7 @@ import { START_TYPES, readStart } from "@/widgets/polls";
 import { currentRelation } from "@/core/matrix/moved";
 import type { MyReceipt } from "../threads/core";
 import { evLike, fallbackQuote, rootThread, threadPlan, type ThreadInfo } from "../threads/rows";
+import { CHAT_WORDS } from "@/features/media/memories/photos";
 export type { ThreadInfo } from "../threads/rows";
 import { isInlineImage, isScriptableType, mimeEssence } from "@/core/mediatype";
 import { PHOTO_LOCATION_FAIL } from "@/core/photoUpload";
@@ -91,6 +92,8 @@ export interface Row {
   threadId: string;
   /** threads: set on a thread root in the main timeline */
   thread: ThreadInfo | null;
+  /** 12.1.17 Memories: a quiet message (a photo posted by "Add photos"): no receive sound, not counted as new */
+  quiet?: boolean;
 }
 
 export interface UploadEcho {
@@ -111,6 +114,8 @@ export interface UploadEcho {
   /** threads: the thread it is sent into ("" / absent = the main timeline) and that thread's newest event then */
   thread?: string;
   threadLatest?: string;
+  /** 12.1.17: sent by Memories' "Add photos" (carries the Memories marker; no chat echo while it uploads) */
+  memories?: boolean;
 }
 
 type C = Record<string, unknown>;
@@ -213,11 +218,19 @@ export interface BuildOpts {
   /** threads (docs/THREADS.md): view null = the main timeline (thread replies hidden, summaries on roots), a root =
    *  that thread's panel (its events only, the spec's fallback quotes hidden); absent = no thread handling */
   threads?: { view: string | null; receipts: MyReceipt[]; now?: number };
+  /** 12.1.17 Memories (media/memories/chatHide.ts): an event the chat hides (its sender's own Memories list names it;
+   *  the photo still heads its own comments' thread panel) and a quiet one (no sound, not new). Absent = none. */
+  memories?: { hidden: (ev: MatrixEvent) => boolean; quiet: (ev: MatrixEvent) => boolean };
 }
 
 
-export function buildRows({ room, me, myName, events, uploads, pinned, threads }: BuildOpts): Row[] {
+/** 12.1.17: what a reply to a photo that is in Memories (hidden from the chat) quotes. Same words on the desktop. */
+export const IN_MEMORIES_QUOTE = CHAT_WORDS.quote;
+
+export function buildRows({ room, me, myName, events, uploads, pinned, threads, memories }: BuildOpts): Row[] {
   const pinnedSet = new Set(pinned);
+  // 12.1.17: Memories photos the chat hides (id → sender, for the quotes of replies to them)
+  const inMemories = new Map<string, string>();
   // threads (threads/rows.ts): which thread each event is in, which are rows in this view, the replies per root
   const live = threads ? events.filter((ev) => ev.status !== EventStatus.CANCELLED) : [];
   const likes = live.map((ev) => evLike(ev, isLocallyRedacted(ev)));
@@ -264,6 +277,11 @@ export function buildRows({ room, me, myName, events, uploads, pinned, threads }
     const threadId = plan && pi !== undefined ? plan.tids[pi] : "";
     // threads: the main timeline leaves thread replies out (the spec's behaviour); a thread's panel shows its own
     if (plan && pi !== undefined && !plan.inView[pi]) continue;
+    // 12.1.17: a photo in its sender's Memories leaves the chat (it still heads its own comments' thread panel)
+    if (memories && !(threads?.view && ev.getId() === threads.view) && memories.hidden(ev)) {
+      inMemories.set(ev.getId() ?? "", ev.getSender() ?? "");
+      continue;
+    }
     const id = ev.getId() ?? ev.getTxnId() ?? "";
     const sender = ev.getSender() ?? "";
     const mine = sender === me;
@@ -357,6 +375,7 @@ export function buildRows({ room, me, myName, events, uploads, pinned, threads }
       thread: null,
     };
     // threads: the summary under a root (the server's bundled aggregation + the replies seen since)
+    if (memories?.quiet(ev)) row.quiet = true;
     if (plan && threads && threads.view === null && row.eventId && !redacted && pi !== undefined)
       row.thread = rootThread(likes[pi], plan.seen, me, threads.receipts, (u) => displayName(room, u), plan.tsOf);
     row.onlyEmbed = row.embeds.length > 0 && bodyIsOnlyEmbed(body);
@@ -395,6 +414,8 @@ export function buildRows({ room, me, myName, events, uploads, pinned, threads }
   for (const u of uploads) {
     // threads: an upload echo shows where it is going (the main timeline, or its thread's panel)
     if (threads && (u.thread ?? "") !== (threads.view ?? "")) continue;
+    // 12.1.17: a photo on its way to Memories doesn't show in the chat while it uploads (a failed one does: Retry)
+    if (u.memories && u.state === "uploading") continue;
     const kind = u.msgtype;
     const r: Row = {
       id: u.id,
@@ -445,6 +466,11 @@ export function buildRows({ room, me, myName, events, uploads, pinned, threads }
   for (const r of rows) {
     if (!r.replyTo) continue;
     const p = byId.get(r.replyTo.id);
+    const memSender = inMemories.get(r.replyTo.id);
+    if (!p && memSender !== undefined) {
+      r.replyTo = { id: r.replyTo.id, loaded: true, sender: memSender, name: displayName(room, memSender), body: IN_MEMORIES_QUOTE };
+      continue;
+    }
     if (p) {
       r.replyTo = {
         id: p.id,

@@ -1299,6 +1299,14 @@ CADDY_API = """\
 			header_up X-Forwarded-For {client_ip}
 		}
 	}
+	handle_path /api/play/* {
+		request_body {
+			max_size 64KB
+		}
+		reverse_proxy 127.0.0.1:3001 {
+			header_up X-Forwarded-For {client_ip}
+		}
+	}
 	handle_path /api/games/* {
 		reverse_proxy 127.0.0.1:3003 {
 			header_up X-Forwarded-For {client_ip}
@@ -1528,8 +1536,20 @@ def compose_env(server_name: str, s: dict, lan: bool, bundle: bool = False) -> s
         "CADDY_CA_FILE": "/etc/tinhat-ca/bundle.pem" if bundle else "",
         # Where this machine answers its own name (lk-jwt's extra_hosts; the same address /etc/hosts gives it).
         "TINHAT_SELF_IP": _self_ip(),
+        # the games database's loopback port (play.db_port: 5433, or a free spare on a machine where it is taken)
+        "TINHAT_PLAY_DB_PORT": str(_play_db_port()),
     }
     return "".join(f"{k}={v}\n" for k, v in lines.items())
+
+
+def _play_db_port() -> int:
+    """(Never fails a config write: any trouble = 0, i.e. no games database for now; Synapse is never affected.)"""
+    from . import play
+    try:
+        return play.db_port()
+    except Exception:  # noqa: BLE001
+        play.log.exception("games database: choosing the port")
+        return 0
 
 
 # ---- in front of the manager: limits on every route to it (M15) ------------------------------------------------------

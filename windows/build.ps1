@@ -38,7 +38,10 @@ $env:CARGO_TARGET_DIR = Join-Path $Stage 'target'
 # (0x1f-separated) keeps paths with spaces whole. The check after the build refuses a binary that still names them.
 $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
 $env:RUSTFLAGS = $null
-$env:CARGO_ENCODED_RUSTFLAGS = "--remap-path-prefix=$cargoHome=C:\cargo" + [char]0x1f + "--remap-path-prefix=$Stage=C:\build"
+# 0.3.19 (launch-gate 14:06): +crt-static links the C runtime into TinHatServer.exe, so it starts on a PC without Microsoft's
+# Visual C++ 2015-2022 runtime (a fresh Windows 11 has none: STATUS_DLL_NOT_FOUND for VCRUNTIME140.dll). It has to be HERE:
+# CARGO_ENCODED_RUSTFLAGS overrides every rustflags setting in .cargo/config.toml.
+$env:CARGO_ENCODED_RUSTFLAGS = "--remap-path-prefix=$cargoHome=C:\cargo" + [char]0x1f + "--remap-path-prefix=$Stage=C:\build" + [char]0x1f + "-Ctarget-feature=+crt-static"
 Push-Location (Join-Path $Stage 'tray')
 $out = Native "`"$cargo`" build --release --locked"
 $rc = $out[-1]; $out | Select-Object -SkipLast 1

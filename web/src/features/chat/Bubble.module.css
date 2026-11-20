@@ -19,7 +19,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-top: 4px;
+  padding-top: var(--th-gap-group, 4px); /* P22: a new sender's group — personal.ts gap(4); CV Th.gap(smallSpacing) */
   position: relative;
 }
 .grouped {
@@ -892,7 +892,7 @@
   border-radius: 11px;
   background: var(--th-embed-control-bg);
   color: var(--th-embed-overlay-fg);
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   display: flex;
   align-items: center;
   justify-content: center;

@@ -31,6 +31,7 @@ import { getDraftContainer, getEditorGen, isDirty, lockOption, mineOf, rsvp, sav
 import { focusOn, useByDay, useFocusRanges } from "./MonthView";
 import { openGameReel } from "../entry";
 import s from "./Calendar.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 const TIME_SLOTS = Array.from({ length: 96 }, (_, i) => fmtMinutes(i * 15));
 const myStatus = (ev: CalEvent | null) => (ev ? ev.my.status || "" : "");
@@ -336,6 +337,7 @@ function DetailTool({ icon, tip, onClick }: { icon: string; tip: string; onClick
 
 function Detail({ ev, actions }: { ev: CalEvent; actions: PaneActions }) {
   const canEdit = useCal((x) => x.canEdit);
+  const calRoom = useCal((x) => x.containerId);
   const games = useCal((x) => x.games);
   const g = ev.game ? games.find((x) => x.name.toLowerCase() === ev.game.toLowerCase()) ?? null : null;
   const mine = useMine(ev); // my answer incl. one still on its way
@@ -402,6 +404,7 @@ function Detail({ ev, actions }: { ev: CalEvent; actions: PaneActions }) {
       ) : null}
       <div className={s.row}>
         <Avatar size={20} name={ev.creator.name} seed={ev.createdBy} imageSource={ev.creator.avatar || null} />
+        {/* no prestige token: "Organised by <name>" is a sentence (GAMES-V1-SPEC §3.2) */}
         <span className={cx(s.small, s.dim)}>{"Organised by " + ev.creator.name}</span>
       </div>
       {ev.notes && <span className={s.wrap}>{ev.notes}</span>}
@@ -478,12 +481,14 @@ function Detail({ ev, actions }: { ev: CalEvent; actions: PaneActions }) {
           {ev.rsvp.yes.map((p) => (
             <span key={p.mxid} className={s.whoChip} style={{ background: "var(--th-calendar-who-yes-bg)" }}>
               <Avatar size={20} name={p.name} seed={p.mxid} imageSource={p.avatar || null} />
+              <PrestigeInRow mxid={p.mxid} roomId={calRoom} rowGap={5} />
               {p.name}
             </span>
           ))}
           {ev.rsvp.maybe.map((p) => (
             <span key={p.mxid} className={s.whoChip} style={{ background: "var(--th-calendar-who-maybe-bg)" }}>
               <Avatar size={20} name={p.name} seed={p.mxid} imageSource={p.avatar || null} />
+              <PrestigeInRow mxid={p.mxid} roomId={calRoom} rowGap={5} />
               {p.name + " (maybe)"}
             </span>
           ))}

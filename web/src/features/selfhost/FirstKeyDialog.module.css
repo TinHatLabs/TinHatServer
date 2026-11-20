@@ -29,8 +29,8 @@
   color: var(--th-input-fg);
   box-shadow: inset 0 0 0 1px var(--th-input-border);
   font-family: var(--th-font-mono);
-  font-size: 15px;
-  line-height: 26px;
+  font-size: calc(15px * var(--th-text-scale, 1));
+  line-height: calc(26px * var(--th-text-scale, 1));
   word-spacing: 0.35em;
   text-align: center;
   user-select: all;
@@ -65,12 +65,12 @@
 }
 .mobile .lead,
 .mobile .hint {
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
 }
 .mobile .key {
-  font-size: 17px;
-  line-height: 30px;
+  font-size: calc(17px * var(--th-text-scale, 1));
+  line-height: calc(30px * var(--th-text-scale, 1));
 }
 .mobile button {
   min-height: 48px;

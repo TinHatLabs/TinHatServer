@@ -156,6 +156,7 @@ export function installFakeCall(): void {
     serverMute: async () => "",
     serverUnmute: async () => "",
     disconnectParticipant: async () => "",
+    askToUnmute: async () => "",
     dismissIncoming: (roomId) => {
       if (roomId === FAKE_INCOMING.roomId) fakeIncomingDismissed = true;
       set({ incomingCalls: get().incomingCalls.filter((c) => c.roomId !== roomId) });

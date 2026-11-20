@@ -31,6 +31,14 @@ function subscribe(cb: () => void) {
   return () => listeners.delete(cb);
 }
 
+/** Outside React: called on every change of data-ff / data-touch (textSize.ts re-applies "Match my phone" on it). */
+export function onFormFactorAttrs(cb: () => void): () => void {
+  const off = subscribe(cb);
+  return () => {
+    off();
+  };
+}
+
 /** Set by the shell (from @/core/device). */
 export function setFormFactorAttrs(ff: FF, touch: boolean): void {
   const d = document.documentElement.dataset;

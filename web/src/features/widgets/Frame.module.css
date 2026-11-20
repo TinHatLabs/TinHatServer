@@ -167,10 +167,10 @@
   padding: 0 0 0 11px;
 }
 .frame[data-mobile] .title {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 .frame[data-mobile] .extra {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .frame[data-mobile] .menuBtn {
   width: 44px;
@@ -179,7 +179,7 @@
   border-radius: 12px;
 }
 .frame[data-mobile] .body {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 
 /* touch, desktop layout (iPad; M5, iPhone/iPad sweep 2026-10-25): the header (it folds the widget) and its options

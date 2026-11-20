@@ -258,7 +258,7 @@
 /* ---- Devices → "Trust this phone?": the device's fingerprint in the mono font, groups of four (docs/TRUST.md) */
 .trustFp {
   font-family: var(--th-font-mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   line-height: 1.6;
   word-spacing: 0.2em;
   user-select: all;
@@ -267,6 +267,6 @@
 }
 .trustNote {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-settings-error-fg);
 }

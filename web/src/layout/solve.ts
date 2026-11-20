@@ -490,6 +490,51 @@ class Solver {
     else b = mn;
     return clamp(b, mn, mx);
   }
+  /** v1.3 keep (§7.6 step 4a): a known island's registry keep along a, when its effective basis is auto or share (a
+   *  fixed or pm size is the user's own choice) and it is not folded — min(sc(len), fdiv(pm × L, 1000)); else null. */
+  keepLen(n: SN, a: Axis, L: number): number | null {
+    if (n.kind !== "island" || isCompatRef(n.ref) || this.folded.has(n.ref)) return null;
+    const kp = defOf(n.ref)?.keep[a];
+    if (!kp) return null;
+    const s = this.sizeOf(n, a);
+    if (s.fixed !== undefined || s.pm !== undefined) return null;
+    return Math.min(this.sc(kp.len), fdiv(kp.pm * L, 1000));
+  }
+  /** v1.3 keep donors: known islands whose registry allows `fold` (the widgets: their minimum is their folded height,
+   *  less than their natural folds or scrolls them). Nothing else gives way: an account bar or a container would clip
+   *  or overflow inside. */
+  keepDonor(n: SN): boolean {
+    if (n.kind !== "island" || isCompatRef(n.ref)) return false;
+    return !!defOf(n.ref)?.collapse.includes("fold");
+  }
+  /** v1.3 keep (§7.6 step 4a, Q-KEEP), after the grow / shrink passes and before squeeze-out: a child below its keep
+   *  takes the free length left over, then what its foldable auto / pm island siblings (no keep) hold above their
+   *  minimum, last child first. The free length is length no child had (Σ base stays ≤ L) and a transfer keeps Σ base,
+   *  so overflow, breach and squeeze-out are exactly v1.2's (squeeze-out happens only when every auto / pm child is
+   *  already at its minimum). */
+  keepMove(kids: SN[], a: Axis, L: number, base: number[], mins: number[], maxs: number[], free0: number): void {
+    const keeps = kids.map((c) => this.keepLen(c, a, L));
+    let free = free0;
+    for (let i = 0; i < kids.length; i++) {
+      const want = keeps[i];
+      if (want === null) continue;
+      let d = clamp(want, mins[i], maxs[i]) - base[i];
+      if (d <= 0) continue;
+      const f = Math.min(d, free);
+      base[i] += f;
+      free -= f;
+      d -= f;
+      for (let j = kids.length - 1; j >= 0 && d > 0; j--) {
+        if (j === i || keeps[j] !== null || !this.keepDonor(kids[j])) continue;
+        const s = this.sizeOf(kids[j], a);
+        if (!(s.auto || s.pm !== undefined)) continue;
+        const take = Math.min(d, Math.max(0, base[j] - mins[j]));
+        base[j] -= take;
+        base[i] += take;
+        d -= take;
+      }
+    }
+  }
   weight(n: SN, a: Axis): number {
     const s = this.sizeOf(n, a);
     if (s.fixed !== undefined || s.auto || s.pm !== undefined) return s.grow ?? 0;
@@ -565,6 +610,7 @@ class Solver {
           need -= take;
         }
       }
+      this.keepMove(kids, a, L, base, mins, maxs, 0);
       for (let i = k - 1; i >= 0; i--) {
         if (need <= 0) break;
         if (floors[i] === 0 && base[i] > 0) {
@@ -575,6 +621,7 @@ class Solver {
       }
       if (need > 0) breach = true;
     }
+    if (!over) this.keepMove(kids, a, L, base, mins, maxs, Math.max(0, R));
     return { base, mins, maxs, g, L, over, breach, squeezed };
   }
 

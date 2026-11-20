@@ -16,6 +16,7 @@ import { fetchProfileCard, linkify, type ProfileCard } from "./roomActions";
 import s from "./ProfileCard.module.css";
 import { PersonButtons } from "@/features/safety";
 import { linkContainerEvents } from "@/core/linkgate";
+import { PersonName } from "./PersonName";
 
 let preview: ClipHandle | null = null;
 
@@ -69,7 +70,9 @@ export function ProfileCardPopup({ roomId, mxid, name, avatar, onClose }: { room
         <div className={s.top}>
           <Avatar size={64} name={shownName} seed={mxid} imageSource={avatar} />
           <div className={s.names}>
-            <div className={s.name}>{shownName}</div>
+            <div className={s.name}>
+              <PersonName mxid={mxid} roomId={roomId}>{shownName}</PersonName>
+            </div>
             {/* REACH §2.6 place 4: a line under the name, led by the dot (nothing while absent) */}
             <PresenceLine mxid={mxid} />
             <div className={s.mxid}>{mxid}</div>

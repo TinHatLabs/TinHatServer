@@ -17,6 +17,8 @@
 #                                 `anywhere` is the way back in when your own address changed or a choice locked you out
 #   tinhat api-limits [NAME=VALUE ... | --reset NAME ... | --reset-all]
 #                                 the extras' limits (GIFs, sounds, YouTube; docs/API.md): show, set, back to default
+#   tinhat play config [day_max=N start=N enabled=on|off rig_phone_apps=on|off | --reset NAME ...] | tinhat play db
+#                                 the mini games: show / set the switches and the two numbers (docs/PLAY.md)
 #   tinhat adopt-synapse DIR @owner:server
 #                                 bring a Synapse that ran elsewhere under this server's name into this server
 #                                 (its database, media and signing key; everyone keeps their account): docs/ADOPT.md
@@ -114,6 +116,10 @@ PY
   api-limits)
     shift
     cd /opt/tinhat/manager && exec python3 -m tinhat api-limits "$@"
+    ;;
+  play)
+    shift
+    cd /opt/tinhat/manager && exec python3 -m tinhat play "$@"
     ;;
   dashboard-access)
     case "${2:-}" in ""|anywhere|home|only|add) ;; *) echo "usage: tinhat dashboard-access [anywhere | home | only ADDR[,ADDR...] | add ADDR[,ADDR...]]" >&2; exit 2 ;; esac

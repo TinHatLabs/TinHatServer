@@ -24,6 +24,7 @@ import { RETRY_PLAIN_MEDIA, RETRY_UNKNOWN, hasPlainMedia, retryVerdict } from ".
 import { reactKeyNorm } from "./lib/reactions";
 import { overUploadLimit } from "./lib/uploadLimit";
 import { uploadLimit } from "./voicenote/wire";
+import { POST_KEY as MEMORIES_POST_KEY } from "@/features/media/memories/photos";
 
 /** the same words as a server-side 413 (lib/model.ts failReason; the desktop's friendly_send_error) */
 const TOO_LARGE = "That file is too large for the server";
@@ -134,20 +135,23 @@ export async function editMessage(roomId: string, targetId: string, text: string
   }
 }
 
-export async function redactMessage(roomId: string, eventId: string): Promise<void> {
+/** → whether the delete went through (12.1.17: Memories' Delete says so; the chat ignores it). */
+export async function redactMessage(roomId: string, eventId: string): Promise<boolean> {
   try {
     await client().redactEvent(roomId, eventId);
   } catch (e) {
     console.warn("[chat] delete failed:", e);
     toast(failText("delete", failClass(e), false));
     dropFailedLocal(roomId);
-    return;
+    return false;
   }
   // QA W1: deleting a pinned message also unpins it, when I may edit the room's pins (pins.ts pinsAfterDelete; a pin I
   // may not take back is only hidden). After the delete went through, so a failed delete never loses the pin.
   const cur = (client().getRoom(roomId)?.currentState.getStateEvents("m.room.pinned_events", "")?.getContent() as Content | undefined)?.pinned;
   const pins = Array.isArray(cur) ? cur.filter((x): x is string => typeof x === "string") : [];
-  if (pinsAfterDelete(pins, eventId, canPin(roomId))) await setPinned(roomId, eventId, false);
+  // (review: a failed unpin never turns a delete that went through into a failure)
+  if (pinsAfterDelete(pins, eventId, canPin(roomId))) await setPinned(roomId, eventId, false).catch((e) => console.warn("[chat] unpin after delete failed:", e));
+  return true;
 }
 
 /** Failed optimistic edits/redactions/reactions roll back (cancel the local echo). */
@@ -356,7 +360,7 @@ async function imageSize(file: File): Promise<{ w: number; h: number }> {
 
 /** Stage → echo row at once (local image), upload (+ encrypt), then send (room.rs send_attachment).
  *  Echoes appear synchronously in staging order; uploads + sends run one after another per room. */
-export function sendAttachment(roomId: string, file: File, th?: ThreadCtx | null, onSent?: (eventId: string) => void): Promise<void> {
+export function sendAttachment(roomId: string, file: File, th?: ThreadCtx | null, onSent?: (eventId: string) => void, opts?: { memories?: boolean }): Promise<void> {
   const mime = file.type || mimeForName(file.name);
   const f = file.type ? file : new File([file], file.name, { type: mime });
   const msgtype = mime.startsWith("image/") ? "m.image" : mime.startsWith("video/") ? "m.video" : mime.startsWith("audio/") ? "m.audio" : "m.file";
@@ -367,7 +371,7 @@ export function sendAttachment(roomId: string, file: File, th?: ThreadCtx | null
     return Promise.resolve();
   }
   // the echo's object URL carries a safe type too (core/mediatype): even our own file never becomes a page of this origin
-  useChatStore.getState().addUpload({ id, roomId, ts: Date.now(), file: f, localUrl: URL.createObjectURL(inertBlob(f)), w: 0, h: 0, state: "uploading", error: "", msgtype, thread: th?.root, threadLatest: th?.latest });
+  useChatStore.getState().addUpload({ id, roomId, ts: Date.now(), file: f, localUrl: URL.createObjectURL(inertBlob(f)), w: 0, h: 0, state: "uploading", error: "", msgtype, thread: th?.root, threadLatest: th?.latest, ...(opts?.memories ? { memories: true } : {}) });
   // QOL A08.2 (review): a file over the upload limit is never decoded for its size either (runUpload refuses it)
   const probe = (async () => {
     if (overUploadLimit(f.size, await uploadLimit().catch(() => null))) return;
@@ -439,6 +443,8 @@ async function runUpload(roomId: string, id: string): Promise<void> {
     const content: Content = { body: u.file.name, info, msgtype: up.msgtype };
     if (up.file) content.file = up.file;
     else content.url = up.mxc;
+    // 12.1.17: Memories' "Add photos" marks its photo (inside the encryption): quiet at once for 12.1.17+ receivers
+    if (u.memories && up.msgtype === "m.image") content[MEMORIES_POST_KEY] = { v: 1 };
     if (!useChatStore.getState().uploads.some((x) => x.id === id)) return; // deleted meanwhile
     useChatStore.getState().dropUpload(id);
     const hook = sentHooks.get(id);

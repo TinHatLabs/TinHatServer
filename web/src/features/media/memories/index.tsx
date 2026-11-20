@@ -13,6 +13,7 @@ import type { MessageMenuCtx } from "@/core/registry";
 import { peekClient } from "@/core/matrix";
 import { toast } from "@/core/bus";
 import { MEMORIES_WORDS, addToMemories, inMyMemories, removeFromMemories } from "./photosStore";
+import { CHAT_WORDS } from "./photos";
 
 /** The message menu's "Add to Memories" applies to MY sent image messages (docs/MEMORIES-PHOTOS.md: your own images only). */
 function myImage(ctx: MessageMenuCtx): boolean {
@@ -59,7 +60,8 @@ export function registerMemories(r: Registries, offs: Array<() => void>): void {
   );
   // chat hosts r.roomHeaderActions in native order: game reel 10, calendar 20, memories 30, call 40
   offs.push(r.roomHeaderActions.add({ id: "media-memories", order: 30, component: MemoriesHeaderButton }));
-  // Memories photos: on my own image, after "Save as…" (50); removing never deletes the message
+  // Memories photos: on my own image, after "Save as…" (50); removing never deletes the message. 12.1.17: adding takes
+  // it out of the chat (memories/chatHide.ts), removing brings it back
   offs.push(
     r.messageMenu.add({
       id: "memories-photo",
@@ -76,7 +78,7 @@ export function registerMemories(r: Registries, offs: Array<() => void>): void {
         const on = inMyMemories(ctx.roomId, id);
         (on ? removeFromMemories(ctx.roomId, id, owner) : addToMemories(ctx.roomId, id, ctx.event.getTs(), owner)).then(
           () => {
-            if (peekClient() === owner) toast(on ? "Removed from Memories. It stays in the chat." : "Added to Memories");
+            if (peekClient() === owner) toast(on ? CHAT_WORDS.removed_toast : CHAT_WORDS.added_toast);
           },
           (e) => {
             if ((e as Error)?.name !== "StaleSession" && peekClient() === owner) toast((e as Error)?.message || MEMORIES_WORDS.forbidden);

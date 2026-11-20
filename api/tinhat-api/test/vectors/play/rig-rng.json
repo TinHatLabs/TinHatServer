@@ -1,0 +1,143 @@
+{
+ "v": 1,
+ "about": "The Rig's reproducible randomness. seed = 32 bytes (hex), shown as SHA-256(seed) at setup and in full at the reveal. draw(label, n): for c = 0, 1, 2, ...: h = HMAC-SHA256(key = seed, message = UTF-8 of label + ':' + c in decimal); u = the first byte of h (0-255); if u < 256 - (256 mod n) return u mod n, else try the next c (n is at most 16 here; rejection_case shows a draw that needed it). Honest reel k (1-3) of spin s = symbol[draw('reel:s:k', 6)] in ring order hat, saucer, dish, eye, moon, lizard. The j-th re-roll of spin s (j from 0, in the order the cards use them) = draw('reroll:s:j', 5), an index into the five symbols other than the one being replaced, kept in ring order (see reroll_symbols). Shuffle(label, list): for i from len-1 down to 1: j = draw(label + ':' + i, i + 1), swap list[i] and list[j]. Deal attempt a: shuffle('deck:a', the preset's deck in card-number order); the first d cards are the dead cards (Full 3, Lite 4); Mechanic m (0-based, rotation order) gets cards d+2m and d+2m+1; if any choice of kept cards would break the machine rules, try a+1 (at most 64; then the round can't start: code rules). Slot order = shuffle('slot', [Mechanic indexes]).",
+ "deck_order": [
+  "moon-monday",
+  "lizard-lane",
+  "hat-thief",
+  "twos-company",
+  "big-bet-tax",
+  "penny-pincher",
+  "cold-streak",
+  "skim",
+  "moon-tax",
+  "shy-hat",
+  "lizard-tax",
+  "underdog",
+  "rebound",
+  "hot-hat",
+  "slow-start",
+  "even-money"
+ ],
+ "lite_deck_order": [
+  "moon-monday",
+  "lizard-lane",
+  "big-bet-tax",
+  "penny-pincher",
+  "cold-streak",
+  "skim",
+  "moon-tax",
+  "lizard-tax",
+  "underdog",
+  "rebound"
+ ],
+ "expect": {
+  "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "commit_sha256_hex": "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd",
+  "honest_reels": {
+   "1": [
+    "saucer",
+    "saucer",
+    "saucer"
+   ],
+   "2": [
+    "lizard",
+    "eye",
+    "moon"
+   ],
+   "3": [
+    "eye",
+    "dish",
+    "hat"
+   ]
+  },
+  "rerolls_spin1": [
+   0,
+   3,
+   0,
+   3
+  ],
+  "reroll_symbols": [
+   {
+    "replacing": "hat",
+    "j": 0,
+    "symbol": "saucer"
+   },
+   {
+    "replacing": "saucer",
+    "j": 1,
+    "symbol": "moon"
+   },
+   {
+    "replacing": "lizard",
+    "j": 2,
+    "symbol": "hat"
+   },
+   {
+    "replacing": "moon",
+    "j": 3,
+    "symbol": "eye"
+   }
+  ],
+  "full_deck_attempt0": [
+   "skim",
+   "hat-thief",
+   "lizard-tax",
+   "rebound",
+   "cold-streak",
+   "slow-start",
+   "moon-monday",
+   "penny-pincher",
+   "lizard-lane",
+   "even-money",
+   "big-bet-tax",
+   "underdog",
+   "shy-hat",
+   "moon-tax",
+   "hot-hat",
+   "twos-company"
+  ],
+  "lite_deck_attempt0": [
+   "lizard-tax",
+   "big-bet-tax",
+   "cold-streak",
+   "rebound",
+   "moon-tax",
+   "underdog",
+   "moon-monday",
+   "skim",
+   "lizard-lane",
+   "penny-pincher"
+  ],
+  "full_dead": [
+   "skim",
+   "hat-thief",
+   "lizard-tax"
+  ],
+  "full_dealt": [
+   [
+    "rebound",
+    "cold-streak"
+   ],
+   [
+    "slow-start",
+    "moon-monday"
+   ],
+   [
+    "penny-pincher",
+    "lizard-lane"
+   ]
+  ],
+  "slot_order_of_3": [
+   0,
+   2,
+   1
+  ],
+  "rejection_case": {
+   "label": "probe:19",
+   "n": 6,
+   "value": 4,
+   "counter_used": 1
+  }
+ }
+}

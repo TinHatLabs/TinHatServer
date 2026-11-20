@@ -80,6 +80,11 @@
 .emptyWrap > * {
   width: min(calc(100% - 108px), 396px);
 }
+/* the wrapper lets the pointer through to the timeline; a button in an empty state (Back to your rooms, Try again now)
+   takes it back, or a real click lands on the message list under it (12.1.17 room-link gate, R1b) */
+.emptyWrap button {
+  pointer-events: auto;
+}
 
 /* P2 a: "Jump to NEW" pill: 8 px from the top, centred, 32 tall, radius 16 (ConversationView.qml newPill) */
 .newPill {
@@ -218,7 +223,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
+  font-size: calc(22px * var(--th-text-scale, 1));
   background: var(--th-bubble-quick-react-bg);
   cursor: pointer;
 }

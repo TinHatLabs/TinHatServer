@@ -41,6 +41,11 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
       - /var/lib/tinhat/postgres:/var/lib/postgresql/data
+    # the games database (play.py PLAY_DB_ACCESS / db_port): the API (host network) connects over the box's loopback
+    # only, as role tinhat_play with its password; nothing outside the box can reach this port (5433, or the free spare
+    # the manager chose on a machine where 5433 is taken: compose.env TINHAT_PLAY_DB_PORT)
+    ports:
+      - "127.0.0.1:${TINHAT_PLAY_DB_PORT:-5433}:5432"
     networks: [backend]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U synapse -d synapse"]
@@ -108,7 +113,7 @@ services:
     # Synapse reaches at the box's address on the backend network) and game servers. Its environment, keys and state
     # are written by the manager into /var/lib/tinhat/api (manager/tinhat/apiconf.py); recordings are read from
     # /var/lib/tinhat/vods.
-    image: tinhat/api:0.3.18
+    image: tinhat/api:0.3.20
     pull_policy: never
     network_mode: host
     restart: unless-stopped
@@ -120,7 +125,7 @@ services:
 
   games:
     # The games catalogue (the Game Reel's list of games + cover art), from the same image.
-    image: tinhat/api:0.3.18
+    image: tinhat/api:0.3.20
     pull_policy: never
     network_mode: host
     restart: unless-stopped

@@ -547,13 +547,13 @@
 }
 .mobile .ph {
   bottom: 0;
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
   padding: 10px 8px;
 }
 .mobile .field {
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
   padding: 10px 8px;
   margin-bottom: 0;
   min-height: 44px;
@@ -592,7 +592,7 @@
   grid-auto-rows: 48px;
 }
 :global(html[data-ff="mobile"]) .search input {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 
 /* phones: round icon-only Send, feature actions row inside the "+" sheet */
@@ -633,7 +633,7 @@
 .sheetActionLabel {
   flex: 1;
   min-width: 0;
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   color: var(--th-menu-item-fg);
   white-space: nowrap;
   overflow: hidden;

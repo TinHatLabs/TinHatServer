@@ -45,7 +45,7 @@
   -webkit-user-drag: none;
 }
 .glyph {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   line-height: 1;
   color: var(--th-memories-card-poster-fg);
 }
@@ -140,8 +140,8 @@
   gap: 10px;
 }
 .body[data-mobile] .title {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .line {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }

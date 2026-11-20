@@ -1,0 +1,36 @@
+{
+ "t": "view",
+ "table": "tRLzU2OBEpTgZpnq",
+ "vseq": 5,
+ "view": {
+  "game": "rig",
+  "table": "tRLzU2OBEpTgZpnq",
+  "room": "!table:example.org",
+  "space": "!gamenight:example.org",
+  "owner": "example.org",
+  "vseq": 5,
+  "now": 1795132686429,
+  "status": "lobby",
+  "host": "@ana:example.org",
+  "opts": {
+   "preset": "lite",
+   "bankroll": 6,
+   "patch": true
+  },
+  "players": [
+   {
+    "u": "@ana:example.org",
+    "order": 1,
+    "role": null,
+    "connected": true,
+    "left": false,
+    "spun": false,
+    "skipped": false
+   }
+  ],
+  "round": null,
+  "end": null,
+  "closed": null,
+  "spectators": 1
+ }
+}

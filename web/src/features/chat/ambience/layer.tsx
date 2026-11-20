@@ -1,9 +1,10 @@
 // layer.tsx — the chat's background + particle layer (Tin Hat Web; the desktop's AmbienceLayer.qml): the room's
 // shared background (a drawn scene: gradient + glow + the theme scrim) and, on top of it but BEHIND the message list,
-// the effect canvas. The particles meet the panels of the list (bubbles, day pills, names, reactions — every element
-// marked `data-bubble` / `data-amb`): rain pools on their tops and drips down their sides, embers slide along their
-// undersides. Nothing is ever drawn inside one (core.ts). Rules: core.ts effectsState (Settings → Appearance →
-// Performance; hidden ALWAYS pauses).
+// the effect canvas. The particles meet the visible message cards of the list (bubbles, day pills, names, reaction
+// chips: `data-bubble` / `data-amb="name|day|reactions"`, core SURFACE_KINDS): rain pools on their tops and drips down
+// their sides, embers slide along their undersides. Never a container, a divider or a row (12.1.17: the NEW line's
+// full-width box caught the phone's rain). Nothing is ever drawn inside one (core.ts). Rules: core.ts effectsState
+// (Settings → Appearance → Performance; hidden ALWAYS pauses).
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { usePref } from "@/core/prefs";
 import { onRealWinState, realWinState } from "@/core/winstate";
@@ -44,8 +45,11 @@ import { useCall } from "@/features/calls";
 
 const log = createLogger("ambience");
 
+/** A `data-amb` marker → its shared surface kind (core SURFACE_KINDS; a `data-bubble` is "b"). Only these are marked:
+ *  the visible cards, never a row, a divider or a container (the desktop's ambRects: the same four). */
+export const AMB_KINDS: Readonly<Record<string, string>> = { name: "n", day: "d", reactions: "r" };
 /** The elements particles treat as solid. */
-export const COLLIDER_SELECTOR = "[data-bubble], [data-amb]";
+export const COLLIDER_SELECTOR = '[data-bubble], [data-amb="name"], [data-amb="day"], [data-amb="reactions"]';
 
 /** "#rrggbb" from a computed CSS colour ("rgb(…)", "rgba(…)", "#…"); a translucent colour is flattened on `under`. */
 export function cssHex(v: string, under = "#000000"): string {
@@ -206,7 +210,7 @@ export interface AmbienceLayerProps {
   image?: { src: string; cells: Cell[] } | null;
   /** kind "game" / unset (game art): its art layer, drawn above the scene and below the scrim + particles */
   art?: ReactNode;
-  /** the element whose `data-bubble` / `data-amb` descendants are the panels */
+  /** the element whose `data-bubble` / `data-amb` descendants are the cards */
   content: () => HTMLElement | null;
   /** the scrolling element (its scroll moves the panels) */
   scroller: () => HTMLElement | null;
@@ -430,7 +434,9 @@ class Loop {
       if (r.bottom < o.top - 40 || r.top > o.bottom + 40 || r.right < o.left || r.left > o.right) continue;
       let id = this.ids.get(el);
       if (!id) {
-        id = `c${this.nextId++}`;
+        const kind = el.hasAttribute("data-bubble") ? "b" : AMB_KINDS[el.getAttribute("data-amb") ?? ""];
+        if (!kind) continue;
+        id = `c${this.nextId++}:${kind}`;
         this.ids.set(el, id);
       }
       let rad = this.radii.get(el);

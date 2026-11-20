@@ -24,6 +24,7 @@ import { HiddenMenu, LayoutMenu, VolMenuHost } from "./menus";
 import { HearPills } from "./HearPills";
 import { ResumePill } from "./ResumePill";
 import { SameRoomAsk } from "./SameRoomAsk";
+import { useUnmuteAsk } from "./UnmuteAsk";
 import { JoinBanner, useHeaderChipsMounted } from "./Incoming";
 import { OnThisPhone } from "@/features/native";
 import { MobileCallStage, MobileCallPill } from "./Mobile";
@@ -484,8 +485,17 @@ function ServerMutedStrip() {
   const by = useC("serverMutedBy");
   const inCall = useC("inCall");
   const connecting = useC("connecting");
+  const ask = useUnmuteAsk();
   if (!sm || !(inCall || connecting)) return null;
-  return <InlineMessage type="warning" icon="dialog-warning" text={`${by || "A moderator"} muted your mic for everyone. Ask them to unmute you.`} />;
+  // 12.1.17: the way to ask (rate-limited; moderators who outrank me see a hand on my tile + a toast with Unmute)
+  return (
+    <InlineMessage
+      type="warning"
+      icon="dialog-warning"
+      text={`${by || "A moderator"} muted your mic for everyone. Ask them to unmute you.`}
+      actions={inCall ? [{ text: ask.label, icon: "hand-symbolic", enabled: ask.ready, onTriggered: ask.ask }] : []}
+    />
+  );
 }
 
 function ConnBanner({ roomId }: { roomId: string }) {

@@ -14,8 +14,10 @@ import { Tile } from "./Tile";
 import { CallOptionsPopover, StreamPopover, HealthPopup, GamePopup } from "./popovers";
 import { VolMenuHost, DevicesMenu, HiddenMenu } from "./menus";
 import { useSlotItems } from "./CallBar";
+import { MIN_SCALE_MOUSE } from "./barfit";
 import { ResumeBanner } from "./ResumePill";
 import { SameRoomAsk } from "./SameRoomAsk";
+import { useUnmuteAsk } from "./UnmuteAsk";
 import { callRowSnapshot, recClipRoom } from "@/actions/decisions";
 import { useChatStore } from "@/features/chat/store";
 import { useActionsSnapshot } from "@/actions/snapshot";
@@ -52,6 +54,7 @@ export function MobileCallStage({ roomId }: { roomId: string }) {
   const hangingUp = useC("hangingUp");
   const serverMuted = useC("serverMuted");
   const serverMutedBy = useC("serverMutedBy");
+  const unmuteAsk = useUnmuteAsk();
   const roomName = useRoomName(roomId);
   const hidden = useHiddenSet();
   const watched = useWatchedShares();
@@ -193,7 +196,15 @@ export function MobileCallStage({ roomId }: { roomId: string }) {
           💤 You're away (BRB) — tap to return
         </button>
       )}
-      {serverMuted && <div className={`${s.banner} ${s.warn}`}>{serverMutedBy || "A moderator"} muted your mic for everyone. Ask them to unmute you.</div>}
+      {serverMuted && (
+        <div className={`${s.banner} ${s.warn}`}>
+          {serverMutedBy || "A moderator"} muted your mic for everyone. Ask them to unmute you.
+          {/* 12.1.17: the way to ask (rate-limited) */}
+          <button type="button" className={s.bannerBtn} disabled={!unmuteAsk.ready} onClick={unmuteAsk.ask} data-testid="unmute-ask">
+            {unmuteAsk.label}
+          </button>
+        </div>
+      )}
       <SameRoomAsk />
       {(reconnecting || failed) && (
         <div className={`${s.banner} ${reconnecting ? s.warn : s.bad}`}>
@@ -268,6 +279,20 @@ function MoreMenu({ open, onClose, onPick, hiddenCount }: { open: boolean; onClo
   );
 }
 
+/** 12.1.18 (callbar-1218): the phone bar never folded or scaled, so eight 50 px buttons (406 px) ran past a 360–393 px
+ *  screen and cut off Leave. Its buttons now zoom down to the bar's width: CallBar.tsx's phone rule (no More here,
+ *  scale 0.7…1). `zoom`, not transform, so the row's layout shrinks with it and each button is hit where it is drawn.
+ *  The natural width is measured at zoom 1 (whatever an engine's zoom maths), the property written only when needed. */
+function fitPhoneBar(bar: HTMLElement | null) {
+  if (!bar) return;
+  bar.style.removeProperty("--th-phone-bar-fit");
+  const cs = getComputedStyle(bar);
+  const avail = bar.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  let natural = 0;
+  for (const c of bar.children) for (const el of c.hasAttribute("data-button-row") ? c.children : [c]) natural += el.getBoundingClientRect().width;
+  if (avail > 0 && natural > avail) bar.style.setProperty("--th-phone-bar-fit", Math.max(MIN_SCALE_MOUSE, avail / natural).toFixed(4));
+}
+
 function MobileBar({ roomId, hide }: { roomId: string; hide: boolean }) {
   const micMuted = useC("micMuted");
   const serverMuted = useC("serverMuted");
@@ -314,8 +339,18 @@ function MobileBar({ roomId, hide }: { roomId: string; hide: boolean }) {
     "watchParty.open": wp ? <wp.component roomId={roomId} /> : <CallButton icon="video-television-symbolic" tip="Media Party" onClick={() => toast("The Media Party arrives with the media feature")} />,
     "call.leave": <CallButton icon="call-stop-symbolic" tip="Leave call" danger busy={hangingUp} live={!hangingUp} onClick={() => act("leaveCall")()} />,
   };
+  // 12.1.18: the row fits the phone (fitPhoneBar)
+  const barRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => fitPhoneBar(barRef.current));
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const ro = new ResizeObserver(() => fitPhoneBar(bar));
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div className={`${s.bar} ${hide ? s.hideDown : ""}`} data-testid="mobile-bar">
+    <div ref={barRef} className={`${s.bar} ${hide ? s.hideDown : ""}`} data-testid="mobile-bar">
       <EditableRow row={row} title="Call controls">
         {shownItems(row).map(({ item: it, i }) => {
           const key = `${it.a}:${i}`;

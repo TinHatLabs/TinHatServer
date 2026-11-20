@@ -2,9 +2,11 @@
 // current room's effect (the Chat background sheet's own write: core.particlesPick), "Chat background…", then the two
 // personal switches of Settings → Appearance → Performance (the SAME stored prefs) and "Effects settings…". The rows
 // themselves come from the shared core.particlesMenu (testvectors/ambience/vectors.json particles_menu).
+// Phones (12.1.17): the ☰ menu lives on the room list, where no room is open, so the rows are about the last room you
+// opened (particlesRoom.ts), under its name.
 import { toast } from "@/core/bus";
 import { peekClient } from "@/core/matrix";
-import { getPrefRaw, setPref } from "@/core/prefs";
+import { getPref, getPrefRaw, setPref } from "@/core/prefs";
 import { UNFOCUSED_SAVER_PREF, unfocusedSaverOn } from "@/core/lowgpu";
 import type { MenuSubItem } from "@/core/registry";
 import { getCurrentRoom } from "@/features/nav/open";
@@ -14,14 +16,21 @@ import { openBackgroundSheet } from "./BackgroundSheet";
 import { canSetBackground, setRoomBackground } from "./room";
 import { AMBIENCE_WORDS as AW } from "./words";
 import { particlesLabel } from "./particlesWords";
+import { particlesRoomFor } from "./particlesRoom";
 
 /** "Effects settings…": Settings → Appearance at the Performance section (both apps: the section's indexed row). */
 export const PERFORMANCE_ROW = "appearance.gpu-saver";
 
+/** The room the rows are about: the open room; on a phone (no room is open on the list) the last room opened. */
+export function particlesRoomId(): string {
+  const phone = typeof document !== "undefined" && document.documentElement.dataset.ff === "mobile";
+  return particlesRoomFor(getCurrentRoom(), String(getPref("last-room", "")), phone);
+}
+
 /** The menu's inputs, read now (the menu builds its rows when it opens). */
 export function particlesMenuInput(): ParticlesMenuIn {
   const c = peekClient();
-  const roomId = getCurrentRoom() ?? "";
+  const roomId = particlesRoomId();
   const room = roomId ? c?.getRoom(roomId) : null;
   const joined = !!room && room.getMyMembership() === "join";
   const ev = joined ? room!.currentState.getStateEvents(BACKGROUND_STATE, "") : null;
@@ -38,10 +47,14 @@ export function particlesMenuInput(): ParticlesMenuIn {
 }
 
 export function particlesSubmenu(input: ParticlesMenuIn = particlesMenuInput()): MenuSubItem[] {
-  const roomId = getCurrentRoom() ?? "";
-  return particlesMenu(input).map((r) => ({
+  const roomId = particlesRoomId();
+  // a room that isn't on screen (the phone's room list): its name heads its rows, so it's clear whose effect this is
+  const heading = input.room && roomId && roomId !== getCurrentRoom() ? (peekClient()?.getRoom(roomId)?.name ?? "") : "";
+  return particlesMenu(input).map((r, i) => ({
     id: r.id,
     label: particlesLabel(r.id),
+    ...(heading && i === 0 ? { section: heading } : {}),
+    ...(r.id.startsWith("note:") ? { note: true } : {}),
     ...(r.checked !== null ? { checked: r.checked } : {}),
     enabled: r.enabled,
     separatorBefore: r.sep,
@@ -50,7 +63,7 @@ export function particlesSubmenu(input: ParticlesMenuIn = particlesMenuInput()):
       if (r.id.startsWith("effect:")) {
         // the room as it is NOW (someone may have changed its background, or my power, while the menu was open); the
         // one write of this menu, and only what particlesWrite allows (null = nothing is sent)
-        if (getCurrentRoom() !== roomId) return;
+        if (particlesRoomId() !== roomId) return;
         const content = particlesWrite(particlesMenuInput(), r.id.slice(7) as Effect);
         if (content) void setRoomBackground(roomId, content).catch(() => toast(AW.setFailed));
       } else if (r.id === "background") openBackgroundSheet(roomId);

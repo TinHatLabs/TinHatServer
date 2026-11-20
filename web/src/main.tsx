@@ -7,6 +7,7 @@ import { getPref } from "@/core/prefs";
 import { loadFeatures } from "@/core/registry";
 import { AppErrorBoundary, applyReducedMotion, installMotion, loadIconIndex, showFatalCard } from "@/ui";
 import { bootTheme } from "@/ui/themeStore";
+import { installLayoutDensity } from "@/actions/layoutDensity";
 import { createLogger } from "@/core/log";
 import { App } from "@/app/App";
 import { initFontSet } from "@/ui/fontset";
@@ -14,6 +15,8 @@ import { initFontSet } from "@/ui/fontset";
 // the theme store (THEMES-SYNC.md §8): the device override → the account's choice → the device's own theme, painted
 // before the first render, then kept current (other tabs, the account-data sync)
 bootTheme();
+// P22 round 2: the layout form's own density (the Handheld preset) is drawn while that layout is on
+installLayoutDensity();
 applyReducedMotion(getPref("reduce-motion", false));
 // GPU.md §1: the window state (<html data-win>), the motion switch (<html data-animate>) and the caret rule — before
 // the first render, so nothing animates on a page that opens unfocused or with Reduce motion on

@@ -1,0 +1,85 @@
+/* GameCard.module.css — the game cards in the timeline (GameCard.tsx). */
+.card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 420px;
+  padding: 10px 12px;
+  border-radius: var(--th-radius-lg);
+  background: var(--th-bubble-other-bg);
+  border: 1px solid var(--th-bubble-other-border);
+  color: var(--th-bubble-other-fg);
+  font-size: calc(13px * var(--th-text-scale, 1));
+}
+.quiet {
+  color: var(--th-text-muted);
+  font-size: calc(12.5px * var(--th-text-scale, 1));
+}
+.rig {
+  border-color: var(--th-accent-dim);
+}
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: var(--g-felt-centre);
+  color: var(--g-card-face);
+  font-size: calc(17px * var(--th-text-scale, 1));
+  flex: none;
+}
+.iconRig {
+  background: var(--g-machine-body);
+  color: var(--g-machine-trim);
+  box-shadow: inset 0 0 0 1px var(--g-machine-trim);
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.title {
+  font-weight: 700;
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.sub {
+  color: var(--th-text-muted);
+  font-size: calc(12px * var(--th-text-scale, 1));
+}
+.result {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.resultHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px;
+}
+.rowName {
+  font-weight: 600;
+}
+.net {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.up {
+  color: var(--g-win);
+}
+.down {
+  color: var(--g-loss);
+}

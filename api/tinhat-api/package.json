@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "pg": "^8.23.1"
   },
   "scripts": {
     "test": "EDGE_PROXY=192.0.2.1 node --test test/*.test.mjs watch.test.mjs"

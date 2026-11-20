@@ -13,6 +13,7 @@ import { act, isRecorderTile, localpartOf, SELF_ID, tileMxid, useC } from "./sto
 import { useCallParticipants } from "./Incoming";
 import { ParticipantVolumeMenu } from "./menus";
 import s from "./NavStrip.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 export interface CallPart {
   mxid: string;
@@ -85,6 +86,7 @@ function PartRow({ p, rev, onMenu }: { p: CallPart; rev: number; onMenu: (a: { x
   const lpFired = useRef(false);
   useEffect(() => () => window.clearTimeout(lp.current), []);
   const tiles = useC("tiles");
+  const callRoom = useC("roomId");
   const gc = useC("gameChatPeers");
   const gameChat = useC("gameChat");
   const corner = useC("corner");
@@ -126,6 +128,7 @@ function PartRow({ p, rev, onMenu }: { p: CallPart; rev: number; onMenu: (a: { x
       data-mxid={p.mxid}
     >
       <Avatar name={p.name} seed={p.mxid || p.name} imageSource={img || (p.avatar.startsWith("mxc://") ? null : p.avatar || null)} size={20} />
+      <PrestigeInRow mxid={p.mxid} roomId={callRoom} rowGap={4} />
       <span className={s.name}>{p.name}</span>
       {muted && <Icon name="audio-volume-muted-symbolic" size={14} color="var(--th-rooms-caller-muted-icon)" />}
       {srvBy && <SrvGlyph by={srvBy} />}

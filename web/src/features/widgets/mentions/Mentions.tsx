@@ -18,6 +18,7 @@ import { useFreshIds } from "../motion";
 import { SAMPLE_SERVER, roomNameNow, usePerson, useRoomLabel } from "../names";
 import { markMentionsSeen, useMentions } from "./store";
 import s from "./Mentions.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 export interface MentionRow extends Mention {
   /** resolved (false while its event is being fetched) */
@@ -112,6 +113,7 @@ function Row({ r, m, ctx, enter }: { r: MentionRow; m: MentionsModel; ctx: Widge
         <Avatar size={ctx.mobile ? 28 : 20} name={who.name} seed={r.s} imageSource={who.avatar} />
         <span className={s.text}>
           <span className={s.line1}>
+            <PrestigeInRow mxid={r.s} roomId={r.r} rowGap={0} size={12} />
             <span className={cx(s.name, unseen && s.nameUnseen)}>{who.name}</span>
             {room && <span className={s.room}> · {room}</span>}
             <span className={s.when}>{whenText(r.t, mode)}</span>

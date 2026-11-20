@@ -109,9 +109,12 @@
   background: var(--th-calendar-banner-missing-bg);
   padding: 7px 12px;
   gap: 10px;
+  /* the Invite button goes under the words when both don't fit (a phone, a big text size), instead of squeezing the
+     words into a one-word column */
+  flex-wrap: wrap;
 }
 .bannerMissing > span {
-  flex: 1 1 auto;
+  flex: 1 1 12em;
   min-width: 0;
 }
 .bannerHint {

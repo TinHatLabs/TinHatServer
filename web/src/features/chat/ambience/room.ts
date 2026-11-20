@@ -5,9 +5,10 @@
 // core.imageShown decides, anything else shows the preset — never a broken tile.
 import { useEffect, useMemo, useState } from "react";
 import { MatrixEvent, RoomEvent } from "matrix-js-sdk";
-import { canSendState, peekClient, sendMessage, sendState, uploadFile, fetchEncryptedMedia, fetchMedia, useRoomStateEvents, type EncryptedFile } from "@/core/matrix";
+import { canSendState, peekClient, sendMessage, sendState, uploadFile, fetchEncryptedMedia, fetchMedia, useDerived, useRoomStateEvents, type EncryptedFile } from "@/core/matrix";
 import { encryptedNowSync, roomEncryptedForUpload } from "@/core/matrix/uploadCrypto";
 import { createLogger } from "@/core/log";
+import { backgroundPermissionSpec, type BackgroundPermission } from "./sheetPerm";
 import { BACKGROUND_STATE, IMAGE_MAX_BYTES, IMAGE_QUALITIES, IMAGE_SHRINK, fitImage, imageCells, imageDims, imageShown, parseBackground, type Background, type Cell, type ImageEvent } from "./core";
 
 const log = createLogger("ambience");
@@ -22,6 +23,12 @@ export function useRoomBackground(roomId: string | null | undefined): Background
 /** May I change this room's background? (the room's power levels — moderators; both people in a Tin Hat DM) */
 export function canSetBackground(roomId: string): boolean {
   return canSendState(roomId, BACKGROUND_STATE);
+}
+
+/** The same, LIVE (bgsheet-1220): null until the room's power levels are here, then re-evaluated whenever they change
+ *  (the "Chat background" sheet; sheetPerm.ts). */
+export function useCanSetBackground(roomId: string): BackgroundPermission {
+  return useDerived(`canSetBackground:${roomId}`, () => backgroundPermissionSpec(roomId, BACKGROUND_STATE));
 }
 
 export async function setRoomBackground(roomId: string, content: Record<string, unknown>): Promise<void> {
@@ -58,6 +65,16 @@ export async function reencode(file: Blob): Promise<{ blob: Blob; w: number; h: 
     throw new Error("image too large");
   } finally {
     bmp.close();
+  }
+}
+
+/** Can this device decode the picture (12.1.17: a HEIC on a browser without HEIC says so at the pick, not at Apply)? */
+export async function decodable(file: Blob): Promise<boolean> {
+  try {
+    (await createImageBitmap(file)).close();
+    return true;
+  } catch {
+    return false;
   }
 }
 

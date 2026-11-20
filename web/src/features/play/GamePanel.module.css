@@ -1,0 +1,61 @@
+/* GamePanel.module.css — the game panel over the room's timeline area (desktop), a full-screen sheet (phones). */
+.panel {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  background: var(--th-surface-window);
+  color: var(--th-text-primary);
+  overflow: hidden;
+}
+.covering {
+  border-radius: var(--th-radius-lg);
+  border: 1px solid var(--th-island-border-active);
+  box-shadow: 0 10px 40px var(--th-island-shadow);
+}
+.centred {
+  left: 50%;
+  top: 50%;
+  width: min(900px, calc(100vw - 32px));
+  height: min(700px, calc(100vh - 32px));
+  transform: translate(-50%, -50%);
+  border-radius: var(--th-radius-lg);
+  border: 1px solid var(--th-island-border-active);
+  box-shadow: 0 10px 40px var(--th-island-shadow);
+}
+.phone {
+  inset: 0;
+  padding-top: env(safe-area-inset-top);
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--th-border-subtle);
+  flex: none;
+}
+.phone .head {
+  height: 48px;
+  padding: 0 8px;
+}
+.title {
+  font-weight: 700;
+  font-size: calc(13.5px * var(--th-text-scale, 1));
+}
+.phone .title {
+  font-size: calc(16px * var(--th-text-scale, 1));
+}
+.grow {
+  flex: 1;
+}
+.body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* #24: on a phone the table's head is ONE line: the title never wraps or shrinks (the space badge gives way) */
+.phone .title {
+  white-space: nowrap;
+  flex: none;
+}

@@ -85,7 +85,7 @@
   justify-content: center;
 }
 .emoji {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   line-height: 1;
 }
 .itemText {

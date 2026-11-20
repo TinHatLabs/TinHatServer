@@ -37,6 +37,7 @@ import { loadResume, loadVolume, saveResume, saveVolume, type Clip } from "./pre
 import { Pill } from "./Pill";
 import { canRemux, setRecordingSource, wantRemux } from "./remux";
 import s from "./Memories.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 export interface MemoriesPlayerProps {
   roomId: string;
@@ -868,6 +869,7 @@ export function MemoriesPlayer({ roomId, roomName, session, clips, resumeAt, onB
           {focusedTrack && !waiting && focusedPov && (
             <div className={s.caption}>
               <Avatar name={focusedPov.gr.name} seed={focusedPov.gr.user} size={22} />
+              <PrestigeInRow mxid={focusedPov.gr.user} roomId={roomId} rowGap={7} />
               <span className={s.captionName}>{focusedPov.gr.name}</span>
               <span className={s.captionKind}>{`${kindGlyph(focusedPov.p.kind)} ${focusedPov.p.label.toLowerCase().replace("camera", "camera")}`}</span>
             </div>
@@ -917,6 +919,7 @@ export function MemoriesPlayer({ roomId, roomName, session, clips, resumeAt, onB
                 return (
                   <SideTile
                     key={f}
+                    roomId={roomId}
                     session={session}
                     groups={groups}
                     track={tr}
@@ -1028,6 +1031,7 @@ export function MemoriesPlayer({ roomId, roomName, session, clips, resumeAt, onB
             {groups.map((gr) => (
               <span key={gr.user} className={s.person}>
                 <Avatar name={gr.name} seed={gr.user} size={24} />
+                <PrestigeInRow mxid={gr.user} roomId={roomId} rowGap={6} />
                 <span className={s.personName}>{gr.name}</span>
                 {gr.povs.map((p) => (
                   <PovPill
@@ -1194,6 +1198,7 @@ function VoicesChip({ on, onPick }: { on: boolean; onPick: () => void }) {
 // ---- side tile (live <video> or snapshot) ------------------------------------------------------------------
 
 function SideTile({
+  roomId,
   session,
   groups,
   track,
@@ -1208,6 +1213,7 @@ function SideTile({
   onFocus,
   onBroken,
 }: {
+  roomId: string;
   session: VodSession;
   groups: PovGroup[];
   track: VodTrack;
@@ -1352,6 +1358,7 @@ function SideTile({
       )}
       <div className={s.tileStrip} style={{ height: stripH }}>
         <Avatar name={name} seed={userIdOf(track.identity)} size={18} />
+        <PrestigeInRow mxid={userIdOf(track.identity)} roomId={roomId} rowGap={6} />
         <span className={s.tileName}>{name}</span>
         <span className={s.tileKind}>{`${kindGlyph(track.kind)}${width >= 250 ? ` ${kindWord}` : ""}`}</span>
         {hit && <span className={s.tileKey}>{hit.pov.key}</span>}

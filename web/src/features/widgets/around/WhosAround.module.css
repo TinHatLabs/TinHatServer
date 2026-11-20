@@ -86,7 +86,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   line-height: 1;
 }
 .callTile {
@@ -266,6 +266,13 @@
   gap: 4px;
   white-space: nowrap;
 }
+/* a narrow header (a big text size): the word gives way, never the Turn on button (the desktop's footer line elides
+   the same way and keeps its button) */
+.hiddenWord {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .hiddenDot {
   flex: none;
   width: 6px;
@@ -324,11 +331,11 @@
 }
 .body[data-mobile] .name,
 .body[data-mobile] .roomTitle {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .roomSub,
 .body[data-mobile] .hidden {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .join {
   height: 36px !important;

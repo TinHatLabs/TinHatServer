@@ -81,6 +81,12 @@ class Entry:
     namespace: str
     defn: str
     copy: str
+    #: (0.3.20) whether the entry carries a data stream in the archive, its section (1 none, 2 pre-data, 3 data,
+    #: 4 post-data) and its tablespace: check() refuses a data stream anywhere but on a data entry (pg_restore runs a
+    #: stream's SQL for any entry that has one), and playdb checks the sections too
+    had_data: bool = False
+    section: int = 0
+    tablespace: str = ""
 
 
 # ---- layer 1: the archive's list of entries (pg_dump custom format, read without its data) ---------------------------
@@ -141,17 +147,17 @@ def read_toc(path: Path) -> list[Entry]:
             dump_id = r.int()
             if not (1 <= dump_id <= MAX_ID):
                 raise UnsafeBackup("The backup's database copy isn't one Tin Hat made; it wasn't restored.")
-            r.int()    # has data
+            had_data = bool(r.int())  # has data
             r.str()    # table oid
             r.str()    # oid
             tag = r.str() or ""
             desc = r.str() or ""
-            r.int()    # section
+            section = r.int()  # section
             defn = r.str() or ""
             r.str()    # drop statement
             copy = r.str() or ""
             namespace = r.str() or ""
-            r.str()    # tablespace
+            tablespace = r.str() or ""  # tablespace
             if ver >= (1, 14, 0):
                 r.str()  # table access method
             if ver >= (1, 16, 0):
@@ -164,7 +170,7 @@ def read_toc(path: Path) -> list[Entry]:
             else:
                 raise UnsafeBackup("The backup's database copy isn't one Tin Hat made; it wasn't restored.")
             r.read(1 + off_size)  # where its data is
-            out.append(Entry(dump_id, desc, tag, namespace, defn, copy))
+            out.append(Entry(dump_id, desc, tag, namespace, defn, copy, had_data, section or 0, tablespace))
     return out
 
 
@@ -280,8 +286,19 @@ def check(entries: list[Entry], ours: bool = False, ref: dict | None = None) -> 
     def refuse(e: Entry, what: str):
         raise UnsafeBackup(f"The backup's database holds something a Tin Hat server's doesn't ({what}: "
                            f"{e.desc} {e.tag[:60]!r}); it wasn't restored.")
-    keep = []
+    keep, ids = [], set()
     for e in entries:
+        if e.id in ids:
+            refuse(e, "an entry id twice")
+        ids.add(e.id)
+        # (0.3.20, launch-gate 15:50) SQL can ride in an archive two ways the list's text doesn't show: a data stream
+        # on an entry that isn't a data entry, and a data entry's own SQL text. Neither is in a Synapse database's dump.
+        if e.had_data and e.desc != "TABLE DATA":
+            refuse(e, "a data stream on an entry that has none")
+        if e.desc == "TABLE DATA" and (e.defn or not e.had_data):
+            refuse(e, "a data entry")
+        if e.tablespace:
+            refuse(e, "a tablespace")
         if e.desc in SKIP:
             continue
         if e.desc not in RUN:

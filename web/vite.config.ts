@@ -108,7 +108,7 @@ export default defineConfig(({ command }) => {
     );
   }
   const to = { target: API, changeOrigin: true, secure: true };
-  const proxy = { "/api": to, "/_matrix": to, "/.well-known/matrix": to, "/livekit": { ...to, ws: true } };
+  const proxy = { "/api/play": { ...to, ws: true }, "/api": to, "/_matrix": to, "/.well-known/matrix": to, "/livekit": { ...to, ws: true } };
   // R3-5: the gallery's lab switches (src/app/galleryLab.ts) exist only in a lab build: `vite dev`, or a build with
   // TW_LAB_BUILD=1 (the measurement runs: tools/ambience/perf.py, soak.py, win/serve.ps1). Every other build folds
   // __TW_LAB__ to false and drops the module; tools/release-hooks-check.mjs proves it on the production bundle.

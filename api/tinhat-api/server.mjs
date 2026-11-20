@@ -25,6 +25,8 @@ import { giphyMediaUrl, sniffImage, readCapped, MEDIA_HEADERS, sniffAudio, sniff
 import { clearGuestCalls } from "./guestcalls.mjs";
 import { listRoom, historySince, visibleSince, sinceFromState, membershipStart } from "./vodslist.mjs";
 import { vodsQuery, vodsAllowed, memberCache } from "./vodslinks.mjs";
+import { installPlay } from "./play/install.mjs";
+import { createFedResolver } from "./fedresolve.mjs";
 
 const app = express();
 const PORT = Number(process.env.PORT || 3001);
@@ -112,7 +114,8 @@ function rateLimit(req, res, next) {
 // + the guest room (guests.mjs): its own limits (knocks per address), and the waiting page polls every 2 s.
 // + call sign-ins (calltoken.mjs): their own per-address limit and body reader (lk-jwt's request shapes).
 // + /network (network.mjs, open network slice 1): per-user limit, no body.
-const REACH_PATH = /^\/(?:presence\/?$|network\/?$|push\/|gameservers\/|guests(?:\/|$)|guest\/(?:door|knock|ticket)$|calltoken(?:\/|$))/;
+// + the mini games (/v1/*, play/install.mjs; docs/PLAY.md): per-session limits and their own body reader.
+const REACH_PATH = /^\/(?:presence\/?$|network\/?$|push\/|gameservers\/|guests(?:\/|$)|guest\/(?:door|knock|ticket)$|calltoken(?:\/|$)|v1\/|api\/play\/)/;
 
 // ---- this server's own extras (Tin Hat Server) -------------------------------------------------------------------
 // Registered before the limiter and the JSON parser: they read their own bodies (the web server caps the sizes).
@@ -1259,10 +1262,26 @@ installCallToken(app, {
     sfuUrl: process.env.LK_SFU_URL || `wss://${process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname}/livekit/sfu`,
 });
 
+// The mini games (GAMES-V1-SPEC; docs/PLAY.md): chips per space, Texas Hold'em and The Rig, over /api/play/v1 (Caddy
+// strips /api/play). Off unless the manager configured the games database (PLAY_DB_*); the only admin-API use is a
+// read-only, allow-listed room-state reader inside play/space.mjs.
+const play = installPlay(app, {
+    conf: CONF, hs: reachHs, adminToken: ADMIN_TOKEN, serverName: process.env.SERVER_NAME || new URL(HS_PUBLIC).hostname,
+    federation: createFedResolver(),
+    lk: { url: LK_API_URL.replace(/\/+$/, ""), key: LK_KEY, secret: LK_SECRET },
+    isGuest: (mxid) => guestAccounts.some((a) => a.user === mxid) || /^@guest-/i.test(mxid) || mxid === (process.env.RECORDER_USER || "\u0000"),
+});
+
 // A rejected promise nobody awaited (an async route Express 4 doesn't watch) is logged, not fatal: one bad request
 // must not take calls, sounds and pushes down for everybody. Thrown exceptions still end the process (unknown state).
 process.on("unhandledRejection", (e) => console.error(`[api] unhandled rejection: ${e && e.stack ? e.stack : e}`));
 
-app.listen(PORT, "127.0.0.1", () => {
+const httpServer = app.listen(PORT, "127.0.0.1", () => {
     console.log(`Tin Hat API listening on 127.0.0.1:${PORT} (conf ${CONF})`);
+});
+play.attach(httpServer); // the play socket (/v1/ws): upgrades on the same port
+// the updater stops the API with SIGTERM: games drain first (§1: a hand in progress is called off within 30 s; the next
+// start voids anything still open from the ledger alone), then the process ends
+for (const sig of ["SIGTERM", "SIGINT"]) process.once(sig, () => {
+    Promise.race([play.drain(5_000, "restart"), new Promise((r) => setTimeout(r, 30_000))]).finally(() => process.exit(0));
 });

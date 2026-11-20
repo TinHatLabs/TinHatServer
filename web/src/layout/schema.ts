@@ -29,7 +29,12 @@ export interface IslandDef {
   home: JObj[];
   /** the call: the usable minimum of its control bar (layout units), 0 elsewhere */
   bar: number;
+  /** v1.3 (LAYOUT.md §7.6 step 4a): the length the island keeps along an axis before its auto / pm siblings get more
+   *  than their minimum — min(sc(len), pm of the parent's inner length); null = none (only the room list has one) */
+  keep: { w: Keep | null; h: Keep | null };
 }
+
+export type Keep = { len: number; pm: number };
 
 export const SCHEMA: JObj = clone(SCHEMA_JSON as unknown as Json) as JObj;
 const X = get(SCHEMA, "x-tinhat") as JObj;
@@ -37,6 +42,11 @@ const X = get(SCHEMA, "x-tinhat") as JObj;
 const num = (o: JObj, k: string): number => get(o, k) as number;
 const sizePair = (o: JObj) => ({ w: get(o, "w") as JObj, h: get(o, "h") as JObj });
 const minPair = (o: JObj) => ({ w: num(o, "w"), h: num(o, "h") });
+
+function keepOf(k: Json | undefined, a: "w" | "h"): Keep | null {
+  const v = isObj(k) ? get(k, a) : undefined;
+  return isObj(v) ? { len: num(v, "len"), pm: num(v, "pm") } : null;
+}
 
 function readDef(id: string, d: JObj): IslandDef {
   const oh = get(d, "orientH");
@@ -60,6 +70,7 @@ function readDef(id: string, d: JObj): IslandDef {
     collapse: (get(d, "collapse") as string[]).slice(),
     home: (get(d, "home") as JObj[]).slice(),
     bar: typeof get(d, "bar") === "number" ? (get(d, "bar") as number) : 0,
+    keep: { w: keepOf(get(d, "keep"), "w"), h: keepOf(get(d, "keep"), "h") },
   };
 }
 

@@ -15,9 +15,10 @@ export function previewText(body: string, name: string | null): string | null {
 }
 
 /** fix1216 1-10: a group toast's sender label: the display name, or the id's localpart when the member isn't cached or
- *  its name is empty (the desktop's notify::sender_label). */
+ *  its name is empty (the desktop's notify::sender_label). N3: the SDK reports an empty name as the user's own id
+ *  (rawDisplayName === userId), so that counts as no name too. */
 export function senderLabel(display: string | null | undefined, userId: string): string {
-  return display || userId.replace(/^@/, "").split(":")[0]!;
+  return display && display !== userId ? display : userId.replace(/^@/, "").split(":")[0]!;
 }
 
 /** fix1216 1-10: the whole toast line (shared vectors `notes`, the desktop's notify::toast_note): the cut text with the

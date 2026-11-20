@@ -1,0 +1,206 @@
+/* bits.module.css — names, cards, chips, the turn ring, the refusal note (play/bits.tsx). Art colours come from the
+   game root's --g-* variables (art.ts); everything else from the theme. */
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- cards ---- */
+.card {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  box-sizing: border-box;
+  border-radius: 6px;
+  background: var(--g-card-face);
+  box-shadow: 0 1px 0 var(--g-card-edge), 0 2px 6px var(--g-shade-soft);
+  font-family: inherit;
+  user-select: none;
+  line-height: 1;
+}
+.sm {
+  width: calc(26px * var(--th-text-scale, 1));
+  height: calc(36px * var(--th-text-scale, 1));
+  border-radius: 4px;
+}
+.md {
+  width: calc(40px * var(--th-text-scale, 1));
+  height: calc(56px * var(--th-text-scale, 1));
+}
+.lg {
+  width: calc(56px * var(--th-text-scale, 1));
+  height: calc(78px * var(--th-text-scale, 1));
+  border-radius: 8px;
+}
+.xl {
+  width: calc(92px * var(--th-text-scale, 1));
+  height: calc(128px * var(--th-text-scale, 1));
+  border-radius: 10px;
+}
+.black {
+  color: var(--g-card-black);
+}
+.red {
+  color: var(--g-card-red);
+}
+.dim {
+  opacity: 0.45;
+  filter: saturate(0.4);
+}
+.corner {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-weight: 700;
+}
+.rank {
+  font-size: calc(15px * var(--th-text-scale, 1));
+  letter-spacing: -0.5px;
+}
+.suitSm {
+  font-size: calc(11px * var(--th-text-scale, 1));
+}
+.pip {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  font-size: calc(22px * var(--th-text-scale, 1));
+}
+.sm .corner {
+  left: 3px;
+  top: 3px;
+}
+.sm .rank {
+  font-size: calc(11px * var(--th-text-scale, 1));
+}
+.sm .suitSm {
+  font-size: calc(8px * var(--th-text-scale, 1));
+}
+.sm .pip {
+  font-size: calc(13px * var(--th-text-scale, 1));
+  right: 3px;
+  bottom: 2px;
+}
+.lg .rank {
+  font-size: calc(20px * var(--th-text-scale, 1));
+}
+.lg .suitSm {
+  font-size: calc(14px * var(--th-text-scale, 1));
+}
+.lg .pip {
+  font-size: calc(32px * var(--th-text-scale, 1));
+  right: 7px;
+  bottom: 5px;
+}
+.xl .corner {
+  left: 8px;
+  top: 8px;
+}
+.xl .rank {
+  font-size: calc(32px * var(--th-text-scale, 1));
+}
+.xl .suitSm {
+  font-size: calc(22px * var(--th-text-scale, 1));
+}
+.xl .pip {
+  font-size: calc(56px * var(--th-text-scale, 1));
+  right: 10px;
+  bottom: 8px;
+}
+.back {
+  background: var(--g-card-back);
+  padding: 3px;
+}
+.backInner {
+  flex: 1;
+  border-radius: 3px;
+  border: 1px solid var(--g-card-back-line);
+  background: repeating-linear-gradient(45deg, transparent 0 4px, var(--g-card-back-line) 4px 5px);
+  opacity: 0.8;
+}
+.ghost {
+  background: transparent;
+  box-shadow: none;
+  border: 1.5px dashed var(--g-felt-line);
+}
+
+/* ---- chips ---- */
+.chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  color: var(--th-text-primary);
+}
+.chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--g-chip);
+  box-shadow: inset 0 0 0 2px var(--g-chip-edge), 0 1px 1px var(--g-shade);
+  flex: none;
+}
+.chipsBig {
+  font-size: calc(15px * var(--th-text-scale, 1));
+}
+.chipsBig .chip {
+  width: 14px;
+  height: 14px;
+  box-shadow: inset 0 0 0 3px var(--g-chip-edge), 0 1px 1px var(--g-shade);
+}
+.chipN {
+  min-width: 0;
+}
+
+/* ---- the turn ring ---- */
+.ring {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ringBg {
+  fill: none;
+  stroke: var(--th-border-subtle);
+  stroke-width: 3;
+}
+.ringFg {
+  fill: none;
+  stroke: var(--th-accent-bright);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dasharray 1s linear;
+}
+.ringLow .ringFg {
+  stroke: var(--g-loss);
+}
+
+/* ---- the refusal note ---- */
+.note {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: 80%;
+  padding: 7px 12px;
+  border-radius: var(--th-radius-lg);
+  background: var(--th-surface-overlay);
+  border: 1px solid var(--th-border-strong);
+  color: var(--th-text-primary);
+  font-size: calc(13px * var(--th-text-scale, 1));
+  box-shadow: 0 6px 18px var(--g-shade);
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ringFg {
+    transition: none;
+  }
+}

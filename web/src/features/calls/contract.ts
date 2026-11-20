@@ -150,6 +150,10 @@ export interface CallState {
   serverMuted: boolean;
   serverMutedBy: string;
   moderationRev: number;
+  /** 12.1.17: identities whose hand is up for ME (they asked to be unmuted and I may unmute them), sorted */
+  unmuteAsks: string[];
+  /** 12.1.17: when I last asked to be unmuted (0 = not this call): the ask button's cooldown */
+  unmuteAskAt: number;
   lastError: string;
   errorRev: number;
   inputs: Dev[];
@@ -267,6 +271,8 @@ export interface CallActions {
   serverMute(identity: string): Promise<string>; // "" or reason
   serverUnmute(identity: string): Promise<string>;
   disconnectParticipant(identity: string): Promise<string>;
+  /** 12.1.17: I'm server-muted — ask the moderators to unmute me (rate-limited). "" or why not. */
+  askToUnmute(): Promise<string>;
   reconnectMic(): void;
   healPeerAudio(identity: string): void;
   fixSystemLevel(): void; // no-op on web

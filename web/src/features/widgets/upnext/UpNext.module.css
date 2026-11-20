@@ -444,7 +444,7 @@
   flex: none;
 }
 .csub {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   font-variant-numeric: tabular-nums;
   color: var(--th-widget-meta-fg);
   white-space: nowrap;
@@ -455,24 +455,24 @@
 /* ---- phones (§8) ---- */
 .body[data-mobile] .title,
 .body[data-mobile] .ctitle {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .when,
 .body[data-mobile] .day,
 .body[data-mobile] .ctime,
 .body[data-mobile] .noReplies,
 .body[data-mobile] .tbd {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .dow {
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .dom {
-  font-size: 17px;
+  font-size: calc(17px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .seg {
   height: 36px;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .rsvpIcons > .seg {
   width: 36px;

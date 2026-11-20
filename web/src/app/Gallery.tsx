@@ -17,7 +17,9 @@
 //   #/__gallery/theme-editor    the theme editor panel (THEMES-UI.md §13; ?theme=&mode=&query=&ops=)
 //   #/__gallery/theme-share     theme share cards + the Try bar (THEMES-UI.md §14; ?theme=&try=1)
 //   #/__gallery/gamebg          game art behind a stand-in conversation ("Match the game", ?art=&theme=&ff=mobile&bare=1)
+//   #/__gallery/room-header     the phone room header + its "More" sheet over a stand-in room (?theme=&open=1)
 //   #/__gallery/ambience        a shared chat background + its effect over a stand-in conversation (docs/AMBIENCE.md)
+//   #/__gallery/games           the games UI over the dev-only mock dealer (features/play/gallery.tsx; DEV builds only)
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { GalleryRoomList } from "./GalleryRoomList";
 import {
@@ -78,7 +80,9 @@ import { ThemeEditorPage, ThemeSharePage } from "./GalleryThemeEditor";
 import { BannerStripView } from "./Banners";
 import { GuestsGallery } from "@/features/guests/gallery";
 import { GameArtGallery } from "./GalleryGameArt";
+import { RoomHeaderGallery } from "./GalleryRoomHeader";
 import { AmbienceGallery } from "./GalleryAmbience";
+import { GamesGallery } from "@/features/play/gallery";
 import s from "./Gallery.module.css";
 
 export function Gallery({ section }: { section?: string }) {
@@ -115,6 +119,10 @@ export function Gallery({ section }: { section?: string }) {
       return <AmbienceGallery />;
     case "guests":
       return <GuestsGallery />;
+    case "room-header":
+      return <RoomHeaderGallery />;
+    case "games":
+      return <GamesGallery />;
     default:
       return <AllPage />;
   }

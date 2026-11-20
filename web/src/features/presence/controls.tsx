@@ -16,7 +16,7 @@ import { EmojiPicker } from "@/features/chat/EmojiPicker";
 import { useCallStore } from "@/features/calls";
 import { answerQuestion, setMyStatus, turnSharingOff, turnSharingOn, usePresenceStore } from "./runtime";
 import { showQuestion } from "./model";
-import { STATUS_PALETTE, STATUS_PRESETS, STATUS_TEXT_MAX, statusColor, statusText, tonightUntil, type CustomStatus, type StatusPreset } from "./status";
+import { STATUS_PALETTE, STATUS_PRESETS, capStatusEdit, statusColor, statusText, tonightUntil, type CustomStatus, type StatusPreset } from "./status";
 import { PresenceLine, StatusChip, hexA, useMyPresence, viewOf } from "./ui";
 import { pickTz, setTzShare, useTzStore } from "./tz";
 import { ZONE_CHOICES, zoneChoiceText } from "@/widgets/clocks";
@@ -257,7 +257,7 @@ export function StatusPicker() {
               value={text}
               placeholder="What are you up to?"
               aria-label="Status text"
-              onChange={(e) => setText(Array.from(e.target.value).slice(0, STATUS_TEXT_MAX).join(""))}
+              onChange={(e) => setText(capStatusEdit(e.target.value))}
               onAccepted={save}
             />
           </div>

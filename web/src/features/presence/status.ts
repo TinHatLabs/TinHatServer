@@ -48,11 +48,18 @@ export const STATUS_PRESETS: readonly StatusPreset[] = [
   { id: "tilted", emoji: "😤", text: "Tilted", color: "pink" },
 ];
 
-export const STATUS_TEXT_MAX = 40;
+/** D07.6 (12.1.17): a status is 1–80 characters after trim. */
+export const STATUS_TEXT_MAX = 80;
+/** What apps and servers from before 12.1.17 accept in `text`. A longer status keeps its whole text in `full` and
+ *  `text` carries the first ≤ 39 characters (whole graphemes) + "…", so older apps still show it, cut short
+ *  (shared vectors: testvectors/presence-status.json, the desktop's and the server's are byte copies). */
+export const STATUS_TEXT_SHORT_MAX = 40;
+const ELLIPSIS = "…";
 
 /** A custom status (account data `dev.tinhat.presence_status`, or the `status` of a GET /api/presence row). */
 export interface CustomStatus {
   id?: string;
+  /** the whole status (1–80): `full` when the content has a valid one, else `text` */
   text: string;
   emoji?: string;
   /** palette key */
@@ -68,14 +75,76 @@ export function statusColor(key: string | undefined | null): string {
 
 export const codePoints = (s: string) => Array.from(s).length;
 
-/** The status if it can be shown at `nowMs` (text 1–40 after trim, not expired), else null. */
+/** D07.6: the status trim of both apps — one explicit set, so the apps write and read alike: JS `\s` (which has
+ *  U+FEFF) + U+0085 = Rust's `char::is_whitespace` (which has U+0085) + U+FEFF. */
+const EDGE_SPACE = /^[\s\u0085]+|[\s\u0085]+$/gu;
+const ALL_SPACE = /^[\s\u0085]+$/u;
+export const trimStatus = (s: string) => s.replace(EDGE_SPACE, "");
+
+/** The cut of a long status: its first whole graphemes that fit in `max` characters (code points), less trailing
+ *  graphemes that are only spaces (whole graphemes again: U+0600 + space is ONE grapheme and stays whole).
+ *  A browser without Intl.Segmenter (older than the app's minimums, WEB-EXCEPTIONS.md) can't find graphemes: it cuts
+ *  before the last space that follows a printable ASCII character (always a grapheme boundary), else to nothing. */
+function cutGraphemes(t: string, max: number): string {
+  const Seg = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: "grapheme" }) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
+  if (!Seg) {
+    const cps = Array.from(t).slice(0, max + 1);
+    for (let i = cps.length - 1; i > 0; i--) {
+      if (/^[\s\u0085]$/u.test(cps[i]!) && /^[\x21-\x7e]$/.test(cps[i - 1]!)) return cps.slice(0, i).join("");
+    }
+    return "";
+  }
+  const out: string[] = [];
+  let n = 0;
+  for (const { segment } of new Seg(undefined, { granularity: "grapheme" }).segment(t)) {
+    const k = codePoints(segment);
+    if (n + k > max) break;
+    out.push(segment);
+    n += k;
+  }
+  while (out.length && ALL_SPACE.test(out[out.length - 1]!)) out.pop();
+  return out.join("");
+}
+
+/** 12.1.17 Stage B (the review's #5): the status editor's cap. A text of at most STATUS_TEXT_MAX characters (code points)
+ *  stays exactly as typed; a longer one becomes its longest prefix of WHOLE graphemes within the cap (a pasted emoji
+ *  sequence or a letter with its mark is never split). Nothing is trimmed (the save trims). Shared vectors
+ *  testvectors/status-edit.json (= desktop presence_model.rs cap_status_edit). A browser without Intl.Segmenter
+ *  (older than the app's minimums, WEB-EXCEPTIONS.md) cuts at code points. */
+export function capStatusEdit(t: string): string {
+  if (codePoints(t) <= STATUS_TEXT_MAX) return t;
+  const Seg = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: "grapheme" }) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
+  if (!Seg) return Array.from(t).slice(0, STATUS_TEXT_MAX).join("");
+  let out = "";
+  let n = 0;
+  for (const { segment } of new Seg(undefined, { granularity: "grapheme" }).segment(t)) {
+    const k = codePoints(segment);
+    if (n + k > STATUS_TEXT_MAX) break;
+    out += segment;
+    n += k;
+  }
+  return out;
+}
+
+/** D07.6: what a status write stores — `text` (≤ 40, shown by every app) and, for a status over 40 characters,
+ *  `full` (the whole text). `t` is trimmed first; a first grapheme too long to fit leaves `text` = "…". */
+export function shortenStatus(t: string): { text: string; full: string | null } {
+  const text = trimStatus(t);
+  if (codePoints(text) <= STATUS_TEXT_SHORT_MAX) return { text, full: null };
+  return { text: cutGraphemes(text, STATUS_TEXT_SHORT_MAX - 1) + ELLIPSIS, full: text };
+}
+
+/** The status if it can be shown at `nowMs` (text 1–40 after trim, not expired), else null. Its text is the
+ *  content's `full` (1–80 after trim) when it has one, else `text` (D07.6). */
 export function liveStatus(s: unknown, nowMs: number): CustomStatus | null {
   if (!s || typeof s !== "object") return null;
   const o = s as Record<string, unknown>;
-  const text = typeof o.text === "string" ? o.text.trim() : "";
-  if (!text || codePoints(text) > STATUS_TEXT_MAX) return null;
+  const short = typeof o.text === "string" ? trimStatus(o.text) : "";
+  if (!short || codePoints(short) > STATUS_TEXT_SHORT_MAX) return null;
   const until = typeof o.until === "number" ? o.until : null;
   if (until !== null && until <= nowMs) return null;
+  const full = typeof o.full === "string" ? trimStatus(o.full) : "";
+  const text = full && codePoints(full) <= STATUS_TEXT_MAX ? full : short;
   return {
     id: typeof o.id === "string" ? o.id : undefined,
     text,
@@ -115,10 +184,13 @@ export function statusView(state: PresenceState, status: unknown, nowMs: number)
 }
 
 /** A4.1: the `dev.tinhat.presence_status` content for a status, or `{}` (Clear status / an expired one's
- *  clean-up) — the desktop's `status_content`. */
+ *  clean-up) — the desktop's `status_content`. A status over 40 characters adds `full` (D07.6). */
 export function statusContent(s: CustomStatus | null): Record<string, unknown> {
   if (!s) return {};
-  return { id: s.id ?? "custom", text: s.text.trim(), emoji: s.emoji ?? "", color: s.color, until: s.until ?? null, v: 1 };
+  const { text, full } = shortenStatus(s.text);
+  const out: Record<string, unknown> = { id: s.id ?? "custom", text, emoji: s.emoji ?? "", color: s.color, until: s.until ?? null, v: 1 };
+  if (full !== null) out.full = full;
+  return out;
 }
 
 /** "Tonight" = the next 04:00 local (the Game Reel's night rollover). */

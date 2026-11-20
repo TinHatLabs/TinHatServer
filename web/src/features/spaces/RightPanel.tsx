@@ -76,6 +76,7 @@ import s from "./RightPanel.module.css";
 import { useRegistry } from "@/core/registry";
 import { linkContainerEvents } from "@/core/linkgate";
 import { roleChoices, roleConfirmWords, roleNeedsConfirm } from "./roleChoices";
+import { PersonName } from "./PersonName";
 
 export interface RightPanelProps {
   roomId: string;
@@ -407,7 +408,7 @@ function InfoPane({ roomId, editing, setEditing, perms }: { roomId: string; edit
       <div className={s.infoAvatar}>
         <Avatar size={72} name={shownName} seed={avatarSeed(roomId, dm.peer)} imageSource={avatar || dm.avatar} />
       </div>
-      {!editing && <div className={s.roomName}>{shownName}</div>}
+      {!editing && <div className={s.roomName}>{dm.peer ? <PersonName mxid={dm.peer} roomId={roomId}>{shownName}</PersonName> : shownName}</div>}
       {!editing && alias && <div className={s.alias}>{alias}</div>}
       {editing && (
         <div className={s.editor}>
@@ -574,6 +575,7 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
               <MemberRowView
                 key={r.mxid}
                 row={r}
+                roomId={roomId}
                 status={statusOf.get(r.mxid) ?? ""}
                 showMore={actionable(r)}
                 menuTarget={menu?.row.mxid === r.mxid || powerMenu?.row.mxid === r.mxid}
@@ -661,6 +663,7 @@ function MembersPane({ roomId, rows, perms, inSpace, spaceId }: { roomId: string
 
 function MemberRowView({
   row,
+  roomId,
   status,
   showMore,
   menuTarget,
@@ -668,6 +671,7 @@ function MemberRowView({
   onMenu,
 }: {
   row: RoomMemberRow;
+  roomId: string;
   status: string;
   showMore: boolean;
   /** this row's menu is open: its ⋯ stays up (native shows EVERY actionable row's ⋯ while any
@@ -713,7 +717,7 @@ function MemberRowView({
       <Avatar size={32.4} name={row.name || row.mxid} seed={row.mxid} imageSource={row.avatar} {...avatarDot(pres, "var(--row-surface)")} />
       <span className={s.rowText}>
         <span ref={nameRef} className={s.rowName} style={{ color: (row.tagColor && ink(row.tagColor)) || senderColor(row.mxid) }}>
-          {row.name || localpart(row.mxid)}
+          <PersonName mxid={row.mxid} roomId={roomId}>{row.name || localpart(row.mxid)}</PersonName>
         </span>
         {chip ? (
           <span className={s.rowSub} data-member-status="">

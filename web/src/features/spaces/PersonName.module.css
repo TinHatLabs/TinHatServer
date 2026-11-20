@@ -1,0 +1,17 @@
+/* PersonName.qml: token, 4 px, label — one row, centred on the text, the label elides. */
+.row {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: bottom;
+}
+.block {
+  display: flex;
+}
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

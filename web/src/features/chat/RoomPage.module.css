@@ -126,7 +126,7 @@
 }
 .veilTitle {
   font-weight: 700;
-  font-size: 18.67px;
+  font-size: calc(18.67px * var(--th-text-scale, 1));
   color: var(--th-drop-card-fg);
 }
 .veilSub {
@@ -157,48 +157,34 @@
   cursor: pointer;
 }
 .mHeader .title {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 .mHeader .sub {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
 }
-/* phones: the header's other actions as a labelled list in the ⋮ sheet (label = the button's tooltip) */
+/* phones: the header's other actions as a labelled list in the ⋮ sheet (HeaderButtonLabel: each HeaderIconButton
+   draws itself as a row with its label as text; it used to be CSS ::after text, which the touch hit-area rule's own
+   ::after blanked on every phone). A wrapper (Threads' unread dot, a dimmed item) spans the row too. */
 .moreRow {
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 4px 8px 12px;
 }
+.moreRow > span {
+  display: flex;
+  width: 100%;
+}
+/* a wrapper's badge (Threads' unread dot, aria-hidden) sits at the glyph's top-right corner, not the row's */
+.moreRow > span > span[aria-hidden="true"] {
+  left: 30px;
+  right: auto;
+  top: 9px;
+}
+/* a row button that isn't a HeaderIconButton (a glyph-less item, a feature's own row) keeps a full touch row */
 .moreRow > button {
-  display: flex !important;
-  align-items: center;
-  width: 100% !important;
-  gap: 14px;
-  padding: 0 12px !important;
-  height: 48px !important;
-  border-radius: 10px;
-}
-.moreRow > button > span:nth-child(-n + 3) {
-  border-radius: 10px;
-}
-.moreRow > button > span:nth-child(2) {
-  display: none;
-}
-.moreRow > button > span:nth-child(4) {
-  position: relative;
-  left: auto;
-  top: auto;
-  margin: 0;
-  flex: none;
-}
-.moreRow > button::after {
-  content: attr(aria-label);
-  font-size: 16px;
-  color: var(--th-header-more-fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-height: 48px;
 }
 
 /* phones: every header action button (ours or another feature's) is a 44 px touch target */

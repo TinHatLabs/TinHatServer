@@ -174,7 +174,7 @@
 }
 /* the rig draws the colour emoji ≈ 16 px even at the 19.2 px font size */
 :global(html:not([data-ff="mobile"])) .emoji {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 .ring {
   position: absolute;
@@ -288,7 +288,7 @@
 }
 .mobile .search input {
   height: 44px;
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 .mobile .addBtn,
 .mobile .closeBtn {
@@ -306,7 +306,7 @@
   height: 96px;
 }
 .mobile .emoji {
-  font-size: 26px;
+  font-size: calc(26px * var(--th-text-scale, 1));
 }
 .mobile .sectionHead,
 .mobile .empty,

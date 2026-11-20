@@ -1,5 +1,5 @@
 diff --git a/dist/livekit-client.e2ee.worker.mjs b/dist/livekit-client.e2ee.worker.mjs
-index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f5683a43914 100644
+index ad55a83819c0e24fde8a65784395b2f797bab99f..bc1395cfe0086291eddb9b3b052440b0861757bf 100644
 --- a/dist/livekit-client.e2ee.worker.mjs
 +++ b/dist/livekit-client.e2ee.worker.mjs
 @@ -6081,13 +6081,9 @@ function writeRbsp(data_in) {
@@ -19,7 +19,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
      return iv;
    }
    static encrypt(data, keys) {
-@@ -6744,6 +6740,365 @@ class BaseFrameCryptor extends eventsExports.EventEmitter {
+@@ -6744,6 +6740,366 @@ class BaseFrameCryptor extends eventsExports.EventEmitter {
   * Cryptor is responsible for en-/decrypting media frames.
   * Each Cryptor instance is responsible for en-/decrypting a single mediaStreamTrack.
   */
@@ -118,6 +118,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
 +const TINHAT_IV_STAMP = 'tinhat-iv-v2';
 +const TINHAT_VP9_KF_IV_STAMP = 'tinhat-vp9-kf-iv-v1';
 +const TINHAT_VP9_KF_IV_MAX_TRIES = 512;
++const TINHAT_TX_LEN_STAMP = 'tinhat-tx-len-v1'; // the sender length check (encodeFunction)
 +const TINHAT_IV_COUNTER_LIMIT = Number.MAX_SAFE_INTEGER; // 2^53 - 1: never reached (one IV per frame)
 +// tinhat-iv-v2, the H.264-safe layout (12.1.8): EVERY IV byte is nonzero and byte 0 >= 4. For H.264/H.265 the sender
 +// RBSP-escapes ciphertext || IV || trailer (writeRbsp: a 0x03 before any byte <= 3 after two 0x00), while native
@@ -385,7 +386,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
  class FrameCryptor extends BaseFrameCryptor {
    constructor(opts) {
      var _a;
-@@ -6756,6 +7111,8 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -6756,6 +7112,8 @@ class FrameCryptor extends BaseFrameCryptor {
      this.hasFrameMetadata = false;
      this.frameMetadataFrameId = 0;
      this.errorLimiter = new ErrorRateLimiter();
@@ -394,7 +395,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
      /** grace period for a teardown or a resubscribe to land before we report a stalled track */
      this.UNDECRYPTED_TRACK_GRACE_MS = 2000;
      /**
-@@ -7045,9 +7402,12 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7045,9 +7403,12 @@ class FrameCryptor extends BaseFrameCryptor {
        if (encodedFrame.data.byteLength === 0) {
          return controller.enqueue(encodedFrame);
        }
@@ -410,16 +411,29 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
        }
        const keySet = this.keys.getKeySet();
        if (!keySet) {
-@@ -7057,7 +7417,7 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7057,8 +7418,20 @@ class FrameCryptor extends BaseFrameCryptor {
        const encryptionKey = keySet.encryptionKey;
        const keyIndex = this.keys.getCurrentKeyIndex();
        if (encryptionKey) {
 -        const iv = this.makeIV((_a = encodedFrame.getMetadata().synchronizationSource) !== null && _a !== void 0 ? _a : -1, encodedFrame.timestamp);
 +        let iv = this.makeIV((_a = encodedFrame.getMetadata().synchronizationSource) !== null && _a !== void 0 ? _a : -1, encodedFrame.timestamp);
          let frameInfo = this.getUnencryptedBytes(encodedFrame);
++        // PATCH (Tin Hat Web) tinhat-tx-len-v1 (12.1.17): a frame SHORTER than its own clear header (a slice NAL header as
++        // the last byte, a VP8 frame under 10 / 3 bytes, an H.264 frame without a slice that falls back to VP8's rule) is
++        // DROPPED, never sent. Upstream's typed-array view below threw a RangeError outside the try: the transform
++        // rejected and this track's whole encode stream errored (nothing more was sent). The desktop's libwebrtc sender
++        // drops the same frames (same stamp); shared vectors testvectors/tx-len/vectors.json. Exactly the header seals.
++        if (encodedFrame.data.byteLength < frameInfo.unencryptedBytes) {
++          this.tinhatShortFrames = (this.tinhatShortFrames || 0) + 1;
++          if ((this.tinhatShortFrames & (this.tinhatShortFrames - 1)) === 0) {
++            workerLogger.warn("frame shorter than its clear header (".concat(encodedFrame.data.byteLength, " < ").concat(frameInfo.unencryptedBytes, "), dropped; ").concat(this.tinhatShortFrames, " so far (").concat(TINHAT_TX_LEN_STAMP, ")"), this.logContext);
++          }
++          return;
++        }
          // Thіs is not encrypted and contains the VP8 payload descriptor or the Opus TOC byte.
          const frameHeader = new Uint8Array(encodedFrame.data, 0, frameInfo.unencryptedBytes);
-@@ -7073,6 +7433,18 @@ class FrameCryptor extends BaseFrameCryptor {
+         // Frame trailer contains the R|IV_LENGTH and key index
+@@ -7073,6 +7446,18 @@ class FrameCryptor extends BaseFrameCryptor {
          // payload  |IV...(length = IV_LENGTH)|R|IV_LENGTH|KID |
          // ---------+-------------------------+-+---------+----
          try {
@@ -438,7 +452,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
            const cipherText = yield crypto.subtle.encrypt({
              name: ENCRYPTION_ALGORITHM,
              iv,
-@@ -7160,18 +7532,17 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7160,18 +7545,17 @@ class FrameCryptor extends BaseFrameCryptor {
          return;
        }
        if (!encryptionEnabled) {
@@ -466,7 +480,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
        }
        const data = new Uint8Array(encodedFrame.data);
        const keyIndex = data[encodedFrame.data.byteLength - 1];
-@@ -7224,6 +7595,10 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7224,6 +7608,10 @@ class FrameCryptor extends BaseFrameCryptor {
          if (!ratchetOpts.encryptionKey && !keySet) {
            throw new TypeError("no encryption key found for decryption of ".concat(_this.participantIdentity));
          }
@@ -477,7 +491,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
          let frameInfo = _this.getUnencryptedBytes(encodedFrame);
          // Construct frame trailer. Similar to the frame header described in
          // https://tools.ietf.org/html/draft-omara-sframe-00#section-4.2
-@@ -7320,20 +7695,11 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7320,20 +7708,11 @@ class FrameCryptor extends BaseFrameCryptor {
     * See also https://developer.mozilla.org/en-US/docs/Web/API/AesGcmParams
     */
    makeIV(synchronizationSource, timestamp) {
@@ -503,7 +517,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
    }
    getUnencryptedBytes(frame) {
      var _a;
-@@ -7410,6 +7776,37 @@ class FrameCryptor extends BaseFrameCryptor {
+@@ -7410,6 +7789,37 @@ class FrameCryptor extends BaseFrameCryptor {
    /**
     * inspects frame mimetype if available. falls back to payloadtype and maps it to the codec specified in rtpMap
     */
@@ -541,7 +555,7 @@ index ad55a83819c0e24fde8a65784395b2f797bab99f..1be708fa53c3f35b57c24133404e5f56
    getVideoCodec(frame) {
      const metadata = frame.getMetadata();
      if (metadata.mimeType) {
-@@ -7671,6 +8068,22 @@ onmessage = ev => {
+@@ -7671,6 +8081,22 @@ onmessage = ev => {
        case 'setLogLevel':
          workerLogger.setLevel(data.level);
          break;

@@ -160,7 +160,7 @@
 
 .main {
   position: relative;
-  height: 40px;
+  height: var(--th-row-room, 40px); /* P22: 40 at 100 % / Cozy (personal.ts row(40); RoomsIsland.qml Th.row(40)) */
   display: flex;
   align-items: center;
   gap: 4px;
@@ -515,8 +515,8 @@
   padding-left: 12px;
 }
 .panel[data-mobile] .name {
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
 }
 .panel[data-mobile] .sub,
 .panel[data-mobile] .parts,
@@ -541,8 +541,8 @@
   box-sizing: border-box;
 }
 .panel[data-mobile] .me {
-  font-size: 15px;
-  line-height: 20px;
+  font-size: calc(15px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
 }
 .panel[data-mobile] .list {
   padding-bottom: calc(80px + var(--th-safe-bottom) + var(--float-card, 0px));
@@ -585,7 +585,7 @@
   flex: 1 1 0;
   height: 44px !important;
   min-height: 44px !important;
-  font-size: 16px !important;
+  font-size: calc(16px * var(--th-text-scale, 1)) !important;
 }
 .inviteActions > * {
   justify-content: center !important;

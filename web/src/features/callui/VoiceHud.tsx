@@ -15,6 +15,7 @@ import { registerAuxWindow } from "@/core/winstate";
 import { Icon, useThemeColours } from "@/ui";
 import { callStore, getC, localpartOf, SELF_ID, tileMxid, useC } from "./store";
 import { forwardKeys } from "./Pip";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 export interface HudPill {
   key: string;
@@ -186,6 +187,7 @@ function HudStack({ active, previewing, mode }: { active: boolean; previewing: b
   // colours are the static (OLED) values, right only for the theme-independent overlay tokens. The accent-based ones
   // are literals of the active theme (as the palette's were), re-rendered on a theme change.
   const { colour: c } = useThemeColours();
+  const callRoom = useC("roomId");
   const last = useRef<Record<string, number>>({});
   const [pills, setPills] = useState<HudPill[]>([]);
   const [t, setT] = useState(0);
@@ -257,6 +259,7 @@ function HudStack({ active, previewing, mode }: { active: boolean; previewing: b
                 {(p.label || "?").charAt(0).toUpperCase()}
               </span>
             )}
+            {!p.more && !p.self && <PrestigeInRow mxid={tileMxid(p.key)} roomId={callRoom} rowGap={6} />}
             <span style={{ color: p.warn ? "var(--th-overlay-pill-fg-error)" : lit ? "var(--th-overlay-pill-fg-speaking)" : "var(--th-overlay-pill-fg)", fontWeight: lit || p.warn ? 700 : 400, fontSize: 13, maxWidth: 162, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {p.warn ? `${p.label} — muted!` : p.label}
             </span>

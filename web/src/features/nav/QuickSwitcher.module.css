@@ -124,8 +124,8 @@
   height: 56px;
 }
 .box[data-mobile] .name {
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
 }
 .box[data-mobile] .row[data-current] .inner {
   background: transparent;
@@ -188,7 +188,7 @@
 }
 /* a status preset's emoji in the glyph box */
 .emoji {
-  font-size: 18px;
+  font-size: calc(18px * var(--th-text-scale, 1));
   line-height: 1;
 }
 

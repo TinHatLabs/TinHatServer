@@ -206,7 +206,7 @@
   gap: 12px;
   height: 48px;
   padding: 0 16px;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .mRow:active {
   background: var(--th-sheet-bottom-item-bg-pressed);
@@ -214,5 +214,5 @@
 :root[data-ff="mobile"] .th,
 :root[data-ff="mobile"] .basic {
   height: 44px;
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }

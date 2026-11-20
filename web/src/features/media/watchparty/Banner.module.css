@@ -31,6 +31,6 @@
   min-width: 64px !important;
 }
 :global(html[data-touch]) .text {
-  font-size: 15px;
-  line-height: 20px;
+  font-size: calc(15px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
 }

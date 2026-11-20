@@ -39,6 +39,10 @@ export interface FormSource {
 }
 let source: FormSource | null = null;
 const sourceListeners = new Set<() => void>();
+/** The source in effect (a page that overrides it for a while puts this one back). */
+export function getFormSource(): FormSource | null {
+  return source;
+}
 export function setFormSource(s: FormSource | null): void {
   source = s;
   for (const l of [...sourceListeners]) l();
@@ -65,6 +69,24 @@ export function getDeviceForm(kind: FormKind): JObj {
   }
   c.form = v === null ? PRESET[kind]() : (kind === "desktop" ? repairDesktop(v) : repairPhone(v)).form;
   return c.form;
+}
+
+/** Follow the device's form outside React (other tabs too; the source's changes too) — useForm's subscription. */
+export function subscribeForm(kind: FormKind, cb: () => void): () => void {
+  const a = onPrefChange(PREF[kind], cb);
+  sourceListeners.add(cb);
+  let b = source?.subscribe(cb) ?? null;
+  const re = () => {
+    b?.();
+    b = source?.subscribe(cb) ?? null;
+  };
+  sourceListeners.add(re);
+  return () => {
+    a();
+    b?.();
+    sourceListeners.delete(cb);
+    sourceListeners.delete(re);
+  };
 }
 
 /** React: the device's form, live (other tabs too; the source's changes too). */

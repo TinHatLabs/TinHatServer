@@ -1015,14 +1015,14 @@
 }
 .mHeadName {
   font-weight: 700;
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .mHeadCaption {
   color: var(--th-space-settings-hint-fg);
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .mTabs {
   flex: none;
@@ -1042,7 +1042,7 @@
   justify-content: center;
   gap: 2px;
   border-radius: 10px;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
 }
 .mTabOn {
   background: var(--th-space-settings-rail-item-bg-selected);

@@ -41,7 +41,7 @@
 }
 .credit {
   margin: 0 4px;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   color: var(--th-soundboard-footer-fg);
 }
 
@@ -70,7 +70,7 @@
 }
 .stripNote {
   margin: 4px 4px 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-soundboard-section-hint-fg);
 }
 /* "Leave your call on this … first." + Leave that call (QOL A21.3) */
@@ -162,7 +162,7 @@
 .phoneHead {
   flex-basis: 100%;
   font-weight: 700;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-soundboard-section-hint-fg);
 }
 
@@ -197,7 +197,7 @@
 }
 .partyTime {
   flex: none;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   font-variant-numeric: tabular-nums;
   color: var(--th-soundboard-section-hint-fg);
 }
@@ -225,7 +225,7 @@
 .next {
   margin: 0 4px 0 24px;
   padding: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   color: var(--th-soundboard-section-fg);
 }
 .next li {

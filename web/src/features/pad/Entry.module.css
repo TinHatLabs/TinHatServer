@@ -70,8 +70,8 @@
   padding: 8px 8px 8px 12px;
 }
 .barMobile .barText {
-  font-size: 15px;
-  line-height: 20px;
+  font-size: calc(15px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
   /* the whole first row, the buttons below it (the desktop's PadBar): next to them the device's name was cut off */
   flex-basis: 100%;
 }

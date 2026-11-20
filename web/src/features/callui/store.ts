@@ -70,6 +70,8 @@ export const DEFAULTS: CallState & Omit<CallUiState, "setMaximized" | "setCollap
   serverMuted: false,
   serverMutedBy: "",
   moderationRev: 0,
+  unmuteAsks: [],
+  unmuteAskAt: 0,
   lastError: "",
   errorRev: 0,
   inputs: EMPTY,
@@ -124,6 +126,7 @@ const NOOPS: Partial<CallActions> = {
   serverMute: async () => "Calls aren't available yet",
   serverUnmute: async () => "Calls aren't available yet",
   disconnectParticipant: async () => "Calls aren't available yet",
+  askToUnmute: async () => "Calls aren't available yet",
   volumeFor: () => 1,
   mutedFor: () => false,
 };

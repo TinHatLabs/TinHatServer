@@ -51,6 +51,16 @@ def after_update() -> int:
     and before the services restart: pending migrations, every generated config written again, the pinned aiohttp."""
     from . import caddylock, install, lkrotate, migrations
     done = migrations.run_pending()
+    # The games database + role + G9 (play.py; idempotent) FIRST: the configs written below then carry a G9 block, and
+    # the new API finds its database at its first start (the database container still runs here). Never fatal and
+    # bounded: a games problem must not fail or stall an update (the manager tries again every minute).
+    from . import play
+    try:
+        ok, msg = asyncio.run(asyncio.wait_for(play.ensure_db(force=True, apply=False), 150))
+    except Exception as e:  # noqa: BLE001
+        ok, msg = False, f"couldn't prepare the games database now ({e!r}); the manager tries again when it starts"
+    print(f"games database: {msg}")
+    play.state.save_state(play_api_restart=None)  # the updater recreates every service after this step anyway
     print(lkrotate.maybe_rotate())  # 0.3.13 (PAD-PHONE Step A): once, and only when a rollback can't mix the key pairs
     with caddylock.held_sync(300) as got:  # the web server's settings lock (a console change finishes first)
         if got:
@@ -238,6 +248,10 @@ def main() -> None:
     if sys.argv[1:2] == ["api-limits"]:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
         sys.exit(api_limits(sys.argv[2:]))
+    if sys.argv[1:2] == ["play"]:  # `tinhat play config …` / `tinhat play db` (play.py; docs/PLAY.md)
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
+        from . import play
+        sys.exit(play.cli(sys.argv[2:]))
     if sys.argv[1:2] == ["dashboard-access"]:
         logging.basicConfig(level=logging.WARNING, stream=sys.stderr, format="%(levelname)s %(name)s: %(message)s")
         sys.exit(dashboard_access(sys.argv[2:]))

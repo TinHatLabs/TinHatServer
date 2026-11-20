@@ -4,6 +4,8 @@
 // and the hover action bar.
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { useMemberRole, RoleBadge, roleNameColour } from "@/features/spaces";
+import { PersonName } from "@/features/spaces/PersonName";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 import { bus, openUserProfile } from "@/core/bus";
 import { useCryptoStatus, useIsFirstDevice, useMember } from "@/core/matrix";
 import { findTimelineRenderer } from "@/core/registry";
@@ -203,13 +205,13 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
     >
       {p.dayLabel && (
         <div className={s.day}>
-          <span className={s.dayPill} data-amb="">
+          <span className={s.dayPill} data-amb="day">
             {p.dayLabel}
           </span>
         </div>
       )}
       {p.isDivider && (
-        <div className={s.newDiv} data-amb="">
+        <div className={s.newDiv}>
           <span className={s.newLine} />
           <span className={s.newLabel}>NEW</span>
         </div>
@@ -282,6 +284,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
         <div className={s.col} style={{ maxWidth: maxBubble + 42, opacity: row.pending ? 0.55 : 1 }}>
           {showName && (
             <div className={s.nameRow}>
+              <PrestigeInRow mxid={row.sender} roomId={roomId} rowGap={6} />
               <span
                 className={s.name}
                 data-amb="name"
@@ -303,7 +306,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
               className={cx(s.bubble, mine ? s.bubbleMine : s.bubbleIn, !grouped && (mine ? s.tuckR : s.tuckL), row.failed && s.bubbleFailed)}
               style={{ maxWidth: maxBubble }}
             >
-              {row.replyTo && <ReplyQuote row={row} mine={mine} inner={inner} onJump={h.onJump} />}
+              {row.replyTo && <ReplyQuote row={row} roomId={roomId} mine={mine} inner={inner} onJump={h.onJump} />}
               {row.redacted && <div className={s.redacted}>Message deleted</div>}
               {row.undecryptable && <LockedNote code={row.utdCode} maxWidth={maxBubble - 70 + 20} />}
               {bodyNode}
@@ -321,7 +324,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
             {!noBar && !p.touch && hover && <HoverBar row={row} tuck={tuck} h={h} />}
           </div>
           {row.failed && (
-            <div className={s.failedRow} data-amb="">
+            <div className={s.failedRow}>
               <span className={s.failReason}>{row.failReason || "Couldn't send"}</span>
               {/* L1 A31.0 / D05.6: real buttons (Tab, Enter / Space, a screen reader names them), drawn as before */}
               <button type="button" className={s.retry} aria-label="Retry sending this message" onClick={() => h.onRetry(row)}>
@@ -333,7 +336,7 @@ export const ChatBubble = memo(function ChatBubble(p: BubbleProps) {
             </div>
           )}
           {row.reactions.length > 0 && (
-            <div className={s.reactions} style={{ maxWidth: maxBubble }} data-amb="">
+            <div className={s.reactions} style={{ maxWidth: maxBubble }} data-amb="reactions">
               {row.reactions.map((r) => (
                 <ReactionChip key={r.key} r={r} onClick={() => h.onReact(row, r.key)} />
               ))}
@@ -377,7 +380,7 @@ function Stamp({ text, tip, failed, mine, quiet }: { text: string; tip: string; 
   );
 }
 
-function ReplyQuote({ row, mine, inner, onJump }: { row: Row; mine: boolean; inner: number; onJump: (id: string) => void }) {
+function ReplyQuote({ row, roomId, mine, inner, onJump }: { row: Row; roomId: string; mine: boolean; inner: number; onJump: (id: string) => void }) {
   const r = row.replyTo!;
   const loaded = r.loaded;
   return (
@@ -390,9 +393,14 @@ function ReplyQuote({ row, mine, inner, onJump }: { row: Row; mine: boolean; inn
       }}
     >
       <span className={s.quoteBar} />
-      <span className={s.quoteName} style={{ color: mine ? "var(--th-bubble-own-quote-fg)" : loaded ? senderColor(r.name) : "var(--th-bubble-other-quote-fg)" }}>
+      <PersonName
+        mxid={loaded ? r.sender : null}
+        roomId={roomId}
+        className={s.quoteName}
+        style={{ color: mine ? "var(--th-bubble-own-quote-fg)" : loaded ? senderColor(r.name) : "var(--th-bubble-other-quote-fg)" }}
+      >
         {loaded ? r.name : "Replying to an earlier message"}
-      </span>
+      </PersonName>
       <span className={s.quoteBody}>{loaded ? r.body : "Older than what's loaded — click to look for it"}</span>
     </div>
   );

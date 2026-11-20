@@ -33,6 +33,7 @@ import { LEAVE_THAT_CALL, modesJoinNote, padPlace, leaveFirst, thisDevice, watch
 import { enterShareFullscreen, type FsHandle } from "@/features/callui/fullscreen";
 import s from "./PadExtras.module.css";
 import ps from "./PadScreen.module.css";
+import { PersonName } from "@/features/spaces/PersonName";
 
 const PENDING_RING = "var(--th-pad-pending-ring)";
 
@@ -364,7 +365,7 @@ function SharePick({ room, participant, on, onPick }: { room: string; participan
   const m = useMember(room, u);
   return (
     <button type="button" className={cx(s.pick, on && s.pickOn)} onClick={onPick} aria-pressed={on}>
-      {nameOf(m, u)}
+      <PersonName mxid={u} roomId={room}>{nameOf(m, u)}</PersonName>
     </button>
   );
 }

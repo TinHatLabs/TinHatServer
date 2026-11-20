@@ -357,10 +357,11 @@
 }
 /* 2026-09-27: no per-person call time — avatar · name / "<calls> call(s)[ · you started n]" (no bar, no time) */
 .friend {
-  height: 32px;
+  /* A31.4: the two text lines grow with the person's text size (they were cut from 110 % on) */
+  height: calc(32px * var(--th-text-scale, 1));
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
-  grid-template-rows: 16px 14px;
+  grid-template-rows: calc(16px * var(--th-text-scale, 1)) calc(14px * var(--th-text-scale, 1));
   column-gap: 8px;
   align-items: center;
   padding: 1px 8px;
@@ -382,14 +383,14 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 16px;
+  line-height: calc(16px * var(--th-text-scale, 1));
 }
 .friendSub {
   grid-row: 2;
   grid-column: 2;
   min-width: 0;
   font-size: calc(var(--th-font-size) * 0.85);
-  line-height: 14px;
+  line-height: calc(14px * var(--th-text-scale, 1));
   color: var(--th-widget-muted-fg);
   white-space: nowrap;
   overflow: hidden;
@@ -427,10 +428,10 @@
   height: 22px;
 }
 .body[data-mobile] .name {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .value {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   width: 64px;
 }
 .outside[data-mobile] .friend {
@@ -439,13 +440,13 @@
   grid-template-rows: 20px 16px;
 }
 .outside[data-mobile] .friendName {
-  font-size: 15px;
-  line-height: 20px;
+  font-size: calc(15px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
 }
 .outside[data-mobile] .friendSub,
 .outside[data-mobile] .lastText,
 .outside[data-mobile] .labelRight {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .outside[data-mobile] .lastRow {
   height: 44px;

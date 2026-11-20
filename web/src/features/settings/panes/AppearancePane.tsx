@@ -3,6 +3,12 @@
 // gallery page). Theme keeps its gallery full width in its section (no card); every other section is a card of rows.
 import { useState } from "react";
 import { setPref, usePref } from "@/core/prefs";
+import { DENSITIES } from "@/theme/look";
+import { PREF_DENSITY, PREF_TEXT_SIZE, TEXT_SIZES, densityLabel, parseDensity, readPersonal } from "@/theme/personal";
+import { useForm } from "@/actions/layoutStore";
+import { useFormFactor } from "@/core/device";
+import { PREF_FOLLOW_OS, followsOs, osFollowEligible, useOsTextPercent } from "@/ui/textSize";
+import { useIsMobile } from "@/ui/formFactor";
 import { UNFOCUSED_SAVER_PREF, unfocusedSaverOn } from "@/core/lowgpu";
 import { PREF_BACKGROUNDS, PREF_EFFECTS, PREF_PAUSE_UNFOCUSED, pauseRow, prefOn } from "@/features/chat/ambience/core";
 import { AMBIENCE_WORDS as AW } from "@/features/chat/ambience/words";
@@ -164,7 +170,63 @@ export function AppSizeSection() {
         label="App size"
         description="Use your browser's zoom: Ctrl and + or − make Tin Hat bigger or smaller, Ctrl and 0 sets it back (⌘ on a Mac). On a phone, pinch or use the browser's text size."
       />
+      <PersonalLookRows />
     </Section>
+  );
+}
+
+/** P22 (12.1.17): the text size and the density are the PERSON's, the same on every theme (they used to live in the
+ *  theme: switching theme changed your size). Steps, words and keys: src/theme/personal.ts + the shared vectors
+ *  testvectors/personal/ (the desktop's AppearancePane.qml shows the same two rows). Phones whose browser tells us the
+ *  phone's text size (iPhone / iPad) also offer "Match my phone" (textSize.ts; docs/WEB-EXCEPTIONS.md). */
+function PersonalLookRows() {
+  const sizePref = usePref(PREF_TEXT_SIZE, "");
+  const densityPref = usePref(PREF_DENSITY, "");
+  const followPref = usePref(PREF_FOLLOW_OS, "");
+  useIsMobile(); // re-render when the layout switches (osFollowEligible reads it)
+  const os = useOsTextPercent();
+  const eligible = osFollowEligible(os);
+  const follow = followsOs(followPref || null, sizePref || null, os);
+  const p = readPersonal(sizePref, densityPref);
+  const sizes = [
+    ...(eligible ? [{ id: "os", label: "Match my phone" }] : []),
+    ...TEXT_SIZES.map((n) => ({ id: String(n), label: `${n}%` })),
+  ];
+  const dens = DENSITIES.map((d) => ({ id: d, label: densityLabel(d) }));
+  // round 2: a layout that names its own density (the Handheld preset) is drawn with it; say so (AppearancePane.qml)
+  const form = useForm(useFormFactor() === "mobile" ? "phone" : "desktop");
+  const layoutDensity = parseDensity(typeof form.density === "string" ? form.density : null);
+  return (
+    <>
+      <ComboRow
+        id="appearance.text-size"
+        label="Text size"
+        description="Makes the words bigger or smaller, the same on every theme. App size makes everything bigger."
+        model={sizes}
+        textRole="label"
+        currentIndex={follow ? 0 : at(sizes, String(p.size))}
+        onActivated={(_i, it) => {
+          if (it.id === "os") {
+            setPref(PREF_FOLLOW_OS, "1");
+            return;
+          }
+          setPref(PREF_FOLLOW_OS, "0"); // a size the person picks always wins over the phone's
+          setPref(PREF_TEXT_SIZE, it.id);
+        }}
+      />
+      <ComboRow
+        id="appearance.density"
+        label="Density"
+        description={
+          "How much room the room list and the chat leave between lines. Compact fits more; Comfortable is easier to tap." +
+          (layoutDensity ? ` Your current layout uses ${densityLabel(layoutDensity)}; your choice here applies on your other layouts.` : "")
+        }
+        model={dens}
+        textRole="label"
+        currentIndex={at(dens, p.density)}
+        onActivated={(_i, it) => setPref(PREF_DENSITY, it.id)}
+      />
+    </>
   );
 }
 

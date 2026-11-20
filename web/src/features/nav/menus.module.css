@@ -17,3 +17,14 @@
   height: 6px;
   border-radius: 50%;
 }
+
+/* a ☰ submenu's explanation line (MenuSubItem.note, 12.1.17: "Only moderators can change this room's background."):
+   on a phone's bottom sheet it wraps to as many lines as it needs instead of ending in "…" (the desktop keeps its row) */
+:root[data-ff="mobile"] .note,
+:root[data-ff="mobile"] .note * {
+  white-space: normal;
+}
+:root[data-ff="mobile"] .note {
+  height: auto;
+  min-height: 48px;
+}

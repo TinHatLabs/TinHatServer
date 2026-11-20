@@ -284,3 +284,92 @@ export function withoutHidden(current: unknown, eventId: string): Edit {
     if (i >= 0) hidden.splice(i, 1);
   });
 }
+
+// ---- the chat (12.1.17): a Memories photo leaves the chat --------------------------------------------------------
+
+/** The content key of a photo posted by Memories' "Add photos": `{"dev.tinhat.memories": {"v": 1}}` (encrypted with the
+ *  message where the room is). The sender's own word that it is for Memories: makes it quiet, never hides it. */
+export const POST_KEY = "dev.tinhat.memories";
+
+/** A message as the chat rules see it: its id, sender, type (the decrypted one), redacted flag and (decrypted) content. */
+export interface ChatMsg {
+  event_id: unknown;
+  sender: unknown;
+  type: unknown;
+  redacted: unknown;
+  content: unknown;
+}
+
+/** What the chat hides in one room: "event id \n sender" of every photo its sender's own valid list names and no
+ *  moderator took down (R1–R4). null = the room's lists aren't loaded: nothing is hidden (fail closed). */
+export type ChatIndex = Set<string> | null;
+
+/** H1–H4 as an index, built once per change of the room's lists or power levels. `states` null = not loaded. */
+export function chatIndex(states: Array<{ state_key: unknown; sender: unknown; content: unknown }> | null | undefined, mods: string[]): ChatIndex {
+  if (!Array.isArray(states)) return null;
+  const c = candidates(states, mods);
+  const out = new Set<string>();
+  for (const p of c.photos) if (!c.hidden.includes(p.event_id)) out.add(`${p.event_id}\n${p.owner}`);
+  return out;
+}
+
+/** H2: a readable (decrypted) image message that isn't redacted, with a real event id and sender. */
+function msgOk(m: ChatMsg | null | undefined): m is ChatMsg & { event_id: string; sender: string; content: Record<string, unknown> } {
+  if (!isObj(m) || !isId(m.event_id) || m.type !== "m.room.message" || m.redacted !== false) return false;
+  return typeof m.sender === "string" && m.sender.startsWith("@") && isObj(m.content) && m.content.msgtype === "m.image";
+}
+
+/** Is this message hidden from the chat? Only when its SENDER's own valid list names it (someone else's list never
+ *  hides it) and no moderator took it down. Fail closed: anything unsure → shown (false). */
+export function hiddenInChat(index: ChatIndex, m: ChatMsg | null | undefined): boolean {
+  if (!index || !msgOk(m)) return false;
+  return index.has(`${m.event_id}\n${m.sender}`);
+}
+
+/** The shared vectors' form: the room's lists (null = not loaded) + the moderators now + one message. */
+export function chatHidden(states: Array<{ state_key: unknown; sender: unknown; content: unknown }> | null | undefined, mods: string[], m: ChatMsg | null | undefined): boolean {
+  return hiddenInChat(chatIndex(states, mods), m);
+}
+
+/** M1: an image posted by Memories' "Add photos" (its own marker, v 1). */
+export function memoriesPost(m: ChatMsg | null | undefined): boolean {
+  if (!msgOk(m)) return false;
+  const mk = m.content[POST_KEY];
+  return isObj(mk) && mk.v === 1;
+}
+
+/** Quiet = hidden from the chat or a Memories post: no notification or sound, not unread, not the room's preview. */
+export function quietInChat(index: ChatIndex, m: ChatMsg | null | undefined): boolean {
+  return hiddenInChat(index, m) || memoriesPost(m);
+}
+
+/** Round 2: in a thread = an m.thread (or the unstable io.element.thread) relation naming an event (threads/core
+ *  threadOf): read by that thread's receipt, which no unread correction follows. */
+function inThread(m: ChatMsg | null | undefined): boolean {
+  const c = isObj(m) && isObj(m.content) ? m.content : null;
+  const rel = c && isObj(c["m.relates_to"]) ? (c["m.relates_to"] as Record<string, unknown>) : null;
+  if (!rel || (rel.rel_type !== "m.thread" && rel.rel_type !== "io.element.thread")) return false;
+  return typeof rel.event_id === "string" && rel.event_id !== "";
+}
+
+/** Round 2 (shared vectors `counts`, = memphotos.rs chat_counts): what notifications and unread counts do with a message.
+ *  silenced = quiet (no notification, no sound, never the preview); uncounted (off the badge) = quiet and NOT in a thread
+ *  (a thread's message is read by that thread's receipt: never taken off, the safe side). */
+export function chatCounts(index: ChatIndex, m: ChatMsg | null | undefined): { silenced: boolean; uncounted: boolean } {
+  const q = quietInChat(index, m);
+  return { silenced: q, uncounted: q && !inThread(m) };
+}
+
+/** The words both apps show for this (byte-identical; the shared vectors' `words`). */
+export const CHAT_WORDS = {
+  add_tip: "Add photos or screenshots to this room's Memories. They stay out of the chat (older apps still show them there).",
+  added_toast: "Added to Memories. It's out of the chat now.",
+  removed_toast: "Removed from Memories. It's back in the chat.",
+  remove_text: "It goes back into the chat.",
+  quote: "Photo in Memories",
+  // a moderator's Delete in the photo viewer (a photo in Memories isn't in the chat: its delete lives here too)
+  delete: "Delete",
+  delete_title: "Delete this photo?",
+  delete_text: "It's deleted for everyone: from Memories and from the chat.",
+  deleted_toast: "Photo deleted.",
+};

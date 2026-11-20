@@ -1,0 +1,2024 @@
+{
+ "v": 1,
+ "about": "The Rig. Symbols in ring order: hat, saucer, dish, eye, moon, lizard (a Nudge step moves round this ring, wrapping). Paytable (x bet): three Hats 20, other three of a kind 8, a pair of Hats 4, another pair 1, else 0. Order: honest reels -> reel cards in slot order (each sees the reels the previous left; a muted card is skipped) -> the Nudge -> paytable on the final reels -> payout cards in slot order, every multiplier card first, then Skim -> payout never below 0. A re-roll takes ONE value from draws (0-4) = that index among the five symbols other than the excluded one, in ring order. touched = the step changed the reels (reel card) or the payout (payout card); bit = the step lowered the payout (reel card: the paytable on the reels before vs after its step). Rake: only when payout < bet and something bit: bet - payout split evenly over the cards that bit (whole chips; remainder to the bank); else a loss goes to the bank and a win/push is paid by the bank (bank_delta: + = the bank gains). history = earlier spins of this round, oldest first (their final result + final reels).",
+ "spins": [
+  {
+   "id": "honest-pair-push",
+   "in": {
+    "bet": 2,
+    "spin": 1,
+    "honest": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "cards": [],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "category": "pair",
+    "honest_payout": 2,
+    "paytable_payout": 2,
+    "payout": 2,
+    "result": "push",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "no cards: an ordinary pair pays 1 x bet = a push"
+  },
+  {
+   "id": "honest-hat-trips",
+   "in": {
+    "bet": 3,
+    "spin": 5,
+    "honest": [
+     "hat",
+     "hat",
+     "hat"
+    ],
+    "cards": [],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "hat",
+     "hat",
+     "hat"
+    ],
+    "final": [
+     "hat",
+     "hat",
+     "hat"
+    ],
+    "category": "trips-hat",
+    "honest_payout": 60,
+    "paytable_payout": 60,
+    "payout": 60,
+    "result": "win",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 57,
+    "rake": {},
+    "bank_delta": -57
+   },
+   "why": "three Hats pay 20 x bet, from the bank"
+  },
+  {
+   "id": "moon-monday-bites",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "dish",
+     "dish",
+     "saucer"
+    ],
+    "cards": [
+     {
+      "card": "moon-monday",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "dish",
+     "moon",
+     "saucer"
+    ],
+    "final": [
+     "dish",
+     "moon",
+     "saucer"
+    ],
+    "category": "none",
+    "honest_payout": 3,
+    "paytable_payout": 0,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "moon-monday"
+    ],
+    "bit": [
+     "moon-monday"
+    ],
+    "spinner_delta": -3,
+    "rake": {
+     "A": 3
+    },
+    "bank_delta": 0
+   },
+   "why": "odd bet: reel 2 becomes a Moon, the pair is broken, the whole lost bet goes to the card's owner"
+  },
+  {
+   "id": "moon-monday-even-bet",
+   "in": {
+    "bet": 2,
+    "spin": 2,
+    "honest": [
+     "dish",
+     "dish",
+     "saucer"
+    ],
+    "cards": [
+     {
+      "card": "moon-monday",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "dish",
+     "dish",
+     "saucer"
+    ],
+    "final": [
+     "dish",
+     "dish",
+     "saucer"
+    ],
+    "category": "pair",
+    "honest_payout": 2,
+    "paytable_payout": 2,
+    "payout": 2,
+    "result": "push",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "even bet: Moon Monday does nothing"
+  },
+  {
+   "id": "moon-monday-touch-no-bite",
+   "in": {
+    "bet": 1,
+    "spin": 2,
+    "honest": [
+     "eye",
+     "saucer",
+     "lizard"
+    ],
+    "cards": [
+     {
+      "card": "moon-monday",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "moon",
+     "lizard"
+    ],
+    "final": [
+     "eye",
+     "moon",
+     "lizard"
+    ],
+    "category": "none",
+    "honest_payout": 0,
+    "paytable_payout": 0,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "moon-monday"
+    ],
+    "bit": [],
+    "spinner_delta": -1,
+    "rake": {},
+    "bank_delta": 1
+   },
+   "why": "the card changed a reel (touched) but the spin was already a loss: no bite, the lost bet goes to the bank"
+  },
+  {
+   "id": "muted-card-skipped",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "dish",
+     "dish",
+     "saucer"
+    ],
+    "cards": [
+     {
+      "card": "moon-monday",
+      "owner": "A",
+      "muted": true
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "dish",
+     "dish",
+     "saucer"
+    ],
+    "final": [
+     "dish",
+     "dish",
+     "saucer"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 3,
+    "result": "push",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "a muted card is skipped entirely"
+  },
+  {
+   "id": "hat-thief-reroll",
+   "in": {
+    "bet": 2,
+    "spin": 4,
+    "honest": [
+     "hat",
+     "hat",
+     "eye"
+    ],
+    "cards": [
+     {
+      "card": "hat-thief",
+      "owner": "B"
+     }
+    ],
+    "draws": [
+     2,
+     3
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "moon",
+     "eye"
+    ],
+    "final": [
+     "eye",
+     "moon",
+     "eye"
+    ],
+    "category": "pair",
+    "honest_payout": 8,
+    "paytable_payout": 2,
+    "payout": 2,
+    "result": "push",
+    "touched": [
+     "hat-thief"
+    ],
+    "bit": [
+     "hat-thief"
+    ],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "each Hat (reel 1 then reel 2) re-rolled with one draw among the five other symbols (draw 2 = eye, 3 = moon); it bit (Hat pair 8 -> pair 2) but the Spinner pushed, so no rake"
+  },
+  {
+   "id": "twos-company-breaks-trips",
+   "in": {
+    "bet": 2,
+    "spin": 3,
+    "honest": [
+     "saucer",
+     "saucer",
+     "saucer"
+    ],
+    "cards": [
+     {
+      "card": "twos-company",
+      "owner": "B"
+     }
+    ],
+    "draws": [
+     0
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "saucer",
+     "saucer",
+     "hat"
+    ],
+    "final": [
+     "saucer",
+     "saucer",
+     "hat"
+    ],
+    "category": "pair",
+    "honest_payout": 16,
+    "paytable_payout": 2,
+    "payout": 2,
+    "result": "push",
+    "touched": [
+     "twos-company"
+    ],
+    "bit": [
+     "twos-company"
+    ],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "reel 3 equals reel 1, so it is re-rolled among the symbols that differ from reel 1 (draw 0 = hat)"
+  },
+  {
+   "id": "reel-cards-chain-in-slot-order",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "hat",
+     "hat",
+     "moon"
+    ],
+    "cards": [
+     {
+      "card": "lizard-lane",
+      "owner": "A"
+     },
+     {
+      "card": "shy-hat",
+      "owner": "B"
+     }
+    ],
+    "draws": [
+     4
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "lizard",
+     "lizard",
+     "moon"
+    ],
+    "final": [
+     "lizard",
+     "lizard",
+     "moon"
+    ],
+    "category": "pair",
+    "honest_payout": 12,
+    "paytable_payout": 3,
+    "payout": 3,
+    "result": "push",
+    "touched": [
+     "lizard-lane",
+     "shy-hat"
+    ],
+    "bit": [
+     "lizard-lane"
+    ],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "Lizard Lane (slot 1) turns reel 1 into a Lizard, then Shy Hat re-rolls reel 2's Hat (draw 4 = lizard): Lizard Lane bit (Hat pair 12 -> none 0), Shy Hat raised the paytable (none -> pair) so it touched without biting"
+  },
+  {
+   "id": "slot-order-matters-double-then-half",
+   "in": {
+    "bet": 1,
+    "spin": 9,
+    "honest": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "slow-start",
+      "owner": "A"
+     },
+     {
+      "card": "even-money",
+      "owner": "B"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "category": "pair",
+    "honest_payout": 1,
+    "paytable_payout": 1,
+    "payout": 2,
+    "result": "win",
+    "touched": [
+     "slow-start"
+    ],
+    "bit": [],
+    "spinner_delta": 1,
+    "rake": {},
+    "bank_delta": -1
+   },
+   "why": "spin 9: Slow Start doubles the pair (1 -> 2); Even Money halves only Hat pairs/trips on odd bets, so it does nothing here"
+  },
+  {
+   "id": "half-then-double-rounding",
+   "in": {
+    "bet": 3,
+    "spin": 9,
+    "honest": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "big-bet-tax",
+      "owner": "A"
+     },
+     {
+      "card": "slow-start",
+      "owner": "B"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 2,
+    "result": "loss",
+    "touched": [
+     "big-bet-tax",
+     "slow-start"
+    ],
+    "bit": [
+     "big-bet-tax"
+    ],
+    "spinner_delta": -1,
+    "rake": {
+     "A": 1
+    },
+    "bank_delta": 0
+   },
+   "why": "slot order: half first (3 -> 1, rounded down), then double (1 -> 2). The Spinner lost 1; only Big Bet Tax bit, so its owner gets it"
+  },
+  {
+   "id": "double-then-half-rounding",
+   "in": {
+    "bet": 3,
+    "spin": 9,
+    "honest": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "slow-start",
+      "owner": "B"
+     },
+     {
+      "card": "big-bet-tax",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "dish"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 3,
+    "result": "push",
+    "touched": [
+     "slow-start",
+     "big-bet-tax"
+    ],
+    "bit": [
+     "big-bet-tax"
+    ],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "the same two cards in the other slot order: double (3 -> 6) then half (6 -> 3) = a push, no rake"
+  },
+  {
+   "id": "skim-after-multipliers",
+   "in": {
+    "bet": 1,
+    "spin": 2,
+    "honest": [
+     "moon",
+     "moon",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "skim",
+      "owner": "A"
+     },
+     {
+      "card": "underdog",
+      "owner": "B"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "moon",
+     "moon",
+     "dish"
+    ],
+    "final": [
+     "moon",
+     "moon",
+     "dish"
+    ],
+    "category": "pair",
+    "honest_payout": 1,
+    "paytable_payout": 1,
+    "payout": 1,
+    "result": "push",
+    "touched": [
+     "underdog",
+     "skim"
+    ],
+    "bit": [
+     "skim"
+    ],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "Skim is not a multiplier, so it applies after them even from slot 1: Underdog 1 -> 2, then Skim 2 -> 1"
+  },
+  {
+   "id": "skim-never-below-zero",
+   "in": {
+    "bet": 2,
+    "spin": 2,
+    "honest": [
+     "moon",
+     "eye",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "skim",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "moon",
+     "eye",
+     "dish"
+    ],
+    "final": [
+     "moon",
+     "eye",
+     "dish"
+    ],
+    "category": "none",
+    "honest_payout": 0,
+    "paytable_payout": 0,
+    "payout": 0,
+    "result": "loss",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": -2,
+    "rake": {},
+    "bank_delta": 2
+   },
+   "why": "nothing to skim from a payout of 0: no touch, the honest loss goes to the bank"
+  },
+  {
+   "id": "first-zero-takes-the-bite",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "eye",
+     "moon",
+     "eye"
+    ],
+    "cards": [
+     {
+      "card": "moon-tax",
+      "owner": "A"
+     },
+     {
+      "card": "big-bet-tax",
+      "owner": "B"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "moon",
+     "eye"
+    ],
+    "final": [
+     "eye",
+     "moon",
+     "eye"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "moon-tax"
+    ],
+    "bit": [
+     "moon-tax"
+    ],
+    "spinner_delta": -3,
+    "rake": {
+     "A": 3
+    },
+    "bank_delta": 0
+   },
+   "why": "Moon Tax zeroes the pair first (slot 1); Big Bet Tax then halves 0 = no change, so only Moon Tax bit"
+  },
+  {
+   "id": "two-biters-really-split",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "hat",
+     "hat",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "big-bet-tax",
+      "owner": "A"
+     },
+     {
+      "card": "skim",
+      "owner": "B"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "hat",
+     "hat",
+     "dish"
+    ],
+    "final": [
+     "hat",
+     "hat",
+     "dish"
+    ],
+    "category": "pair-hat",
+    "honest_payout": 12,
+    "paytable_payout": 12,
+    "payout": 5,
+    "result": "win",
+    "touched": [
+     "big-bet-tax",
+     "skim"
+    ],
+    "bit": [
+     "big-bet-tax",
+     "skim"
+    ],
+    "spinner_delta": 2,
+    "rake": {},
+    "bank_delta": -2
+   },
+   "why": "both bit but the Spinner still won (12 -> 6 -> 5): a shaved win is not raked; the bank pays 2"
+  },
+  {
+   "id": "lizard-lane-kills-hat-pair",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "dish",
+     "dish",
+     "hat"
+    ],
+    "cards": [
+     {
+      "card": "lizard-lane",
+      "owner": "A"
+     },
+     {
+      "card": "big-bet-tax",
+      "owner": "B"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "lizard",
+     "dish",
+     "hat"
+    ],
+    "final": [
+     "lizard",
+     "dish",
+     "hat"
+    ],
+    "category": "none",
+    "honest_payout": 3,
+    "paytable_payout": 0,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "lizard-lane"
+    ],
+    "bit": [
+     "lizard-lane"
+    ],
+    "spinner_delta": -3,
+    "rake": {
+     "A": 3
+    },
+    "bank_delta": 0
+   },
+   "why": "Lizard Lane kills the pair (bit); Big Bet Tax halves 0 = nothing; all 3 lost chips to A"
+  },
+  {
+   "id": "rake-split-remainder-to-bank",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "hat",
+     "hat",
+     "saucer"
+    ],
+    "cards": [
+     {
+      "card": "shy-hat",
+      "owner": "A"
+     },
+     {
+      "card": "underdog",
+      "owner": "B"
+     }
+    ],
+    "draws": [
+     0
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "hat",
+     "saucer",
+     "saucer"
+    ],
+    "final": [
+     "hat",
+     "saucer",
+     "saucer"
+    ],
+    "category": "pair",
+    "honest_payout": 12,
+    "paytable_payout": 3,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "shy-hat",
+     "underdog"
+    ],
+    "bit": [
+     "shy-hat",
+     "underdog"
+    ],
+    "spinner_delta": -3,
+    "rake": {
+     "A": 1,
+     "B": 1
+    },
+    "bank_delta": 1
+   },
+   "why": "Shy Hat re-rolls reel 2's Hat (draw 0 = saucer): Hat pair 12 -> pair 3, bit; Underdog then zeroes a pair on a bet of 3, bit. Lost 3 over two cards = 1 each, the odd chip to the bank"
+  },
+  {
+   "id": "nudge-breaks-pair-first",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "dish",
+     "dish",
+     "eye"
+    ],
+    "cards": [
+     {
+      "card": "big-bet-tax",
+      "owner": "A"
+     },
+     {
+      "card": "lizard-tax",
+      "owner": "B"
+     }
+    ],
+    "draws": [],
+    "history": [],
+    "nudge": {
+     "reel": 2,
+     "step": -1
+    }
+   },
+   "expect": {
+    "after_cards": [
+     "dish",
+     "dish",
+     "eye"
+    ],
+    "final": [
+     "dish",
+     "saucer",
+     "eye"
+    ],
+    "category": "none",
+    "honest_payout": 3,
+    "paytable_payout": 0,
+    "payout": 0,
+    "result": "loss",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": -3,
+    "rake": {},
+    "bank_delta": 3
+   },
+   "why": "a Nudge moved reel 2 back one step (dish -1 = saucer): the pair is gone before any payout card runs, so nothing bit and the loss goes to the bank"
+  },
+  {
+   "id": "moon-monday-breaks-hat-pair",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "hat",
+     "hat",
+     "eye"
+    ],
+    "cards": [
+     {
+      "card": "moon-monday",
+      "owner": "A"
+     },
+     {
+      "card": "big-bet-tax",
+      "owner": "B"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "hat",
+     "moon",
+     "eye"
+    ],
+    "final": [
+     "hat",
+     "moon",
+     "eye"
+    ],
+    "category": "none",
+    "honest_payout": 12,
+    "paytable_payout": 0,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "moon-monday"
+    ],
+    "bit": [
+     "moon-monday"
+    ],
+    "spinner_delta": -3,
+    "rake": {
+     "A": 3
+    },
+    "bank_delta": 0
+   },
+   "why": "Moon Monday breaks the Hat pair; Big Bet Tax finds nothing to halve"
+  },
+  {
+   "id": "cold-streak-after-loss",
+   "in": {
+    "bet": 2,
+    "spin": 3,
+    "honest": [
+     "saucer",
+     "dish",
+     "saucer"
+    ],
+    "cards": [
+     {
+      "card": "cold-streak",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "saucer",
+     "dish",
+     "saucer"
+    ],
+    "final": [
+     "saucer",
+     "dish",
+     "saucer"
+    ],
+    "category": "pair",
+    "honest_payout": 2,
+    "paytable_payout": 2,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "cold-streak"
+    ],
+    "bit": [
+     "cold-streak"
+    ],
+    "spinner_delta": -2,
+    "rake": {
+     "A": 2
+    },
+    "bank_delta": 0
+   },
+   "why": "the spin right after a loss: an ordinary pair pays nothing"
+  },
+  {
+   "id": "cold-streak-hat-pair-still-pays",
+   "in": {
+    "bet": 1,
+    "spin": 3,
+    "honest": [
+     "hat",
+     "dish",
+     "hat"
+    ],
+    "cards": [
+     {
+      "card": "cold-streak",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "hat",
+     "dish",
+     "hat"
+    ],
+    "final": [
+     "hat",
+     "dish",
+     "hat"
+    ],
+    "category": "pair-hat",
+    "honest_payout": 4,
+    "paytable_payout": 4,
+    "payout": 4,
+    "result": "win",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 3,
+    "rake": {},
+    "bank_delta": -3
+   },
+   "why": "Hat pairs still pay after a loss"
+  },
+  {
+   "id": "rebound-exactly-one",
+   "in": {
+    "bet": 3,
+    "spin": 4,
+    "honest": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "cards": [
+     {
+      "card": "rebound",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "win",
+      "reels": [
+       "hat",
+       "hat",
+       "eye"
+      ]
+     },
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 6,
+    "result": "win",
+    "touched": [
+     "rebound"
+    ],
+    "bit": [],
+    "spinner_delta": 3,
+    "rake": {},
+    "bank_delta": -3
+   },
+   "why": "exactly one loss before: pays double"
+  },
+  {
+   "id": "rebound-exactly-two",
+   "in": {
+    "bet": 3,
+    "spin": 5,
+    "honest": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "cards": [
+     {
+      "card": "rebound",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     },
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "rebound"
+    ],
+    "bit": [
+     "rebound"
+    ],
+    "spinner_delta": -3,
+    "rake": {
+     "A": 3
+    },
+    "bank_delta": 0
+   },
+   "why": "exactly two losses in a row before: pays nothing"
+  },
+  {
+   "id": "rebound-three-normal",
+   "in": {
+    "bet": 3,
+    "spin": 6,
+    "honest": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "cards": [
+     {
+      "card": "rebound",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     },
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     },
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 3,
+    "result": "push",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "three or more losses in a row: normal (no infinite loss loop)"
+  },
+  {
+   "id": "rebound-push-breaks-streak",
+   "in": {
+    "bet": 3,
+    "spin": 6,
+    "honest": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "cards": [
+     {
+      "card": "rebound",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     },
+     {
+      "result": "push",
+      "reels": [
+       "eye",
+       "eye",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "hat"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 3,
+    "result": "push",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "a push is not a loss: the streak before this spin is 0"
+  },
+  {
+   "id": "hot-hat-no-hat-before",
+   "in": {
+    "bet": 2,
+    "spin": 3,
+    "honest": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "cards": [
+     {
+      "card": "hot-hat",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "loss",
+      "reels": [
+       "eye",
+       "moon",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "final": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "category": "pair",
+    "honest_payout": 2,
+    "paytable_payout": 2,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "hot-hat"
+    ],
+    "bit": [
+     "hot-hat"
+    ],
+    "spinner_delta": -2,
+    "rake": {
+     "A": 2
+    },
+    "bank_delta": 0
+   },
+   "why": "the previous spin showed no Hat: ordinary pairs pay nothing"
+  },
+  {
+   "id": "hot-hat-reel1-hat-before",
+   "in": {
+    "bet": 2,
+    "spin": 3,
+    "honest": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "cards": [
+     {
+      "card": "hot-hat",
+      "owner": "A"
+     }
+    ],
+    "history": [
+     {
+      "result": "loss",
+      "reels": [
+       "hat",
+       "moon",
+       "dish"
+      ]
+     }
+    ]
+   },
+   "expect": {
+    "after_cards": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "final": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "category": "pair",
+    "honest_payout": 2,
+    "paytable_payout": 2,
+    "payout": 4,
+    "result": "win",
+    "touched": [
+     "hot-hat"
+    ],
+    "bit": [],
+    "spinner_delta": 2,
+    "rake": {},
+    "bank_delta": -2
+   },
+   "why": "the previous spin had a Hat on reel 1: pays double"
+  },
+  {
+   "id": "hot-hat-first-spin",
+   "in": {
+    "bet": 2,
+    "spin": 1,
+    "honest": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "cards": [
+     {
+      "card": "hot-hat",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "final": [
+     "moon",
+     "dish",
+     "moon"
+    ],
+    "category": "pair",
+    "honest_payout": 2,
+    "paytable_payout": 2,
+    "payout": 2,
+    "result": "push",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "no previous spin: Hot Hat does nothing"
+  },
+  {
+   "id": "even-money-odd-bet-trips-half",
+   "in": {
+    "bet": 1,
+    "spin": 2,
+    "honest": [
+     "eye",
+     "eye",
+     "eye"
+    ],
+    "cards": [
+     {
+      "card": "even-money",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "eye",
+     "eye"
+    ],
+    "final": [
+     "eye",
+     "eye",
+     "eye"
+    ],
+    "category": "trips",
+    "honest_payout": 8,
+    "paytable_payout": 8,
+    "payout": 4,
+    "result": "win",
+    "touched": [
+     "even-money"
+    ],
+    "bit": [
+     "even-money"
+    ],
+    "spinner_delta": 3,
+    "rake": {},
+    "bank_delta": -3
+   },
+   "why": "odd bet: any three of a kind pays half (8 -> 4); still a win, so nothing is raked"
+  },
+  {
+   "id": "penny-pincher",
+   "in": {
+    "bet": 1,
+    "spin": 2,
+    "honest": [
+     "hat",
+     "hat",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "penny-pincher",
+      "owner": "A"
+     }
+    ],
+    "history": []
+   },
+   "expect": {
+    "after_cards": [
+     "hat",
+     "hat",
+     "dish"
+    ],
+    "final": [
+     "hat",
+     "hat",
+     "dish"
+    ],
+    "category": "pair-hat",
+    "honest_payout": 4,
+    "paytable_payout": 4,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "penny-pincher"
+    ],
+    "bit": [
+     "penny-pincher"
+    ],
+    "spinner_delta": -1,
+    "rake": {
+     "A": 1
+    },
+    "bank_delta": 0
+   },
+   "why": "bets of 1 never pay"
+  },
+  {
+   "id": "lizard-tax-final-reel",
+   "in": {
+    "bet": 2,
+    "spin": 2,
+    "honest": [
+     "eye",
+     "moon",
+     "eye"
+    ],
+    "cards": [
+     {
+      "card": "lizard-tax",
+      "owner": "A"
+     }
+    ],
+    "history": [],
+    "nudge": {
+     "reel": 2,
+     "step": 1
+    }
+   },
+   "expect": {
+    "after_cards": [
+     "eye",
+     "moon",
+     "eye"
+    ],
+    "final": [
+     "eye",
+     "lizard",
+     "eye"
+    ],
+    "category": "pair",
+    "honest_payout": 2,
+    "paytable_payout": 2,
+    "payout": 0,
+    "result": "loss",
+    "touched": [
+     "lizard-tax"
+    ],
+    "bit": [
+     "lizard-tax"
+    ],
+    "spinner_delta": -2,
+    "rake": {
+     "A": 2
+    },
+    "bank_delta": 0
+   },
+   "why": "payout cards read the FINAL reels: the Nudge put a Lizard on reel 2"
+  },
+  {
+   "id": "nudge-wraps",
+   "in": {
+    "bet": 2,
+    "spin": 2,
+    "honest": [
+     "lizard",
+     "hat",
+     "dish"
+    ],
+    "cards": [],
+    "history": [],
+    "nudge": {
+     "reel": 1,
+     "step": 1
+    }
+   },
+   "expect": {
+    "after_cards": [
+     "lizard",
+     "hat",
+     "dish"
+    ],
+    "final": [
+     "hat",
+     "hat",
+     "dish"
+    ],
+    "category": "pair-hat",
+    "honest_payout": 0,
+    "paytable_payout": 8,
+    "payout": 8,
+    "result": "win",
+    "touched": [],
+    "bit": [],
+    "spinner_delta": 6,
+    "rake": {},
+    "bank_delta": -6
+   },
+   "why": "a Nudge steps round the symbol ring: lizard +1 = hat"
+  },
+  {
+   "id": "nudge-after-reel-cards",
+   "in": {
+    "bet": 3,
+    "spin": 2,
+    "honest": [
+     "dish",
+     "saucer",
+     "dish"
+    ],
+    "cards": [
+     {
+      "card": "moon-monday",
+      "owner": "A"
+     }
+    ],
+    "history": [],
+    "nudge": {
+     "reel": 2,
+     "step": -1
+    }
+   },
+   "expect": {
+    "after_cards": [
+     "dish",
+     "moon",
+     "dish"
+    ],
+    "final": [
+     "dish",
+     "eye",
+     "dish"
+    ],
+    "category": "pair",
+    "honest_payout": 3,
+    "paytable_payout": 3,
+    "payout": 3,
+    "result": "push",
+    "touched": [
+     "moon-monday"
+    ],
+    "bit": [],
+    "spinner_delta": 0,
+    "rake": {},
+    "bank_delta": 0
+   },
+   "why": "the Nudge is the last word on the reels: Moon Monday doesn't re-apply after it (moon -1 = eye), so the pair pays"
+  }
+ ],
+ "machine": {
+  "about": "A machine is refused when its live cards' bites add up to more than 6, it has more than one Tax (skim, moon-tax, shy-hat, lizard-tax), or a card twice. Bites: twos-company 3, moon-tax 3, lizard-tax 1, every other card 2.",
+  "cases": [
+   {
+    "id": "lite-ok",
+    "cards": [
+     "moon-monday",
+     "skim"
+    ],
+    "expect": {
+     "ok": true,
+     "why": ""
+    }
+   },
+   {
+    "id": "two-taxes",
+    "cards": [
+     "skim",
+     "lizard-tax"
+    ],
+    "expect": {
+     "ok": false,
+     "why": "tax"
+    }
+   },
+   {
+    "id": "bite-7",
+    "cards": [
+     "twos-company",
+     "hat-thief",
+     "underdog"
+    ],
+    "expect": {
+     "ok": false,
+     "why": "bite"
+    }
+   },
+   {
+    "id": "bite-6-with-3",
+    "cards": [
+     "twos-company",
+     "lizard-tax",
+     "underdog"
+    ],
+    "expect": {
+     "ok": true,
+     "why": ""
+    }
+   },
+   {
+    "id": "bite-6-two-threes",
+    "cards": [
+     "twos-company",
+     "moon-tax"
+    ],
+    "expect": {
+     "ok": true,
+     "why": ""
+    }
+   },
+   {
+    "id": "full-ok",
+    "cards": [
+     "moon-monday",
+     "rebound",
+     "skim"
+    ],
+    "expect": {
+     "ok": true,
+     "why": ""
+    }
+   },
+   {
+    "id": "dup",
+    "cards": [
+     "rebound",
+     "rebound"
+    ],
+    "expect": {
+     "ok": false,
+     "why": "dup"
+    }
+   }
+  ]
+ },
+ "market": {
+  "about": "Market bets settle at the reveal: if both sides have bets, each winner gets their stake back + floor(stake x losing pool / winning stakes); what's left of the losing pool goes to the bank. One side only: everyone gets their stake back.",
+  "cases": [
+   {
+    "id": "market-pro-rata",
+    "bets": [
+     {
+      "who": "A",
+      "side": "up",
+      "stake": 2
+     },
+     {
+      "who": "B",
+      "side": "up",
+      "stake": 1
+     },
+     {
+      "who": "C",
+      "side": "not-up",
+      "stake": 2
+     },
+     {
+      "who": "D",
+      "side": "not-up",
+      "stake": 2
+     }
+    ],
+    "spinner_up": true,
+    "expect": {
+     "back": {
+      "A": 4,
+      "B": 2,
+      "C": 0,
+      "D": 0
+     },
+     "bank": 1
+    },
+    "why": "winners take the losing 4 pro rata: A 2*4/3 = 2 (floor), B 1*4/3 = 1; the odd chip to the bank"
+   },
+   {
+    "id": "market-one-side",
+    "bets": [
+     {
+      "who": "A",
+      "side": "up",
+      "stake": 2
+     },
+     {
+      "who": "B",
+      "side": "up",
+      "stake": 1
+     }
+    ],
+    "spinner_up": false,
+    "expect": {
+     "back": {
+      "A": 2,
+      "B": 1
+     },
+     "bank": 0
+    },
+    "why": "everyone bet the same way: stakes back"
+   },
+   {
+    "id": "market-not-up-wins",
+    "bets": [
+     {
+      "who": "A",
+      "side": "up",
+      "stake": 1
+     },
+     {
+      "who": "C",
+      "side": "not-up",
+      "stake": 2
+     }
+    ],
+    "spinner_up": false,
+    "expect": {
+     "back": {
+      "C": 3,
+      "A": 0
+     },
+     "bank": 0
+    },
+    "why": "NOT UP wins: C gets 2 back + A's 1"
+   }
+  ]
+ },
+ "peek": {
+  "about": "Each Peek escrowed 2 chips when placed (not shown in delta). At the reveal, per Mechanic: every WRONG Peek on them pays its 2 to them first; then the right Peeks share a bounty of min(3, what the Mechanic has after that) evenly (whole chips; the remainder stays with the Mechanic) and get their 2 back. held = the card the Mechanic held when the Peek was placed. delta = change from this step only, after escrow.",
+  "cases": [
+   {
+    "id": "peek-right-shares-bounty",
+    "peeks": [
+     {
+      "who": "S1",
+      "target": "M",
+      "card": "skim",
+      "held": "skim"
+     },
+     {
+      "who": "S2",
+      "target": "M",
+      "card": "skim",
+      "held": "skim"
+     }
+    ],
+    "mechanic_balance": {
+     "M": 10
+    },
+    "expect": {
+     "delta": {
+      "M": -2,
+      "S1": 3,
+      "S2": 3
+     }
+    },
+    "why": "two right Peeks share M's 3-chip bounty: 1 each (the odd chip stays with M), plus their 2 back"
+   },
+   {
+    "id": "peek-wrong-pays-accused",
+    "peeks": [
+     {
+      "who": "S1",
+      "target": "M",
+      "card": "rebound",
+      "held": "skim"
+     }
+    ],
+    "mechanic_balance": {
+     "M": 10
+    },
+    "expect": {
+     "delta": {
+      "M": 2,
+      "S1": 0
+     }
+    },
+    "why": "a wrong Peek's 2 chips go to the Mechanic it accused"
+   },
+   {
+    "id": "peek-bounty-capped-by-wallet",
+    "peeks": [
+     {
+      "who": "S1",
+      "target": "M",
+      "card": "skim",
+      "held": "skim"
+     }
+    ],
+    "mechanic_balance": {
+     "M": 1
+    },
+    "expect": {
+     "delta": {
+      "M": -1,
+      "S1": 3
+     }
+    },
+    "why": "the bounty is capped at what M has (1)"
+   },
+   {
+    "id": "peek-wrong-funds-bounty",
+    "peeks": [
+     {
+      "who": "S1",
+      "target": "M",
+      "card": "skim",
+      "held": "skim"
+     },
+     {
+      "who": "S2",
+      "target": "M",
+      "card": "moon-tax",
+      "held": "skim"
+     }
+    ],
+    "mechanic_balance": {
+     "M": 0
+    },
+    "expect": {
+     "delta": {
+      "M": 0,
+      "S1": 4,
+      "S2": 0
+     }
+    },
+    "why": "M has 0, but S2's wrong Peek pays M 2 first, which funds 2 of the 3-chip bounty"
+   },
+   {
+    "id": "peek-cross-targets-snapshot",
+    "peeks": [
+     {
+      "who": "M1",
+      "target": "M2",
+      "card": "skim",
+      "held": "skim"
+     },
+     {
+      "who": "M2",
+      "target": "M1",
+      "card": "rebound",
+      "held": "rebound"
+     }
+    ],
+    "mechanic_balance": {
+     "M1": 0,
+     "M2": 3
+    },
+    "expect": {
+     "delta": {
+      "M1": 5,
+      "M2": -1
+     }
+    },
+    "why": "two Mechanics Peek each other correctly: bounties come from one snapshot (M1 had 0, M2 had 3), so M1 gets 2 back + 3, M2 gets 2 back and pays 3; refunds received never fund a bounty, whatever the order"
+   }
+  ]
+ }
+}

@@ -53,7 +53,7 @@
 .more {
   color: var(--th-dm-more-fg);
   font-weight: 700;
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
   line-height: 1;
   letter-spacing: -0.2px;
   user-select: none;

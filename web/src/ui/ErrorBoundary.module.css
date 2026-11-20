@@ -25,27 +25,27 @@
 }
 .title {
   color: var(--th-recovery-title-fg);
-  font-size: 18px;
-  line-height: 24px;
+  font-size: calc(18px * var(--th-text-scale, 1));
+  line-height: calc(24px * var(--th-text-scale, 1));
   font-weight: 700;
 }
 .detail {
   color: var(--th-recovery-detail-fg);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
   overflow-wrap: anywhere;
 }
 .hint {
   color: var(--th-recovery-hint-fg);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
 }
 .reload {
   min-height: 48px;
   border-radius: var(--th-radius);
   background: var(--th-recovery-button-primary-bg);
   color: var(--th-recovery-button-primary-fg);
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   font-weight: 700;
   text-align: center;
 }
@@ -64,7 +64,7 @@
   background: transparent;
   color: var(--th-recovery-button-fg);
   box-shadow: inset 0 0 0 1px var(--th-recovery-button-border);
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   text-align: center;
 }
 .home:hover {

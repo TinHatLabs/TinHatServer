@@ -1,0 +1,594 @@
+/* Holdem.module.css — the Hold'em table (HoldemTable.tsx). Desktop: header bar · the felt (an oval, seats around it
+   on seatLayout()'s positions) · my area (cards + action bar). Phones (.mobile): header · a strip of the other seats ·
+   the felt as a rounded panel (board + pot) · my big cards · a thumb-sized action bar. */
+.root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--th-text-primary);
+  font-size: calc(13px * var(--th-text-scale, 1));
+}
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--th-border-subtle);
+  flex-wrap: wrap;
+}
+.title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.game {
+  font-weight: 700;
+  font-size: calc(15px * var(--th-text-scale, 1));
+}
+.meta {
+  color: var(--th-text-muted);
+  font-size: calc(12px * var(--th-text-scale, 1));
+}
+.barActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 104px 30px;
+}
+
+/* ---- the felt ---- */
+/* the oval keeps its shape in any box: as wide as the stage allows AND as its height allows (never squashed) */
+.feltWrap {
+  position: relative;
+  width: min(100%, 940px, calc(100cqh * 2 / 1.08));
+  aspect-ratio: 2 / 1.08;
+  flex: none;
+}
+.felt {
+  position: absolute;
+  inset: 9% 7%;
+  border-radius: 999px;
+  background: radial-gradient(ellipse at 50% 42%, var(--g-felt-centre) 0%, var(--g-felt-edge) 78%);
+  box-shadow:
+    0 0 0 10px var(--g-felt-rim),
+    0 0 0 11px var(--g-felt-rim-light),
+    0 18px 40px var(--g-shade-deep),
+    inset 0 0 40px var(--g-shade);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.feltLine {
+  position: absolute;
+  inset: 14px;
+  border-radius: 999px;
+  border: 1.5px solid var(--g-felt-line);
+  pointer-events: none;
+}
+.middle {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.board {
+  display: flex;
+  gap: 6px;
+}
+.boardCard {
+  animation: cardIn var(--th-dur-long) ease-out;
+}
+@keyframes cardIn {
+  from {
+    transform: translateY(-6px) scale(0.96);
+    opacity: 0;
+  }
+}
+.pot:empty {
+  display: none;
+}
+.pot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--g-shade-soft);
+}
+.side {
+  color: var(--th-text-secondary);
+  font-size: calc(11px * var(--th-text-scale, 1));
+}
+.wait {
+  color: var(--th-text-secondary);
+  font-size: calc(12px * var(--th-text-scale, 1));
+}
+
+/* ---- seats ---- */
+.seatPos {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+}
+.seat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 112px;
+}
+.avatarWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+.seatText {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  max-width: 112px;
+  padding: 3px 8px 4px;
+  border-radius: var(--th-radius-md);
+  background: var(--th-surface-overlay);
+  border: 1px solid var(--th-border-subtle);
+  box-shadow: 0 2px 8px var(--g-shade-soft);
+}
+.seatName {
+  max-width: 96px;
+  font-weight: 600;
+  font-size: calc(12px * var(--th-text-scale, 1));
+}
+.seatSub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tag {
+  font-size: calc(10.5px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+  text-transform: none;
+  white-space: nowrap;
+}
+.tagWin {
+  color: var(--g-win);
+  font-weight: 700;
+}
+.made {
+  font-size: calc(10.5px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+}
+.turn .seatText {
+  border-color: var(--th-accent-bright);
+  box-shadow: 0 0 0 1px var(--th-accent-bright), 0 0 14px var(--th-accent-glow);
+}
+.turn .tag {
+  color: var(--th-accent-bright);
+  font-weight: 700;
+}
+.folded {
+  opacity: 0.55;
+}
+.winner .seatText {
+  border-color: var(--g-win);
+  box-shadow: 0 0 0 1px var(--g-win), 0 0 16px color-mix(in srgb, var(--g-win) 35%, transparent);
+}
+.self .seatText {
+  background: var(--th-surface-selected);
+}
+.holes {
+  display: flex;
+  gap: 2px;
+  margin-bottom: -10px;
+  z-index: 1;
+}
+.holesShown {
+  margin-bottom: -6px;
+}
+.holesShown > * {
+  transform: scale(1.15);
+}
+.holesInline {
+  display: flex;
+  gap: 2px;
+}
+.dealer {
+  position: absolute;
+  right: -6px;
+  bottom: -2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--g-dealer);
+  color: var(--g-dealer-fg);
+  font-size: calc(10px * var(--th-text-scale, 1));
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px var(--g-shade);
+}
+.bet {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--g-shade);
+  pointer-events: none;
+  z-index: 3;
+}
+.betCompact {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--g-shade-soft);
+}
+.empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  white-space: nowrap;
+  width: 84px;
+  height: 44px;
+  border-radius: 22px;
+  border: 1.5px dashed var(--th-border-strong);
+  background: var(--g-shade-soft);
+  color: var(--th-text-secondary);
+  font: inherit;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  cursor: pointer;
+}
+.empty:hover {
+  border-color: var(--th-accent-bright);
+  color: var(--th-text-primary);
+  background: var(--th-surface-hover);
+}
+.emptyQuiet {
+  display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--g-felt-line);
+}
+
+/* ---- me ---- */
+.me {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--th-border-subtle);
+  background: var(--th-surface-sunken);
+}
+.meTurn {
+  box-shadow: inset 0 2px 0 var(--th-accent-bright);
+}
+.myCards {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.hand {
+  display: flex;
+  gap: 6px;
+  touch-action: none;
+}
+.handHidden {
+  cursor: grab;
+}
+.noCards {
+  color: var(--th-text-muted);
+  width: 118px;
+  text-align: center;
+}
+.peekHint {
+  position: absolute;
+  left: 0;
+  bottom: -11px;
+  font-size: calc(10.5px * var(--th-text-scale, 1));
+  color: var(--th-text-muted);
+  white-space: nowrap;
+}
+.myInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.myName {
+  font-weight: 600;
+}
+.cap {
+  font-size: calc(11px * var(--th-text-scale, 1));
+  color: var(--th-accent-bright);
+  max-width: 200px;
+}
+.actions {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+  position: relative;
+}
+.timer {
+  align-self: center;
+  min-width: 34px;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+  color: var(--th-accent-bright);
+  font-weight: 700;
+  text-align: right;
+}
+.timerLow {
+  color: var(--g-loss);
+}
+.potWord {
+  font-size: calc(11px * var(--th-text-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--th-text-secondary);
+}
+.result {
+  color: var(--th-text-primary);
+  font-weight: 600;
+  font-size: calc(13px * var(--th-text-scale, 1));
+}
+.result > span {
+  display: inline-flex;
+  gap: 4px;
+}
+.btnRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.act {
+  justify-content: center;
+  text-align: center;
+  min-width: 88px;
+  height: 36px;
+  font-weight: 600;
+}
+.raiseRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+}
+.slider {
+  flex: 1 1 auto;
+}
+.presets {
+  display: flex;
+  gap: 4px;
+}
+.preset {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 13px;
+  border: 1px solid var(--th-border-strong);
+  background: transparent;
+  color: var(--th-text-secondary);
+  font: inherit;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  cursor: pointer;
+}
+.preset:hover {
+  background: var(--th-surface-hover);
+  color: var(--th-text-primary);
+}
+.presetOn {
+  border-color: var(--th-accent-bright);
+  color: var(--th-accent-bright);
+}
+.waitTurn {
+  color: var(--th-text-muted);
+  align-self: center;
+  margin: auto 0;
+}
+.watching {
+  padding: 14px;
+  border-top: 1px solid var(--th-border-subtle);
+  color: var(--th-text-secondary);
+  text-align: center;
+  background: var(--th-surface-sunken);
+}
+
+/* ---- phones ---- */
+.mobile .bar {
+  padding: 8px 10px;
+}
+.mobile .stage {
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  gap: 12px;
+  padding: 10px;
+}
+.strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+  min-height: 64px;
+  align-items: center;
+}
+.seatCompact {
+  flex: none;
+  flex-direction: row;
+  width: auto;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--th-radius-lg);
+  background: var(--th-surface-overlay);
+  border: 1px solid var(--th-border-subtle);
+}
+.seatCompact .seatText {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  align-items: flex-start;
+}
+.seatCompact.turn {
+  border-color: var(--th-accent-bright);
+  box-shadow: 0 0 0 1px var(--th-accent-bright);
+}
+.seatCompact.winner {
+  border-color: var(--g-win);
+}
+.feltPhone {
+  border-radius: 28px;
+  padding: 22px 12px;
+  background: radial-gradient(ellipse at 50% 40%, var(--g-felt-centre) 0%, var(--g-felt-edge) 85%);
+  box-shadow:
+    0 0 0 6px var(--g-felt-rim),
+    0 10px 24px var(--g-shade);
+  display: flex;
+  justify-content: center;
+  margin: 6px;
+}
+.mobile .me {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+}
+.mobile .myCards {
+  justify-content: center;
+}
+.mobile .peekHint {
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -14px;
+}
+.mobile .actions {
+  align-items: stretch;
+}
+.mobile .btnRow {
+  justify-content: stretch;
+  flex-wrap: wrap;
+}
+.mobile .act {
+  flex: 1 1 0;
+  height: 48px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+}
+.mobile .raiseRow {
+  max-width: none;
+  flex-direction: column;
+  align-items: stretch;
+}
+.mobile .presets {
+  justify-content: space-between;
+}
+.mobile .preset {
+  flex: 1 1 0;
+  height: 40px;
+  border-radius: 20px;
+  font-size: calc(15px * var(--th-text-scale, 1));
+}
+.mobile .timer {
+  flex: 1 1 100%;
+  text-align: center;
+  margin: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .boardCard {
+    animation: none;
+  }
+}
+/* the action buttons' labels sit in the middle (ThButton starts its content at the left) */
+.btnRow .act {
+  justify-content: center;
+}
+/* side seats: the plate beside the avatar, on the outer side, vertically centred on it (the avatar keeps its slot) */
+.sideL .seatText,
+.sideR .seatText {
+  position: absolute;
+  bottom: 0;
+  min-width: 84px;
+}
+.sideL .seatText {
+  right: calc(50% + 30px);
+  align-items: flex-end;
+}
+.sideR .seatText {
+  left: calc(50% + 30px);
+  align-items: flex-start;
+}
+
+.preset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+/* phones: the stage scrolls rather than slide under my cards; a 12 px gap above my area; the slider spans the row */
+.mobile .stage {
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.mobile .raiseRow > :first-child {
+  width: 100%;
+}
+.seatCompact .dealer {
+  top: -4px;
+  right: -4px;
+  bottom: auto;
+}
+.kick {
+  position: absolute;
+  top: 0;
+  right: 22px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--th-border-strong);
+  background: var(--th-surface-raised);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  z-index: 4;
+}
+/* phones, raise row up (punch list #4): a tighter felt + my smaller cards (HoldemTable) keep the whole felt, pot
+   included, above my area with its 12 px gap */
+.raising {
+  --g-raising: 1; /* a hook for :has() below */
+}
+.mobile:has(.raising) .feltPhone {
+  padding: 10px 12px;
+  margin: 4px 6px;
+}
+.mobile:has(.raising) .stage {
+  gap: 8px;
+  padding-top: 6px;
+}
+.mobile:has(.raising) .strip {
+  min-height: 56px;
+}

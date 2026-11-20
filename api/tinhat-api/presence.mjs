@@ -5,7 +5,8 @@
 //   DELETE /presence              -> 204  the off switch: every entry of the caller + their cached opt-in
 //   DELETE /presence?device=this  -> 204  sign-out: only the calling device
 //   GET    /presence              -> 200 {users: {"<mxid>": {state, room?, status?}}, every: 20}
-//                                    state "online"|"away"|"call"; status {text, emoji, color} (A4)
+//                                    state "online"|"away"|"call"; status {text, emoji, color, full?} (A4; full =
+//                                    the whole text of a status over 40 characters, apps 12.1.17+, D07.6)
 //   GET    /presence?tz=1         -> the same + `tz` ("<IANA zone>") for every user who shares a joined room with the
 //                                    reader and whose `dev.tinhat.presence_tz` says share: true — a user who shares a
 //                                    time zone but not presence is listed with `tz` only (no state) (A7, widgets W1)
@@ -77,8 +78,10 @@ export function validateBeat(v) {
 }
 
 /**
- * A custom status (A4.4) -> {text, emoji, color, until} or null. Invalid is ignored, never an error:
+ * A custom status (A4.4) -> {text, emoji, color, until, full?} or null. Invalid is ignored, never an error:
  * text 1–40 characters after trim, emoji ≤ 16 UTF-8 bytes, color a palette key, until null or in the future.
+ * `full` (apps 12.1.17+, D07.6): the whole text of a status over 40 characters, 1–80 after trim; `text` then holds
+ * its first characters + "…" for older apps. A bad `full` is dropped on its own (the status still shows `text`).
  */
 export function validStatus(s, nowWall) {
     if (!isObj(s) || typeof s.text !== "string") return null;
@@ -90,7 +93,18 @@ export function validStatus(s, nowWall) {
     if (typeof s.color !== "string" || !PALETTE_SET.has(s.color)) return null;
     const until = s.until ?? null;
     if (until !== null && !(typeof until === "number" && Number.isFinite(until) && until > nowWall)) return null;
-    return { text, emoji, color: s.color, until };
+    const out = { text, emoji, color: s.color, until };
+    const full = typeof s.full === "string" ? s.full.trim() : "";
+    const fn = Array.from(full).length;
+    if (fn >= 1 && fn <= 80 && !UNSAFE_TEXT.test(full)) out.full = full;
+    return out;
+}
+
+/** A valid status -> the `status` of a GET row: {text, emoji, color} (+ `full` when it has one; `until` stays here). */
+export function rowStatus(st) {
+    const row = { text: st.text, emoji: st.emoji, color: st.color };
+    if (st.full !== undefined) row.full = st.full;
+    return row;
 }
 
 /** Live devices of one user -> {state, room?}: any call -> call (newest beat's room); else any online; else away. */
@@ -428,7 +442,7 @@ export function createPresence(deps) {
                 const row = { state: agg.state };
                 if (agg.state === "call" && agg.room && mine.has(agg.room)) row.room = agg.room;
                 const st = c.status;
-                if (st && (st.until === null || st.until > w)) row.status = { text: st.text, emoji: st.emoji, color: st.color };
+                if (st && (st.until === null || st.until > w)) row.status = rowStatus(st);
                 out[c.mxid] = row;
             }
             if (zones) {

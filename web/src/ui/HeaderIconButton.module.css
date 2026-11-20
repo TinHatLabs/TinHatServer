@@ -66,3 +66,45 @@
   position: absolute;
   inset: min(0px, calc(50% - 22px)) max(calc(0px - var(--th-hit-x, 0px)), min(0px, calc(50% - 22px)));
 }
+
+/* inside <HeaderButtonLabel> (the phone ⋯ More sheet): a full-width list row — the glyph, then its label as text.
+   48 px tall (one line); a long label wraps to two lines and ellipsizes after that. */
+.labelled {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 48px;
+  padding: 4px 12px;
+  border-radius: 10px;
+  text-align: start;
+}
+.labelled .wash,
+.labelled .focus {
+  inset: 0;
+  border-radius: 10px;
+}
+.labelled .ring {
+  display: none;
+}
+.labelled .glyph {
+  position: relative;
+  left: auto;
+  top: auto;
+  margin: 0;
+  flex: none;
+}
+.label {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
+  color: var(--th-header-more-fg);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}

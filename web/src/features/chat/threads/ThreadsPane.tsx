@@ -21,6 +21,7 @@ import { myReceipts, onThreadReceipts, receiptsVersion } from "./receipts";
 import { THREAD_BACK_LEVEL, moreThreadPages, setOpenThread, setThreadsFilter, threadTakesBack, useThreadsPanel } from "./state";
 import { useRightPanelStore } from "@/features/spaces/panelState";
 import { getView } from "../store";
+import { chatMsgOf, hiddenInChat, useChatIndex } from "@/features/media";
 import s from "./Threads.module.css";
 
 interface ListItem {
@@ -113,6 +114,8 @@ export function useThreadItems(roomId: string, fetchServer: boolean): { items: L
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, fetchServer, client, localRoots, pages]);
 
+  // 12.1.17: a photo in Memories isn't listed here (its comments live in Memories' viewer, which opens its thread)
+  const memIdx = useChatIndex(roomId);
   const items = useMemo(() => {
     const room = client?.getRoom(roomId) ?? null;
     const receipts = myReceipts(roomId);
@@ -133,6 +136,7 @@ export function useThreadItems(roomId: string, fetchServer: boolean): { items: L
     const out: ListItem[] = [];
     for (const [root, ev0] of roots) {
       const ev = room?.findEventById(root) ?? ev0;
+      if (ev && hiddenInChat(memIdx, chatMsgOf(ev))) continue;
       // the server copy carries the bundled summary (the room's copy may be older than its last reply)
       const bundle = bundleOf(ev0?.event) ?? bundleOf(ev?.event);
       const mineSeen = seen.get(root) ?? [];
@@ -156,7 +160,7 @@ export function useThreadItems(roomId: string, fetchServer: boolean): { items: L
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server, tl.version, tl.events, receiptsV, roomId, me, client]);
+  }, [server, tl.version, tl.events, receiptsV, roomId, me, client, memIdx]);
   return { items, loading, error, more, loadMore: () => moreThreadPages(roomId) };
 }
 

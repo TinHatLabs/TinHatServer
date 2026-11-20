@@ -12,6 +12,7 @@ import { ConversationView } from "./ConversationView";
 import { ConvToastCtx } from "./convToast";
 import { closeFloatingChat, getView, patchFloating, raiseFloating, useChatStore, type FloatingChat } from "./store";
 import s from "./FloatingChats.module.css";
+import { PersonName } from "@/features/spaces/PersonName";
 
 export function FloatingChatsLayer() {
   const chats = useChatStore((st) => st.floating);
@@ -146,7 +147,7 @@ function FloatingChatWindow({ chat }: { chat: FloatingChat }) {
     >
       <div className={s.title} onPointerDown={startDrag} onPointerMove={moveDrag} onPointerUp={() => endDrag()}>
         <Avatar size={25} name={name || "Room"} seed={avatarSeed(chat.roomId, dm.peer)} imageSource={avatar || dm.avatar} />
-        <span className={s.name}>{name || "Room"}</span>
+        <span className={s.name}>{dm.peer ? <PersonName mxid={dm.peer} roomId={chat.roomId}>{name || "Room"}</PersonName> : name || "Room"}</span>
         <HeaderIconButton
           iconName="window-minimize-symbolic"
           tip="Minimize to chat-head"

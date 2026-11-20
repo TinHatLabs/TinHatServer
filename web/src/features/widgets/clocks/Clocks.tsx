@@ -18,6 +18,7 @@ import { defineWidget, type PartProps, type WidgetCtx } from "../impl";
 import { useFreshIds } from "../motion";
 import { nameNow, usePerson } from "../names";
 import s from "./Clocks.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 export const CLOCK_ROWS = { M: 5, L: 12 } as const;
 
@@ -143,6 +144,7 @@ function Row({ r, L, mode, enter, ctx }: { r: ClockRow; L: boolean; mode: ClockM
       onKeyDown={(e) => e.key === "Enter" && open()}
     >
       <Avatar size={ctx.mobile ? 24 : 20} name={who.name} seed={r.id} imageSource={who.avatar} />
+      <PrestigeInRow mxid={r.id} rowGap={8} size={12} />
       <span className={s.name}>{who.name}</span>
       <span className={s.zone}>{zone}</span>
       <DayNight night={r.night} />

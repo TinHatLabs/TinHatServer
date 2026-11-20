@@ -54,7 +54,7 @@
 .mobile {
   min-height: 36px;
   padding: 0 4px 0 12px;
-  font-size: 14px;
+  font-size: calc(14px * var(--th-text-scale, 1));
   max-width: 46vw;
 }
 .mobile .x {

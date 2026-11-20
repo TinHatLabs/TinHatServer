@@ -52,8 +52,8 @@
   position: absolute;
   right: 4px;
   bottom: 3px;
-  font-size: 13px;
-  line-height: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
+  line-height: calc(13px * var(--th-text-scale, 1));
   color: var(--th-callbar-button-badge-fg);
   text-shadow: 0 0 1px var(--th-callbar-button-badge-shadow), 0 0 2px var(--th-callbar-button-badge-shadow);
   pointer-events: none;

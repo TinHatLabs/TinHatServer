@@ -9,7 +9,10 @@ import { getPref } from "@/core/prefs";
 import { registerAuxWindow } from "@/core/winstate";
 import { getFormFactor } from "@/core/device";
 import { useCallStore } from "@/features/calls";
-import { sameParticipant } from "@/features/calls/identity";
+import { mxidOf, sameParticipant } from "@/features/calls/identity";
+import { usePrestige } from "@/features/prestige/store";
+import { glyphFor, inkFor } from "@/features/prestige/PrestigeToken";
+import { prestigeLabel, prestigeTier } from "@/features/prestige/clientRules";
 import type { CallStore } from "@/features/calls/contract";
 import { createLogger } from "@/core/log";
 import { resolveIcon, useIconIndex } from "@/ui/iconpack";
@@ -50,6 +53,8 @@ function copyTheme(target: Document) {
 
 interface Pill {
   key: string;
+  /** whose pill (the prestige token beside the name); none on the preview's made-up pills */
+  mxid?: string;
   label: string;
   speaking: boolean;
   muted: boolean;
@@ -107,14 +112,14 @@ function livePills(e: Partial<CallStore>, now: number): Pill[] {
   const selfLinger = (lastSpoke.get("__self") ?? 0) + LINGER_MS > now;
   const warn = !!e.micMuted && !!e.hear && (e.hear as { mutedTalk?: boolean }).mutedTalk === true;
   if (!speakingOnly || selfSpeaking || selfLinger || warn) {
-    out.push({ key: "__self", label: "You", speaking: selfSpeaking, muted: !!e.micMuted, deafened: !!e.deafened, self: true, sharing: !!e.sharing || (e.tiles ?? []).some((t) => t.companionOf === "You"), more: false, warn }); // (or our phone shares for us)
+    out.push({ key: "__self", mxid: me ? mxidOf(me) : undefined, label: "You", speaking: selfSpeaking, muted: !!e.micMuted, deafened: !!e.deafened, self: true, sharing: !!e.sharing || (e.tiles ?? []).some((t) => t.companionOf === "You"), more: false, warn }); // (or our phone shares for us)
   }
-  const seen = new Map<string, { key: string; label: string; muted: boolean; sharing: boolean }>();
+  const seen = new Map<string, { key: string; mxid: string; label: string; muted: boolean; sharing: boolean }>();
   for (const t of e.tiles ?? []) {
     const p = t.companionOf || t.participant; // a companion's share counts as its person's (screen share P3)
     if (!p || p === "You" || t.id === "vid_selfview") continue;
     const r = seen.get(p);
-    if (!r) seen.set(p, { key: p, label: t.name || p.replace(/^@/, "").split(":")[0], muted: !!t.muted, sharing: !!t.screenshare });
+    if (!r) seen.set(p, { key: p, mxid: mxidOf(p), label: t.name || p.replace(/^@/, "").split(":")[0], muted: !!t.muted, sharing: !!t.screenshare });
     else {
       if (t.screenshare) r.sharing = true;
       if (t.kind !== "screenshare") r.muted = !!t.muted;
@@ -137,12 +142,28 @@ function livePills(e: Partial<CallStore>, now: number): Pill[] {
   return out;
 }
 
+/** The prestige token in a pill (the app's PrestigeToken draws with the app's stylesheets, which this pop-out doesn't
+ *  load): the same glyph + prestige.* ink, inline, in the call room's context. Nothing at rank 0. */
+function PipToken({ mxid }: { mxid: string }) {
+  const room = useCallStore((st) => st.callRoomId);
+  const rank = usePrestige(mxid, room || null);
+  const look = prestigeTier(rank);
+  if (look.tier === 0) return null;
+  return (
+    <span role="img" aria-label={prestigeLabel(rank)} data-prestige-tier={look.tier} style={{ display: "inline-flex", flex: "none" }}>
+      <PipIcon name={glyphFor(look)} size={Math.round(GU * 0.72)} color={inkFor(look)} />
+    </span>
+  );
+}
+
 function PillView({ p }: { p: Pill }) {
   const bg = p.warn ? "var(--th-overlay-pill-bg-error)" : p.speaking ? "var(--th-overlay-pill-bg-speaking)" : "var(--th-overlay-pill-bg)";
   const border = p.warn ? "var(--th-overlay-pill-border-error)" : p.speaking ? "var(--th-overlay-pill-border-speaking)" : "var(--th-overlay-pill-border)";
   const dot = GU * 1.3;
   return (
     <div
+      data-testid="overlay-pill"
+      data-self={p.self ? "1" : "0"}
       style={{
         alignSelf: getPref("overlay-corner", "tl").endsWith("r") ? "flex-end" : "flex-start",
         height: GU * 1.9,
@@ -178,6 +199,7 @@ function PillView({ p }: { p: Pill }) {
           {(p.label || "?").charAt(0).toUpperCase()}
         </span>
       )}
+      {p.mxid && !p.more && <PipToken mxid={p.mxid} />}
       <span
         style={{
           color: p.warn ? "var(--th-overlay-name-fg-error)" : p.speaking ? "var(--th-overlay-name-fg-speaking)" : "var(--th-overlay-name-fg)",

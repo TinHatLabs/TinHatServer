@@ -21,7 +21,7 @@
 /* Every role and element token of src/theme/tokens.json as --th-<id> (src/ui/themeNames.ts), with the value the web paints
    in the OLED built-in: resolveForApp(oled, tokens, "web"), the step-1a webPins included. applyTheme() (themes.ts)
    sets the same variables on <html> for the active theme; this block only makes CSS work before the bundle runs.
-   52 roles + 1667 element tokens. How to use them: src/theme/MIGRATING.md. */
+   52 roles + 1671 element tokens. How to use them: src/theme/MIGRATING.md. */
 :root {
   /* roles */
   --th-accent-base: #1e6a76;
@@ -1029,6 +1029,10 @@
   --th-presence-line-fg: #aaaaaa;
   --th-presence-online-dot: #3ba55c;
   --th-presence-ring: #0a0a0a;
+  --th-prestige-accent-fg: #3cbad0;
+  --th-prestige-filled-fg: #e0e0e0;
+  --th-prestige-outline-fg: rgba(170, 170, 170, 0.7);
+  --th-prestige-shine-highlight: #e0e0e0;
   --th-profile-bg: #0a0a0a;
   --th-profile-border: #222222;
   --th-profile-card-bg: #0a0a0a;

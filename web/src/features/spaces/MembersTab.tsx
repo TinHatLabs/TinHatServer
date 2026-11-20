@@ -32,6 +32,7 @@ import { useLongPress } from "./longPress";
 import { MiddleElide } from "./MiddleElide";
 import { useCenterOnWindow } from "./winGeom";
 import s from "./SpaceSettings.module.css";
+import { PersonName } from "./PersonName";
 
 type Filter = "all" | "invited" | "banned";
 
@@ -323,6 +324,7 @@ function MemberRowView({
   const ref = useRef<HTMLDivElement>(null);
   const lp = useLongPress(() => onMenu(ref.current));
   const ink = useContentInk();
+  const spaceId = useSpaceAdmin((st) => st.spaceId);
   const nameColor = (row.tag?.color && ink(row.tag.color)) || senderColor(row.mxid);
   const opacity = row.membership === "invite" ? 0.75 : row.membership === "ban" ? 0.5 : 1;
   const second = row.membership === "ban" && row.reason ? `${row.mxid}  ·  ${row.reason}` : row.mxid;
@@ -359,7 +361,7 @@ function MemberRowView({
       <div className={s.mRowText}>
         <div className={s.mRowLine1}>
           <span className={s.mRowName} style={{ color: nameColor }}>
-            {row.name || localpart(row.mxid)}
+            <PersonName mxid={row.mxid} roomId={spaceId}>{row.name || localpart(row.mxid)}</PersonName>
           </span>
           {row.isMe && <span className={s.you}>you</span>}
         </div>

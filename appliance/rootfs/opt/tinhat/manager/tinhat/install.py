@@ -20,7 +20,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp.abc import AbstractResolver
 
-from . import apiconf, caddylock, compose, config, console, dbcheck, environment, hw, names, netrules, owndomain, relay, restoresafe, state, templates
+from . import apiconf, caddylock, compose, config, console, dbcheck, environment, hw, names, netrules, owndomain, playdb, relay, restoresafe, state, templates
 from .synapse import Synapse
 
 log = logging.getLogger("tinhat.install")
@@ -575,6 +575,20 @@ class Installer:
             shutil.rmtree(files, ignore_errors=True)
             raise InstallError(str(e))
         log.info("restore: the backup's database passed the check (schema %s, %s)", checked.schema_version, checked.counts)
+        # the games database (G1): the same three layers (playdb), never a reason to stop the server's restore
+        play_note = None
+        if (root / "play.dump").is_file():
+            try:
+                pmeta = state.read_json(root / "backup.json", {})
+                pmeta = pmeta.get("play") if isinstance(pmeta, dict) else None
+                pc = await playdb.isolated(root / "play.dump", work / "playcheck", dbcheck.postgres_image(config.OPT / "compose.yaml"),
+                                           (pmeta or {}).get("counts") if isinstance(pmeta, dict) else None)
+                shutil.move(str(pc.dump), str(work / "play.dump"))
+                log.info("restore: the backup's games database passed the check (%s)", pc.counts)
+            except Exception as e:  # noqa: BLE001 — the games never stop the chat's restore (astra G1: metadata too)
+                play_note = str(e)[:300] or repr(e)[:300]
+                log.warning("restore: the games database wasn't restored: %s", e)
+            shutil.rmtree(work / "playcheck", ignore_errors=True)
         # since 0.3.8 a backup holds no home-network CA key (backup.STATE_ITEMS): Caddy makes a new CA in "secure"
         new_ca = a.get("mode", "lan") == "lan" and not (root / "state" / "caddy" / "data" / "caddy" / "pki").exists()
         for item in backup.STATE_ITEMS:
@@ -595,13 +609,16 @@ class Installer:
         old = state.read_json(root / "state" / "state.json", {})
         drop = {"phase", "ports", "reach", "assessment", "failed_step", "error", "error_details", "names_notices",
                 "connect_codes", "names_status", "restoring", "livekit_public_ip",
-                "restored_from"}  # a copy of a server that was itself restored once: this restore is the one to remember
+                "restored_from",  # a copy of a server that was itself restored once: this restore is the one to remember
+                # the games' G9 record is the OLD box's: this one checks its own before the games may be on (play.py)
+                "play_g9_ok", "play_g9_block", "play_g9_block_at", "play_api_restart"}
         meta = state.read_json(root / "backup.json", {})
         if isinstance(old.get("domain"), dict):  # the proxy this copy sits behind may connect from elsewhere: named
             old["domain"] = {k: v for k, v in old["domain"].items() if k != "proxies"}  # again in the dashboard
         state.save_state(**{k: v for k, v in old.items() if k not in drop},
                          restored_from={"at": int(time.time()), "snapshot": r["snapshot"], "backup_time": r.get("time"),
-                                        "backup_version": meta.get("version"), "old_addresses": meta.get("addresses") or []})
+                                        "backup_version": meta.get("version"), "old_addresses": meta.get("addresses") or []},
+                         play_restore=({"ok": False, "why": play_note} if play_note else None))
         media = files / str(backup.MEDIA).lstrip("/")
         if media.exists():
             shutil.rmtree(backup.MEDIA, ignore_errors=True)
@@ -651,6 +668,18 @@ class Installer:
         if proc.returncode != 0:
             raise InstallError("The database in the backup couldn't be restored.", _tail(out.decode(errors="replace")))
         dump.unlink(missing_ok=True)
+        # the games database (G1): our own checked copy (playdb.isolated in _s_restore), restored AS the games role into an
+        # empty games database; a failure leaves the games empty and says so, the server's restore goes on
+        pdump = config.STATE_DIR / "restore" / "play.dump"
+        if pdump.is_file():
+            try:
+                pc = await playdb.load(pdump)
+                state.save_state(play_restore={"ok": True, "counts": pc})
+                log.info("restore: the games database is back (%s)", pc)
+            except Exception as e:  # noqa: BLE001
+                state.save_state(play_restore={"ok": False, "why": str(e)[:300]})
+                log.warning("restore: the games database wasn't restored: %s", e)
+            pdump.unlink(missing_ok=True)
         if a.get("mode") != "anywhere":  # (a tinhat.me name: right after the name moves here, in _s_takeover)
             rf = state.load_state().get("restored_from") or {}
             told = await _tell_old_computer(rf.get("old_addresses") or [], a["server_name"])

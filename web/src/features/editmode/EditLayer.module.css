@@ -40,7 +40,7 @@
   background: var(--th-editmode-handle-bg);
   color: var(--th-editmode-handle-fg);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   font-weight: 600;
   cursor: grab;
   touch-action: none;
@@ -202,7 +202,7 @@
   border: 2px solid var(--th-editmode-ghost-border);
   background: var(--th-editmode-handle-bg);
   color: var(--th-editmode-handle-fg);
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   font-weight: 600;
   pointer-events: none;
   white-space: nowrap;
@@ -240,7 +240,7 @@
   background: var(--th-editmode-handle-bg);
   color: var(--th-editmode-handle-fg);
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   font-weight: 600;
   cursor: grab;
   touch-action: none;

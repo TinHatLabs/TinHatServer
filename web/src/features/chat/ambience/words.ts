@@ -24,6 +24,7 @@ export const AMBIENCE_WORDS = {
   effectsSettings: "Effects settings…",
   customBusy: "Posting the image…",
   customFailed: "Couldn't post the image",
+  customFormat: "This picture's format can't be used as a background. Pick a JPEG, PNG, WebP or GIF picture.",
   readOnly: "Only moderators can change this room's background.",
   offHere: "Chat backgrounds are off on this device (Settings → Appearance).",
   forEveryone: "Everyone in this room sees the background you choose.",

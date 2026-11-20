@@ -39,6 +39,7 @@ import urllib.parse
 from pathlib import Path
 
 from . import config, environment, state
+from . import play
 
 log = logging.getLogger("tinhat.api")
 
@@ -266,6 +267,9 @@ def features(st: dict | None = None, s: dict | None = None) -> dict:
         # Each person's rule for invites from other servers (dev.tinhat.invite_rules account data) is enforced by this
         # server (tinhat_network.NetworkRules, docs/NETWORK-RULES.md): the apps show the setting only when this is true.
         "invite_rules": network_mode(st) != "home",
+        # the mini games (play.py; GAMES-V1-SPEC §1 "Switches"): unlike every other flag, the apps show games only on
+        # an explicit play: true (an older server has no play API); The Rig in the phone apps only on an explicit true
+        **play.features(st),
     }
 
 
@@ -385,7 +389,8 @@ def owner(st: dict | None = None) -> str:
     return ""
 
 
-def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str = "", owner_limits: dict | None = None) -> str:
+def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str = "", owner_limits: dict | None = None,
+             play_env: dict | None = None) -> str:
     base = f"https://{server_name}"
     gw = gateway or "127.0.0.1"
     lines = {
@@ -413,6 +418,9 @@ def env_text(server_name: str, s: dict, gateway: str, web: str = "", relay: str 
     }
     if relay:
         lines["PUSH_RELAY"] = relay  # the phone apps' relay (docs/PHONE-PUSH.md); absent = phone pushers refused
+    for k, v in (play_env or {}).items():  # the mini games (play.py): only PLAY_* and the recorder's id, never anything else
+        if (k.startswith("PLAY_") or k == "RECORDER_USER") and k not in lines and not any(ord(c) < 0x21 for c in str(v)):
+            lines[k] = str(v)
     for k, v in (owner_limits or {}).items():  # the owner's numbers (LIMITS only, re-checked: never another variable)
         val = limit_value(k, v)
         if val is not None and k not in lines:
@@ -445,7 +453,8 @@ def write(st: dict | None = None, s: dict | None = None) -> bool:
         return False
     changed = False
     files = {
-        "env": env_text(sn, s, docker_gateway(), settings(st)["web"], push_relay(st), limits(st)),
+        "env": env_text(sn, s, docker_gateway(), settings(st)["web"], push_relay(st), limits(st), play.env_lines(st, s)),
+        "play-db.secret": play.password(s),  # the games database role's password (play.py), read by the API only
         "synapse-admin.token": s.get("system_token") or "",
         "synapse.secret": s.get("registration_shared_secret") or "",
         "livekit.secret": s.get("livekit_secret") or "",
@@ -596,4 +605,8 @@ def doc(st: dict | None = None, s: dict | None = None) -> dict:
             "web": a["web"], "webOffered": st.get("mode") == "domain", "serverName": st.get("server_name") or "",
             "turn": {k: v for k, v in (a["turn"] or {}).items() if k != "credential"} if a["turn"] else None,
             "gameservers": gameservers_configured(), "vodsDir": str(VODS_DIR), "apiDir": str(DIR),
-            "reports": len(reports(500))}
+            "reports": len(reports(500)),
+            # the mini games (play.py): the switches and the two numbers, with their bounds for the form
+            "play": {**play.settings(st), "bounds": {k: list(v) for k, v in play.BOUNDS.items()},
+                     # a G9 block (play.py): the dashboard says the games are off and why, whatever the switch says
+                     "blocked": play.blocked(st) or None, "blocked_at": st.get("play_g9_block_at") if play.blocked(st) else None}}

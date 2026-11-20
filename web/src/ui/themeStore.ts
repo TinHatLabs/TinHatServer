@@ -26,6 +26,8 @@ import { readRecent, recentMenu, recordPick, writeRecent } from "../theme/recent
 import { getBlob, getPrefRaw, onBlobChange, onPrefChange, setBlob, setPrefRaw } from "../core/prefs";
 import { applyThemeDoc, currentColours, normalizeTheme, resolveColours, type ThemeColours } from "./themes";
 import { libraryDoc, libraryNow, loadLibrary } from "./themeLibrary";
+import { PREF_DENSITY, PREF_MIGRATED, PREF_TEXT_SIZE } from "../theme/personal";
+import { PREF_FOLLOW_OS, applyPersonal, migratePersonal, reapplyOnFormFactor, refreshOsTextPercent } from "./textSize";
 
 const BLOB = "theme-sync";
 const OFFERS_PREF = "theme-offers";
@@ -262,6 +264,12 @@ function recompute(): void {
   if (pk.projection?.theme) {
     // under a preview the effective choice is resolved (the settings' state) but not painted
     const doc = pk.projection.theme as unknown as Theme;
+    // P22 (12.1.17): once per device, the theme the person RESOLVES to (never a fallback painted while a library theme
+    // is still loading) gives its old text size / density to the person; from then on themes never carry them
+    if (getPrefRaw(PREF_MIGRATED) !== "1") {
+      migratePersonal(doc);
+      applyPersonal();
+    }
     const r = preview ? resolveColours(doc) : applyThemeDoc(doc);
     if (!("error" in r)) colours = r;
   }
@@ -332,6 +340,19 @@ export function bootTheme(): void {
   p = loaded ?? emptyPersisted();
   persistedText = loaded ? JSON.stringify(p) : "";
   recompute();
+  // P22 (12.1.17): the person's text size + density (textSize.ts) — a change of the prefs (here or in another tab)
+  // repaints; the phone's own text size can change while the app is in the background (iOS Settings → Display)
+  applyPersonal();
+  for (const k of [PREF_TEXT_SIZE, PREF_DENSITY, PREF_FOLLOW_OS]) onPrefChange(k, () => applyPersonal());
+  // 12.1.18 review #4: the phone layout is marked after this first apply: re-apply when it is (Match my phone)
+  reapplyOnFormFactor();
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible") return;
+      refreshOsTextPercent();
+      applyPersonal();
+    });
+  }
   // another tab changed the state (its own applies, its sync), or the gate's storage-event switch (gate mode)
   onBlobChange(BLOB, () => {
     if (LOCAL) return;

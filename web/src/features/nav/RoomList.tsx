@@ -58,6 +58,8 @@ import { useIsTouch } from "@/core/device";
 import { swallowNextClick } from "./touch";
 import { listPlan, type PhoneSections } from "./sections";
 import s from "./RoomList.module.css";
+import { PersonName, PrestigeFor } from "@/features/spaces/PersonName";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 const scrollMemory = new Map<string, number>();
 
@@ -632,13 +634,15 @@ const RoomRowView = memo(function RoomRowView({ row, roving, hidden, first, sele
           // grey under the name (a display name alone can copy anyone's; the desktop's RoomsIsland.qml)
           <span className={s.nameCol}>
             <span className={s.name} style={{ color: "var(--th-rooms-item-not-joined-fg)", fontWeight: 700 }}>
-              {row.name}
+              <PersonName mxid={row.peer} roomId={row.id}>{row.name}</PersonName>
             </span>
             <span className={s.inviterAddr} data-inviter-addr="">
               {row.peer}
             </span>
           </span>
         ) : (
+          <>
+          {isDM && <PrestigeInRow mxid={row.peer} roomId={row.id} rowGap={4} />}
           <span
             className={s.name}
             style={{
@@ -649,6 +653,7 @@ const RoomRowView = memo(function RoomRowView({ row, roving, hidden, first, sele
           >
             {row.name}
           </span>
+          </>
         )}
         {row.muted && !isInvite && <Icon name="notifications-disabled-symbolic" size={14} color="var(--th-rooms-item-muted-icon)" className={s.flex0} />}
         {(isInvite || notJoined) && <span className={cx(s.pill, isInvite ? s.pillInvite : s.pillNone)}>{isInvite ? "Invited" : "Not joined"}</span>}
@@ -735,6 +740,7 @@ const RoomRowView = memo(function RoomRowView({ row, roving, hidden, first, sele
         <div className={s.statuses}>
           {row.statuses.map((st) => (
             <div key={st.userId} className={s.status}>
+              <PrestigeFor mxid={st.userId} roomId={row.id} />
               {st.name}: {st.text}
             </div>
           ))}
@@ -823,6 +829,7 @@ function ParticipantRow({ roomId, p, onMenu }: { roomId: string; p: Participant;
     >
       <Avatar size={20} name={p.name} seed={p.mxid} imageSource={p.avatar || null} className={s.flex0} />
       {/* textDim like ThRoomList.qml (the desktop colours roles in chat/members/profile, not here) */}
+      <PrestigeInRow mxid={p.mxid} roomId={roomId} rowGap={4} />
       <span className={s.partName}>
         {p.name}
       </span>
@@ -886,6 +893,7 @@ function SpaceInviteCard({ entry }: { entry: SpaceEntry }) {
         <div className={s.inviteText}>
           {inviter ? (
             <>
+              <PrestigeFor mxid={entry.inviterMxid} roomId={entry.key} />
               <b>{inviter}</b> invited you to <b>{entry.label}</b>
             </>
           ) : (
@@ -997,7 +1005,9 @@ function AccountCard({ onBug, onMenu, mobile, island, active = true }: { onBug: 
       >
         <Avatar size={30} name={prof.displayName || me} seed={me} imageSource={prof.avatarUrl ?? null} className={s.flex0} {...avatarDot(presenceOn ? myPres : null, "var(--me-surface)")} />
         <span className={s.meCol}>
-          <span className={s.me}>{accountName(me, prof.displayName)}</span>
+          <span className={s.me}>
+            <PersonName mxid={me}>{accountName(me, prof.displayName)}</PersonName>
+          </span>
           {presenceOn && <MyStatusLine />}
         </span>
       </div>

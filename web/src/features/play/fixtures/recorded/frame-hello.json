@@ -1,0 +1,10 @@
+{
+ "t": "hello",
+ "v": 1,
+ "user": "@dee:example.org",
+ "now": 1795132566574,
+ "rig_hidden": false,
+ "wallets": [
+  "!gamenight:example.org"
+ ]
+}

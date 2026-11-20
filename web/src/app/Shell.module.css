@@ -50,6 +50,14 @@
 }
 
 /* ---- phones: the stack ------------------------------------------------------------------------ */
+/* A touch tablet in the DESKTOP layout (the iPhone/iPad app on an iPad, Safari on iPad, a foldable's inner screen):
+   the page reaches under the status bar and the home indicator (index.html: viewport-fit=cover), so the shell keeps
+   its content inside the safe area — the rail's Home button sat on the clock (2026-11-14). The band itself shows the
+   window background. Desktop browsers (no data-touch) and the phone layout (.mobile, its own insets below) unchanged;
+   where the platform reports no inset, env() is 0 and nothing moves. */
+:root[data-ff="desktop"][data-touch] .shell:not(.mobile) {
+  padding: var(--th-safe-top) var(--th-safe-right) var(--th-safe-bottom) var(--th-safe-left);
+}
 .mobile {
   /* The iOS status bar is translucent (index.html): the band behind the clock belongs to what is at the top —
      the banner strip when one shows, else the page itself (the room header paints its own colour up there, the

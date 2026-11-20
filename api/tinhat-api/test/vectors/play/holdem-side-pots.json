@@ -1,0 +1,647 @@
+{
+ "v": 1,
+ "about": "Pots at the end of a hand. put_in = every chip each seat put in this hand (blinds included). First the uncalled part of the single biggest put-in (over the second biggest, folded seats included) goes back. Then one pot per distinct put-in level of the seats still in (ascending), taking from every seat (folded too) up to that level; eligible = seats still in whose put-in reaches it. Chips above the highest level reached by a seat still in (put in only by folded seats) join the top pot, so nothing is ever left over. Neighbouring pots with the same eligible seats merge. Each pot goes to the strongest eligible group in ranking; a split pot's odd chips go one each to its winners in clockwise order starting with the first seat after the button. Chips are whole numbers; nothing is created or lost.",
+ "cases": [
+  {
+   "id": "heads-up-uncalled",
+   "seats": [
+    "1",
+    "2"
+   ],
+   "button": "1",
+   "put_in": {
+    "1": 40,
+    "2": 15
+   },
+   "folded": [],
+   "ranking": [
+    [
+     "1"
+    ],
+    [
+     "2"
+    ]
+   ],
+   "expect": {
+    "returned": {
+     "1": 25
+    },
+    "pots": [
+     {
+      "amount": 30,
+      "eligible": [
+       "1",
+       "2"
+      ],
+      "winners": [
+       "1"
+      ],
+      "paid": {
+       "1": 30
+      }
+     }
+    ],
+    "won": {
+     "1": 30
+    }
+   },
+   "why": "the 25 nobody called goes back before any pot is made"
+  },
+  {
+   "id": "three-way-allin",
+   "seats": [
+    "1",
+    "2",
+    "3"
+   ],
+   "button": "3",
+   "put_in": {
+    "1": 10,
+    "2": 30,
+    "3": 50
+   },
+   "folded": [],
+   "ranking": [
+    [
+     "1"
+    ],
+    [
+     "2"
+    ],
+    [
+     "3"
+    ]
+   ],
+   "expect": {
+    "returned": {
+     "3": 20
+    },
+    "pots": [
+     {
+      "amount": 30,
+      "eligible": [
+       "1",
+       "2",
+       "3"
+      ],
+      "winners": [
+       "1"
+      ],
+      "paid": {
+       "1": 30
+      }
+     },
+     {
+      "amount": 40,
+      "eligible": [
+       "2",
+       "3"
+      ],
+      "winners": [
+       "2"
+      ],
+      "paid": {
+       "2": 40
+      }
+     }
+    ],
+    "won": {
+     "1": 30,
+     "2": 40
+    }
+   },
+   "why": "short stack wins the main pot only; the side pot goes to the next best"
+  },
+  {
+   "id": "side-pot-to-short-loser",
+   "seats": [
+    "1",
+    "2",
+    "3"
+   ],
+   "button": "1",
+   "put_in": {
+    "1": 10,
+    "2": 30,
+    "3": 30
+   },
+   "folded": [],
+   "ranking": [
+    [
+     "3"
+    ],
+    [
+     "1"
+    ],
+    [
+     "2"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 30,
+      "eligible": [
+       "1",
+       "2",
+       "3"
+      ],
+      "winners": [
+       "3"
+      ],
+      "paid": {
+       "3": 30
+      }
+     },
+     {
+      "amount": 40,
+      "eligible": [
+       "2",
+       "3"
+      ],
+      "winners": [
+       "3"
+      ],
+      "paid": {
+       "3": 40
+      }
+     }
+    ],
+    "won": {
+     "3": 70
+    }
+   },
+   "why": "best hand wins both pots"
+  },
+  {
+   "id": "folded-money-stays",
+   "seats": [
+    "1",
+    "2",
+    "3"
+   ],
+   "button": "2",
+   "put_in": {
+    "1": 20,
+    "2": 8,
+    "3": 20
+   },
+   "folded": [
+    "1"
+   ],
+   "ranking": [
+    [
+     "2"
+    ],
+    [
+     "3"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 24,
+      "eligible": [
+       "2",
+       "3"
+      ],
+      "winners": [
+       "2"
+      ],
+      "paid": {
+       "2": 24
+      }
+     },
+     {
+      "amount": 24,
+      "eligible": [
+       "3"
+      ],
+      "winners": [
+       "3"
+      ],
+      "paid": {
+       "3": 24
+      }
+     }
+    ],
+    "won": {
+     "2": 24,
+     "3": 24
+    }
+   },
+   "why": "a folded player's chips fill the pots but they can't win; the all-in 8 only reaches the main pot"
+  },
+  {
+   "id": "odd-chip-after-button",
+   "seats": [
+    "1",
+    "2",
+    "3",
+    "4"
+   ],
+   "button": "3",
+   "put_in": {
+    "1": 7,
+    "2": 7,
+    "3": 7,
+    "4": 0
+   },
+   "folded": [
+    "3"
+   ],
+   "ranking": [
+    [
+     "1",
+     "2"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 21,
+      "eligible": [
+       "1",
+       "2"
+      ],
+      "winners": [
+       "1",
+       "2"
+      ],
+      "paid": {
+       "1": 11,
+       "2": 10
+      }
+     }
+    ],
+    "won": {
+     "1": 11,
+     "2": 10
+    }
+   },
+   "why": "21 split two ways: the odd chip goes to the first winner clockwise after the button (seat 4 is out, so seat 1)"
+  },
+  {
+   "id": "odd-chips-three-way",
+   "seats": [
+    "1",
+    "2",
+    "3",
+    "4"
+   ],
+   "button": "1",
+   "put_in": {
+    "1": 5,
+    "2": 5,
+    "3": 5,
+    "4": 5
+   },
+   "folded": [],
+   "ranking": [
+    [
+     "2",
+     "3",
+     "4"
+    ],
+    [
+     "1"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 20,
+      "eligible": [
+       "1",
+       "2",
+       "3",
+       "4"
+      ],
+      "winners": [
+       "2",
+       "3",
+       "4"
+      ],
+      "paid": {
+       "2": 7,
+       "3": 7,
+       "4": 6
+      }
+     }
+    ],
+    "won": {
+     "2": 7,
+     "3": 7,
+     "4": 6
+    }
+   },
+   "why": "20 three ways = 6 each + 2 odd chips to seats 2 then 3 (clockwise from the button)"
+  },
+  {
+   "id": "side-pot-tie",
+   "seats": [
+    "1",
+    "2",
+    "3"
+   ],
+   "button": "1",
+   "put_in": {
+    "1": 5,
+    "2": 13,
+    "3": 13
+   },
+   "folded": [],
+   "ranking": [
+    [
+     "1"
+    ],
+    [
+     "2",
+     "3"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 15,
+      "eligible": [
+       "1",
+       "2",
+       "3"
+      ],
+      "winners": [
+       "1"
+      ],
+      "paid": {
+       "1": 15
+      }
+     },
+     {
+      "amount": 16,
+      "eligible": [
+       "2",
+       "3"
+      ],
+      "winners": [
+       "2",
+       "3"
+      ],
+      "paid": {
+       "2": 8,
+       "3": 8
+      }
+     }
+    ],
+    "won": {
+     "1": 15,
+     "2": 8,
+     "3": 8
+    }
+   },
+   "why": "main pot to the short stack, the side pot split evenly"
+  },
+  {
+   "id": "four-levels",
+   "seats": [
+    "1",
+    "2",
+    "3",
+    "4"
+   ],
+   "button": "4",
+   "put_in": {
+    "1": 3,
+    "2": 9,
+    "3": 20,
+    "4": 20
+   },
+   "folded": [],
+   "ranking": [
+    [
+     "1"
+    ],
+    [
+     "2"
+    ],
+    [
+     "4"
+    ],
+    [
+     "3"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 12,
+      "eligible": [
+       "1",
+       "2",
+       "3",
+       "4"
+      ],
+      "winners": [
+       "1"
+      ],
+      "paid": {
+       "1": 12
+      }
+     },
+     {
+      "amount": 18,
+      "eligible": [
+       "2",
+       "3",
+       "4"
+      ],
+      "winners": [
+       "2"
+      ],
+      "paid": {
+       "2": 18
+      }
+     },
+     {
+      "amount": 22,
+      "eligible": [
+       "3",
+       "4"
+      ],
+      "winners": [
+       "4"
+      ],
+      "paid": {
+       "4": 22
+      }
+     }
+    ],
+    "won": {
+     "1": 12,
+     "2": 18,
+     "4": 22
+    }
+   },
+   "why": "three pots, each to the best hand still eligible"
+  },
+  {
+   "id": "blind-allin-short",
+   "seats": [
+    "1",
+    "2",
+    "3"
+   ],
+   "button": "1",
+   "put_in": {
+    "1": 2,
+    "2": 1,
+    "3": 2
+   },
+   "folded": [],
+   "ranking": [
+    [
+     "2"
+    ],
+    [
+     "1",
+     "3"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 3,
+      "eligible": [
+       "1",
+       "2",
+       "3"
+      ],
+      "winners": [
+       "2"
+      ],
+      "paid": {
+       "2": 3
+      }
+     },
+     {
+      "amount": 2,
+      "eligible": [
+       "1",
+       "3"
+      ],
+      "winners": [
+       "1",
+       "3"
+      ],
+      "paid": {
+       "1": 1,
+       "3": 1
+      }
+     }
+    ],
+    "won": {
+     "1": 1,
+     "2": 3,
+     "3": 1
+    }
+   },
+   "why": "a small blind all-in for 1 wins only 1 from each player"
+  },
+  {
+   "id": "everyone-folds-to-bet",
+   "seats": [
+    "1",
+    "2",
+    "3"
+   ],
+   "button": "1",
+   "put_in": {
+    "1": 2,
+    "2": 1,
+    "3": 8
+   },
+   "folded": [
+    "1",
+    "2"
+   ],
+   "ranking": [
+    [
+     "3"
+    ]
+   ],
+   "expect": {
+    "returned": {
+     "3": 6
+    },
+    "pots": [
+     {
+      "amount": 5,
+      "eligible": [
+       "3"
+      ],
+      "winners": [
+       "3"
+      ],
+      "paid": {
+       "3": 5
+      }
+     }
+    ],
+    "won": {
+     "3": 5
+    }
+   },
+   "why": "uncalled 6 returned, the rest is the winner's: no showdown"
+  },
+  {
+   "id": "folded-excess-joins-top-pot",
+   "seats": [
+    "1",
+    "2",
+    "3"
+   ],
+   "button": "1",
+   "put_in": {
+    "1": 60,
+    "2": 60,
+    "3": 2
+   },
+   "folded": [
+    "1",
+    "2"
+   ],
+   "ranking": [
+    [
+     "3"
+    ]
+   ],
+   "expect": {
+    "returned": {},
+    "pots": [
+     {
+      "amount": 122,
+      "eligible": [
+       "3"
+      ],
+      "winners": [
+       "3"
+      ],
+      "paid": {
+       "3": 122
+      }
+     }
+    ],
+    "won": {
+     "3": 122
+    }
+   },
+   "why": "two seats put in 60 each and both folded (no single biggest put-in, so nothing is returned); the only seat still in put in 2: chips above the last level of a seat still in join the top pot, so it wins all 122 (nothing may be left over)"
+  }
+ ]
+}

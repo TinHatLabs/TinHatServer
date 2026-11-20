@@ -62,8 +62,8 @@
   align-items: center;
 }
 .emoji {
-  font-size: 32px;
-  line-height: 44px;
+  font-size: calc(32px * var(--th-text-scale, 1));
+  line-height: calc(44px * var(--th-text-scale, 1));
 }
 .keyArea {
   font-family: var(--th-font-mono);
@@ -88,8 +88,8 @@
   gap: 14px 6px;
 }
 .mobileDialog .emoji {
-  font-size: 44px;
-  line-height: 56px;
+  font-size: calc(44px * var(--th-text-scale, 1));
+  line-height: calc(56px * var(--th-text-scale, 1));
 }
 .mobileDialog .full {
   min-height: 48px;
@@ -112,8 +112,8 @@
   gap: 12px;
 }
 .mobileDialog .note {
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
 }
 /* 48 px on phones — above the generic 44 px touch floor (`:root[data-ff="mobile"] .col8 button`,
    Dialog's `:root[data-touch] .fbtn > button`) */
@@ -158,7 +158,7 @@
   color: var(--th-bug-report-note-placeholder);
 }
 :global(html[data-ff="mobile"]) .bugNote {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   /* shrinks while the keyboard is up so title, note and the footer buttons all stay on screen */
   height: max(96px, min(40vh, calc(100dvh - var(--th-vv-bottom, 0px) - 250px)));
 }

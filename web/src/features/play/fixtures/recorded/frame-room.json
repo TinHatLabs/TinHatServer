@@ -1,0 +1,39 @@
+{
+ "t": "room",
+ "room": "!table:example.org",
+ "space": "!gamenight:example.org",
+ "owner": "example.org",
+ "tables": [
+  {
+   "table": "tHSkMyPt5zikh4in",
+   "game": "holdem",
+   "status": "lobby",
+   "host": "@dee:example.org",
+   "seated": 2,
+   "seats": 8,
+   "players": [
+    "@cy:example.org",
+    "@ben:example.org"
+   ],
+   "hand": null,
+   "round": null,
+   "space": "!gamenight:example.org",
+   "owner": "example.org"
+  },
+  {
+   "table": "tRLzU2OBEpTgZpnq",
+   "game": "rig",
+   "status": "lobby",
+   "host": "@ana:example.org",
+   "seated": 1,
+   "seats": 8,
+   "players": [
+    "@ana:example.org"
+   ],
+   "hand": null,
+   "round": null,
+   "space": "!gamenight:example.org",
+   "owner": "example.org"
+  }
+ ]
+}

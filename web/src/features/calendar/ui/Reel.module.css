@@ -47,16 +47,16 @@
   gap: 2px;
 }
 .title {
-  font-size: 22px;
-  line-height: 30px;
+  font-size: calc(22px * var(--th-text-scale, 1));
+  line-height: calc(30px * var(--th-text-scale, 1));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .subtitle {
-  font-size: 13px;
-  line-height: 18px;
+  font-size: calc(13px * var(--th-text-scale, 1));
+  line-height: calc(18px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
   white-space: nowrap;
   overflow: hidden;
@@ -69,7 +69,7 @@
   flex: none;
 }
 .here {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
   white-space: nowrap;
 }
@@ -87,7 +87,7 @@
 }
 .errorText {
   flex: 1 1 auto;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   color: var(--th-reel-error-fg);
   overflow-wrap: anywhere;
 }
@@ -100,7 +100,7 @@
   border: 1px solid var(--th-reel-button-border);
   color: var(--th-reel-button-fg);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   font-weight: 500;
   cursor: pointer;
   display: inline-flex;
@@ -188,8 +188,8 @@ html[data-ff="mobile"] .rb {
   top: 50%;
   transform: translateY(-50%);
   text-align: center;
-  font-size: 14px;
-  line-height: 19px;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  line-height: calc(19px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .viewport {
@@ -279,12 +279,12 @@ html[data-ff="mobile"] .rb {
   gap: 4px;
 }
 .badge {
-  height: 18px;
+  height: calc(18px * var(--th-text-scale, 1));
   border-radius: 7px;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: calc(10px * var(--th-text-scale, 1));
   font-weight: 600;
-  line-height: 18px;
+  line-height: calc(18px * var(--th-text-scale, 1));
   white-space: nowrap;
 }
 .badgeCredit {
@@ -300,8 +300,8 @@ html[data-ff="mobile"] .rb {
   color: var(--th-reel-cover-badge-fg);
 }
 .coverName {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -329,8 +329,8 @@ html[data-ff="mobile"] .rb {
   transition: width var(--th-dur-long);
 }
 .pct {
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .explain {
@@ -342,8 +342,8 @@ html[data-ff="mobile"] .rb {
   border-radius: 5px;
   background: var(--th-reel-cover-explain-bg);
   color: var(--th-reel-cover-explain-fg);
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   padding: 6px;
   white-space: pre-wrap;
 }
@@ -360,33 +360,33 @@ html[data-ff="mobile"] .rb {
   flex: 1 1 auto;
 }
 .dim12 {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .dim11 {
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .dim10 {
-  font-size: 10px;
-  line-height: 14px;
+  font-size: calc(10px * var(--th-text-scale, 1));
+  line-height: calc(14px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .err11 {
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   color: var(--th-reel-error-fg);
 }
 .warn12 {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   color: var(--th-reel-warning-fg);
 }
 .warn11 {
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   color: var(--th-reel-warning-fg);
 }
 .elide {
@@ -423,8 +423,8 @@ html[data-ff="mobile"] .rb {
   gap: 3px;
 }
 .resultTitle {
-  font-size: 18px;
-  line-height: 25px;
+  font-size: calc(18px * var(--th-text-scale, 1));
+  line-height: calc(25px * var(--th-text-scale, 1));
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -438,22 +438,22 @@ html[data-ff="mobile"] .rb {
   gap: 6px;
 }
 .caps {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--th-reel-section-fg);
 }
 .caps11 {
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--th-reel-section-fg);
 }
 .tierSub {
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .tierFlow {
@@ -491,15 +491,15 @@ html[data-ff="mobile"] .rb {
   background: var(--th-reel-odds-fill);
 }
 .tname {
-  font-size: 11px;
-  line-height: 15px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(15px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .tsub {
-  font-size: 10px;
-  line-height: 14px;
+  font-size: calc(10px * var(--th-text-scale, 1));
+  line-height: calc(14px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
   white-space: nowrap;
   overflow: hidden;
@@ -514,8 +514,8 @@ html[data-ff="mobile"] .rb {
   border-radius: 5px;
   background: var(--th-reel-tier-explain-bg);
   color: var(--th-reel-tier-explain-fg);
-  font-size: 10px;
-  line-height: 14px;
+  font-size: calc(10px * var(--th-text-scale, 1));
+  line-height: calc(14px * var(--th-text-scale, 1));
   padding: 5px;
   white-space: pre-wrap;
 }
@@ -527,8 +527,8 @@ html[data-ff="mobile"] .rb {
   gap: 6px;
 }
 .logLine {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
   overflow-wrap: anywhere;
 }
@@ -548,12 +548,12 @@ html[data-ff="mobile"] .rb {
 }
 /* 10.5.2 settings credits.mode "free" */
 .freeChip {
-  height: 22px;
+  height: calc(22px * var(--th-text-scale, 1));
   padding: 0 8px;
   border-radius: 11px;
   border: 1px solid var(--th-reel-free-chip-border);
-  font-size: 11px;
-  line-height: 20px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
   color: var(--th-reel-free-chip-fg);
   white-space: nowrap;
   box-sizing: border-box;
@@ -581,12 +581,12 @@ html[data-ff="mobile"] .rb {
 }
 .edTitle {
   flex: 1 1 auto;
-  font-size: 16px;
-  line-height: 22px;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: calc(22px * var(--th-text-scale, 1));
   font-weight: 600;
 }
 .unsaved {
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
   color: var(--th-reel-warning-fg);
 }
 .field36,
@@ -618,10 +618,10 @@ html[data-ff="mobile"] .rb {
   outline: none;
   color: var(--th-reel-field-fg);
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .field34 input {
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
 }
 .placeholder {
   position: absolute;
@@ -629,13 +629,13 @@ html[data-ff="mobile"] .rb {
   right: 10px;
   pointer-events: none;
   color: var(--th-reel-field-placeholder);
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .placeholder12 {
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
 }
 .results {
   display: flex;
@@ -674,15 +674,15 @@ html[data-ff="mobile"] .rb {
   gap: 1px;
 }
 .rtName {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .rtMeta {
-  font-size: 10px;
-  line-height: 14px;
+  font-size: calc(10px * var(--th-text-scale, 1));
+  line-height: calc(14px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
   white-space: nowrap;
   overflow: hidden;
@@ -718,7 +718,7 @@ html[data-ff="mobile"] .rb {
 .rowName {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -739,15 +739,15 @@ html[data-ff="mobile"] .rb {
 }
 .checkBox {
   width: 18px;
-  height: 18px;
+  height: calc(18px * var(--th-text-scale, 1));
   box-sizing: border-box;
   flex: none;
   border-radius: 4px;
   background: var(--th-reel-checkbox-bg);
   border: 1px solid var(--th-reel-checkbox-border);
   color: var(--th-reel-checkbox-fg);
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   text-align: center;
 }
 .checkOn {
@@ -759,8 +759,8 @@ html[data-ff="mobile"] .rb {
   outline-offset: 1px;
 }
 .checkText {
-  font-size: 12px;
-  line-height: 16px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
   padding-left: 6px;
 }
 .steamRow {
@@ -798,7 +798,7 @@ html[data-ff="mobile"] .rb {
 .admLabel {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -806,7 +806,7 @@ html[data-ff="mobile"] .rb {
 .admDef {
   width: 44px;
   flex: none;
-  font-size: 10px;
+  font-size: calc(10px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .spin {
@@ -842,7 +842,7 @@ html[data-ff="mobile"] .rb {
 .spinVal {
   flex: 1 1 auto;
   text-align: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
 }
 .toggles {
   display: flex;
@@ -862,7 +862,7 @@ html[data-ff="mobile"] .rb {
 .simName {
   width: 200px;
   flex: none;
-  font-size: 12px;
+  font-size: calc(12px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -883,7 +883,7 @@ html[data-ff="mobile"] .rb {
 .simPct {
   width: 40px;
   flex: none;
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
 }
 .admActions {
@@ -923,7 +923,7 @@ html[data-ff="mobile"] .rb {
   width: 22px;
   flex: none;
   text-align: right;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
@@ -934,7 +934,7 @@ html[data-ff="mobile"] .rb {
 .creditOff {
   width: 44px;
   flex: none;
-  font-size: 10px;
+  font-size: calc(10px * var(--th-text-scale, 1));
   color: var(--th-reel-meta-fg);
   white-space: nowrap;
 }
@@ -966,7 +966,7 @@ html[data-ff="mobile"] .simName {
 }
 html[data-ff="mobile"] .field36 input,
 html[data-ff="mobile"] .field34 input {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
 }
 html[data-ff="mobile"] .spin {
   height: 46px; /* − / + inside the 1 px frame are 44 px tall */

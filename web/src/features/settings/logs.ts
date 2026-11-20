@@ -12,6 +12,8 @@ import { REPORTS_PATH, apiFetch } from "@/core/api";
 import { SERVER_LABEL } from "@/core/bearer";
 import { getSession } from "@/core/matrix";
 import { createLogger } from "@/core/log";
+import { nativeInfo } from "@/features/native";
+import { reportPlatform } from "./reportPlatform";
 
 const log = createLogger("logship");
 /** the release version (package.json, via vite.config.ts) */
@@ -208,7 +210,7 @@ export async function submitBugReport(note: string): Promise<string> {
         body: LOGSHIP_ENABLED
           ? `${note}\n\n— submitted from the ${os} app (${APP_VERSION}); full session log attached.\nlog provenance: ${provenance}`
           : `${note}\n\n— submitted from the ${os} app (${APP_VERSION}); no log attached (the web app can't share logs yet).`,
-        platform: os,
+        platform: reportPlatform(os, nativeInfo()),
         version: `U0.1.0 (${APP_VERSION})`,
         reporter: uid,
       },
@@ -269,7 +271,7 @@ export function buildDiagnosticsReport(): string {
   const env = [
     `app: Tin Hat Web ${APP_VERSION} (${BUILD_HASH})`,
     `user agent: ${navigator.userAgent}`,
-    `platform: ${osName()}`,
+    `platform: ${reportPlatform(osName(), nativeInfo())}`,
     `language: ${navigator.language}`,
     `screen: ${screen.width}x${screen.height} @${devicePixelRatio}x, window ${innerWidth}x${innerHeight}`,
     `cores: ${navigator.hardwareConcurrency ?? "?"}  memory: ${(navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? "?"} GB`,

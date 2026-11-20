@@ -303,6 +303,7 @@ export function PeoplePicker({ verb, roomId, onPick, onInvite, placeholder, init
                         <Avatar size={28} name={v.name || r.mxid} seed={r.mxid} imageSource={pickerPicture(v.avatar) || null} />
                         <div className={s.text}>
                           <div className={s.nameLine}>
+                            {/* no prestige token: people search is outside any space's surfaces (rev 2 §3.3) */}
                             <span className={s.name}>{v.name}</span>
                             {r.server && <span className={s.server}>&nbsp;· {r.server}</span>}
                           </div>

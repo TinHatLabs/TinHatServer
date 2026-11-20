@@ -16,6 +16,7 @@ import { RoleBadge } from "./RoleBadge";
 import { openOrCreateDm } from "./roomActions";
 import { PersonButtons } from "@/features/safety";
 import s from "./ProfileFlyout.module.css";
+import { PersonName } from "./PersonName";
 
 export function ProfileFlyout() {
   const [target, setTarget] = useState<{ userId: string; roomId?: string; n: number } | null>(null);
@@ -50,7 +51,7 @@ function Flyout({ userId, roomId, onClose }: { userId: string; roomId?: string; 
         </div>
         <div className={s.cell}>
           <div className={s.name} style={{ color: tag?.color || senderColor(userId) }}>
-            {name}
+            <PersonName mxid={userId} roomId={roomId}>{name}</PersonName>
           </div>
         </div>
         <div className={s.cell}>

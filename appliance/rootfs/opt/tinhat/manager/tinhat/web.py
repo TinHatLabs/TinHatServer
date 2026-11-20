@@ -1140,6 +1140,22 @@ class Manager:
             if on != (api.get("phone_push") is not False):
                 api["phone_push"] = on
                 changed.append("phonePush")
+        play_changes = {}
+        if isinstance(body.get("play"), dict):  # Mini games (play.py): refused out of bounds, like the console
+            from . import play
+            cur = play.settings(st)
+            for field, name in (("enabled", "enabled"), ("rigPhoneApps", "rig_phone_apps"), ("dayMax", "day_max"), ("start", "start")):
+                if field not in body["play"]:
+                    continue
+                v, why = play.check(name, body["play"][field])
+                if v is None:
+                    return _err(f"Mini games: {why}.", 400)
+                if v != cur[name]:
+                    play_changes[name] = v
+            if play_changes:
+                if await play.call_live():  # the save restarts the API (it hands out call tokens): never mid-call
+                    return _json({"error": play.IN_CALL, "in_call": True}, 409)
+                changed.append("play")
         if "web" in body:
             w = str(body["web"] or "").strip().lower()
             w = re.sub(r"^https?://", "", w).rstrip("/").rstrip(".")
@@ -1173,13 +1189,20 @@ class Manager:
         async with self._apply_lock:
             if new_secrets:
                 s = state.save_secrets(**new_secrets)
+            if play_changes:
+                from . import play
+                play.save(play_changes, s_["mxid"])  # one log line per change (who, old, new)
             st = state.save_state(api=api)
             from . import install
             if apiconf.write(st, s):
                 # Recreated, not restarted: `compose restart` keeps a container's old environment, so a changed env
                 # file (PUSH_RELAY when phone notifications go off or on, WEB_BASE) would never reach the running API.
-                rc, out = await compose.run("up", "-d", "--no-build", "--pull", "never", "--force-recreate", "api", "games",
-                                            timeout=180)
+                if play_changes and await play.call_live():  # a call started meanwhile: the restart waits for it (play.apply_pending)
+                    play.mark_restart_pending()
+                    rc, out = 0, ""
+                else:
+                    rc, out = await compose.run("up", "-d", "--no-build", "--pull", "never", "--force-recreate", "api", "games",
+                                                timeout=180)
                 if rc != 0:
                     log.warning("restarting the extras: %s", out[-400:])
             install.write_wellknowns(st, st["server_name"], st.get("calls", True))
@@ -2687,6 +2710,11 @@ async def _background(m: Manager) -> None:
                 m._bg_websides = asyncio.create_task(_guard("web app copies", _websides()))
             if not repairs.done("general_calls"):
                 await _guard("repair: General's calls", repairs.general_calls(m.synapse))
+        if tick % 6 == 1 and state.phase() == "ready":  # the games database, once per start (play.py; cheap, idempotent)
+            from . import play
+            ok, msg = await play.ensure_db()
+            if not ok and tick % 60 == 1:
+                log.warning("%s", msg)
         if tick % 30 == 17 and state.phase() == "ready" and not moved.is_moved():  # every 5 minutes (D04.1)
             await _guard("notices to the admins", _tell_admins(m))
         if state.phase() == "ready" and not moved.is_moved():  # new people land in #general (never guests)

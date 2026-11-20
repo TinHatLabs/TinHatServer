@@ -16,7 +16,10 @@ import { openPip } from "./Pip";
 import { StreamMenu } from "./menus";
 import { tileDoubleAction } from "./tileGestures";
 import type { Slot } from "./layout";
+import { words } from "@/features/calls/unmuteask";
 import s from "./Tile.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
+import { getSession } from "@/core/matrix/session";
 
 export interface TileProps {
   tile: TileT;
@@ -89,6 +92,7 @@ export const Tile = memo(function Tile(p: TileProps) {
   const micMuted = useC("micMuted");
   const serverMutedMe = useC("serverMuted");
   const serverMutedByMe = useC("serverMutedBy");
+  const unmuteAsks = useC("unmuteAsks") ?? [];
   const gameChat = useC("gameChat");
   const gcPeers = useC("gameChatPeers");
   const corner = useC("corner");
@@ -278,6 +282,8 @@ export const Tile = memo(function Tile(p: TileProps) {
   const isMuted = self ? micMuted || serverMutedMe : tile.muted || tile.serverMuted;
   const smBy = self ? (serverMutedMe ? serverMutedByMe : "") : tile.serverMuted ? tile.serverMutedBy : "";
   const smOn = self ? serverMutedMe : tile.serverMuted;
+  // 12.1.17: they asked to be unmuted and I may unmute them (any of their devices, for a person tile)
+  const askHand = !self && !share && (unmuteAsks.includes(tile.participant) || (tile.members ?? []).some((m) => unmuteAsks.includes(m)));
   const inGameChat = self ? gameChat && !micMuted : gcPeers.peers.some((pp) => tileMxid(pp) === mxid || pp === tile.participant);
   const gcMutedForMe = !self && gcPeers.muted.some((pp) => tileMxid(pp) === mxid || pp === tile.participant);
   const myCorner = corner.mine && corner.corners[corner.mine] ? corner.corners[corner.mine] : [];
@@ -303,7 +309,7 @@ export const Tile = memo(function Tile(p: TileProps) {
     ? `You're in a room with ${srOthers.join(", ")} — Tin Hat sends one voice from your room${srLive ? " (your mic is the room mic right now)" : " (their mic is the room mic right now)"}`
     : `${name} is in a room with ${srOthers.join(", ")} — Tin Hat sends one voice from their room${srLive ? " (their mic is live right now)" : ""}`;
   const [recOnly, tunedIn] = recFlags[tile.id] ?? [!!tile.recordingOnly, !!tile.tunedIn];
-  const glyphCount = (isMuted ? 1 : 0) + (inGameChat ? 1 : 0) + (asideMark ? 1 : 0) + (srMark ? 1 : 0) + (deafMark ? 1 : 0) + (notRecv ? 1 : 0) + (cantHear ? 1 : 0) + (echo ? 2 : 0);
+  const glyphCount = (isMuted ? 1 : 0) + (askHand ? 1 : 0) + (inGameChat ? 1 : 0) + (asideMark ? 1 : 0) + (srMark ? 1 : 0) + (deafMark ? 1 : 0) + (notRecv ? 1 : 0) + (cantHear ? 1 : 0) + (echo ? 2 : 0);
 
   // ---- buttons ----
   const btnShown = (minW: number, minH = 60) => cw > minW && ch > minH;
@@ -444,6 +450,7 @@ export const Tile = memo(function Tile(p: TileProps) {
               )}
             </MarkIcon>
           )}
+          {askHand && <MarkIcon name="hand-symbolic" color="var(--th-tile-server-muted-border)" tip={words("handTip", name)} testId="unmute-ask-hand" />}
           {smOn && cw > 330 && <span className={s.smPill}>Muted by {smBy || "a moderator"}</span>}
           {inGameChat && (
             <MarkIcon
@@ -473,6 +480,7 @@ export const Tile = memo(function Tile(p: TileProps) {
             />
           )}
           {echo && <EchoChip name={name} lag={peerHear!.echo!.lag} room={!!(peerHear!.echo as { room?: boolean }).room} />}
+          <PrestigeInRow mxid={self ? getSession().userId : mxid} roomId={p.roomId} rowGap={6} />
           <span className={s.name} style={{ maxWidth: Math.max(40, cw - 8 - glyphCount * 22 - (smOn && cw > 330 ? 130 : 0) - (waveVisible ? 49 : 0) - zoomRoom) }}>
             {share ? `${name} — screen` : name}
           </span>
@@ -638,11 +646,11 @@ export function toggleListen(id: string) {
   ui().set({ listen: l.includes(id) ? l.filter((x) => x !== id) : [...l, id] });
 }
 
-function MarkIcon({ name, color, tip, children, onClick }: { name: string; color: string; tip?: string; children?: React.ReactNode; onClick?: () => void }) {
+function MarkIcon({ name, color, tip, children, onClick, testId }: { name: string; color: string; tip?: string; children?: React.ReactNode; onClick?: () => void; testId?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   useTip(ref, tip, { delay: 300 });
   return (
-    <span ref={ref} className={s.mark} style={{ cursor: onClick ? "pointer" : undefined }} onClick={onClick}>
+    <span ref={ref} className={s.mark} style={{ cursor: onClick ? "pointer" : undefined }} onClick={onClick} data-testid={testId}>
       <Icon name={name} size={16} color={color} />
       {children}
     </span>

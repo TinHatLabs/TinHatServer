@@ -66,6 +66,10 @@ before(async () => {
     const app = join(T, "app"), conf = join(T, "conf");
     mkdirSync(app); mkdirSync(conf); mkdirSync(join(T, "vods", "room1", "s1"), { recursive: true });
     for (const f of readdirSync(SRC)) if (f.endsWith(".mjs")) copyFileSync(join(SRC, f), join(app, f));
+    // what the Dockerfile copies of the mini games: play/*.mjs and play/contract/schema.mjs (never play/tools, play/contract's builder)
+    mkdirSync(join(app, "play", "contract"), { recursive: true });
+    for (const f of readdirSync(join(SRC, "play"))) if (f.endsWith(".mjs")) copyFileSync(join(SRC, "play", f), join(app, "play", f));
+    copyFileSync(join(SRC, "play", "contract", "schema.mjs"), join(app, "play", "contract", "schema.mjs"));
     writeFileSync(join(app, "mi-fetch.py"), STUB);
     symlinkSync(dirname(expressDir), join(app, "node_modules"));
     writeFileSync(join(T, "preload.mjs"), PRELOAD);

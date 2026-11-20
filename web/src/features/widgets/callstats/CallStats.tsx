@@ -22,6 +22,8 @@ import { NO_HISTORY, retryHistory, useCallHistory, type HistoryView } from "./hi
 import { lastCallRoomText } from "./lastRoom";
 import { friendsByCalls } from "./order";
 import s from "./CallStats.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
+import { WidgetPersonName } from "@/features/spaces/PersonName";
 
 // ---- the model ---------------------------------------------------------------------------------------------------
 
@@ -260,6 +262,7 @@ function PersonRow({ p, roomId, ctx }: { p: PersonView; roomId: string | null; c
         </span>
         <span className={s.pmain}>
           <span className={s.line1}>
+            <PrestigeInRow mxid={p.mxid} roomId={roomId} rowGap={4} size={12} />
             <span className={s.name}>{name}</span>
             {p.chips.map((c) => (
               <span key={c} className={s.chip}>
@@ -443,7 +446,7 @@ function FriendRow({ f, ctx }: { f: History["week"]["friends"][number]; ctx: Wid
       <span className={s.friendAv}>
         <Avatar size={ctx.mobile ? 28 : 20} name={who.name} seed={f.user} imageSource={who.avatar} />
       </span>
-      <span className={s.friendName}>{who.name}</span>
+      <WidgetPersonName mxid={f.user} className={s.friendName} name={who.name} />
       <span className={s.friendSub}>{calls}</span>
     </div>
   );

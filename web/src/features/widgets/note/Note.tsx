@@ -17,6 +17,7 @@ import { fmtAgo } from "@/widgets/time";
 import { defineWidget, type PartProps, type WidgetCtx } from "../impl";
 import { SAMPLE_SERVER, usePerson } from "../names";
 import s from "./Note.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 export interface NoteModel {
   /** the space whose note shows ("" = none) */
@@ -202,6 +203,7 @@ function Body({ model: m, ctx }: PartProps<NoteModel>) {
       </div>
       <div className={s.meta}>
         <Avatar size={ctx.mobile ? 20 : 16} name={who.name} seed={m.sender} imageSource={who.avatar} />
+        <PrestigeInRow mxid={m.sender} roomId={m.space || null} rowGap={6} size={12} />
         <span className={s.metaText}>
           {who.name} · edited {fmtAgo(Date.now() - m.ts)}
         </span>

@@ -62,8 +62,8 @@
   opacity: 0.5;
 }
 .emoji {
-  font-size: 20px;
-  line-height: 24px;
+  font-size: calc(20px * var(--th-text-scale, 1));
+  line-height: calc(24px * var(--th-text-scale, 1));
 }
 .name {
   max-width: 100%;
@@ -128,8 +128,8 @@
   flex: none;
 }
 .chip .emoji {
-  font-size: 13px;
-  line-height: 16px;
+  font-size: calc(13px * var(--th-text-scale, 1));
+  line-height: calc(16px * var(--th-text-scale, 1));
 }
 
 /* ---- states ---- */
@@ -173,10 +173,10 @@
   height: 64px;
 }
 .body[data-mobile] .emoji {
-  font-size: 24px;
-  line-height: 28px;
+  font-size: calc(24px * var(--th-text-scale, 1));
+  line-height: calc(28px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .name,
 .body[data-mobile] .hint {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }

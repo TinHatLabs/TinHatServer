@@ -434,16 +434,25 @@ function DesktopShell({ roomId, eventId, always }: { roomId: string | null; even
 
 const tabLabel = (ref: string) => islandText(ref).name;
 
-/** "#alias:server" → the room id (joined rooms first, then the directory); "!id" passes through. */
+/** an #alias link's directory lookup that failed (not "no such alias") is asked again while the link is open: after 3, 6,
+ *  12, 24 s, then every 30 s */
+const ALIAS_RETRY_MS = 3000;
+const ALIAS_RETRY_MAX_MS = 30000;
+
+/** "#alias:server" → the room id (joined rooms first, then the directory); "!id" passes through. 12.1.17 (review #1, the
+ *  room-link gate's R13): the rooms are looked at again as they arrive (an #alias link opened before the first sync gets
+ *  its room from that sync), and a directory lookup that failed for a moment is tried again (not after "no such alias"). */
 function useResolvedRoomId(target: string | null): string | null {
   const client = useClient();
+  const roomList = useNavStore((st) => st.globalRooms); // a new list whenever rooms (and their aliases) arrive
   const local = useMemo(() => {
     if (!target) return null;
     if (target.startsWith("!")) return target;
     const rooms = client?.getRooms() ?? [];
     const hit = rooms.find((r) => r.getCanonicalAlias() === target || r.getAltAliases().includes(target));
     return hit ? hit.roomId : null;
-  }, [target, client]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- roomList: re-read the client's rooms when the list changes
+  }, [target, client, roomList]);
   const [remote, setRemote] = useState<{
     alias: string;
     id: string | null;
@@ -451,12 +460,22 @@ function useResolvedRoomId(target: string | null): string | null {
   useEffect(() => {
     if (!target || local || !target.startsWith("#") || !client) return;
     let alive = true;
-    client
-      .getRoomIdForAlias(target)
-      .then((r) => alive && setRemote({ alias: target, id: r.room_id }))
-      .catch(() => alive && setRemote({ alias: target, id: null }));
+    let retry = 0;
+    const look = (tries: number) =>
+      client
+        .getRoomIdForAlias(target)
+        .then((r) => alive && setRemote({ alias: target, id: r.room_id }))
+        .catch((e: { errcode?: string }) => {
+          if (!alive) return;
+          setRemote({ alias: target, id: null });
+          // "no such alias" is an answer; anything else (the directory down for a moment, offline) is asked again for as
+          // long as the link stays open, less and less often (a cap would leave it stuck after a long outage: review)
+          if (e?.errcode !== "M_NOT_FOUND") retry = window.setTimeout(() => look(tries + 1), Math.min(ALIAS_RETRY_MS * 2 ** tries, ALIAS_RETRY_MAX_MS));
+        });
+    void look(0);
     return () => {
       alive = false;
+      window.clearTimeout(retry);
     };
   }, [target, local, client]);
   if (!target) return null;

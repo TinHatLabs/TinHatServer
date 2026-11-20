@@ -178,11 +178,11 @@
   padding: 4px 0 8px;
 }
 .mItem {
-  height: 48px;
+  height: calc(48px * var(--th-text-scale, 1));
   padding: 6px 16px;
   gap: 12px;
-  font-size: 15px;
-  line-height: 20px;
+  font-size: calc(15px * var(--th-text-scale, 1));
+  line-height: calc(20px * var(--th-text-scale, 1));
 }
 .mItem:active::before {
   background: var(--th-sheet-bottom-item-bg-pressed);
@@ -192,6 +192,6 @@
 }
 .mSection {
   padding: 10px 16px 4px;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: calc(13px * var(--th-text-scale, 1));
+  line-height: calc(18px * var(--th-text-scale, 1));
 }

@@ -102,11 +102,11 @@
   justify-content: center;
 }
 .emoji {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   line-height: 1;
 }
 .coverSmall .emoji {
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
 }
 .cardText {
   min-width: 0;
@@ -457,14 +457,14 @@
 }
 .body[data-mobile] .name,
 .body[data-mobile] .otherName {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .body[data-mobile] .chipLine,
 .body[data-mobile] .players,
 .body[data-mobile] .join,
 .body[data-mobile] .info,
 .body[data-mobile] .next {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 
 /* ---- the one-line server line (Up next's hero, the calendar card) ---- */

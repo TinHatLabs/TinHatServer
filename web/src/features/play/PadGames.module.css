@@ -1,0 +1,95 @@
+/* PadGames.module.css — the Games section of the Pad screen. */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dim {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.title {
+  font-weight: 700;
+  font-size: calc(13px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+}
+.back {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: none;
+  background: transparent;
+  color: var(--th-text-link);
+  font: inherit;
+  cursor: pointer;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 12px;
+  border-radius: var(--th-radius-lg);
+  border: 1px solid var(--th-border-subtle);
+  background: var(--th-surface-raised);
+  color: var(--th-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--g-felt-centre);
+  color: var(--g-card-face);
+  font-size: calc(18px * var(--th-text-scale, 1));
+  flex: none;
+}
+.iconRig {
+  background: var(--g-machine-body);
+  color: var(--g-machine-trim);
+  box-shadow: inset 0 0 0 1px var(--g-machine-trim);
+}
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.name {
+  font-weight: 700;
+  font-size: calc(15px * var(--th-text-scale, 1));
+}
+.meta {
+  font-size: calc(13px * var(--th-text-scale, 1));
+  color: var(--th-text-muted);
+}
+.open {
+  padding: 7px 14px;
+  border-radius: 16px;
+  background: var(--th-accent-base);
+  color: var(--th-text-on-accent);
+  font-weight: 700;
+}
+.table {
+  position: relative;
+  height: min(78vh, 720px);
+  border-radius: var(--th-radius-lg);
+  border: 1px solid var(--th-border-subtle);
+  overflow: hidden;
+  background: var(--th-surface-window);
+}
+.wait {
+  padding: 16px;
+  color: var(--th-text-secondary);
+  text-align: center;
+}

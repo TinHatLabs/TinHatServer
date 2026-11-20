@@ -103,7 +103,7 @@ export function AmbienceGallery() {
                   <div key={m.key} className={`${b.row} ${grouped ? b.grouped : ""}`}>
                     {m.day && (
                       <div className={b.day}>
-                        <span className={b.dayPill} data-amb="">
+                        <span className={b.dayPill} data-amb="day">
                           {m.day}
                         </span>
                       </div>

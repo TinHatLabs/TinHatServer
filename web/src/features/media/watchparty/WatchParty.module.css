@@ -826,7 +826,7 @@
 }
 .mobile .search input,
 .mobile input.search {
-  font-size: 16px;
+  font-size: calc(16px * var(--th-text-scale, 1));
   height: 44px;
 }
 .mobile .names {
@@ -940,8 +940,8 @@
 .hostBadge {
   padding: 0 5px;
   border-radius: 7px;
-  font-size: 10px;
-  line-height: 14px;
+  font-size: calc(10px * var(--th-text-scale, 1));
+  line-height: calc(14px * var(--th-text-scale, 1));
   font-weight: 700;
   color: var(--th-watchparty-fg);
   background: var(--th-watchparty-queue-row-bg-hover);

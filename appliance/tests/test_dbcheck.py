@@ -51,9 +51,9 @@ def archive(entries: list[dict], version=(1, 16, 0)) -> bytes:
         out += _int(v)
     out += _str("synapse") + _str("17.11") + _str("17.11") + _int(len(entries))
     for i, e in enumerate(entries, 1):
-        out += _int(e.get("id", i)) + _int(1 if e["desc"] == "TABLE DATA" else 0) + _str("0") + _str("0")
+        out += _int(e.get("id", i)) + _int(1 if e.get("had_data", e["desc"] == "TABLE DATA") else 0) + _str("0") + _str("0")
         out += _str(e.get("tag", "x")) + _str(e["desc"]) + _int(1) + _str(e.get("defn", "")) + _str("")
-        out += _str(e.get("copy")) + _str(e.get("ns", "public")) + _str("")
+        out += _str(e.get("copy")) + _str(e.get("ns", "public")) + _str(e.get("tablespace", ""))
         if version >= (1, 14, 0):
             out += _str("heap")
         if version >= (1, 16, 0):
@@ -229,6 +229,26 @@ class Check(Box):
         for defn in bad:
             with self.subTest(defn[:60]):
                 self.refused(synapse_like() + [{"desc": "TRIGGER", "tag": "t x", "defn": defn}], what="a trigger")
+
+    def test_sql_riding_in_a_data_stream_or_a_data_entrys_text(self):
+        """launch-gate 15:50 (astra on G1): a schema entry that carries a data stream (pg_restore would run it), a data
+        entry with SQL text of its own, a data entry without its data, a tablespace, an id twice: each refused at
+        layer 1, before anything runs."""
+        base = synapse_like()
+        trig = next(i for i, e in enumerate(base) if e["desc"] == "TRIGGER")
+        data = next(i for i, e in enumerate(base) if e["desc"] == "TABLE DATA")
+        cases = {
+            "a data stream on a trigger": [dict(e, had_data=True) if i == trig else e for i, e in enumerate(base)],
+            "a data stream on the database entry": [dict(e, had_data=True) if e["desc"] == "DATABASE" else e for e in base],
+            "a data entry with SQL text": [dict(e, defn="SELECT pg_sleep(1);\n") if i == data else e for i, e in enumerate(base)],
+            "a data entry without data": [dict(e, had_data=False) if i == data else e for i, e in enumerate(base)],
+            "a table in a tablespace": [dict(e, tablespace="evil") if e["desc"] == "TABLE" else e for e in base],
+            "an id twice": base + [dict(base[trig], id=trig + 1)],
+        }
+        for what, entries in cases.items():
+            with self.subTest(what=what):
+                self.refused(entries)
+        dbcheck.check(dbcheck.read_toc(self.write(base)))  # the Synapse-shaped one still passes
 
     def test_copy_from_program_in_a_data_entry(self):
         for copy in ("COPY public.users (name) FROM PROGRAM 'id > /tmp/x';\n",

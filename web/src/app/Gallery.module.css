@@ -59,7 +59,7 @@
   flex: none;
   width: 120px;
   color: var(--th-text-secondary);
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
 }
 .rowItems {
   display: flex;
@@ -117,10 +117,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: calc(11px * var(--th-text-scale, 1));
 }
 .iconKind {
-  font-size: 10px;
+  font-size: calc(10px * var(--th-text-scale, 1));
   color: var(--th-text-secondary);
 }
 .mobileCol {

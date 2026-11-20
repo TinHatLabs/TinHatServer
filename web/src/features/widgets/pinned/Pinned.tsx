@@ -19,6 +19,7 @@ import { useFreshIds } from "../motion";
 import { SAMPLE_SERVER, usePerson, useRoomLabel } from "../names";
 import { usePinRows, type PinRow } from "./resolve";
 import s from "./Pinned.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 export interface PinnedModel {
   /** the room whose pins show ("" = none) */
@@ -101,6 +102,7 @@ function PinRowView({ r, m, ctx, enter }: { r: PinRow; m: PinnedModel; ctx: Widg
         <Avatar size={ctx.mobile ? 28 : 20} name={who.name} seed={r.sender} imageSource={who.avatar} />
         <span className={s.text}>
           <span className={s.line1}>
+            <PrestigeInRow mxid={r.sender} roomId={m.room} rowGap={8} size={12} />
             <span className={s.name}>{who.name}</span>
             <span className={s.when}>{whenText(r.ts, mode)}</span>
           </span>

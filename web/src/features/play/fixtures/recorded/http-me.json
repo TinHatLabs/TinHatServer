@@ -1,0 +1,19 @@
+{
+ "v": 1,
+ "space": "!gamenight:example.org",
+ "user": "@dee:example.org",
+ "balance": 13,
+ "holdings": 13,
+ "rank": 0,
+ "cap": 100,
+ "at_table": null,
+ "earned_today": 3,
+ "day_max": 8,
+ "accrual_s": 1139,
+ "chip_s": 3600,
+ "day": "2026-11-19",
+ "topup": {
+  "available": false,
+  "next_day": "2026-11-19"
+ }
+}

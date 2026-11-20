@@ -58,6 +58,7 @@ import { QueueList } from "./QueueList";
 import { WatchPlayer, type WatchPlayerHandle } from "./player";
 import s from "./WatchParty.module.css";
 import { openExternal } from "@/core/openlink";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 /** QOL §1 numbers (the desktop's WatchPartyWindow.qml uses the same) */
 export const WIDE_MIN_W = 960;
@@ -89,6 +90,7 @@ function UserChip({ roomId, userId, host, size = 20 }: { roomId: string; userId:
   return (
     <span className={s.user} title={userId}>
       <Avatar name={m?.name ?? shortName(userId)} seed={userId} size={size} imageSource={m?.avatarMxc ?? ""} />
+      <PrestigeInRow mxid={userId} roomId={roomId} rowGap={4} />
       <span className={s.userName}>{m?.name ?? shortName(userId)}</span>
       {host && <span className={s.hostBadge}>host</span>}
     </span>

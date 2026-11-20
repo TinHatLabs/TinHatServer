@@ -23,6 +23,7 @@ import { inviterServerHere, onClientChanged, peekClient, pickVia, serverPart } f
 import { getPref, onPrefChange, setPref } from "@/core/prefs";
 import { EMPTY_DM_STRIP, dmStrip, type DmStrip, type DmStripRoom } from "./dmstrip";
 import { adjustedUnread } from "./rollup";
+import { countsWithoutQuiet } from "@/features/media/memories/chatHide";
 import { appBadgeCount, globalBadge } from "./badge";
 import { rosterCounts } from "@/features/calls/callrules";
 import { callerMembership, onMemberProbe } from "@/features/calls/memberprobe";
@@ -457,8 +458,8 @@ function rowFor(c: MatrixClient, room: Room, membership: "join" | "invite", dms:
     (membership === "invite" && (room.currentState.getStateEvents(EventType.RoomMember, me)?.getContent() as { is_direct?: boolean } | undefined)?.is_direct === true);
   const mode = effectiveMode(rules, room.roomId, dm);
   const muted = mode === "mute";
-  const total = room.getUnreadNotificationCount(NotificationCountType.Total) ?? 0;
-  const hl = room.getUnreadNotificationCount(NotificationCountType.Highlight) ?? 0;
+  // 12.1.17: a Memories photo (hidden from the chat, or posted by "Add photos") isn't counted (memories/chatHide.ts)
+  const { total, highlight: hl } = countsWithoutQuiet(c, room);
   // A5.3: the settings-adjusted number (0 muted, highlights in mentions mode, else the notification count)
   const unread = adjustedUnread({ mode, notif: total, highlight: hl, isSpace: false });
   let participants: Participant[] = [];

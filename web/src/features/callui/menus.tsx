@@ -432,7 +432,12 @@ export function DevicesMenu({ anchor, onClose, roomId }: { anchor: HTMLElement |
   const [urlOpen, setUrlOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const roomMenu = useRegistry("roomMenu");
-  const callFeatures = useMemo(() => roomMenu.filter((i) => (i as { section?: string }).section === "call" || i.section === "Call features"), [roomMenu]);
+  // a row's own `visible` rule counts here as in the room list's menu (nav/menus.tsx): the Games row shows only when the
+  // room's game server plays (features.play), so a server with games off never offers it
+  const callFeatures = useMemo(
+    () => roomMenu.filter((i) => ((i as { section?: string }).section === "call" || i.section === "Call features") && (i.visible ? i.visible({ roomId }) : true)),
+    [roomMenu, roomId],
+  );
   useHoldChrome(!!anchor);
   const sinkOk = typeof (HTMLMediaElement.prototype as { setSinkId?: unknown }).setSinkId === "function";
   const cur = (list: { id: string; name: string }[], pref: string, name: string) => list.find((d) => d.id === pref)?.id ?? list.find((d) => d.name === name)?.id ?? "";

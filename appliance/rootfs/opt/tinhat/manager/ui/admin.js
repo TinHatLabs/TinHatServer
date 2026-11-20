@@ -308,6 +308,10 @@ function apiCard(o, el) {
       ["Phone notifications", a.phonePush === false ? "Off" : a.phoneRelay ? `On · through ${a.phoneRelay}` : "On, but no relay is set: phones get none",
         a.phonePush !== false && !!a.phoneRelay],
       ["Game servers panel", a.gameservers ? "Configured" : "Not configured", !!a.gameservers],
+      ["Mini games (chips, Texas Hold'em, The Rig)", !a.play ? "Not offered" : a.play.blocked
+        ? "Off: blocked by a safety check (see Mini games below)" : a.play.enabled
+        ? `On · up to ${a.play.day_max} chips a day from calls, new players start with ${a.play.start}${a.play.rig_phone_apps ? " · The Rig shown in the phone apps" : ""}` : "Off",
+        !!(a.play && a.play.enabled && !a.play.blocked)],
       ["TURN server for calls", a.turn ? `${a.turn.host}:${a.turn.port} (${a.turn.protocol})` : "None", !!a.turn],
       ...(a.webOffered ? [["Web app address", a.web || `${a.serverName} (the server's own)`, !!a.web]] : []),
     ];
@@ -333,6 +337,15 @@ function apiCard(o, el) {
     let phone = a.phonePush !== false;
     const phoneSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(phone), "aria-label": "Phone notifications" });
     phoneSw.addEventListener("click", () => { phone = !phone; phoneSw.setAttribute("aria-checked", String(phone)); });
+    const pl = a.play || null;
+    const bounds = (pl && pl.bounds) || { day_max: [1, 24], start: [0, 50] };
+    let playOn = !!(pl && pl.enabled), rigPhones = !!(pl && pl.rig_phone_apps);
+    const playSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(playOn), "aria-label": "Mini games" });
+    playSw.addEventListener("click", () => { playOn = !playOn; playSw.setAttribute("aria-checked", String(playOn)); });
+    const rigSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(rigPhones), "aria-label": "Show The Rig in the iPhone and Android apps" });
+    rigSw.addEventListener("click", () => { rigPhones = !rigPhones; rigSw.setAttribute("aria-checked", String(rigPhones)); });
+    const dayIn = h("input", { type: "number", min: String(bounds.day_max[0]), max: String(bounds.day_max[1]), step: "1", value: pl ? String(pl.day_max) : "8", "aria-label": "Chips a day from calls" });
+    const startIn = h("input", { type: "number", min: String(bounds.start[0]), max: String(bounds.start[1]), step: "1", value: pl ? String(pl.start) : "10", "aria-label": "Chips a new player starts with" });
     const turn = a.turn || {};
     const tHost = h("input", { type: "text", value: turn.host || "", placeholder: "turn.example.com (empty = none)", spellcheck: "false" });
     const tPort = h("input", { type: "text", value: turn.port ? String(turn.port) : "", placeholder: "3478 or 5349" });
@@ -346,7 +359,8 @@ function apiCard(o, el) {
       save.disabled = true;
       save.replaceChildren(h("span.spin"), "Applying…");
       err.classList.add("hidden");
-      const body = { ...f, memories: mem, recorder: recIn.value.trim(), phonePush: phone, ...(webIn ? { web: webIn.value.trim() } : {}) };
+      const body = { ...f, memories: mem, recorder: recIn.value.trim(), phonePush: phone, ...(webIn ? { web: webIn.value.trim() } : {}),
+        ...(pl ? { play: { enabled: playOn, rigPhoneApps: rigPhones, dayMax: dayIn.value.trim(), start: startIn.value.trim() } } : {}) };
       body.turn = tHost.value.trim()
         ? { host: tHost.value.trim(), port: tPort.value.trim(), protocol: tProto.value, username: tUser.value.trim(), credential: tCred.value }
         : null;
@@ -370,6 +384,17 @@ function apiCard(o, el) {
           h("div.s", "Recordings a Tin Hat recorder writes into this server's recordings folder. Name the recorder's account, so the apps don't show it as a caller."), recIn), memSw),
         h("div.item", h("div.grow", h("div.k", "Phone notifications"),
           h("div.s", `Lets the Tin Hat iPhone and Android apps get notifications from this server. Each one is encrypted on this server for that phone and travels through the Tin Hat project's relay (${a.phoneRelay || "push.tinhat.dev"}) to Apple or Google; the relay sees only scrambled data and the phone's push address, never who wrote what. Off: phones get no notifications from this server.`)), phoneSw),
+        ...(pl ? [
+          h("div.item", h("div.grow", h("div.k", "Mini games"),
+            h("div.s", "Chips, Texas Hold'em and The Rig in calls. Play money only: never bought, sold, cashed out or moved to another server. People earn chips only after they open a game once, from their time in calls on this server. Off: every table closes after its hand or round, everyone is cashed out, wallets are kept."),
+            ...(pl.blocked ? [h("div.s.warn-text", `The games are off whatever this switch says, until the games' safety check passes: ${pl.blocked}. The server checks again every minute and turns the games on by itself once it passes.`)] : [])), playSw),
+          h("div.item", h("div.grow", h("div.k", "Show The Rig in the iPhone and Android apps"),
+            h("div.s", "Off: the phone apps offer only Texas Hold'em (The Rig still works in browsers and the desktop app). Either way, an App Store or Play Store release needs the simulated-gambling age rating.")), rigSw),
+          h("div.item", h("div.grow", h("div.k", "Chips a day from calls"),
+            h("div.s", `One chip per hour in a call, at most this many a day (${bounds.day_max[0]}–${bounds.day_max[1]}). Lowering it takes nothing back.`), dayIn)),
+          h("div.item", h("div.grow", h("div.k", "Chips a new player starts with"),
+            h("div.s", `For wallets opened from now on (${bounds.start[0]}–${bounds.start[1]}). Existing wallets are untouched.`), startIn)),
+        ] : []),
         h("div.item", h("div.grow", h("div.k", "TURN server for calls"),
           h("div.s", "For callers whose network blocks UDP (a coturn of your own). Leave the host empty for none."),
           h("div.row.wrap", tHost, tPort, tProto), h("div.row.wrap", tUser, tCred))),

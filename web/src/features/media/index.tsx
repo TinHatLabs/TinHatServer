@@ -28,6 +28,9 @@ export { openWatchParty, WatchPartyBanner, useWatchParty, watchPartyOn, useWatch
 export { MediaPartyButton, MediaPartyPhoneStrip, useCallParty } from "./watchparty/CallBarPieces";
 export { addLink, addLinkToParty, type AddOutcome } from "./watchparty/add"; // chat's embed cards (Media Party 11.4)
 export { openMemories, MemoriesHeaderButton } from "./memories";
+// 12.1.17: Memories photos leave the chat (the chat, the badges and the notifications read these)
+export { chatMsgOf, hiddenEvent, quietEvent, useChatIndex, roomChatIndex, totalWithoutQuiet } from "./memories/chatHide";
+export { hiddenInChat, quietInChat } from "./memories/photos";
 export { fetchSessions, thumbUrl, type VodSession } from "./memories/model"; // widgets W2: the Memories widget
 export {
   RecButton,

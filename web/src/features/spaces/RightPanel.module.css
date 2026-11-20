@@ -46,6 +46,9 @@
 .header {
   flex: none;
   display: flex;
+  /* P22 × 12.1.16's Threads tab: at a big text size the three tabs don't fit the panel; the row wraps instead of
+     running out of it (identical whenever they fit) */
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   margin: 8px;
@@ -185,7 +188,7 @@
 .ttl {
   /* gridUnit × 3.2 like native; the rig's Basic combo clips "30m" to "3" — show the intended text
      (DECISIONS D2): tighter padding + indicator so the value fits */
-  width: 57.6px !important;
+  width: calc(57.6px * var(--th-text-scale, 1)) !important; /* P22: grows with the person's text size ("30m" was cut at 150 %) */
   min-width: 0 !important;
   padding: 0 18px 0 7px !important;
   flex: none;
@@ -339,7 +342,7 @@
   flex: 1 1 auto;
   min-width: 0;
   font-weight: 700;
-  font-size: 17px;
+  font-size: calc(17px * var(--th-text-scale, 1));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

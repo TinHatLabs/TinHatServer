@@ -2,6 +2,7 @@
 // "<sender> · MMM d, <time>" + a 3-line body per pin, incl. pins older than the loaded window
 // (max 20 fetched, cached per event); click → close + jump/flash (CV:1733-1789; room.rs:4207-4233).
 import { useEffect, useRef, useState } from "react";
+import { PersonName } from "@/features/spaces/PersonName";
 import { MatrixEvent, RoomEvent } from "matrix-js-sdk";
 import { peekClient, useRoomState } from "@/core/matrix";
 import { Popover, ToolButton } from "@/ui";
@@ -130,9 +131,9 @@ export function PinnedPopover({ roomId, open, onClose, anchor, onJump }: { roomI
                 onJump(r.id);
               }}
             >
-              <span className={s.pinWho}>
+              <PersonName mxid={r.sender} roomId={roomId} className={s.pinWho}>
                 {displayName(room, r.sender)} · {fmtPinnedWhen(r.ts)}
-              </span>
+              </PersonName>
               <span className={s.pinBody}>{withSlashBreaks(r.body)}</span>
             </div>
           ))}

@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   livekit-client@2.22.3:
-    hash: b62ce18fa47c79450bc0e0a18026ed55494dacc1dd2343af92849c9ceeb0decf
+    hash: 83f8a5a5d771e6e6dd67a9a62cdfc2a3cc57b3573bcf23773a8f256bb76d71f4
     path: patches/livekit-client@2.22.3.patch
 
 importers:
@@ -24,7 +24,7 @@ importers:
         version: 3.4.17
       livekit-client:
         specifier: ^2.22.3
-        version: 2.22.3(patch_hash=b62ce18fa47c79450bc0e0a18026ed55494dacc1dd2343af92849c9ceeb0decf)(@types/dom-mediacapture-record@1.0.22)
+        version: 2.22.3(patch_hash=83f8a5a5d771e6e6dd67a9a62cdfc2a3cc57b3573bcf23773a8f256bb76d71f4)(@types/dom-mediacapture-record@1.0.22)
       marked:
         specifier: ^18.0.14
         version: 18.0.14
@@ -870,7 +870,7 @@ snapshots:
       lightningcss-win32-arm64-msvc: 1.33.0
       lightningcss-win32-x64-msvc: 1.33.0
 
-  livekit-client@2.22.3(patch_hash=b62ce18fa47c79450bc0e0a18026ed55494dacc1dd2343af92849c9ceeb0decf)(@types/dom-mediacapture-record@1.0.22):
+  livekit-client@2.22.3(patch_hash=83f8a5a5d771e6e6dd67a9a62cdfc2a3cc57b3573bcf23773a8f256bb76d71f4)(@types/dom-mediacapture-record@1.0.22):
     dependencies:
       '@livekit/mutex': 1.1.1
       '@livekit/protocol': 1.50.4

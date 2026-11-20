@@ -1,36 +1,39 @@
 // memories/PhotoParts.tsx — Memories photos in the window (docs/MEMORIES-PHOTOS.md §6): the photo
-// card in the timeline, the photo viewer (Previous / Next, comments, Show in chat, Save, Remove), the remove dialog and
+// card in the timeline, the photo viewer (Previous / Next, comments, Save, Remove; 12.1.17: no Show in chat, the photo isn't there), the remove dialog and
 // "Add photos" (picker, paste, drop). Same words as the desktop's MemoriesWindow.qml.
 import { useEffect, useRef, useState } from "react";
-import { jumpToEvent, openThread, toast } from "@/core/bus";
+import { openThread, toast } from "@/core/bus";
 import { peekClient, useMessageMedia } from "@/core/matrix";
 import { BusyIndicator, CheckBox, Dialog, GlowButton, HeaderIconButton, Icon, cx, useIsMobile } from "@/ui";
 import { redactMessage, saveMedia, sendAttachment } from "@/features/chat/actions";
+import { useChatStore } from "@/features/chat/store";
 import type { MediaRef } from "@/features/chat/lib/model";
 import { fmtDate, fmtDateLong, shortName } from "../shared/format";
 import { Pill } from "./Pill";
-import { commentsFace } from "./photos";
+import { CHAT_WORDS, commentsFace } from "./photos";
+import { WORDS as SAFETY_WORDS } from "@/core/safety";
+import { useSafetyUi } from "@/features/safety/store";
+import { nameOf } from "@/features/safety/PersonActions";
 import { MEMORIES_WORDS, addToMemories, canAddHere, iModerate, removeFromMemories, takeDown, type MemoryPhoto } from "./photosStore";
 import s from "./Memories.module.css";
 
 /** The words (the desktop uses the same). */
 export const PHOTO_WORDS = {
   add: "Add photos",
-  addTip: "Add photos or screenshots to this room's Memories. They're also posted in the chat.",
+  addTip: CHAT_WORDS.add_tip,
   unencrypted: "This room isn't encrypted: the server can see these photos.",
   sharedBy: (who: string) => `shared by ${who}`,
   comments: (n: number) => (n === 0 ? "Comment" : n === 1 ? "1 comment" : `${n} comments`),
-  showInChat: "Show in chat",
   save: "Save",
   remove: "Remove from Memories",
   removeTitle: "Remove from Memories?",
-  removeText: "The photo stays in the chat.",
+  removeText: CHAT_WORDS.remove_text,
   alsoDelete: "Also delete it from the chat",
   previous: "Previous photo",
   next: "Next photo",
   back: "Back to Memories",
   unavailable: (n: number) => `${n} ${n === 1 ? "photo" : "photos"} can't be shown on this device yet.`,
-  added: "Added to Memories",
+  added: CHAT_WORDS.added_toast,
 };
 
 function mediaRefOf(p: MemoryPhoto): MediaRef {
@@ -103,6 +106,10 @@ export function PhotoViewer({ roomId, p, onBack, onStep, hasPrev, hasNext }: { r
   const me = peekClient()?.getUserId() ?? "";
   const mine = p.owner === me;
   const canRemove = mine || iModerate(roomId);
+  // 12.1.17: the photo isn't in the chat, so its chat-side safety actions live here: Report… (someone else's photo) and a
+  // moderator's Delete (redacts it: gone from the chat and from Memories)
+  const canDelete = !mine && iModerate(roomId);
+  const [del, setDel] = useState(false);
   useEffect(() => rootRef.current?.focus(), [p.event_id]);
   return (
     <div
@@ -148,12 +155,43 @@ export function PhotoViewer({ roomId, p, onBack, onStep, hasPrev, hasNext }: { r
       <div className={s.photoBar}>
         {/* 2-8: a photo inside a thread → that thread, no count ("Comments in thread"; memories/photos.ts commentsFace) */}
         <GlowButton text={`💬 ${commentsFace(p.event_id, p.content, p.comments).button}`} onClick={() => openThread(roomId, commentsFace(p.event_id, p.content, p.comments).root)} />
-        <GlowButton text={PHOTO_WORDS.showInChat} icon="mail-reply-sender-symbolic" onClick={() => jumpToEvent(roomId, p.event_id)} />
         <GlowButton text={PHOTO_WORDS.save} icon="document-save-symbolic" onClick={() => void saveMedia(mediaRefOf(p))} />
         <span className={s.spacer} />
+        {!mine && (
+          <GlowButton
+            text={SAFETY_WORDS.report}
+            icon="dialog-warning"
+            onClick={() => useSafetyUi.getState().openReport({ user: p.owner, room: roomId, event: p.event_id }, nameOf(p.owner, roomId))}
+          />
+        )}
+        {canDelete && <GlowButton text={CHAT_WORDS.delete} icon="edit-delete-symbolic" onClick={() => setDel(true)} />}
         {canRemove && <GlowButton text={PHOTO_WORDS.remove} icon="delete-symbolic" onClick={() => setConfirm(true)} />}
       </div>
       <RemoveDialog roomId={roomId} p={p} mine={mine} open={confirm} onClose={() => setConfirm(false)} onDone={onBack} />
+      <Dialog
+        open={del}
+        onClose={() => setDel(false)}
+        title={CHAT_WORDS.delete_title}
+        buttons={[
+          { text: "Cancel", role: "reject", onClick: () => setDel(false) },
+          {
+            text: CHAT_WORDS.delete,
+            role: "destructive",
+            onClick: () => {
+              setDel(false);
+              const owner = peekClient();
+              void redactMessage(roomId, p.event_id).then((ok) => {
+                if (!ok || peekClient() !== owner) return;
+                toast(CHAT_WORDS.deleted_toast);
+                onBack();
+              });
+            },
+          },
+        ]}
+        width={380}
+      >
+        <div className={s.dialogText}>{CHAT_WORDS.delete_text}</div>
+      </Dialog>
     </div>
   );
 }
@@ -213,6 +251,7 @@ export function addPhotoFiles(roomId: string, files: File[]): number {
   // R3-2: the account these photos are queued for (their Memories write never runs under another)
   const owner = peekClient();
   for (const f of imgs)
+    // 12.1.17: with the Memories marker (quiet at once on 12.1.17+; the chat hides it once my list names it)
     void sendAttachment(roomId, f, null, (eventId) => {
       // R3-2: bound to the account that queued the photo (a switch meanwhile drops it, silently)
       addToMemories(roomId, eventId, Date.now(), owner).then(
@@ -223,6 +262,12 @@ export function addPhotoFiles(roomId: string, files: File[]): number {
           if ((e as Error)?.name !== "StaleSession") toast((e as Error)?.message || MEMORIES_WORDS.forbidden);
         },
       );
+    }, { memories: true }).then(() => {
+      // 12.1.17 round 2: a photo that wasn't sent says why HERE too, as the desktop's Memories window does (its chat row
+      // says it as well). E.g. a picture whose location couldn't be removed: refused, never sent as it is.
+      if (peekClient() !== owner) return;
+      const failed = useChatStore.getState().uploads.filter((u) => u.roomId === roomId && u.file === f && u.state === "failed").pop();
+      if (failed) toast(failed.error, { kind: "error", timeoutMs: 8000 });
     });
   return imgs.length;
 }

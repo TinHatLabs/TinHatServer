@@ -1,0 +1,2430 @@
+{
+ "v": 1,
+ "about": "Wallet rules, pure. params = the server's play config for the case (defaults: day_max 8, start 10; the owner may set day_max 1-24 and start 0-50; every other value is fixed in v1); a case that changes one names only that key in its params. create = a new wallet opens with params.start. holdings = everything the person has on this server (wallet + chips at a table + escrow). cap = 100 + 50 x rank. tick = one run of the server's call sampler; gap_s = now minus that wallet's credited_through (the time it was last sampled). If eligible, not at the cap and under the day max, add min(gap_s, tick_max_s) to accrual_s; at chip_s (3600) pay one chip and keep the rest. The day (for the day max and the top-up) is the calendar day in the server's time zone (params.tz); a new day resets earned_today before the tick is judged. topup: only when holdings is exactly 0 and the last top-up was on another day -> holdings = topup_to. settle = a game moved chips (delta). leave = the person left a game with nothing still in play: holdings >= cap -> holdings = prestige_to, rank + 1 (once). A new wallet starts at params.start.",
+ "cases": [
+  {
+   "id": "hour-makes-a-chip",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 10,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:01:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:02:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:03:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:04:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:05:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:06:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:07:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:08:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:09:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:10:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:11:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:12:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:13:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:14:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:15:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:16:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:17:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:18:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:19:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:20:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:21:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:22:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:23:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:24:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:25:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:26:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:27:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:28:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:29:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:30:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:31:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:32:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:33:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:34:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:35:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:36:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:37:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:38:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:39:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:40:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:41:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:42:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:43:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:44:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:45:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:46:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:47:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:48:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:49:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:50:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:51:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:52:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:53:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:54:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:55:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:56:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:57:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:58:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:59:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 60,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 120,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 180,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 240,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 300,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 360,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 420,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 480,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 540,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 600,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 660,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 720,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 780,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 840,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 900,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 960,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1020,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1080,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1140,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1200,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1260,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1320,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1380,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1440,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1500,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1560,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1620,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1680,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1740,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1800,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1860,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1920,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 1980,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2040,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2100,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2160,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2220,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2280,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2340,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2400,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2460,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2520,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2580,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2640,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2700,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2760,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2820,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2880,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 2940,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3000,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3060,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3120,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3180,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3240,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3300,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3360,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3420,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3480,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3540,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 1,
+      "why": "",
+      "state": {
+       "holdings": 11,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 1,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 11,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 1,
+     "topup_day": null
+    }
+   },
+   "why": "60 eligible ticks of 60 s = one chip; the clock goes back to 0"
+  },
+  {
+   "id": "gap-capped-at-90",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 10,
+    "rank": 0,
+    "accrual_s": 3500,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 600,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3590,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 10,
+     "rank": 0,
+     "accrual_s": 3590,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "a 10-minute gap (the server was busy or away) counts as 90 s at most: 3500 + 90 = 3590, no chip yet"
+  },
+  {
+   "id": "not-eligible-counts-nothing",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 10,
+    "rank": 0,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": false
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "not-eligible",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3590,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 10,
+     "rank": 0,
+     "accrual_s": 3590,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "an ineligible tick (alone in the call, BRB, idle) adds nothing and keeps what was saved"
+  },
+  {
+   "id": "carry-over",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 10,
+    "rank": 0,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 1,
+      "why": "",
+      "state": {
+       "holdings": 11,
+       "rank": 0,
+       "accrual_s": 50,
+       "day": "2026-11-19",
+       "earned_today": 1,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 11,
+     "rank": 0,
+     "accrual_s": 50,
+     "day": "2026-11-19",
+     "earned_today": 1,
+     "topup_day": null
+    }
+   },
+   "why": "time carries over: 3590 + 60 = 3650 -> one chip, 50 s saved toward the next"
+  },
+  {
+   "id": "at-cap-no-earning",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 100,
+    "rank": 0,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "at-cap",
+      "state": {
+       "holdings": 100,
+       "rank": 0,
+       "accrual_s": 3590,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 100,
+     "rank": 0,
+     "accrual_s": 3590,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "at the cap (100 at rank 0) nothing accrues"
+  },
+  {
+   "id": "reaches-cap-exactly",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 99,
+    "rank": 0,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:01:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 1,
+      "why": "",
+      "state": {
+       "holdings": 100,
+       "rank": 0,
+       "accrual_s": 50,
+       "day": "2026-11-19",
+       "earned_today": 1,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "at-cap",
+      "state": {
+       "holdings": 100,
+       "rank": 0,
+       "accrual_s": 50,
+       "day": "2026-11-19",
+       "earned_today": 1,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 100,
+     "rank": 0,
+     "accrual_s": 50,
+     "day": "2026-11-19",
+     "earned_today": 1,
+     "topup_day": null
+    }
+   },
+   "why": "earning may reach the cap exactly, then stops"
+  },
+  {
+   "id": "rank2-cap-200",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 150,
+    "rank": 2,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 1,
+      "why": "",
+      "state": {
+       "holdings": 151,
+       "rank": 2,
+       "accrual_s": 50,
+       "day": "2026-11-19",
+       "earned_today": 1,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 151,
+     "rank": 2,
+     "accrual_s": 50,
+     "day": "2026-11-19",
+     "earned_today": 1,
+     "topup_day": null
+    }
+   },
+   "why": "the cap at rank 2 is 100 + 50 x 2 = 200, so 150 still earns"
+  },
+  {
+   "id": "day-max-then-new-day",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 10,
+    "rank": 0,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 8,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-20T09:59:00Z",
+     "gap_s": 60,
+     "eligible": true
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-20T10:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "day-max",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3590,
+       "day": "2026-11-19",
+       "earned_today": 8,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 1,
+      "why": "",
+      "state": {
+       "holdings": 11,
+       "rank": 0,
+       "accrual_s": 50,
+       "day": "2026-11-20",
+       "earned_today": 1,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 11,
+     "rank": 0,
+     "accrual_s": 50,
+     "day": "2026-11-20",
+     "earned_today": 1,
+     "topup_day": null
+    }
+   },
+   "why": "8 chips earned today (the day max): the 23:59 local time (UTC-10) tick adds nothing; at 00:00 local time (10:00 UTC) the count resets and the saved time pays out"
+  },
+  {
+   "id": "topup-at-zero",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 0,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": "2026-11-18"
+   },
+   "events": [
+    {
+     "do": "topup",
+     "at": "2026-11-19T20:00:00Z"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 5,
+      "why": "",
+      "state": {
+       "holdings": 5,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": "2026-11-19"
+      }
+     }
+    ],
+    "end": {
+     "holdings": 5,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": "2026-11-19"
+    }
+   },
+   "why": "at 0 and not yet topped up today: up to 5"
+  },
+  {
+   "id": "topup-once-a-day",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 0,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": "2026-11-18"
+   },
+   "events": [
+    {
+     "do": "topup",
+     "at": "2026-11-19T20:00:00Z"
+    },
+    {
+     "do": "settle",
+     "delta": -5
+    },
+    {
+     "do": "topup",
+     "at": "2026-11-20T09:59:59Z"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 5,
+      "why": "",
+      "state": {
+       "holdings": 5,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": "2026-11-19"
+      }
+     },
+     {
+      "state": {
+       "holdings": 0,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": "2026-11-19"
+      }
+     },
+     {
+      "chips": 0,
+      "why": "already-today",
+      "state": {
+       "holdings": 0,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": "2026-11-19"
+      }
+     }
+    ],
+    "end": {
+     "holdings": 0,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": "2026-11-19"
+    }
+   },
+   "why": "lost the top-up the same day (23:59:59 local time): no second one"
+  },
+  {
+   "id": "topup-next-day",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 0,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": "2026-11-19"
+   },
+   "events": [
+    {
+     "do": "topup",
+     "at": "2026-11-20T10:00:00Z"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 5,
+      "why": "",
+      "state": {
+       "holdings": 5,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": "2026-11-20"
+      }
+     }
+    ],
+    "end": {
+     "holdings": 5,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": "2026-11-20"
+    }
+   },
+   "why": "a new day in the server's time zone (00:00 local time) allows the next one"
+  },
+  {
+   "id": "topup-not-at-1",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 1,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "topup",
+     "at": "2026-11-19T20:00:00Z"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "not-zero",
+      "state": {
+       "holdings": 1,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 1,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "only at exactly 0"
+  },
+  {
+   "id": "topup-day-in-other-zone",
+   "params": {
+    "tz": "America/New_York",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 0,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": "2026-11-19"
+   },
+   "events": [
+    {
+     "do": "topup",
+     "at": "2026-11-20T05:00:00Z"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 5,
+      "why": "",
+      "state": {
+       "holdings": 5,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": "2026-11-20"
+      }
+     }
+    ],
+    "end": {
+     "holdings": 5,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": "2026-11-20"
+    }
+   },
+   "why": "a server in New York: 05:00 UTC is 00:00 on the 20th there (no DST in November)"
+  },
+  {
+   "id": "prestige-on-leave",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 95,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "settle",
+     "delta": 45
+    },
+    {
+     "do": "leave"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "state": {
+       "holdings": 140,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "burned": 130,
+      "why": "prestige",
+      "state": {
+       "holdings": 10,
+       "rank": 1,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 10,
+     "rank": 1,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "left the table with 140 at rank 0 (cap 100): reset to 10, rank 1; the 130 over 10 is burned"
+  },
+  {
+   "id": "one-rank-per-leave",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 100,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "settle",
+     "delta": 300
+    },
+    {
+     "do": "leave"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "state": {
+       "holdings": 400,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "burned": 390,
+      "why": "prestige",
+      "state": {
+       "holdings": 10,
+       "rank": 1,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 10,
+     "rank": 1,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "400 is over the rank-1 cap (150) too, but one leave = one rank"
+  },
+  {
+   "id": "exactly-cap-prestiges",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 150,
+    "rank": 1,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "leave"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "burned": 140,
+      "why": "prestige",
+      "state": {
+       "holdings": 10,
+       "rank": 2,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 10,
+     "rank": 2,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "at the cap exactly (150 at rank 1) counts"
+  },
+  {
+   "id": "under-cap-no-prestige",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 149,
+    "rank": 1,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "leave"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "burned": 0,
+      "why": "",
+      "state": {
+       "holdings": 149,
+       "rank": 1,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 149,
+     "rank": 1,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "one under the cap: nothing happens"
+  },
+  {
+   "id": "never-mid-game",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 95,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "settle",
+     "delta": 45
+    },
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "state": {
+       "holdings": 140,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 0,
+      "why": "at-cap",
+      "state": {
+       "holdings": 140,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 140,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "over the cap at the table: no prestige until the leave, and no earning meanwhile"
+  },
+  {
+   "id": "new-wallet-default-start",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 0,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "create"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 10,
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 10,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "a new wallet gets params.start (default 10)"
+  },
+  {
+   "id": "admin-start-25",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 25
+   },
+   "start": {
+    "holdings": 0,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "create"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 25,
+      "state": {
+       "holdings": 25,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 25,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": null
+    }
+   },
+   "why": "the owner set the start to 25: new wallets get 25"
+  },
+  {
+   "id": "admin-start-0",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 8,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 0
+   },
+   "start": {
+    "holdings": 0,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 0,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "create"
+    },
+    {
+     "do": "topup",
+     "at": "2026-11-19T20:00:00Z"
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "state": {
+       "holdings": 0,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": null
+      }
+     },
+     {
+      "chips": 5,
+      "why": "",
+      "state": {
+       "holdings": 5,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 0,
+       "topup_day": "2026-11-19"
+      }
+     }
+    ],
+    "end": {
+     "holdings": 5,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 0,
+     "topup_day": "2026-11-19"
+    }
+   },
+   "why": "start 0: the wallet opens empty, and the daily top-up still applies at once"
+  },
+  {
+   "id": "admin-day-max-3",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 3,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 10,
+    "rank": 0,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 3,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "day-max",
+      "state": {
+       "holdings": 10,
+       "rank": 0,
+       "accrual_s": 3590,
+       "day": "2026-11-19",
+       "earned_today": 3,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 10,
+     "rank": 0,
+     "accrual_s": 3590,
+     "day": "2026-11-19",
+     "earned_today": 3,
+     "topup_day": null
+    }
+   },
+   "why": "the owner set the day max to 3 and 3 were earned today: nothing more today"
+  },
+  {
+   "id": "admin-day-max-lowered-no-clawback",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 4,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 16,
+    "rank": 0,
+    "accrual_s": 0,
+    "day": "2026-11-19",
+    "earned_today": 6,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 0,
+      "why": "day-max",
+      "state": {
+       "holdings": 16,
+       "rank": 0,
+       "accrual_s": 0,
+       "day": "2026-11-19",
+       "earned_today": 6,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 16,
+     "rank": 0,
+     "accrual_s": 0,
+     "day": "2026-11-19",
+     "earned_today": 6,
+     "topup_day": null
+    }
+   },
+   "why": "lowered to 4 after 6 were earned today: the 6 stay (no clawback), nothing more today"
+  },
+  {
+   "id": "admin-day-max-24",
+   "params": {
+    "tz": "Pacific/Tahiti",
+    "tick_max_s": 90,
+    "chip_s": 3600,
+    "day_max": 24,
+    "topup_to": 5,
+    "prestige_to": 10,
+    "start": 10
+   },
+   "start": {
+    "holdings": 10,
+    "rank": 0,
+    "accrual_s": 3590,
+    "day": "2026-11-19",
+    "earned_today": 8,
+    "topup_day": null
+   },
+   "events": [
+    {
+     "do": "tick",
+     "at": "2026-11-19T20:00:00Z",
+     "gap_s": 60,
+     "eligible": true
+    }
+   ],
+   "expect": {
+    "after_each": [
+     {
+      "chips": 1,
+      "why": "",
+      "state": {
+       "holdings": 11,
+       "rank": 0,
+       "accrual_s": 50,
+       "day": "2026-11-19",
+       "earned_today": 9,
+       "topup_day": null
+      }
+     }
+    ],
+    "end": {
+     "holdings": 11,
+     "rank": 0,
+     "accrual_s": 50,
+     "day": "2026-11-19",
+     "earned_today": 9,
+     "topup_day": null
+    }
+   },
+   "why": "raised to 24: the 9th chip of the day pays"
+  }
+ ]
+}

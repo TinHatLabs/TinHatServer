@@ -3,7 +3,9 @@
 // real handlers with a scripted homeserver and a hand-driven clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createPresence, aggregate, validateBeat, validStatus, sharedZone, PRESENCE, PALETTE, TZ } from "../presence.mjs";
+import { readFileSync } from "node:fs";
+import { UNSAFE_TEXT } from "../reachcommon.mjs";
+import { createPresence, aggregate, validateBeat, validStatus, rowStatus, sharedZone, PRESENCE, PALETTE, TZ } from "../presence.mjs";
 import { call, bearer, clock, fakeHomeserver, authFor } from "./helpers.mjs";
 
 const A = "@alice:example.org", B = "@bob:example.org", C = "@carol:example.org";
@@ -287,6 +289,36 @@ test("custom_status_rides_on_the_same_read_and_is_validated", async () => {
     assert.equal(validStatus({ text: "👋".repeat(40), color: "white" }, 0).text, "👋".repeat(40), "40 characters, not UTF-16 units");
     assert.equal(validStatus({ text: "ok", emoji: "🛋️", color: "blue" }, 0).emoji, "🛋️");
     assert.equal(PALETTE.length, 12);
+});
+
+// D07.6 (apps 12.1.17): status text up to 80 characters. Shared vectors test/vectors/presence-status.json (byte copy of
+// the desktop app's and Tin Hat Web's): `text` stays 1–40 for older apps, a long status rides in `full` (1–80).
+test("status_80_vectors", () => {
+    const V = JSON.parse(readFileSync(new URL("./vectors/presence-status.json", import.meta.url), "utf8"));
+    for (const c of V.server) {
+        const st = validStatus(c.status, 0);
+        assert.deepEqual(st === null ? null : rowStatus(st), c.row, c.name);
+    }
+    // what the apps store for a long status passes whole
+    for (const c of V.shorten) {
+        const content = { text: c.text, emoji: "", color: "teal", until: null, v: 1, ...(c.full === null ? {} : { full: c.full }) };
+        const keep = c.full !== null && !UNSAFE_TEXT.test(c.full); // a full with control/bidi characters is dropped alone
+        assert.deepEqual(rowStatus(validStatus(content, 0)), { text: c.text, emoji: "", color: "teal", ...(keep ? { full: c.full } : {}) }, c.name);
+    }
+});
+
+test("status_80_get_row", async () => {
+    const { put, get, hs } = setup();
+    const short = "x".repeat(39) + "\u2026", long = "x".repeat(60);
+    const orig = hs.get;
+    hs.get = async (path, token) => {
+        const r = await orig(path, token);
+        if (/users\/([^/]+)\/accountdata$/.exec(path)?.[1] === encodeURIComponent(A))
+            r.body.account_data.global["dev.tinhat.presence_status"] = { id: "custom", text: short, emoji: "", color: "teal", until: null, v: 1, full: long };
+        return r;
+    };
+    assert.equal((await put("ta1", online)).statusCode, 200);
+    assert.deepEqual((await get("tb")).body.users[A], { state: "online", status: { text: short, emoji: "", color: "teal", full: long } });
 });
 
 test("bad_bodies_400_and_over_1kb_413", async () => {

@@ -127,14 +127,14 @@
 .newMobile {
   height: 36px;
   padding: 0 12px;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }
 .rowMobile {
   height: 52px;
 }
 .rowMobile .q {
-  font-size: 15px;
+  font-size: calc(15px * var(--th-text-scale, 1));
 }
 .rowMobile .line {
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
 }

@@ -12,7 +12,7 @@
 // creates the delegates it shows, so this is the same behaviour; without it a room kept every row it had shown (~17 DOM
 // nodes / ~45–50 KB of heap per message) and a phone's first open of a 750-row room mounted all of them in one 3.6 s task.
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
-import { peekClient, useClient, useDmPeer, useIsDirect, useMember, useRoomState, liveTimelineChain, provisionOnOpen } from "@/core/matrix";
+import { getSession, peekClient, useClient, useDmPeer, useIsDirect, useMember, useRoomState, liveTimelineChain, provisionOnOpen } from "@/core/matrix";
 import { DM_WAITING_EXPLAIN, dmWaitingLine } from "@/features/nav/firstrun";
 import { bus, useBus } from "@/core/bus";
 import { useRegistry, menuValue, type MessageMenuCtx } from "@/core/registry";
@@ -27,9 +27,11 @@ import { LightboxView } from "./Lightbox";
 import * as settingsFeature from "@/features/settings";
 import { useConvToast } from "./convToast";
 import { buildRows, displayName, isDiceRow, isInteractive, type Row } from "./lib/model";
+import type { MatrixEvent } from "matrix-js-sdk";
+import { chatMsgOf, hiddenEvent, hiddenInChat, openMemories, quietInChat, roomChatIndex, useChatIndex } from "@/features/media";
 import { HAS_CHAT_SAMPLES, sampleEvents } from "./lib/samples";
 import { dayLabel, sameDay } from "./lib/format";
-import { newLineHint, newLineStart, newPillShown } from "./lib/catchup";
+import { dividerAfterHide, newLineHint, newLineStart, newPillShown } from "./lib/catchup";
 import { useRoomTimeline } from "./useRoomTimeline";
 import { HEAD, TAIL, WIN_INIT, WIN_MAX, WIN_STEP, windowAround, windowNewer, windowOlder, windowRange, type RowWindow } from "./lib/rowwindow";
 import { registerView, useChatStore } from "./store";
@@ -42,6 +44,8 @@ import { mainFocusHeld } from "./threads/focusIntent";
 import { mayDelete } from "./lib/deleteRule";
 import { shareLinkNow } from "@/core/server";
 import s from "./Conversation.module.css";
+import { ROOM_MISSING, watchMissing } from "./roomMissing";
+import { goBack } from "@/app/router";
 import { AmbienceLayer } from "./ambience/layer";
 import { useBackgroundImage, useRoomBackground } from "./ambience/room";
 import { useGameArt } from "./gamebg";
@@ -102,6 +106,10 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
   const roomUploads = useMemo(() => uploads.filter((u) => u.roomId === roomId), [uploads, roomId]);
   const pinnedState = useRoomState<{ pinned?: string[] }>(roomId, "m.room.pinned_events");
   const pinned = useMemo(() => (Array.isArray(pinnedState?.pinned) ? pinnedState!.pinned! : []), [pinnedState]);
+  // 12.1.17: Memories photos leave the chat (their sender's own list names them; media/memories/chatHide.ts)
+  // (the hook re-renders on a list / power-level change; the rows re-read the index each build, so a redacted list
+  // — same event id, its content gone — counts at the next timeline change: review)
+  const memIdx = useChatIndex(roomId);
   const clock = String(usePref("clock", "system"));
   const notify = useConvToast();
   const [localLb, setLocalLb] = useState<{ src: string; name?: string } | null>(null);
@@ -112,7 +120,9 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
   const rows = useMemo(() => {
     // the gates' sample rows (widgets W3, debug flag + ?chatsamples=…): local events after the real ones, never sent
     const events = HAS_CHAT_SAMPLES ? [...tl.events, ...sampleEvents(roomId, me)] : tl.events;
-    const fresh = buildRows({ room, me, myName, events, uploads: roomUploads, pinned, threads: { view: threadRoot ?? null, receipts: myReceipts(roomId) } });
+    const idx = roomChatIndex(room);
+    const memRules = { hidden: (ev: MatrixEvent) => hiddenInChat(idx, chatMsgOf(ev)), quiet: (ev: MatrixEvent) => quietInChat(idx, chatMsgOf(ev)) };
+    const fresh = buildRows({ room, me, myName, events, uploads: roomUploads, pinned, threads: { view: threadRoot ?? null, receipts: myReceipts(roomId) }, memories: memRules });
     const next = new Map<string, { sig: string; row: Row }>();
     const out = fresh.map((r) => {
       const sig = rowSig(r);
@@ -124,12 +134,15 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     rowCache.current = next;
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tl.version, tl.events, roomUploads, pinned, me, myName, room, threadRoot, receiptsV]);
+  }, [tl.version, tl.events, roomUploads, pinned, me, myName, room, threadRoot, receiptsV, memIdx]);
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
   const threadTlRef = useRef(threadTl);
   threadTlRef.current = threadTl;
   const tlRef = useRef(tl);
+  /** An event this view knows: its own timeline's (a thread's fetched pages too), else the room's (12.1.17 round 2). */
+  const eventHere = (id: string): MatrixEvent | undefined =>
+    tlRef.current.events.find((e) => e.getId() === id) ?? peekClient()?.getRoom(roomId)?.findEventById(id) ?? undefined;
   tlRef.current = tl;
 
   // CHAT-83: the first load failed and nothing is cached → error state; retried every 5 s
@@ -236,6 +249,7 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
 
   // a permalink open must not mark the room read before the jump has happened
   const permalinkPending = useRef(!!eventId);
+  const tailEvRef = useRef("");
   const markRead = useCallback(() => {
     if (!readerRef.current || permalinkPending.current) return;
     const r = peekClient()?.getRoom(roomId);
@@ -266,12 +280,14 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
   // ---- NEW divider freeze (3.1 step 8 + 3.2)
   // waiting (A35.1): the line is above everything loaded; seen (P2 a): it has been on screen since the room opened;
   // hunting: "Jump to NEW" is loading older pages to find it
-  const nw = useRef<{ frozen: boolean; marker: string; hint: number; tail: string; divider: string; settled: boolean; waiting: boolean; seen: boolean; hunting: boolean }>({
+  const nw = useRef<{ frozen: boolean; marker: string; hint: number; tail: string; tailTs: number; divider: string; dividerTs: number; settled: boolean; waiting: boolean; seen: boolean; hunting: boolean }>({
     frozen: false,
     marker: "",
     hint: 0,
     tail: "",
+    tailTs: 0,
     divider: "",
+    dividerTs: 0,
     settled: false,
     waiting: false,
     seen: false,
@@ -285,9 +301,20 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     nw.current.hint = newLineHint(threadRoot ?? "", room.getUnreadNotificationCount() ?? 0);
     const real = rows.filter((r) => !r.echo);
     nw.current.tail = real.length ? real[real.length - 1].id : "";
+    nw.current.tailTs = real.length ? real[real.length - 1].ts : 0; // 12.1.17 round 2: dividerAfterHide's bound
   }
   const recomputeDivider = () => {
     const n = nw.current;
+    // 12.1.17 round 2 (memories-hide-chat review #6): the row carrying NEW may have left the chat (its photo went into
+    // Memories): the frozen boundary stays, NEW moves to the next eligible row (lib/catchup.ts, shared vectors) or goes
+    if (n.frozen && n.divider) {
+      const nx = dividerAfterHide(rows, n.divider, n.dividerTs, me, n.tail, n.tailTs);
+      if (nx !== n.divider) {
+        n.divider = nx;
+        if (!nx) n.settled = true;
+      }
+      return;
+    }
     if (!n.frozen || n.divider || n.settled) return;
     const rs = rows;
     if (!rs.length) return;
@@ -344,6 +371,7 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     for (let j = start + 1; j < end; j++) {
       if (rs[j].sender !== me && !rs[j].echo) {
         n.divider = rs[j].id;
+        n.dividerTs = rs[j].ts;
         n.waiting = false;
         return;
       }
@@ -646,6 +674,13 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
   const jumpTo = useCallback(
     async (id: string) => {
       if (centreRow(id)) return;
+      // 12.1.17: a photo the chat hides lives in Memories: its viewer opens there (no hunt through older pages). Round 2
+      // (review #7): a thread's view looks in its own fetched events first (a photo only its thread pages brought in)
+      const known = eventHere(id);
+      if (known && hiddenEvent(peekClient()?.getRoom(roomId), known) && known.getId() !== threadRoot) {
+        openMemories(roomId, id);
+        return;
+      }
       // threads (review #16): a message in a thread never shows in the main timeline — open its thread instead
       if (!threadRoot) {
         const t = await threadRootOf(roomId, id);
@@ -664,6 +699,12 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
         for (let w = 0; w < 100 && tlRef.current.loadingBack; w++) await new Promise((res) => setTimeout(res, 100));
         const r = await tl.paginate(100);
         await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+        // 12.1.17: found it, and it is a photo the chat hides → its Memories viewer
+        const found = eventHere(id);
+        if (found && found.getId() !== threadRoot && hiddenEvent(peekClient()?.getRoom(roomId), found)) {
+          openMemories(roomId, id);
+          return;
+        }
         if (rowsRef.current.some((x) => x.id === id)) {
           requestAnimationFrame(() => centreRow(id));
           return;
@@ -902,14 +943,19 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     } else appended = rows.filter((r) => !r.echo);
     const newestPrev = prev.filter((r) => !r.echo).pop();
     const newestNow = rows.filter((r) => !r.echo).pop();
+    // 12.1.17: a photo the chat hides (it is in Memories) adds no row; while reading at the end it is read too (the desktop's
+    // note_nonrow), so the server's count never waits for the next visible message
+    const tailEv = tl.events.length ? tl.events[tl.events.length - 1].getId() ?? "" : "";
+    const tailMoved = tailEv !== tailEvRef.current;
+    tailEvRef.current = tailEv;
     if (stick.current || performance.now() < settleUntil.current) {
       toEnd();
-      if (appended.length) queueMicrotask(markRead);
+      if (appended.length || (tailMoved && tailEv.startsWith("$"))) queueMicrotask(markRead);
     } else {
-      const others = appended.filter((r) => r.sender !== me && !r.echo).length;
+      const others = appended.filter((r) => r.sender !== me && !r.echo && !r.quiet).length;
       if (others) setNewBelow((n) => n + others);
     }
-    if (readerRef.current && newestNow && newestPrev && newestNow.id !== newestPrev.id && newestNow.ts > newestPrev.ts && newestNow.sender !== me && !tl.loadingBack) {
+    if (readerRef.current && newestNow && newestPrev && newestNow.id !== newestPrev.id && newestNow.ts > newestPrev.ts && newestNow.sender !== me && !newestNow.quiet && !tl.loadingBack) {
       playUiSound("receive");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1199,9 +1245,24 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
     return () => window.clearInterval(t);
   }, [loadError]);
 
+  // A room link to a room this account isn't in: once it is still unknown ROOM_MISSING.waitMs after opening (and the
+  // first sync is done), stop loading and say so (roomMissing.ts, shared vectors with the desktop)
+  const [missing, setMissing] = useState(false);
+  useEffect(() => {
+    setMissing(false);
+    if (tl.known) return;
+    // synced = the first sync from the NETWORK (liveSyncDone), not the cache's: a room joined elsewhere since the cache was
+    // written is unknown until the network answers (the desktop's ROOM_SYNCED; 12.1.17 room-link gate R9/R10)
+    const client = () => {
+      const c = peekClient();
+      return c ? { isInitialSyncComplete: () => getSession().liveSyncDone, getRoom: (id: string) => c.getRoom(id) } : null;
+    };
+    return watchMissing(roomId, setMissing, { client, now: Date.now, every: (fn, ms) => window.setInterval(fn, ms), stop: (h) => window.clearInterval(h as number) });
+  }, [roomId, tl.known]);
+
   // ---- states (CV:1096-1131)
   const failed = rows.length === 0 && !!loadError;
-  const loading = !failed && rows.length === 0 && (tl.loadingBack || (!tl.known && !!client));
+  const loading = !failed && !missing && rows.length === 0 && (tl.loadingBack || (!tl.known && !!client));
   const empty = !failed && rows.length === 0 && !tl.canBack && tl.known && !tl.loadingBack;
   // D09.3 (Sunday QoL): a DM whose other person hasn't accepted yet says so instead of looking like an empty chat
   const dmPeer = useDmPeer(roomId);
@@ -1278,9 +1339,15 @@ function Conversation({ roomId, primary = true, floating = false, eventId, mobil
             <BusyIndicator size={27} label="Loading older messages" />
           </div>
         )}
-        {(loading || empty || failed) && (
+        {(loading || empty || failed || missing) && (
           <div className={s.emptyWrap}>
-            {failed ? (
+            {missing ? (
+              // a link to a room this account isn't in (roomMissing.ts; the desktop's ConversationView.qml says the same)
+              <EmptyState iconName="dialog-messages-symbolic" title={ROOM_MISSING.title} explanation={ROOM_MISSING.explanation}>
+                {/* the room's own conversation only (a thread panel's is not primary: its Back would pop the thread, review #4) */}
+                {primary && !floating && <Button text={ROOM_MISSING.button} onClick={() => goBack()} />}
+              </EmptyState>
+            ) : failed ? (
               // QOL A29.3: no dead end — Try again now (the 5 s retry keeps going too)
               <EmptyState iconName="network-disconnect-symbolic" title="Couldn't load this conversation" explanation={loadError}>
                 <Button text="Try again" onClick={() => void loadOlderRef.current()} />

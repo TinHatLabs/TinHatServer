@@ -1,14 +1,15 @@
 // Simple.tsx — THEMES-UI.md §13.7: Name + Author, Colours (the palette groups of palette.ts — THEME-SIMPLE design
 // 2026-10-31 — the accent quick picks, "set by hand", the adjusted note, readability),
-// Text (three fonts, the size), Density, Islands (radius, gap, margin, border, shadow, transparency).
+// Text (three fonts; the size and the density are the person's own since 12.1.17, P22), Islands (radius, gap, margin,
+// border, shadow, transparency).
 import { useMemo, useRef, useState } from "react";
 import { PALETTE_GROUPS, paletteView, type Swatch } from "@/theme/palette";
 import { ACCENT_PRESETS, fixesFor, islandOpacity } from "@/theme/editor";
-import { FONTS_MONO, FONTS_SANS, FONTS_SERIF, readLook, type Density } from "@/theme/look";
+import { FONTS_MONO, FONTS_SANS, FONTS_SERIF, readLook } from "@/theme/look";
 import { paletteLabel } from "@/theme/labels";
 import { readShape } from "@/theme/shape";
 import type { JObj } from "@/theme/sync";
-import { BasicRadioButton, Button, ComboBox, HintLabel, Icon, InlineMessage, SectionLabel, Slider, TextField } from "@/ui";
+import { Button, ComboBox, HintLabel, Icon, InlineMessage, SectionLabel, Slider, TextField } from "@/ui";
 import { adjustedText } from "../text";
 import { APP_SPEC, edit, newGesture, shownIssues, useEditor } from "./editorStore";
 import { ColourPopover } from "./ColourPopover";
@@ -255,21 +256,10 @@ export function SimpleMode() {
         <Row label="Code font">
           <ComboBox model={CODE_FONTS} currentIndex={fontIndex(CODE_FONTS, look.fonts.code)} style={{ width: 220 }} aria-label="Code font" onActivated={(i) => edit({ op: "font", slot: "code", value: i === 0 ? null : CODE_FONTS[i] })} />
         </Row>
-        <SliderRow label="Text size" value={look.size} from={80} to={150} step={5} text={`${look.size} %`} onMove={(v, g) => edit({ op: "size", value: v === 100 ? null : v }, g)} />
-      </div>
-
-      <div className={s.section}>
-        <SectionLabel>Density</SectionLabel>
-        <div className={s.radios} role="radiogroup" aria-label="Density">
-          {(["compact", "normal", "touch"] as Density[]).map((d) => (
-            <BasicRadioButton
-              key={d}
-              name="theme-density"
-              text={d === "compact" ? "Compact" : d === "normal" ? "Normal" : "Touch"}
-              checked={look.density === d}
-              onToggled={(on) => on && edit({ op: "density", value: d === "normal" ? null : d })}
-            />
-          ))}
+        {/* P22 (12.1.17): the text size and the density are the person's own now (Settings → Appearance), the same on
+            every theme; a theme no longer carries them (the desktop's ThemeEditorSimple.qml says the same) */}
+        <div className={s.note}>
+          <span>Text size and density are your own settings, the same on every theme: Settings → Appearance.</span>
         </div>
       </div>
 

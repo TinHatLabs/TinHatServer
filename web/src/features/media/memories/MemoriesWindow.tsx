@@ -20,7 +20,7 @@ const MemoriesPlayer = lazyPart("MemoriesPlayer", () => import("./MemoriesPlayer
 
 // ---- the window ----------------------------------------------------------------------------------
 
-export function MemoriesWindow({ roomId, open: openId }: { roomId: string; open?: string }) {
+export function MemoriesWindow({ roomId, open: openId, openSeq }: { roomId: string; open?: string; openSeq?: number }) {
   const mobile = useIsMobile();
   const roomName = useRoomName(roomId);
   const [memories, setMemories] = useState<VodSession[] | null>(null);
@@ -117,6 +117,21 @@ export function MemoriesWindow({ roomId, open: openId }: { roomId: string; open?
     const m = openId === "latest" ? memories.find((x) => x.end_ms && x.ready !== false && !x.empty) : memories.find((x) => x.id === openId);
     if (m) setSel(m);
   }, [openId, memories]);
+
+  // 12.1.17: open=<$event id> opens that photo's viewer (a jump to a photo the chat hides lands here)
+  // (review: each request has its own number, so opening the same photo again after going back works; the handled
+  // request is STATE, not a ref: an effect run again — the window's room effect clearing the selection, dev StrictMode —
+  // selects it again, and only a later render with the request handled leaves the user's Back alone; lab run 2)
+  const [handledReq, setHandledReq] = useState("");
+  useEffect(() => {
+    const req = `${openId ?? ""}#${openSeq ?? 0}`;
+    if (!openId?.startsWith("$") || handledReq === req) return;
+    if (photos.photos.some((p) => p.event_id === openId)) {
+      setHandledReq(req);
+      setSel(null);
+      setSelPhoto(openId);
+    }
+  }, [openId, openSeq, photos.photos, handledReq]);
 
   const tryOpen = (m: VodSession) => {
     if (!m.end_ms) {
@@ -427,10 +442,11 @@ function usePoster(m: VodSession, index: number) {
   };
 }
 
+let openSeq = 0;
 /** Open (or raise) the Memories window for `roomId` (native: fetches sessions + clips on open). */
 export function openMemoriesWindow(roomId: string, open?: string): void {
   // re-read clips now (native re-reads on open)
   void getStateAll(roomId, CLIP_TYPE);
   currentTitle = "Memories 📼";
-  openWindow("memories", { roomId, ...(open ? { open } : {}) });
+  openWindow("memories", { roomId, ...(open ? { open, openSeq: ++openSeq } : {}) });
 }

@@ -1,0 +1,25 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.line {
+  margin: 0;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  line-height: 1.45;
+  color: var(--th-text-primary);
+}
+.small {
+  margin: 0;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  line-height: 1.4;
+  color: var(--th-text-muted);
+}
+/* OK fills its footer cell like the Basic "Not now" beside it, label centred at every width (punch list #8) */
+.ok {
+  width: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

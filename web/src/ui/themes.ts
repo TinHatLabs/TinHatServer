@@ -16,6 +16,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import { BUILTINS, ROLE_IDS, formatColour, parseLiteral, resolveForApp, type NamesMode, type Theme, type TokensSpec, type Variant } from "../theme/engine";
 import { guardC } from "../theme/ops";
 import { readLook } from "../theme/look";
+import { applyPersonal } from "./textSize";
 import { readShape, type Shape } from "../theme/shape";
 import { canonJson } from "../theme/canon";
 import { setPrefRaw } from "../core/prefs";
@@ -257,14 +258,16 @@ function paint(t: ThemeColours, boot = true): void {
     const before = onDocument ? themeVars(onDocument) : null;
     for (const [k, val] of Object.entries(themeVars(t))) if (!before || before[k] !== val) root.style.setProperty(k, val);
     root.style.colorScheme = t.variant;
-    // ENGINE.md §10: the look — fonts from the allowed lists, the text size (tokens.css scales every type size by it)
+    // ENGINE.md §10: the look — fonts from the allowed lists
     // (an empty value removes the inline declaration: tokens.css's default comes back)
     const look = readLook(t.doc);
     const chat = look.fonts.chat ?? look.fonts.ui;
     root.style.setProperty("--th-font", look.fonts.ui ? `${quoteFamily(look.fonts.ui)}, ${FONT_STACK}` : "");
     root.style.setProperty("--th-font-chat", chat ? quoteFamily(chat) : "");
     root.style.setProperty("--th-font-mono", look.fonts.code ? `${quoteFamily(look.fonts.code)}, monospace` : "");
-    root.style.setProperty("--th-text-scale", look.size !== 100 ? String(look.size / 100) : "");
+    // P22 (12.1.17): the text size and the density are the PERSON's, never the theme's type.size / shape.density
+    // (textSize.ts: --th-text-scale, the room row, the chat group gap)
+    applyPersonal();
     // 11.0 (ISLANDS-ARCH §3.4): the theme's shape block — island radius, gap, margin, border (theme/shape.ts)
     const sh = readShape(t.doc);
     root.style.setProperty("--th-shape-radius", `${sh.radius}px`);

@@ -21,6 +21,8 @@ import { nameNow, usePerson, useRoomLabel } from "../names";
 import { useGameCover } from "./covers";
 import s from "./WhosAround.module.css";
 import { PersonMenuItems } from "@/features/safety";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
+import { WidgetPersonName } from "@/features/spaces/PersonName";
 
 const ACTIVITY_TYPE = "dev.tinhat.activity";
 
@@ -183,7 +185,7 @@ function HoverCard({ mxid, anchor, onClose }: { mxid: string; anchor: HTMLElemen
       <div className={s.cardBody}>
         <Avatar size={48} name={who.name} seed={mxid} imageSource={who.avatar} />
         <div className={s.cardText}>
-          <div className={s.cardName}>{who.name}</div>
+          <WidgetPersonName as="div" block mxid={mxid} className={s.cardName} name={who.name} />
           <div className={s.cardId}>{mxid}</div>
           <PresenceLine mxid={mxid} />
         </div>
@@ -221,6 +223,7 @@ function PersonRowView({ id, row, away, enter, full, ctx }: { id: string; row: P
         }}
       >
         <Avatar size={ctx.mobile ? 28 : 20} name={who.name} seed={id} imageSource={who.avatar} {...avatarDot(row, "var(--th-widget-bg)")} />
+        <PrestigeInRow mxid={id} rowGap={8} size={12} />
         <span className={s.name} data-away={away ? "" : undefined}>
           {who.name}
         </span>
@@ -375,7 +378,7 @@ function HiddenNote({ model: m, ctx }: PartProps<AroundModel>) {
   return (
     <span className={s.hiddenNote} title="You're hidden from others" data-hidden-note="">
       <span className={s.hiddenDot} />
-      <span>Hidden ·</span>
+      <span className={s.hiddenWord}>Hidden ·</span>
       <button
         type="button"
         className={s.link}

@@ -14,6 +14,7 @@ import { useRegistry } from "@/core/registry";
 import { useContainer, useRolesState } from "@/features/spaces";
 import { buildMemberRows } from "@/features/spaces/RightPanel";
 import { AnimatedImage, Avatar, ConfirmDialog, GlowButton, Icon, Menu, MenuItem, ToolButton, cx, useTip } from "@/ui";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 import type { ItemOut } from "@/actions/evaluate";
 import type { Handler } from "@/actions/run";
 import { Dim, EditableRow, RowButton, bespokeOk, shownItems, useRow, type RowState } from "@/actions/ui/rowHost";
@@ -668,6 +669,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                   {it.mention ? (
                     <>
                       <Avatar size={24} name={it.mention.room ? "@" : it.label} seed={it.seed} imageSource={it.avatar ?? null} />
+                      {!it.mention.room && <PrestigeInRow mxid={it.mention.userId} roomId={roomId} rowGap={6} />}
                       <span className={s.popLabel}>{it.mention.room ? it.label : it.label}</span>
                     </>
                   ) : (

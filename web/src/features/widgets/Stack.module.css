@@ -66,7 +66,7 @@
 .stack[data-mobile] .add {
   height: 44px;
   margin-top: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--th-text-scale, 1));
   border-radius: 12px;
 }
 

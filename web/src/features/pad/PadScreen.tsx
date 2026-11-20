@@ -15,6 +15,7 @@
 // phone's): header · my row · Watch (only while someone shares) · soundboard (Favourites, the web search, This room,
 // Recent) · Media Party (only when the call room has one) · people. PadExtras.tsx has the new parts.
 // Presses are optimistic (the button moves at once, a thin ring until the PC answers, rolled back with its reason).
+import { PadGames } from "@/features/play";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAccountData, useMember, useRoomName } from "@/core/matrix";
 import { openRoom } from "@/core/bus";
@@ -30,6 +31,7 @@ import { closePad, openPad, padController, useDeviceName, usePadCtrl, usePadDevi
 import { PartyCard, PhoneModes, Watch, WebSearch } from "./PadExtras";
 import { myRowNote } from "./words";
 import s from "./PadScreen.module.css";
+import { PersonName } from "@/features/spaces/PersonName";
 
 const PENDING_RING = "var(--th-pad-pending-ring)";
 const SHEET_ANCHOR = { x: 0, y: 0, width: 0, height: 0 };
@@ -90,6 +92,7 @@ function PadScreen() {
       <PhoneModes view={view} device={device} mobile={mobile} />
       <Sounds view={view} device={device} mobile={mobile} dim={!live} />
       <PartyCard view={view} device={device} mobile={mobile} dim={!live} />
+      <PadGames room={view.room} dim={!live} />
       <People view={view} onPick={(u, el) => setVol({ u, anchor: el })} />
     </div>
   );
@@ -403,7 +406,9 @@ function PersonRow({ p, room, onPick }: { p: PadPersonView; room: string; onPick
         <Avatar size={36} name={name} seed={p.u} imageSource={m?.avatarMxc ?? null} />
       </span>
       <span className={s.personText}>
-        <span className={s.personName}>{name}</span>
+        <span className={s.personName}>
+          <PersonName mxid={p.u} roomId={room}>{name}</PersonName>
+        </span>
         {line && <span className={s.personSub}>{line}</span>}
       </span>
       {p.away && (

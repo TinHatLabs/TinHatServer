@@ -14,6 +14,7 @@ import dlg from "@/features/settings/dialogs.module.css";
 import { applyIgnore } from "./SafetyHost";
 import { bind, deleteMyAccount, deleteRefusalNow, finishDeleted, me, useIgnored } from "./store";
 import s from "./safety.module.css";
+import { PersonName } from "@/features/spaces/PersonName";
 
 export function IgnoredPeopleSection() {
   const list = useIgnored();
@@ -38,7 +39,7 @@ function IgnoredRow({ mxid, first }: { mxid: string; first: boolean }) {
       id={first ? "privacy.ignored" : undefined}
       attrs={{ "data-ignored": mxid }}
       icon={<Avatar size={32} name={name} seed={mxid} imageSource={p.avatarUrl ?? null} />}
-      label={name}
+      label={<PersonName mxid={mxid}>{name}</PersonName>}
       description={mxid}
       control={
         <Button

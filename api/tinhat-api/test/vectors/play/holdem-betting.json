@@ -1,0 +1,548 @@
+{
+ "v": 1,
+ "about": "No-limit betting, blinds 1/2. seats = clockwise with stacks before the blinds. actions are applied in turn order from the start of the hand: [\"fold\"], [\"check\"], [\"call\"], [\"raise\", TO] (raise or bet TO a total for this street), [\"allin\"]. expect = after the last action: street (preflop|flop|turn|river|showdown = no more betting, deal the rest|done = one player left), next seat to act, and its legal moves (call = chips to add; raise = the TO range, null = may not raise). Or error = the index of the refused action and its code. Rules: heads-up the button is the small blind and acts first preflop, last after; min raise = the biggest raise so far this street (at least the big blind); an all-in short of a full raise does not let players who already acted raise again unless the raises since their last action add up to a full raise; a big blind all-in for less still leaves the full big blind to call.",
+ "cases": [
+  {
+   "id": "hu-preflop-button-first",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [],
+   "expect": {
+    "street": "preflop",
+    "next": "1",
+    "legal": {
+     "fold": true,
+     "check": false,
+     "call": 1,
+     "raise": {
+      "min": 4,
+      "max": 100
+     }
+    }
+   },
+   "why": "heads-up: the button posts the small blind and acts first before the flop"
+  },
+  {
+   "id": "hu-bb-option",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "call"
+    ]
+   ],
+   "expect": {
+    "street": "preflop",
+    "next": "2",
+    "legal": {
+     "fold": true,
+     "check": true,
+     "call": 0,
+     "raise": {
+      "min": 4,
+      "max": 100
+     }
+    }
+   },
+   "why": "when the button just calls, the big blind still gets to act (check or raise)"
+  },
+  {
+   "id": "hu-postflop-bb-first",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "call"
+    ],
+    [
+     "check"
+    ]
+   ],
+   "expect": {
+    "street": "flop",
+    "next": "2",
+    "legal": {
+     "fold": true,
+     "check": true,
+     "call": 0,
+     "raise": {
+      "min": 2,
+      "max": 98
+     }
+    }
+   },
+   "why": "heads-up after the flop: the big blind (not the button) acts first; minimum bet = the big blind"
+  },
+  {
+   "id": "three-utg-first",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 50
+    },
+    {
+     "seat": "2",
+     "stack": 50
+    },
+    {
+     "seat": "3",
+     "stack": 50
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [],
+   "expect": {
+    "street": "preflop",
+    "next": "1",
+    "legal": {
+     "fold": true,
+     "check": false,
+     "call": 2,
+     "raise": {
+      "min": 4,
+      "max": 50
+     }
+    }
+   },
+   "why": "three players: seat 2 small blind, seat 3 big blind, the button (seat 1) acts first"
+  },
+  {
+   "id": "min-raise-follows-last-raise",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    },
+    {
+     "seat": "3",
+     "stack": 100
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "raise",
+     10
+    ]
+   ],
+   "expect": {
+    "street": "preflop",
+    "next": "2",
+    "legal": {
+     "fold": true,
+     "check": false,
+     "call": 9,
+     "raise": {
+      "min": 18,
+      "max": 100
+     }
+    }
+   },
+   "why": "a raise to 10 (8 more than 2) makes the next minimum raise 10 + 8 = 18"
+  },
+  {
+   "id": "short-allin-no-reopen",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 15
+    },
+    {
+     "seat": "3",
+     "stack": 100
+    }
+   ],
+   "button": "3",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "raise",
+     10
+    ],
+    [
+     "call"
+    ],
+    [
+     "allin"
+    ]
+   ],
+   "expect": {
+    "street": "preflop",
+    "next": "3",
+    "legal": {
+     "fold": true,
+     "check": false,
+     "call": 5,
+     "raise": null
+    }
+   },
+   "why": "button raises to 10, the small blind calls, the big blind goes all-in to 15 (5 more, less than a full raise of 8): the button, who already acted, may only call or fold"
+  },
+  {
+   "id": "short-allins-add-up",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 15
+    },
+    {
+     "seat": "3",
+     "stack": 22
+    },
+    {
+     "seat": "4",
+     "stack": 100
+    }
+   ],
+   "button": "2",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "raise",
+     10
+    ],
+    [
+     "allin"
+    ],
+    [
+     "allin"
+    ],
+    [
+     "call"
+    ]
+   ],
+   "expect": {
+    "street": "preflop",
+    "next": "1",
+    "legal": {
+     "fold": true,
+     "check": false,
+     "call": 12,
+     "raise": {
+      "min": 30,
+      "max": 100
+     }
+    }
+   },
+   "why": "seat 1 raises to 10; two short all-ins (15, then 22) add up to 12 over seat 1's 10, at least a full raise (8): seat 1 may raise again (to at least 30)"
+  },
+  {
+   "id": "short-allin-first-to-act",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    },
+    {
+     "seat": "3",
+     "stack": 3
+    }
+   ],
+   "button": "3",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "allin"
+    ]
+   ],
+   "expect": {
+    "street": "preflop",
+    "next": "1",
+    "legal": {
+     "fold": true,
+     "check": false,
+     "call": 2,
+     "raise": {
+      "min": 5,
+      "max": 100
+     }
+    }
+   },
+   "why": "the button goes all-in for 3 (1 over the big blind, less than a full raise): the small blind owes 2 more and, not having acted, may raise; the minimum raise is still 2 over the 3 = 5"
+  },
+  {
+   "id": "bad-min-raise",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "raise",
+     3
+    ]
+   ],
+   "expect": {
+    "error": {
+     "at": 0,
+     "code": "bad-amount"
+    }
+   },
+   "why": "a raise to 3 is under the minimum raise to 4"
+  },
+  {
+   "id": "check-facing-bet",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    },
+    {
+     "seat": "3",
+     "stack": 100
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "check"
+    ]
+   ],
+   "expect": {
+    "error": {
+     "at": 0,
+     "code": "bad-action"
+    }
+   },
+   "why": "the first player facing the big blind can't check"
+  },
+  {
+   "id": "everyone-allin-runs-out",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 30
+    },
+    {
+     "seat": "2",
+     "stack": 30
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "allin"
+    ],
+    [
+     "call"
+    ]
+   ],
+   "expect": {
+    "street": "showdown",
+    "next": null,
+    "legal": null
+   },
+   "why": "both all-in before the flop: no more betting, the board is dealt out"
+  },
+  {
+   "id": "fold-ends-hand",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 30
+    },
+    {
+     "seat": "2",
+     "stack": 30
+    },
+    {
+     "seat": "3",
+     "stack": 30
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "fold"
+    ],
+    [
+     "fold"
+    ]
+   ],
+   "expect": {
+    "street": "done",
+    "next": null,
+    "legal": null
+   },
+   "why": "everyone folds to the big blind: the hand is over"
+  },
+  {
+   "id": "bb-allin-short-others-call-full",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 100
+    },
+    {
+     "seat": "3",
+     "stack": 1
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [],
+   "expect": {
+    "street": "preflop",
+    "next": "1",
+    "legal": {
+     "fold": true,
+     "check": false,
+     "call": 2,
+     "raise": {
+      "min": 4,
+      "max": 100
+     }
+    }
+   },
+   "why": "a big blind all-in for 1: the others still owe the full big blind of 2"
+  },
+  {
+   "id": "lone-player-vs-allins",
+   "seats": [
+    {
+     "seat": "1",
+     "stack": 100
+    },
+    {
+     "seat": "2",
+     "stack": 10
+    },
+    {
+     "seat": "3",
+     "stack": 10
+    }
+   ],
+   "button": "1",
+   "blinds": [
+    1,
+    2
+   ],
+   "actions": [
+    [
+     "call"
+    ],
+    [
+     "allin"
+    ],
+    [
+     "allin"
+    ],
+    [
+     "call"
+    ]
+   ],
+   "expect": {
+    "street": "showdown",
+    "next": null,
+    "legal": null
+   },
+   "why": "the only player with chips behind has matched every all-in: nobody can act, the board runs out"
+  }
+ ]
+}

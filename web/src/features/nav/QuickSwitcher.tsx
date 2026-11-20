@@ -33,6 +33,7 @@ import { paletteRoomLists } from "./palettelists";
 import { paletteChoice } from "./paletteChoice";
 import { openNavDialog } from "./dialogs";
 import s from "./QuickSwitcher.module.css";
+import { PrestigeInRow } from "@/features/spaces/PrestigeInRow";
 
 /** Pick mode (THEMES-UI.md §14.5 "Share to a room…"): the same switcher with its own title and placeholder, the room
  *  open now listed first, and a pick handed to `onPick` instead of opening the room. */
@@ -275,6 +276,7 @@ function QuickSwitcher({ initialStage, initialQuery, pick, onClose }: { initialS
             >
               <div className={s.inner}>
                 <Lead it={it} room={rowsById.get(it.id)} size={mobile ? 36 : 28} />
+                {it.kind === "person" && <PrestigeInRow mxid={it.id} rowGap={4} />}
                 <span className={s.name}>{it.label}</span>
                 {/* an invite: the room list's "Invited" pill (the word is the table's palette.texts.inviteMarker,
                     ACTIONS.md §10.1) — and no unread badge */}

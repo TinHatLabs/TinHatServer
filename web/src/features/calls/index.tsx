@@ -35,7 +35,7 @@ import { applyGameChat, applyShareRecordingOnly, joinCorner, leaveCorner, pullAs
 import { installAfk, setAfk } from "./afk";
 import { answerAsk, cancelAsk, installSameRoom, linkWith, setHearThrough, unlink } from "./sameroom/link";
 export { rememberedPairs, forgetPair, PAIRS_KEY as SAME_ROOM_PAIRS_KEY } from "./sameroom/link";
-import { disconnectParticipant, serverMute, serverUnmute, setPermsProvider, setRankProvider } from "./moderation";
+import { askToUnmute, disconnectParticipant, serverMute, serverUnmute, setPermsProvider, setRankProvider } from "./moderation";
 import { answerIncoming, declinableRing, declineIncoming, dismissIncoming, installCallWatch, roomCall, useIncomingCalls, useIncomingRing, useRoomCall } from "./callwatch";
 import { heardSummary, I_HEAR_REASON, NOT_ME_REASON, noteMute } from "./hear";
 import "./stats";
@@ -194,6 +194,7 @@ useCallStore.setState({
   serverMute,
   serverUnmute,
   disconnectParticipant,
+  askToUnmute,
   reconnectMic: () => void engine.reconnectMic(),
   healPeerAudio: (identity: string) => {
     let n = 0;

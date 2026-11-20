@@ -1,0 +1,78 @@
+/* CallChip.module.css — the game chips in the call's status strip / above the phone call's tiles. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 4px 0 10px;
+  border-radius: 13px;
+  border: 1px solid var(--th-border-strong);
+  background: var(--th-surface-overlay);
+  color: var(--th-text-primary);
+  font: inherit;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip:hover {
+  background: var(--th-surface-hover);
+}
+.rig {
+  border-color: var(--th-accent-dim);
+}
+.text {
+  font-weight: 600;
+}
+.join {
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: var(--th-accent-base);
+  color: var(--th-text-on-accent);
+  font-weight: 700;
+  font-size: calc(11px * var(--th-text-scale, 1));
+}
+.mobile {
+  height: 36px;
+  border-radius: 18px;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  padding: 0 5px 0 14px;
+}
+.mobile .join {
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-size: calc(13px * var(--th-text-scale, 1));
+}
+.strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px 8px;
+}
+.strip:empty {
+  display: none;
+}
+.glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: -2px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+}
+.glyphRig {
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--th-accent-dim);
+  color: var(--th-accent-bright);
+  font-size: calc(10px * var(--th-text-scale, 1));
+}
+/* the phone's Games chip (#23): the same 36 px pill, no Join pill; lit while a table is open */
+.games {
+  padding: 0 14px 0 10px;
+  gap: 6px;
+  flex: none;
+}
+.gamesLive {
+  border-color: var(--th-accent-dim);
+  box-shadow: inset 0 0 0 1px var(--th-accent-dim);
+}

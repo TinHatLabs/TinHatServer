@@ -76,6 +76,11 @@ export interface MenuSubItem {
   enabled?: boolean;
   /** ADDITIVE (☰ Theme menu, THEMES-UI §12): a separator above this row */
   separatorBefore?: boolean;
+  /** ADDITIVE (☰ Particles on phones, 12.1.17): a MenuSectionLabel above this row (the room the rows are about) */
+  section?: string;
+  /** ADDITIVE (☰ Particles on phones, 12.1.17): a disabled explanation line; on a phone's sheet its words wrap instead
+   *  of being cut off (the reason a row is greyed must stay readable at 360 px) */
+  note?: boolean;
   /** ADDITIVE (☰ Theme menu, THEMES-UI §12): a theme swatch at the row's right end — CSS colours [fill, border, dot 1,
    *  dot 2, dot 3] */
   swatch?: readonly string[];

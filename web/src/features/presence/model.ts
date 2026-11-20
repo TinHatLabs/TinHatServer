@@ -84,8 +84,9 @@ export interface Seen {
   state: "online" | "away" | "call";
   /** the call's room ("" unless state is call and we may see it) */
   room: string;
-  /** A4.4: {text, emoji, color} when the person has a valid custom status (web reads it already) */
-  status?: { text: string; emoji: string; color: string };
+  /** A4.4: {text, emoji, color} when the person has a valid custom status (web reads it already); `full` = the
+   *  whole text of a status over 40 characters (D07.6; status.ts liveStatus decides which one shows) */
+  status?: { text: string; emoji: string; color: string; full?: string };
 }
 
 /** §2.5: the GET body → mxid → Seen. Unknown states and malformed rows are dropped (no dot beats a wrong dot);
@@ -101,9 +102,11 @@ export function parseUsers(body: unknown): Map<string, Seen> {
     if (state !== "online" && state !== "away" && state !== "call") continue;
     const room = state === "call" && typeof o!.room === "string" && o!.room.startsWith("!") ? o!.room : "";
     const seen: Seen = { state, room };
-    const st = o!.status as { text?: unknown; emoji?: unknown; color?: unknown } | undefined;
-    if (st && typeof st === "object" && typeof st.text === "string" && st.text.trim() && typeof st.color === "string")
+    const st = o!.status as { text?: unknown; emoji?: unknown; color?: unknown; full?: unknown } | undefined;
+    if (st && typeof st === "object" && typeof st.text === "string" && st.text.trim() && typeof st.color === "string") {
       seen.status = { text: st.text.trim(), emoji: typeof st.emoji === "string" ? st.emoji : "", color: st.color };
+      if (typeof st.full === "string" && st.full.trim()) seen.status.full = st.full.trim();
+    }
     out.set(mxid, seen);
   }
   return out;

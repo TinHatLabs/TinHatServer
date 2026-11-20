@@ -11,6 +11,7 @@ import { EventStatus, type MatrixEvent } from "matrix-js-sdk";
 import { usePowerLevels, useMyMembership, useClient } from "@/core/matrix";
 import { usePref } from "@/core/prefs";
 import { Icon, TextField, cx, useTip } from "@/ui";
+import { PrestigeFor } from "@/features/spaces/PersonName";
 import { useRoomTimeline } from "@/features/chat";
 import { fmtClock, useClockMode, type ClockMode } from "@/features/settings";
 import { diceHistory, diceSummary, evaluateDice, parseDice, withAdvantage, type DiceEntry } from "@/widgets/dice";
@@ -105,7 +106,13 @@ function Who({ e, m }: { e: DiceView; m: DiceModel }) {
         Private
       </span>
     );
-  return <>{e.sender === m.me ? "You" : p.name}</>;
+  if (e.sender === m.me) return <>You</>;
+  return (
+    <>
+      <PrestigeFor mxid={e.sender} roomId={m.room} size={12} />
+      {p.name}
+    </>
+  );
 }
 
 function When({ e }: { e: DiceView }) {

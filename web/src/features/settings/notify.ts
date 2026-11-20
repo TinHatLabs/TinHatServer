@@ -36,6 +36,8 @@ import { webActions } from "@/features/push/notifactions";
 import { noteIcon } from "./noteicon";
 import { toastNote } from "./toastpreview";
 import { forgetPosts, isNewestPost, pickNotified, postTicket, type Notified } from "./notifypick";
+import { chatMsgOf, countsWithoutQuiet, highlightWithoutQuiet, roomChatIndex, totalWithoutQuiet } from "@/features/media/memories/chatHide";
+import { quietInChat } from "@/features/media/memories/photos";
 
 const log = createLogger("notify");
 
@@ -217,7 +219,9 @@ function latestBody(room: Room): Notified | null {
   // 6-9: a blank one keeps its event, sender and thread (notifypick.ts)
   const c = peekClient();
   const me = c?.getUserId();
-  return pickNotified(room.getLiveTimeline().getEvents(), (e) => e.getSender() !== me && !!c?.getPushActionsForEvent(e as MatrixEvent)?.notify);
+  // 12.1.17: a quiet Memories photo is never what a notification is about (memories/chatHide.ts)
+  const idx = roomChatIndex(room);
+  return pickNotified(room.getLiveTimeline().getEvents(), (e) => e.getSender() !== me && !quietInChat(idx, chatMsgOf(e as MatrixEvent)) && !!c?.getPushActionsForEvent(e as MatrixEvent)?.notify);
 }
 
 export function toastBody(room: Room, isDm: boolean, rise: number): { body: string; sender: string; eventId: string; thread: string } {
@@ -307,7 +311,7 @@ const fireLog: number[] = [];
 function countFor(c: MatrixClient, room: Room, dms: Set<string>): number {
   const mode = roomMode(c, room.roomId, dms.has(room.roomId));
   if (mode === "mute") return 0;
-  return mode === "mentions" ? room.getUnreadNotificationCount(NotificationCountType.Highlight) : room.getUnreadNotificationCount(NotificationCountType.Total);
+  return mode === "mentions" ? highlightWithoutQuiet(c, room) : totalWithoutQuiet(c, room);
 }
 
 /** A5.4: the baseline comes from the first NETWORK sync (never the IndexedDB cache) and is taken again after a
@@ -334,14 +338,21 @@ export function scanOnce(c: MatrixClient, now = Date.now()): string[] {
     present.add(id);
     const isDm = dms.has(id);
     const mode = roomMode(c, id, isDm);
-    const count =
-      mode === "mentions" ? room.getUnreadNotificationCount(NotificationCountType.Highlight) : room.getUnreadNotificationCount(NotificationCountType.Total);
+    // 12.1.17 round 2 (review #1 + launch-gate's gate row): rises, the badge and "the room was read" all use the badge's
+    // count (shared vectors `counts`: only UNCOUNTED photos come off — never a thread's). The SDK's count can't say whether
+    // a thread photo was read by its thread's receipt, so taking a SILENCED thread photo off as well could swallow the
+    // alert of a real message after it (a read thread photo + a new message = count 1 and an alert, on both apps).
+    // Silenced photos never become a notification's text (latestBody). Known limit: a thread photo that arrives already
+    // listed (a catch-up) can still raise a rise here; the desktop's tally (per event) silences it.
+    const badge = countsWithoutQuiet(c, room);
+    const rising = mode === "mentions" ? badge.highlight : badge.total;
+    const count = rising;
     const prev = seen.get(id);
-    const highlights = room.getUnreadNotificationCount(NotificationCountType.Highlight);
+    const highlights = badge.highlight;
     const highlightRose = highlights > (seenHighlights.get(id) ?? 0);
     if ((seenCounts.get(id) ?? prev?.count ?? 0) > 0 && count === 0) read.push(id); // A5.4: read → its notification goes
     seenCounts.set(id, count);
-    obs.push({ id, count, mode, attended: onScreen.has(id) && !threadNewsHidden(room) }); // threads: news in a hidden thread still notifies
+    obs.push({ id, count: rising, mode, attended: onScreen.has(id) && !threadNewsHidden(room) }); // threads: news in a hidden thread still notifies
     extra.set(id, { room, isDm, highlightRose, highlights });
   }
   const plan = planScan(seen, obs, seeded, now, fireLog);
@@ -418,7 +429,7 @@ export async function closeReadNotes(c: MatrixClient): Promise<void> {
         continue;
       }
       const mode = roomMode(c, room.roomId, dms.has(room.roomId));
-      const count = mode === "mute" ? 0 : mode === "mentions" ? room.getUnreadNotificationCount(NotificationCountType.Highlight) : room.getUnreadNotificationCount(NotificationCountType.Total);
+      const count = mode === "mute" ? 0 : mode === "mentions" ? highlightWithoutQuiet(c, room) : totalWithoutQuiet(c, room);
       if (!count) n.close();
     }
   } catch {
@@ -441,7 +452,8 @@ export function startNotifyEngine(): void {
   let wakeTimer = 0;
   const scan = () => {
     try {
-      scanOnce(c);
+      const fired = scanOnce(c);
+      if (fired.length) log.debug(`fired ${fired.join(",")}`); // the gates read this (debug: dev builds / #twdebug only)
     } catch (e) {
       log.warn("scan failed", e);
     }

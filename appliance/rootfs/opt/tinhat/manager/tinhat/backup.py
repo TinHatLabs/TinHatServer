@@ -2,6 +2,8 @@
 
 What a backup holds (enough to bring the same server back on another computer):
   db.dump        the whole database (pg_dump), so messages, rooms, people, keys
+  play.dump      the games database (pg_dump of tinhat_play: the chips; 0.3.20, when the server has one), restored only
+                 through playdb's checks; backup.json "play" records its counts (or why it is missing)
   state/         the manager's state and secrets, the name's credentials, the chat server's config and signing key
                  (its identity), call and web server config, the home-network certificate authority's public root,
                  the API's data and (0.3.16) its Pad state (the person mutes: api/pad/state.json)
@@ -27,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import compose, config, dbcheck, restorecap, restoresafe, state, hw
+from . import compose, config, dbcheck, playdb, restorecap, restoresafe, state, hw
 from .updater import PAD_FILE, NotPlain, _pad_dir_fd, _read_nofollow, pad_problem  # noqa: F401 (install.py)
 
 log = logging.getLogger("tinhat.backup")
@@ -251,11 +253,17 @@ async def prepare_staging() -> dict:
             dst.parent.mkdir(parents=True, exist_ok=True)
             (shutil.copytree if src.is_dir() else shutil.copy2)(src, dst)
     stage_pad(STAGING / "state")
+    # the games database (G1): never fails the backup (the chat's database is what a backup must hold); the result says
+    play_meta = await playdb.dump_to(STAGING / "play.dump")
+    if play_meta and not play_meta.get("ok"):
+        log.warning("backup: the games database wasn't copied: %s", play_meta.get("why"))
     st = state.load_state()
     meta = {"server_name": st.get("server_name"), "mode": st.get("mode"), "version": config.VERSION,
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"), "counts": await counts(),
             # where this computer is at home: a restore on another computer tells it to stand down (moved.py)
             "addresses": hw.addresses()}
+    if play_meta is not None:
+        meta["play"] = play_meta
     state.write_json(STAGING / "backup.json", meta, 0o600)
     return meta
 
@@ -401,8 +409,24 @@ async def test_restore() -> dict:
             raise BackupError(str(e))
         restored = checked.counts
         ok = same_key and restored == (meta.get("counts") or restored)
+        # the games database (G1): the same isolated check a real restore runs, against the counts the backup recorded
+        play_res = None
+        pdump = next(work.rglob("play.dump"), None)
+        pmeta = meta.get("play") if isinstance(meta, dict) and isinstance(meta.get("play"), dict) else None
+        if pdump is not None:
+            try:
+                pc = await playdb.isolated(pdump, work / "playcheck", _postgres_image(), (pmeta or {}).get("counts"))
+                play_res = {"ok": True, "restored": pc.counts}
+            except Exception as e:  # noqa: BLE001 — (an untrusted backup's metadata too: astra G1)
+                play_res, ok = {"ok": False, "why": str(e)[:300] or repr(e)[:300]}, False
+        elif pmeta is not None and pmeta.get("ok"):
+            play_res, ok = {"ok": False, "why": "the backup says it holds the games database, but it isn't there"}, False
+        elif pmeta is not None:
+            play_res = {"ok": False, "why": f"the games database wasn't in this backup ({pmeta.get('why')})"}
         res = {"at": int(time.time()), "ok": ok, "snapshot": snaps[0]["id"], "backup_time": snaps[0]["time"],
                "restored": restored, "in_backup": meta.get("counts"), "live": await counts(), "same_identity": same_key}
+        if play_res is not None:
+            res["play"] = play_res
         set_status(test=res)
         return res
     finally:
