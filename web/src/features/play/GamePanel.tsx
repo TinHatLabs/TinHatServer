@@ -9,6 +9,8 @@ import { getPref, onPrefChange, setPref } from "@/core/prefs";
 import { getC, setUiState } from "@/features/callui/store";
 import { useHoldChrome } from "@/features/callui/chrome";
 import { GamesWindow, SpaceBadge } from "./GamesWindow";
+import { StagePill } from "./Stage";
+import { useCallStore } from "@/features/calls";
 import { useRoomGame } from "./space";
 import { closeGamePanel, openGameWindow, usePlay } from "./store";
 import { GAME_WORDS, w } from "./rules";
@@ -114,15 +116,18 @@ function GamePanel({ roomId, table }: { roomId: string; table: string }) {
   }, [mobile]);
   const style: CSSProperties | undefined = mobile ? undefined : box ? { left: box.left, top: box.top, width: box.width, height: box.height } : undefined;
   const title = game ? GAME_WORDS[game] : "Games";
+  // B4: Table | Call while this table's room is my call
+  const stageable = useCallStore((c) => !!table && c.inCall && c.callRoomId === roomId);
   return (
     <OverlayPortal>
       <div ref={ref} role="dialog" aria-label={title} className={cx(s.panel, mobile ? s.phone : box ? s.covering : s.centred)} style={{ ...artVars(), ...style }} data-testid="game-panel">
         <div className={s.head}>
           {mobile && !table && <HeaderIconButton iconName="go-previous-symbolic" tip="Back to the call" onClick={closeGamePanel} />}
           {table && <HeaderIconButton iconName="go-previous-symbolic" tip={w("lobby.all_games")} onClick={() => openGameWindow(roomId, null)} data-testid="games-back" />}
-          <span className={s.title}>{title}</span>
+          {stageable && <StagePill on="table" className={mobile ? s.headPill : undefined} />}
+          <span className={cx(s.title, mobile && stageable && s.titleTight)}>{title}</span>
           <span className={s.grow} />
-          {g.owner && g.space && <SpaceBadge owner={g.owner} space={g.space} table={table} roomId={roomId} compact={mobile && !!table} />}
+          {g.owner && g.space && <SpaceBadge owner={g.owner} space={g.space} table={table} roomId={roomId} compact={mobile && !!table} tight={mobile && stageable} />}
           {!mobile && <HeaderIconButton iconName="window-close-symbolic" tip={w("lobby.back_to_chat")} onClick={closeGamePanel} data-testid="game-panel-close" />}
           {mobile && table && <HeaderIconButton iconName="window-close-symbolic" tip="Back to the call" onClick={closeGamePanel} data-testid="game-panel-close" />}
         </div>

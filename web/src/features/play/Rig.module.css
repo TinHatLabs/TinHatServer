@@ -983,3 +983,33 @@
   justify-content: center;
   flex-wrap: wrap;
 }
+
+/* B10 on The Rig (addendum §8.1 / §8.2): my away bar, the away pills, a dimmed person */
+.awayBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--th-border-subtle);
+  background: var(--th-surface-sunken);
+}
+.awayText {
+  font-size: calc(12px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+}
+.mobile .awayBar {
+  flex-direction: column;
+  align-items: stretch;
+  text-align: center;
+}
+.personAway {
+  opacity: 0.6;
+}
+.awayPill {
+  font-size: calc(10.5px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+  border: 1px solid var(--th-border-subtle);
+  border-radius: 999px;
+  padding: 0 6px;
+}

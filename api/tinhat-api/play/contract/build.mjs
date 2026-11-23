@@ -58,9 +58,13 @@ const frames = {
         act_rig_peek: { t: "act", table: RIG_TABLE, op: "op-0c1d2e3f4051627f", at: { round: 2, spin: 3, phase: "turn" }, a: { do: "peek", mechanic: P.dee, card: "moon-monday" } },
         act_rig_patch: { t: "act", table: RIG_TABLE, op: "op-0c1d2e3f40516280", at: { round: 2, spin: 4, phase: "turn" }, a: { do: "patch" } },
         act_rig_walk: { t: "act", table: RIG_TABLE, op: "op-0c1d2e3f40516281", at: { round: 2, spin: 6, phase: "turn" }, a: { do: "walk" } },
+        // v1.1 F7: reactions (table-level, no `at`; only toss takes `to`: a seat / the Rig player's order, or "pot")
+        act_react_tip: { t: "act", table: HOLDEM_TABLE, op: "op-r2react000000001", a: { do: "react", r: "tip" } },
+        act_react_toss: { t: "act", table: HOLDEM_TABLE, op: "op-r2react000000002", a: { do: "react", r: "toss", to: 4 } },
+        act_react_rig: { t: "act", table: RIG_TABLE, op: "op-r2react000000003", a: { do: "react", r: "toss", to: "pot" } },
     },
     server: {
-        hello: { t: "hello", v: 1, user: P.ana, now: NOW, rig_hidden: false, wallets: [SPACE] },
+        hello: { t: "hello", v: 1, user: P.ana, now: NOW, rig_hidden: false, wallets: [SPACE], features: ["fresh-screens", "react", "away2"] },
         room: { t: "room", room: ROOM, space: SPACE, owner: OWNER, tables: [listing({ game: "holdem", table: HOLDEM_TABLE, space: SPACE, owner: OWNER, status: "hand", host: P.ana, opts: { seats: 8 }, seats: [{ u: P.ana }, { u: P.ben }, { u: P.dee }], hand: { n: 1 } }),
             listing({ game: "rig", table: RIG_TABLE, space: SPACE, owner: OWNER, status: "round", host: P.ana, players: [{ u: P.ana }, { u: P.ben }, { u: P.cy }], round: { r: 2 } })] },
         view: { t: "view", table: HOLDEM_TABLE, vseq: viewEx.vseq, view: viewEx },
@@ -76,6 +80,10 @@ const frames = {
         error: { t: "error", code: "not-in-call", room: ROOM },
         error_wrong_server: { t: "error", code: "wrong-server", room: ROOM, space: "!squad:other.example", server: "other.example" },
         bye: { t: "bye", code: "replaced" },
+        // v1.1 F7
+        react: { t: "react", table: HOLDEM_TABLE, u: P.ana, seat: 1, r: "toss", to: 4, at: NOW },
+        react_watcher: { t: "react", table: HOLDEM_TABLE, u: P.cy, seat: null, r: "clap", at: NOW },
+        ack_cooldown: { t: "ack", op: "op-r2react000000001", ok: false, code: "cooldown", dup: false, retry_ms: 2600 },
     },
 };
 for (const [k, f] of Object.entries(frames.client)) check("clientFrame", f, `frames.client.${k}`);
@@ -83,7 +91,7 @@ for (const [k, f] of Object.entries(frames.server)) check("serverFrame", f, `fra
 files.set("frames.json", J(frames));
 
 // ---- HTTP: every endpoint with a request and an answer
-const meEx = { v: 1, space: SPACE, user: P.ana, balance: 38, holdings: 40, rank: 1, cap: 150, at_table: { table: HOLDEM_TABLE, game: "holdem", room: ROOM }, earned_today: 3, day_max: 8, accrual_s: 1260, chip_s: 3600, day: "2026-11-19", topup: { available: false, next_day: "2026-11-20" } };
+const meEx = { v: 1, space: SPACE, user: P.ana, balance: 38, holdings: 40, rank: 1, cap: 150, at_table: { table: HOLDEM_TABLE, game: "holdem", room: ROOM }, earned_today: 3, day_max: 16, accrual_s: 420, chip_s: 900, chip_minutes: 15, day: "2026-11-19", topup: { available: false, next_day: "2026-11-20" } , notices: { items: [{ id: 812, at: NOW - 60000, action: "grant", amount: 5, reason: "birthday" }], more: 0 }, side: { on: true, eligible: false, reason: "not-broke", left_today: 10, day_max: 10, broke_max: 4 } };
 const http = {
     about: "Base: https://<server>/api/play/v1 (the room's own server, rankServerFor). Header Authorization: Play <session> on everything but POST /session. CORS *, no cookies. Errors: {code, error} with the status in errors.json. All bodies JSON.",
     endpoints: [
@@ -110,6 +118,29 @@ const http = {
             res: (() => { const rv = steps.find((s) => s.game === "rig" && s.id === "10-reveal").views.spectator.round; return { v: 1, table: RIG_TABLE, r: rv.r, spinner: rv.spinner, preset: rv.preset, history: rv.history, reveal: rv.reveal }; })() },
         { method: "GET", path: "/tables/{id}/summary", def: "summary", status: 200, about: "what a chat card renders; hands for Hold'em, rounds + leaderboard + pit_boss for The Rig", req: null,
             res: { v: 1, table: HOLDEM_TABLE, game: "holdem", room: ROOM, space: SPACE, owner: OWNER, host: P.ana, status: "closed", opened: NOW - 3600000, closed: NOW, hands: 24, rounds: 0, biggest_pot: 60, net: { [P.ana]: -12, [P.ben]: -10, [P.dee]: 22 }, leaderboard: [], pit_boss: null } },
+        // ---- v1.1 F8 (addendum §5.3): only the space's own server answers; admins = power level 100 in the space or the server owner
+        { method: "GET", path: "/admin/spaces/{space}", def: "adminSpace", status: 200, about: "the admin screen's data (403 not-admin | not-member | wrong-server). Someone with open money: balance null, open true.", req: null,
+            res: { v: 1, space: SPACE, you: { admin: true, why: "space-admin" }, economy: { chip_minutes: { value: 15, source: "default" }, day_max: { value: 16, source: "default" }, start: { value: 10, source: "default" }, topup_to: { value: 5, source: "default" }, cap_base: { value: 100, source: "default" }, cap_per_rank: { value: 50, source: "default" }, side_day_max: { value: 10, source: "default" }, side_on: { value: true, source: "space" } },
+                wallets: [{ u: P.ana, balance: 38, rank: 1, cap: 150, open: false }, { u: P.ben, balance: null, rank: 0, cap: 100, open: true }] } },
+        { method: "POST", path: "/admin/spaces/{space}/wallets", def_req: "adminWalletsRequest", def: "adminWallets", status: 200, about: "grant | remove | set | reset | rank; who = a list (all-or-nothing) or \"everyone\" (skips listed). A resend of the same op: the first answer, dup true; the op with another request: 409 op-reused.",
+            req: { op: "op-r2admin00000001", action: "grant", who: [P.ana, P.ben], amount: 5, reason: "birthday" },
+            res: { done: [{ u: P.ana, before: { balance: 38, rank: 1 }, after: { balance: 43, rank: 1 } }, { u: P.ben, before: { granted: 5 }, after: { granted: 5 } }], skipped: [], log: 812, dup: false },
+            errors: [{ status: 409, body: { code: "at-table", error: "at-table", who: [P.ben] } }, { status: 404, body: { code: "no-wallet", error: "no-wallet", who: [P.cy] } }, { status: 400, body: { code: "bad-reason", error: "bad-reason" } }] },
+        { method: "PUT", path: "/admin/spaces/{space}/economy", def_req: "adminEconomyRequest", def: "adminEconomy", status: 200, about: "set and/or reset keys (bounds in rules.mjs ECONOMY_BOUNDS); nothing retroactive",
+            req: { op: "op-r2admin00000002", set: { chip_minutes: 10, day_max: 20 }, reset: ["start"], reason: "game night" },
+            res: { economy: { chip_minutes: { value: 10, source: "space" }, day_max: { value: 20, source: "space" }, start: { value: 10, source: "default" }, topup_to: { value: 5, source: "default" }, cap_base: { value: 100, source: "default" }, cap_per_rank: { value: 50, source: "default" }, side_day_max: { value: 10, source: "default" }, side_on: { value: true, source: "default" } }, log: 813, dup: false },
+            errors: [{ status: 400, body: { code: "bad-value", error: "bad-value", key: "day_max", min: 1, max: 200 } }] },
+        { method: "GET", path: "/admin/spaces/{space}/log?before=<id>&limit=50", def: "adminLog", status: 200, about: "newest first; who = \"someone\" once that wallet was deleted", req: null,
+            res: { v: 1, space: SPACE, entries: [{ id: 813, at: NOW, by: P.ana, by_role: "space-admin", action: "economy", who: "economy", amount: null, before: {}, after: { chip_minutes: 10, day_max: 20 }, reason: "game night", count: 0 },
+                { id: 812, at: NOW - 60000, by: P.ana, by_role: "space-admin", action: "grant", who: P.ben, amount: 5, before: { granted: 5 }, after: { granted: 5 }, reason: "birthday", count: 1 }] } },
+        { method: "POST", path: "/me/notices/seen", def_req: "noticesSeenRequest", def: "noticesSeen", status: 200, about: "acknowledge /me.notices up to that id (this wallet only)", req: { space: SPACE, upto: 812 }, res: { v: 1, seen: 1 } },
+        // ---- v1.1 F9 (addendum §6.4)
+        { method: "POST", path: "/side/tune", def_req: "sideStartRequest", def: "sideRun", status: 201, about: "start a run (409 not-broke | open-money | day-max, 403 side-off | not-member | wrong-server, 404 no-wallet); a new run cancels your old one",
+            req: { space: SPACE }, res: { run: "sRq7Wb2kLmN4pX8zT1", lo: 1, hi: 100, tries_left: 7, expires: NOW + 90000, pay: [3, 3, 3, 3, 2, 2, 1], left_today: 10 } },
+        { method: "POST", path: "/side/tune/{run}", def_req: "sideTuneRequest", def: "sideTune", status: 200, about: "one try (400 bad outside lo..hi, costs nothing; 404 no-run; 409 stale; 429 rate: 1 try / 300 ms). secret only when found, lost or cancelled.",
+            req: { op: "op-r2side000000001", guess: 50 }, res: { result: "higher", lo: 51, hi: 100, tries_left: 6, paid: 0, dup: false } },
+        { method: "POST", path: "/side/tune/{run}", def_req: "sideTuneRequest", def: "sideTune", status: 200, req: { op: "op-r2side000000002", guess: 62 },
+            res: { result: "found", lo: 51, hi: 74, tries_left: 4, paid: 3, secret: 62, wallet: { balance: 3, holdings: 3 }, dup: false } },
     ],
 };
 for (const e of http.endpoints) {
@@ -155,6 +186,17 @@ const WHEN = {
     rules: "a Patch / keep that would break the machine rules (bites > 6, two Taxes, a card twice)",
     greyed: "that card is dead, busted or wrongly called (can't be Called or Patched in)",
     "host-only": "only the table's host can do that",
+    // v1.1
+    cooldown: "a reaction too soon (your bucket, or the table's minute is full): the ack carries retry_ms; the socket stays open",
+    "op-reused": "an admin write's op was already used for a different request",
+    "bad-reason": "an admin why-text that is empty, too long, has control characters or a link, or looks like a Matrix id",
+    "bad-value": "an economy value outside its bounds (the answer names the key, min and max)",
+    "at-table": "the person has open money (at a table, in a round): only a grant is allowed",
+    "not-admin": "you aren't an admin of that space (power level 100 in the space) nor the server owner",
+    "not-broke": "Tune In is only for people at or below the broke line (4 chips)",
+    "day-max": "today's Tune In chips are used up",
+    "side-off": "Tune In is switched off for this space (or this server)",
+    "no-run": "no such Tune In run for you (expired, finished, or the server restarted)",
 };
 const errors = { about: "Every code: HTTP status (an HTTP error body is {code, error}; a socket ack carries code only), and when.", codes: Object.fromEntries(Object.entries(CODES).map(([c, s]) => [c, { http: s, when: WHEN[c] }])) };
 for (const c of Object.keys(CODES)) if (!WHEN[c]) problems.push(`errors: no WHEN for ${c}`);
@@ -215,7 +257,7 @@ const malformed = {
         { id: "frame-rig-move-on-holdem-table", def: "clientFrame", value: { t: "act", table: HOLDEM_TABLE, op: "op-a1b2c3d4e5f60718", at: { round: 1, spin: 1, phase: "turn" }, a: { do: "spin" } } },
         { id: "frame-whisper-text-and-template", def: "clientFrame", value: { t: "act", table: RIG_TABLE, op: "op-0c1d2e3f4051627d", at: { round: 2, spin: 5, phase: "turn" }, a: { do: "whisper", template: "bet-size", text: "x" } } },
         { id: "frame-market-pass-with-stake", def: "clientFrame", value: { t: "act", table: RIG_TABLE, op: "op-0c1d2e3f4051627a", at: { round: 1, spin: 0, phase: "setup" }, a: { do: "market", side: "pass", stake: 1 } } },
-        { id: "me-earned-25", def: "me", value: { ...meEx, earned_today: 25 } },
+        { id: "me-earned-201", def: "me", value: { ...meEx, earned_today: 201 } }, // v1.1: the day max goes to 200
         { id: "frame-act-bad-step", def: "clientFrame", value: { t: "act", table: RIG_TABLE, op: "op-0c1d2e3f4051627c", at: { round: 2, spin: 5, phase: "nudge" }, a: { do: "nudge", reel: 3, step: 2 } } },
     ],
 };

@@ -43,6 +43,18 @@ export const TIMERS = Object.freeze({ setup: 20_000, turn: 20_000, land: 2_000, 
 export const DEAL_ATTEMPTS = 64;
 export const TIMEOUTS_TO_WALK = 2;
 export const RAILBIRD_BELOW = 1; // a House member with fewer chips than this at the round's start is a Railbird
+// v1.1 B10 (addendum §8.1, The Rig): any Rig timeout of yours sets `away` for the NEXT rounds (the current round keeps
+// v1's rules); away = skipped as Spinner, never dealt in as a Mechanic, a watch-only Railbird; after AWAY_STAND_ROUNDS
+// rounds without you or AWAY_STAND_MS you stand up (checked at each round's start)
+export const AWAY = Object.freeze({ AWAY_STAND_ROUNDS: 6, AWAY_STAND_MS: 600_000 });
+const WATCH_ONLY = new Set(["nudge", "whisper", "peek", "market"]);
+const PUBLIC_MOVES = new Set(["spin", "call", "audit", "walk", "nudge", "patch"]); // moves everyone sees anyway
+const awayOf = (st) => (st.away && typeof st.away === "object" ? st.away : (st.away = {}));
+function setAwayRig(st, who, reason, now) {
+    const A = awayOf(st);
+    if (!A[who]) A[who] = { reason, since: now, rounds: 0 }; else A[who].reason = reason;
+    if (st.round?.back) st.round.back = st.round.back.filter((u) => u !== who); // a newer away beats an earlier pending return (astra r3 R3-2)
+}
 
 const clone = (x) => structuredClone(x);
 const own = (obj, k) => typeof k === "string" && Object.hasOwn(obj, k); // moves are untrusted: never "__proto__" & co
@@ -79,6 +91,11 @@ export function createTable({ table, room, space, host, now }) {
 
 export function nextDeadline(st) {
     const R = st.round;
+    // v1.1: a table waiting in the lobby still stands away players up on their clock (astra r1 #13)
+    if (!R && (st.status === "lobby" || st.status === "end") && st.away && Object.keys(st.away).length) {
+        const t = Math.min(...Object.values(st.away).map((a) => a.since + AWAY.AWAY_STAND_MS));
+        return Number.isFinite(t) ? t : null;
+    }
     if (!R || st.status !== "round") return null;
     if (R.phase === "turn" && R.away.since != null) {
         return R.away.since + Math.max(0, TIMERS.spinner_away - R.away.used);
@@ -124,24 +141,40 @@ function closeTable(st, effects, reason, now) {
 }
 
 function startNextRound(st, ctx, effects) {
+    const back = st.round?.back || []; // I'm back by a secret move in the round that just ended (public now)
+    for (const u of back) if (st.away) delete st.away[u];
     st.round = null;
     // spec rev 2: the admission check at every round setup; a failed check or a change seen earlier closes the table
     if (st.closing || ctx.admitted === false) return closeTable(st, effects, st.closing || "space-changed", ctx.now);
+    // v1.1: away players stand up after AWAY_STAND_ROUNDS rounds without them or AWAY_STAND_MS (never mid-round: this
+    // is between rounds, and an away player holds nothing in the next one)
+    const A = awayOf(st);
+    for (const u of Object.keys(A)) {
+        if (!st.seats.includes(u)) { delete A[u]; continue; }
+        if (ctx.now - A[u].since >= AWAY.AWAY_STAND_MS) standUp(st, u, effects); // the clock (rounds: below, with a real round)
+    }
     for (;;) {
         if (st.seats.length < PLAYERS.min) return endTable(st, effects);
-        const spinner = st.seats.find((u) => !st.spun.includes(u));
+        // fewer than PLAYERS.min players who aren't away: no setup, the table waits (nothing escrowed, no round counted)
+        if (st.seats.filter((u) => !A[u]).length < PLAYERS.min) { st.status = "lobby"; st.round = null; st.waiting_away = true; return; }
+        // an away player is skipped as Spinner (they keep their turn in this rotation if they come back before it ends)
+        const spinner = st.seats.find((u) => !st.spun.includes(u) && !A[u]);
         if (!spinner) return endTable(st, effects);
         st.spun.push(spinner);
         const bal = (u) => Math.max(0, ctx.balances?.[u] ?? 0);
         const bankroll = Math.min(st.opts.bankroll, bal(spinner));
         if (bankroll < MONEY.bankroll_min) { st.skipped.push(spinner); continue; } // "not enough chips": sits in the House
+        // this round is going ahead (every start check passed): it would be the AWAY_STAND_ROUNDS-th without them → they
+        // stand up now instead (holding nothing in it), so only a round that really starts counts (astra r1 #13, r2/r3 N3)
+        for (const u of st.seats.filter((x) => A[x] && A[x].rounds + 1 >= AWAY.AWAY_STAND_ROUNDS)) standUp(st, u, effects);
+        if (st.seats.length < PLAYERS.min) { st.spun.pop(); return endTable(st, effects); }
         const house = st.seats.filter((u) => u !== spinner);
         const firstOfRun = st.rounds_in_run === 0;
         const preset = firstOfRun || st.seats.length === PLAYERS.min ? PRESETS.lite : PRESETS[st.opts.preset];
         // Mechanics: House members who can stake, fewest Mechanic turns first, then seat order after the Spinner.
         const si = st.seats.indexOf(spinner), n = st.seats.length;
         const dist = (u) => (st.seats.indexOf(u) - si + n) % n;
-        const eligible = house.filter((u) => bal(u) >= MONEY.stake)
+        const eligible = house.filter((u) => bal(u) >= MONEY.stake && !A[u]) // an away player is never dealt in
             .sort((a, b) => (st.mech_count[a] || 0) - (st.mech_count[b] || 0) || dist(a) - dist(b));
         const mechanics = eligible.slice(0, preset.live).sort((a, b) => dist(a) - dist(b));
         const seed = Buffer.from(ctx.newSeed());
@@ -150,7 +183,9 @@ function startNextRound(st, ctx, effects) {
         for (const u of mechanics) st.mech_count[u] = (st.mech_count[u] || 0) + 1;
         st.rounds += 1; st.rounds_in_run += 1;
         const r = st.rounds;
-        const railbirds = house.filter((u) => bal(u) < RAILBIRD_BELOW);
+        const railbirds = house.filter((u) => bal(u) < RAILBIRD_BELOW || A[u]);
+        const watch = house.filter((u) => A[u]); // away: watch only (no Nudge, Whisper, Peek or Market)
+        for (const u of watch) A[u].rounds += 1;
         const R = {
             r, preset: preset.name, seed: seed.toString("hex"), commit: commitOf(seed),
             phase: "setup", deadline: ctx.now + TIMERS.setup,
@@ -161,7 +196,7 @@ function startNextRound(st, ctx, effects) {
             spins: preset.spins, spin: 1, dial: 1, calls_left: preset.calls, call_spin: 0, audit: null,
             timeouts: 0, away: { since: null, used: 0 },
             mutes: Object.fromEntries(mechanics.map((u) => [u, { left: preset.mutes, armed: false }])),
-            nudge_left: Object.fromEntries(house.map((u) => [u, preset.nudges ? 1 : 0])),
+            nudge_left: Object.fromEntries(house.map((u) => [u, preset.nudges && !A[u] ? 1 : 0])), watch,
             whispers: [], peeks: [], market: {}, market_done: [],
             pending: null, history: [], calls: [], refilled: [], patched: [],
             rake_to: {}, call_to: {}, bank: 0,
@@ -177,6 +212,14 @@ function startNextRound(st, ctx, effects) {
         for (const u of mechanics) esc(u, MONEY.stake, "stake");
         return;
     }
+}
+
+/** An away player stands up between rounds (the v1 leave with nothing in play): out of the seats, chips kept. */
+function standUp(st, u, effects) {
+    st.seats = st.seats.filter((x) => x !== u);
+    if (st.host === u) st.host = st.seats[0] ?? st.host;
+    if (st.away) delete st.away[u];
+    effects.push({ k: "left", who: u, reason: "away" });
 }
 
 function endTable(st, effects) {
@@ -199,6 +242,8 @@ function setupDone(R) {
 
 function finishSetup(st, ctx) {
     const R = st.round;
+    // a Mechanic's setup timeout (no keep): v1's timeout keep, and away from the next rounds (v1.1 §8.1)
+    for (const u of R.mechanics) if (!R.kept[u] && !R.left.includes(u)) setAwayRig(st, u, "timeout", ctx.now);
     for (const u of R.mechanics) if (!R.kept[u]) R.kept[u] = R.deals[u][0];
     R.slots = R.order.map((m, i) => ({ slot: i, owner: R.mechanics[m], card: R.kept[R.mechanics[m]], from_spin: 1, busted_spin: null, stake: MONEY.stake }));
     toTurn(st, ctx);
@@ -373,10 +418,15 @@ export function tick(st0, ctx) {
         const due = nextDeadline(st);
         if (due == null || ctx.now < due) break;
         changed = true;
+        if (!R) { // the lobby clock: stand up whoever is past it
+            for (const u of Object.keys(st.away || {})) if (ctx.now - st.away[u].since >= AWAY.AWAY_STAND_MS) { if (st.seats.includes(u)) standUp(st, u, effects); else delete st.away[u]; }
+            continue;
+        }
         if (R.phase === "setup") finishSetup(st, ctx);
         else if (R.phase === "turn") {
-            if (R.away.since != null) { finishRound(st, ctx, effects, "away"); continue; }
+            if (R.away.since != null) { setAwayRig(st, R.spinner, "gone", ctx.now); finishRound(st, ctx, effects, "away"); continue; }
             R.timeouts += 1;
+            setAwayRig(st, R.spinner, "timeout", ctx.now); // v1.1: away from the next rounds; this one keeps v1's rules
             if (R.timeouts >= TIMEOUTS_TO_WALK) finishRound(st, ctx, effects, "timeouts");
             else doSpin(st, ctx, Math.min(R.dial, R.bankroll));
         } else if (R.phase === "land") {
@@ -426,7 +476,7 @@ export function spaceChanged(st0, ctx) {
 }
 
 // ------------------------------------------------------------------------------------------------------------ moves
-const TABLE_MOVES = new Set(["join", "leave", "start", "kick", "close"]);
+const TABLE_MOVES = new Set(["join", "leave", "start", "kick", "close", "away"]);
 
 export function act(st0, who, a, ctx) {
     if (!a || typeof a !== "object" || typeof a.do !== "string") return no(st0, "bad");
@@ -450,6 +500,20 @@ export function act(st0, who, a, ctx) {
     if (!R || st.status !== "round") return no(st0, "phase");
     if (late) return no(st0, "stale");
     if (!inRound(R, who) || R.left.includes(who)) return no(st0, "not-your-turn");
+    if ((R.watch || []).includes(who) && WATCH_ONLY.has(a.do)) return no(st0, "rules"); // away this round: watch only
+    const r = actInRound(st0, st, who, a, ctx, effects, R);
+    // I'm back (v1.1 §8.1): a game move of your own in the current round clears away (never a reaction or a reconnect)
+    // A SECRET move (a keep, a Mute, a Market bet, a Peek, a Whisper) must not show anyone that this person did something,
+    // so it clears away only at the round's end (the reveal makes everything public); a public move clears it at once
+    if (r.ok && r.state !== st0 && r.state.away && r.state.away[who]) {
+        if (PUBLIC_MOVES.has(a.do)) { delete r.state.away[who]; refreshVersions(r.state); } // (views moved: versions follow)
+        else if (r.state.round) { const RR = r.state.round; RR.back = [...new Set([...(RR.back || []), who])]; refreshVersions(r.state); }
+    }
+    return r;
+}
+
+function actInRound(st0, st, who, a, ctx, effects, R) {
+    const bal = Math.max(0, ctx.balances?.[who] ?? 0);
     if (a.do === "nudge" && R.phase !== "nudge" && R.spinner !== who) {
         // too late: "taken" if someone else's Nudge closed the window this move was aimed at, else "window"
         const h = a.at && R.history.find((x) => x.spin === a.at.spin);
@@ -706,6 +770,12 @@ function tableMove(st0, st, who, a, ctx, effects) {
         closeTable(st, effects, "host", ctx.now);
         return ok(st, effects);
     }
+    case "away": { // v1.1: on = sit out from the next round (asked); off = I'm back
+        if (!st.seats.includes(who) || typeof a.on !== "boolean") return no(st0, "bad");
+        if (a.on) setAwayRig(st, who, "asked", ctx.now); else delete awayOf(st)[who];
+        if (!a.on && st.status === "lobby" && st.waiting_away) st.waiting_away = false;
+        return ok(st, effects);
+    }
     }
     return no(st0, "bad");
 }
@@ -737,6 +807,7 @@ function viewBody(st, who) {
             u, role: roleOf(st, u), ...(R && R.left.includes(u) ? { left: true } : {}), order: i + 1,
             connected: !st.offline.includes(u), skipped: st.skipped.includes(u),
             spun: st.spun.includes(u) && !(live && R.spinner === u && R.phase !== "reveal"), // this table's rotation
+            away: st.away && st.away[u] ? { reason: st.away[u].reason, since: st.away[u].since, stand_at: st.away[u].since + AWAY.AWAY_STAND_MS, hands_left: Math.max(0, AWAY.AWAY_STAND_ROUNDS - st.away[u].rounds) } : null, // v1.1
         }));
     const view = {
         game: "rig", table: st.table, space: st.space, status: st.status, host: st.host,

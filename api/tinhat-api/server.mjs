@@ -1270,7 +1270,23 @@ const play = installPlay(app, {
     federation: createFedResolver(),
     lk: { url: LK_API_URL.replace(/\/+$/, ""), key: LK_KEY, secret: LK_SECRET },
     isGuest: (mxid) => guestAccounts.some((a) => a.user === mxid) || /^@guest-/i.test(mxid) || mxid === (process.env.RECORDER_USER || "\u0000"),
+    isServerAdmin: playOwnerCheck(),
 });
+/** Games v1.1 F8 (addendum §5.1): "the server owner" = a Synapse server admin of this server (on a Tin Hat Server the
+ *  owner's account is one); one user record read with this process' admin token, which stays here; cached a minute. */
+function playOwnerCheck() {
+    const cache = new Map();
+    return async (mxid) => {
+        const c = cache.get(mxid); // only a "no" is cached (30 s): a revoked or deactivated admin loses it at once (astra r1 #3)
+        if (c && Date.now() - c.at < 30_000) return false;
+        let ok = false;
+        try { const r = await synapse(`/_synapse/admin/v2/users/${encodeURIComponent(mxid)}`, {}, ADMIN_TOKEN); ok = !!(r.ok && r.body && r.body.admin === true && !r.body.deactivated); }
+        catch { ok = false; }
+        if (ok) cache.delete(mxid); else cache.set(mxid, { at: Date.now() });
+        if (cache.size > 1000) cache.clear();
+        return ok;
+    };
+}
 
 // A rejected promise nobody awaited (an async route Express 4 doesn't watch) is logged, not fatal: one bad request
 // must not take calls, sounds and pushes down for everybody. Thrown exceptions still end the process (unknown state).

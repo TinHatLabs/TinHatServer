@@ -65,7 +65,7 @@ export function createOpenIdResolver({ hs, serverName, conf, federation }) {
     };
 }
 
-export function installPlay(app, { env = process.env, conf, hs, adminToken, serverName, federation, isGuest, lk = null, log = (s) => console.log(s) }) {
+export function installPlay(app, { env = process.env, conf, hs, adminToken, serverName, federation, isGuest, lk = null, log = (s) => console.log(s), isServerAdmin = async () => false }) {
     const dbConfigured = !!(env.PLAY_DB_URL || env.PLAY_DB_HOST);
     const flags = () => ({ play: dbConfigured && on(env.PLAY_ENABLED, true), rig_phone_apps: on(env.PLAY_RIG_PHONE_APPS, false) });
     const router = express.Router();
@@ -108,7 +108,8 @@ export function installPlay(app, { env = process.env, conf, hs, adminToken, serv
     const noWallet = (u) => isGuest(u) || u === system || (!!recorder && u === recorder);
     let playRef = null; // the sampler asks the platform for an open Rig round's running result (holdings, §2.1)
     if (sampler) sampler.setProvisional?.((w) => (playRef ? playRef.provisionalOf(w) : 0));
-    const play = createPlay({ pool, cfg, flags, spaces, spaceInfo, resolveOpenId, isGuest: noWallet, serverName, salt: saltFrom(conf), log, onMove: (u) => sampler?.touch(u) });
+    const play = createPlay({ pool, cfg, flags, spaces, spaceInfo, resolveOpenId, isGuest: noWallet, serverName, salt: saltFrom(conf), log, onMove: (u) => sampler?.touch(u),
+        isServerAdmin }); // F8: the server owner (a Synapse server admin here, from server.mjs) counts as an admin of every space it keeps
     playRef = play;
     if (sampler) sampler.setOnCredit((wid, sid) => play.pushWalletFor(wid, sid));
     play.routes(router);
@@ -138,4 +139,5 @@ export function installPlay(app, { env = process.env, conf, hs, adminToken, serv
     return { attach: (server) => play.attach(server), ready, drain: (ms, why) => play.drain(ms, why), pool };
 }
 
-export const PLAY_ENV_KEYS = ["PLAY_ENABLED", "PLAY_RIG_PHONE_APPS", "PLAY_DAY_MAX", "PLAY_START", "PLAY_TZ", "PLAY_DB_HOST", "PLAY_DB_NAME", "PLAY_DB_USER", "PLAY_DB_PASSWORD_FILE", "PLAY_DB_URL"];
+export const PLAY_ENV_KEYS = ["PLAY_ENABLED", "PLAY_RIG_PHONE_APPS", "PLAY_DAY_MAX", "PLAY_START", "PLAY_TZ",
+    "PLAY_CHIP_MINUTES", "PLAY_TOPUP_TO", "PLAY_CAP_BASE", "PLAY_CAP_PER_RANK", "PLAY_SIDE_DAY_MAX", "PLAY_SIDE_ON", "PLAY_DB_HOST", "PLAY_DB_NAME", "PLAY_DB_USER", "PLAY_DB_PASSWORD_FILE", "PLAY_DB_URL"];

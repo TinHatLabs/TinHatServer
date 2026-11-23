@@ -4,10 +4,10 @@
 // receipt (§2.5). Engines play with wallet ids; views go through adapt.mjs. Nothing here holds an admin capability:
 // room/space state comes from space.mjs's read-only reader.
 import { randomBytes, createHash, randomInt } from "node:crypto";
-import { readJson, RateLimit, ipBucket, mono } from "../reachcommon.mjs";
+import { readJson, RateLimit, ipBucket, mono as monoClock } from "../reachcommon.mjs";
 import { attachWs } from "./ws.mjs";
 import { validate } from "./jsonschema.mjs";
-import { SCHEMA } from "./contract/schema.mjs";
+import { SCHEMA, REACTIONS } from "./contract/schema.mjs";
 import { inTx, Conflict } from "./db.mjs";
 import * as L from "./ledger.mjs";
 import * as rules from "./rules.mjs";
@@ -15,17 +15,28 @@ import * as Holdem from "./holdem.mjs";
 import * as Rig from "./rig.mjs";
 import { holdemContract, rigContract, mapReveal } from "./adapt.mjs";
 import { rigProvisional } from "./provisional.mjs";
+import { createAdmin, noticesOf } from "./admin.mjs";
+import { createSide, sideOf } from "./side.mjs";
 
 export const PLAY = Object.freeze({
     SESSION_MS: 8 * 3600_000,
     SESSIONS_PER_ACCOUNT_MIN: 30, SESSIONS_PER_ADDRESS_MIN: 120,
     REQ_PER_SESSION_MIN: 600,
     SOCKETS_PER_PERSON: 4, FRAMES_PER_S: 20, FRAME_BURST: 40, SILENT_MS: 60_000,
+    // B2 (round 2): a Pad socket hides that person's cards on their other screens only while it is ALIVE: it counts
+    // in `you.screens` only if it sent a frame (its 20 s ping) within SCREEN_STALE_MS; checked every PAD_SWEEP_MS. A
+    // locked / backgrounded phone drops out in <= 30 s instead of the silent close's ~70 s.
+    SCREEN_STALE_MS: 25_000, PAD_SWEEP_MS: 5_000, // the edge is a timer at the last frame + 25 s; the sweep is a backstop (astra r1 #16)
+    // F7 table reactions (addendum §4.2): per person per table a bucket of REACT_BURST refilling one per REACT_REFILL_MS;
+    // per table REACT_TABLE_PER_MIN in a rolling minute; people watching from the call may react too
+    REACT_SPECTATORS: true, REACT_BURST: 3, REACT_REFILL_MS: 4_000, REACT_TABLE_PER_MIN: 40, REACT_DUP_MS: 60_000,
     MAX_FRAME: 16384, MAX_DEPTH: 32,
     BODY_LIMIT: 8192,
     DRAIN_MS: 30_000,
 });
 const ENGINES = { holdem: Holdem, rig: Rig };
+/** v1.1 (addendum §7.3): the socket-only pieces this server has, in `hello.features` (apps gate on the names). */
+export const PLAY_FEATURES = Object.freeze(["fresh-screens", "react", "away2"]);
 const B62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const tableId = (game) => (game === "holdem" ? "tH" : "tR") + Array.from({ length: 14 }, () => B62[randomInt(62)]).join("");
 const sha = (s) => createHash("sha256").update(s).digest("base64url");
@@ -48,6 +59,9 @@ class Refusal extends Error { constructor(code, extra = {}) { super(code); this.
 export function createPlay(deps) {
     const { pool, cfg, spaces, serverName } = deps;
     const now = deps.now || Date.now;
+    const mono = deps.mono || monoClock; // the transport clock (tests move it)
+    const SCREEN_STALE_MS = deps.padFreshMs ?? PLAY.SCREEN_STALE_MS;
+    const PAD_SWEEP_MS = deps.padSweepMs ?? PLAY.PAD_SWEEP_MS;
     const log = deps.log || ((s) => console.log(s));
     const flags = deps.flags || (() => ({ play: true, rig_phone_apps: false }));
     const isGuest = deps.isGuest || ((u) => /^@guest-/i.test(u));
@@ -62,6 +76,18 @@ export function createPlay(deps) {
     const perAccount = new RateLimit(PLAY.SESSIONS_PER_ACCOUNT_MIN, 60_000);
     const perAddress = new RateLimit(PLAY.SESSIONS_PER_ADDRESS_MIN, 60_000);
     const perSession = new RateLimit(PLAY.REQ_PER_SESSION_MIN, 60_000);
+    /** Open money (§5.2): seated at a table, or chips in a pot / an escrow. */
+    async function openMoney(c, wid) {
+        const { rows } = await c.query("SELECT 1 FROM play_seats WHERE wid = $1 AND active", [wid]);
+        if (rows.length) return true;
+        return (await L.holdingsOf(c, wid)).atTable > 0;
+    }
+    // F8 (addendum §5): the admin money screen's API
+    const admin = createAdmin({ pool, cfg, serverName, spaceInfo: deps.spaceInfo, isServerAdmin: deps.isServerAdmin || (async () => false), now, Refusal, RateLimit, openMoney,
+        onWalletChanged: (wid, sid) => { pushWalletFor(wid, sid).catch(() => {}); } });
+    // F9 (addendum §6): Tune In
+    const side = createSide({ pool, cfg, serverName, spaceInfo: deps.spaceInfo, now, mono, Refusal, openMoney, rng: deps.sideRng,
+        onWalletChanged: (wid, sid) => { pushWalletFor(wid, sid).catch(() => {}); } });
 
     // ------------------------------------------------------------------------------------ people + wallets
     async function widFor(c, sid, user) { const w = await L.widOfUser(c, sid, user); if (w) people.set(w, user); return w; }
@@ -77,7 +103,7 @@ export function createPlay(deps) {
         const { rows } = await c.query("SELECT rank FROM play_wallets WHERE wid = $1", [wid]);
         const h = await L.holdingsOf(c, wid, provisionalOf(wid) ?? 0);
         const rank = rows.length ? rows[0].rank : 0;
-        const cap = rules.capOf(rank, cfg);
+        const cap = rules.capOf(rank, await L.spaceCfg(c, sid, cfg)); // the space's own cap numbers (v1.1)
         return { holdings: h.holdings, balance: h.wallet, rank, cap, at_cap: h.holdings >= cap };
     }
 
@@ -116,10 +142,81 @@ export function createPlay(deps) {
     }
     const isSeated = (T, wid) => !!wid && seatedWids(T).includes(wid);
     function connectedWid(T, wid) { const u = mxOf(wid); for (const c of T.openers) if (c.user === u && !c.closed) return true; return false; }
+    /** B10 "gone" (addendum §8.1): when a seated person's last socket on the table went (game clock), cleared when one
+     *  opens again; at a deal, anyone gone for GONE_MS is dealt out (reason gone). */
+    function trackPresence(T, user) {
+        const wid = user ? T.widByUser.get(user) : null;
+        if (!wid || !T.goneAt) return;
+        if (connectedWid(T, wid)) T.goneAt.delete(wid);
+        else if (!T.goneAt.has(wid)) T.goneAt.set(wid, now());
+    }
+    function goneSet(T) {
+        const out = new Set();
+        if (!T.goneAt) return out;
+        for (const w of seatedWids(T)) { const at = T.goneAt.get(w); if (at !== undefined && now() - at >= Holdem.HOLDEM.GONE_MS) out.add(w); }
+        return out;
+    }
+    /** F7 (addendum §4.2): a reaction. Ephemeral: no wallet needed, no durable receipt (a resend of the same op within
+     *  REACT_DUP_MS is answered from memory), not in the view, not stored, never activity for anything. */
+    async function react(conn, f) {
+        const ack = (ok, code = "", extra = {}) => sendFrame(conn, { t: "ack", op: f.op, ok, code, dup: false, ...extra });
+        const T = tables.get(f.table);
+        if (!T || T.closed || !conn.open.has(T.id) || !T.openers.has(conn)) return ack(false, "no-table");
+        const t = mono();
+        T.reactOps = T.reactOps || new Map();
+        for (const [k, v] of T.reactOps) if (t - v.at > PLAY.REACT_DUP_MS) T.reactOps.delete(k);
+        const key = `${conn.user}|${f.op}`;
+        const seen = T.reactOps.get(key);
+        if (seen) return sendFrame(conn, { t: "ack", op: f.op, ...seen.answer, dup: true });
+        const answer = (ok, code = "", extra = {}) => { const a = { ok, code, ...extra }; T.reactOps.set(key, { at: t, answer: a }); return sendFrame(conn, { t: "ack", op: f.op, ...a, dup: false }); };
+        const r = f.a.r;
+        if (!REACTIONS.includes(r)) return answer(false, "bad");
+        // who: a seat (Hold'em: the seat number; The Rig: the player's order) or, with REACT_SPECTATORS, a watcher
+        const wid = T.widByUser.get(conn.user);
+        const order = seatedWids(T);
+        let seat = null;
+        if (wid && order.includes(wid)) seat = T.game === "holdem" ? Number(Object.keys(T.st.seats).find((k) => T.st.seats[k].id === wid)) : order.indexOf(wid) + 1;
+        if (seat === null && !PLAY.REACT_SPECTATORS) return answer(false, "not-in-call");
+        if (seat === null) { // a watcher reacts only while in the room's call (§4.2 "watching from the call"; astra r1 #15)
+            const rr = await spaces.resolve(T.room).catch(() => null);
+            if (!rr || !rr.room || !rr.room.sessions.some((x) => x.sender === conn.user)) return answer(false, "not-in-call");
+            const again = T.reactOps.get(key); // a resend that raced this one while we looked (astra r2 N2)
+            if (again) return sendFrame(conn, { t: "ack", op: f.op, ...again.answer, dup: true });
+        }
+        let to;
+        if (r === "toss") {
+            to = f.a.to === undefined ? "pot" : f.a.to;
+            if (to !== "pot") {
+                const ok = T.game === "holdem" ? !!T.st.seats[to] : to >= 1 && to <= order.length;
+                if (!ok) return answer(false, "bad");
+            }
+        } else if (f.a.to !== undefined) return answer(false, "bad");
+        // the person's bucket (across all their sockets), then the table's rolling minute
+        T.reactBucket = T.reactBucket || new Map();
+        const b = T.reactBucket.get(conn.user) || { tokens: PLAY.REACT_BURST, at: t };
+        b.tokens = Math.min(PLAY.REACT_BURST, b.tokens + (t - b.at) / PLAY.REACT_REFILL_MS); b.at = t;
+        T.reactBucket.set(conn.user, b);
+        if (b.tokens < 1) return answer(false, "cooldown", { retry_ms: Math.min(60_000, Math.ceil((1 - b.tokens) * PLAY.REACT_REFILL_MS)) });
+        T.reactTimes = (T.reactTimes || []).filter((x) => t - x < 60_000);
+        if (T.reactTimes.length >= PLAY.REACT_TABLE_PER_MIN) return answer(false, "cooldown", { retry_ms: Math.min(60_000, Math.max(1, T.reactTimes[0] + 60_000 - t)) });
+        b.tokens -= 1; T.reactTimes.push(t);
+        const frame = { t: "react", table: T.id, u: conn.user, seat, r, ...(to !== undefined ? { to } : {}), at: now() };
+        for (const c of T.openers) if (!c.closed) sendFrame(c, frame);
+        return answer(true);
+    }
+    /** A Pad socket that has gone quiet (a locked or backgrounded phone) no longer counts as a screen (B2). */
+    const padFresh = (c) => !c.pad || mono() - c.last < SCREEN_STALE_MS; // the boundary itself is stale (astra r1 #16)
     function screensOf(T, wid) {
         const u = mxOf(wid); const k = new Set();
-        for (const c of T.openers) if (c.user === u && !c.closed) { k.add(c.kind); if (c.pad) k.add("pad"); }
+        for (const c of T.openers) if (c.user === u && !c.closed && padFresh(c)) { k.add(c.kind); if (c.pad) k.add("pad"); }
         return [...k].sort();
+    }
+    /** A Pad socket's freshness changed (gone quiet, or heard from again): the tables it has open get new views. */
+    function padChanged(c) {
+        const fresh = padFresh(c);
+        if (c.padWasFresh === fresh) return;
+        c.padWasFresh = fresh;
+        for (const id of c.open) { const T = tables.get(id); if (T) pushViews(T).catch(() => {}); }
     }
     async function viewOf(T, user) {
         const wid = user ? T.widByUser.get(user) || null : null;
@@ -129,6 +226,9 @@ export function createPlay(deps) {
         const ctx = {
             room: T.room, owner: T.owner, now: now(), mx: (w) => mxOf(w) || "@someone:" + serverName, hostMx: mxOf(T.hostWid) || "@someone:" + serverName,
             connected: (w) => connectedWid(T, w), screens: (w) => screensOf(T, w), wallet: (w) => T.walletCache.get(w) || { holdings: 0, at_cap: false, cap: 100 },
+            // B3: each seat's prestige rank in the table's space (public: the ranks API shows it to every member), so the
+            // apps draw the token at the seat plates without a lookup; null (field left out) when the wallet isn't cached
+            rank: (w) => { const x = T.walletCache.get(w); return x && Number.isInteger(x.rank) && x.rank >= 0 ? x.rank : null; },
             spectators, closedReason: T.closedReason, closedAt: T.closedAt, voidedHand: T.voidedHand,
         };
         return T.game === "holdem" ? holdemContract(v, T.st, wid, ctx) : rigContract(v, T.st, wid, ctx);
@@ -183,7 +283,7 @@ export function createPlay(deps) {
     }
     /** Someone no longer joined to the table's room or its bound space: their sockets stop getting the table (§6.0). */
     function dropOpener(T, c) {
-        T.openers.delete(c); c.open.delete(T.id);
+        T.openers.delete(c); c.open.delete(T.id); trackPresence(T, c.user);
         sendFrame(c, { t: "error", code: "not-member", table: T.id });
     }
     /** §6.0 "Membership is re-checked … and when the server sees a leave, kick or ban": every REVALIDATE_MS (and on
@@ -262,7 +362,7 @@ export function createPlay(deps) {
         const mayStart = !live;
         const between = ["lobby", "pause", "end"].includes(T.st.status) || T.st.round?.phase === "reveal"; // a start may be due
         const ctx = { now: t, balances: await balancesFor(T, wid, { topupActor: a && (a.do === "sit" || a.do === "join"), topupAll: !live && (kind === "tick" || a?.do === "deal" || a?.do === "start" || between) }),
-            admitted: live ? true : (!draining && await admittedFor(T)), newSeed, randomInt };
+            admitted: live ? true : (!draining && await admittedFor(T)), newSeed, randomInt, ...(T.game === "holdem" ? { gone: goneSet(T) } : {}) };
         debug(`  ctx ready`);
         // run the timers that are due first (a move after its deadline is stale), then the move
         let st = T.st; const fx = [];
@@ -271,7 +371,11 @@ export function createPlay(deps) {
             for (const w of await departedMembers(T)) { const lv = E.act(st, w, { do: "leave" }, ctx); if (lv.ok !== false && lv.state) { st = lv.state; fx.push(...(lv.effects || [])); } }
         }
         // (a tick answers {state, effects}, ok unless it says ok: false; an unchanged state = nothing was due)
-        if (kind !== "tick" && !live) { const tk = E.tick(st, ctx); if (tk.ok !== false && tk.state !== st) { st = tk.state; fx.push(...(tk.effects || [])); } }
+        // (an "I'm back" goes BEFORE the due timers: it wins over a pending instant act, addendum §8.1; astra r1 #11)
+        const H0 = T.game === "holdem" ? T.st.hand : null;
+        const instantMine = !!(H0 && !H0.done && H0.instantTurn === H0.turn && wid && Object.values(T.st.seats || {}).some((x, i) => x.id === wid && Number(Object.keys(T.st.seats)[i]) === H0.b?.toAct));
+        const back = (a && a.do === "away" && a.on === false) || (instantMine && ["fold", "check", "call", "raise", "allin"].includes(a?.do));
+        if (kind !== "tick" && !live && !back) { const tk = E.tick(st, ctx); if (tk.ok !== false && tk.state !== st) { st = tk.state; fx.push(...(tk.effects || [])); } }
         const r0 = kind === "tick" ? E.tick(st, ctx) : E.act(st, wid, a, ctx);
         const r = { ...r0, ok: r0.ok !== false, effects: r0.effects || [] };
         debug(`  engine ${r.ok} ${r.code || ""} effects ${JSON.stringify((r.effects || []).map((e) => e.t || e.k))}`);
@@ -463,7 +567,7 @@ export function createPlay(deps) {
         const w = await inTx(pool, (c) => walletInfo(c, wid, sid)).catch(() => null);
         const { rows } = await pool.query("SELECT earned_today, day FROM play_wallets WHERE wid = $1", [wid]);
         if (!sp || !w || !rows.length) return;
-        const earned = rows[0].day === rules.dayOf(now(), cfg.tz) ? Math.min(24, rows[0].earned_today) : 0;
+        const earned = rows[0].day === rules.dayOf(now(), cfg.tz) ? Math.min(200, rows[0].earned_today) : 0;
         for (const c of sockets) if (c.user === u && !c.closed) sendFrame(c, { t: "wallet", space: sp, balance: w.balance, holdings: w.holdings, rank: w.rank, cap: w.cap, earned_today: earned });
     }
     async function pushWallet(T, wid) {
@@ -506,7 +610,7 @@ export function createPlay(deps) {
                 try { await c.query("INSERT INTO play_seats (table_id, wid, sid, person) VALUES ($1,$2,$3,$4)", [id, wid, sid, personKey(user)]); }
                 catch (e) { if (e.code === "23505") throw new Refusal("seated-elsewhere"); throw e; }
             }
-            const T = { id, game: body.game, room, space: acc.space, owner: acc.owner, sid, hostWid: wid, opts, st, version: 0, queue: Promise.resolve(), timer: null, openers: new Set(), widByUser: new Map([[user, wid]]), walletCache: new Map(), closed: false, acks: new Map(), seen: new Map() };
+            const T = { id, game: body.game, room, space: acc.space, owner: acc.owner, sid, hostWid: wid, opts, st, version: 0, queue: Promise.resolve(), timer: null, openers: new Set(), widByUser: new Map([[user, wid]]), walletCache: new Map(), closed: false, acks: new Map(), seen: new Map(), goneAt: new Map() };
             tables.set(id, T);
             return T;
         }).then(async (T) => { await pushViews(T); askToPost(T, { kind: "invite" }); log(`[play] table ${T.game} opened (${roomTables(room).length} in that room)`); return T; });
@@ -538,6 +642,8 @@ export function createPlay(deps) {
             if (!acc.inCall) throw new Refusal("not-in-call");
             wid = await inTx(pool, async (c) => { const w = await widFor(c, T.sid, user); if (!w) throw new Refusal("no-wallet"); await notSeatedElsewhere(c, user, T.id); return w; });
             T.widByUser.set(user, wid);
+            // present only with a socket on the table; seated without one = gone from now (astra r1 #14)
+            if (T.goneAt) { if (connectedWid(T, wid)) T.goneAt.delete(wid); else if (!T.goneAt.has(wid)) T.goneAt.set(wid, now()); }
         }
         if (!wid) throw new Refusal(T.game === "holdem" ? "not-your-turn" : "phase");
         if (T.members && !T.members.has(user) && !["leave", "away"].includes(f.a.do)) throw new Refusal("not-member"); // leave is always allowed
@@ -657,11 +763,30 @@ export function createPlay(deps) {
                 const sid = await L.sidOf(c, space); if (!sid) return null;
                 const wid = await widFor(c, sid, s.user);
                 const T = wid ? [...tables.values()].find((x) => !x.closed && isSeated(x, wid)) : null;
-                return L.me(c, { sid, spaceId: space, user: s.user, cfg, now: now(), atTable: T ? { table: T.id, game: T.game, room: T.room } : null, provisional: wid ? () => provisionalOf(wid) : 0 });
+                const m = await L.me(c, { sid, spaceId: space, user: s.user, cfg, now: now(), atTable: T ? { table: T.id, game: T.game, room: T.room } : null, provisional: wid ? () => provisionalOf(wid) : 0 });
+                if (m && wid) m.notices = await noticesOf(c, wid); // v1.1 F8 (§5.5)
+                if (m && wid) m.side = await sideOf(c, { sid, wid, cfg, now: now(), openMoney }); // v1.1 F9 (§6.4)
+                return m;
             });
             if (!m) throw new Refusal("no-wallet");
             res.json(m);
         }));
+        router.post("/v1/me/notices/seen", wrap(async (req, res, s) => {
+            const b = await body(req);
+            if (!b || typeof b.space !== "string" || !ROOM_RE.test(b.space) || !Number.isSafeInteger(b.upto) || b.upto < 0) throw new Refusal("bad");
+            const n = await inTx(pool, async (c) => { const sid = await L.sidOf(c, b.space); const wid = sid && await widFor(c, sid, s.user); if (!wid) return null;
+                return (await c.query("UPDATE play_notices SET seen = true WHERE wid = $1 AND id <= $2 AND NOT seen", [wid, b.upto])).rowCount; });
+            if (n === null) throw new Refusal("no-wallet");
+            res.json({ v: 1, seen: n });
+        }));
+        // F9 Tune In (addendum §6.4); never activity (no onMove)
+        router.post("/v1/side/tune", wrap(async (req, res, s) => { res.status(201).json(await side.start(s.user, await body(req))); }));
+        router.post("/v1/side/tune/:run", wrap(async (req, res, s) => { res.json(await side.tune(s.user, req.params.run, await body(req))); }));
+        // F8 admin (addendum §5.3): server-checked on every request (adminOf)
+        router.get("/v1/admin/spaces/:space", wrap(async (req, res, s) => { res.json(await admin.getSpace(s.user, req.params.space)); }));
+        router.post("/v1/admin/spaces/:space/wallets", wrap(async (req, res, s) => { res.json(await admin.changeWallets(s.user, req.params.space, await body(req))); }));
+        router.put("/v1/admin/spaces/:space/economy", wrap(async (req, res, s) => { res.json(await admin.changeEconomy(s.user, req.params.space, await body(req))); }));
+        router.get("/v1/admin/spaces/:space/log", wrap(async (req, res, s) => { res.json(await admin.getLog(s.user, req.params.space, { before: req.query.before, limit: req.query.limit })); }));
         router.get("/v1/me/journal", wrap(async (req, res, s) => {
             const space = qSpace(req);
             const j = await inTx(pool, async (c) => { const sid = await L.sidOf(c, space); const wid = sid && await widFor(c, sid, s.user); return wid ? L.journal(c, { wid, before: typeof req.query.before === "string" ? req.query.before : null, limit: req.query.limit }) : null; });
@@ -793,11 +918,13 @@ export function createPlay(deps) {
         const silent = setInterval(() => { if (mono() - conn.last > PLAY.SILENT_MS) conn.close(1000, "silent"); }, 10_000);
         silent.unref?.();
         conn.on("close", () => {
-            clearInterval(silent); sockets.delete(conn);
-            for (const id of conn.open) { const T = tables.get(id); if (T) { T.openers.delete(conn); pushViews(T).catch(() => {}); if (T.game === "rig") enqueue(T, () => onlineChanged(T, conn.user)).catch(() => {}); } }
+            clearInterval(silent); clearInterval(conn.padSweep); clearTimeout(conn.padEdge); sockets.delete(conn);
+            for (const id of conn.open) { const T = tables.get(id); if (T) { T.openers.delete(conn); trackPresence(T, conn.user); pushViews(T).catch(() => {}); if (T.game === "rig") enqueue(T, () => onlineChanged(T, conn.user)).catch(() => {}); } }
         });
         conn.on("message", (text) => {
             conn.last = mono();
+            if (conn.pad && conn.padWasFresh === false) padChanged(conn); // the phone is back
+            if (conn.pad && conn.padEdge) { clearTimeout(conn.padEdge); conn.padEdge = setTimeout(() => padChanged(conn), SCREEN_STALE_MS); conn.padEdge.unref?.(); }
             const el = (mono() - conn.lastFill) / 1000; conn.lastFill = mono();
             conn.tokens = Math.min(PLAY.FRAME_BURST, conn.tokens + el * PLAY.FRAMES_PER_S);
             if (conn.tokens < 1) { sendFrame(conn, { t: "bye", code: "rate" }); return conn.close(1008, "rate"); }
@@ -836,10 +963,16 @@ export function createPlay(deps) {
             const s = sessions.get(sha(f.session));
             if (!s || s.exp <= now() || conn.user) { sendFrame(conn, { t: "bye", code: "session" }); return conn.close(1008, "session"); }
             Object.assign(conn, { user: s.user, kind: f.client.kind, pad: !!f.client.pad, rigHidden: s.rigHidden, sessionKey: sha(f.session) });
+            if (conn.pad) {
+                conn.padWasFresh = true;
+                // the edge: a timer at the last frame + SCREEN_STALE_MS (re-armed on every frame), plus a slow sweep as a backstop
+                conn.padEdge = setTimeout(() => padChanged(conn), SCREEN_STALE_MS); conn.padEdge.unref?.();
+                conn.padSweep = setInterval(() => padChanged(conn), PAD_SWEEP_MS); conn.padSweep.unref?.();
+            }
             const mine = [...sockets].filter((c) => c.user === s.user && !c.closed);
             if (mine.length > PLAY.SOCKETS_PER_PERSON) { const old = mine[0]; sendFrame(old, { t: "bye", code: "replaced" }); old.close(1000, "replaced"); }
             const wallets = await inTx(pool, (c) => L.walletSpaces(c, s.user));
-            sendFrame(conn, { t: "hello", v: 1, user: s.user, now: now(), rig_hidden: s.rigHidden, wallets });
+            sendFrame(conn, { t: "hello", v: 1, user: s.user, now: now(), rig_hidden: s.rigHidden, wallets, features: PLAY_FEATURES });
             return;
         }
         if (!conn.user) { sendFrame(conn, { t: "bye", code: "session" }); return conn.close(1008, "session"); }
@@ -861,13 +994,14 @@ export function createPlay(deps) {
             const still = sessions.get(conn.sessionKey);
             if (conn.closed || !still || still.exp <= now()) return; // revoked while we looked: add nothing back
             if (w0 && !T.widByUser.has(conn.user)) { T.widByUser.set(conn.user, w0); people.set(w0, conn.user); }
-            T.openers.add(conn); conn.open.add(T.id);
+            T.openers.add(conn); conn.open.add(T.id); trackPresence(T, conn.user);
             conn.needsView = true; // a socket that just opened the table always gets the current view
             await pushViews(T);
             if (T.game === "rig") enqueue(T, () => onlineChanged(T, conn.user)).catch(() => {});
             return;
         }
-        if (f.t === "close") { const T = tables.get(f.table); if (T && T.openers.delete(conn)) { conn.open.delete(T.id); await pushViews(T); } return; }
+        if (f.t === "close") { const T = tables.get(f.table); if (T && T.openers.delete(conn)) { conn.open.delete(T.id); trackPresence(T, conn.user); await pushViews(T); } return; }
+        if (f.t === "act" && f.a.do === "react") return react(conn, f); // F7: ephemeral, before any wallet or receipt
         if (f.t === "act") {
             const T = T_of(f.table);
             if (f.a.do === "dial" && T.game === "rig") { // no ack; the bet dial is a live value
@@ -899,7 +1033,8 @@ export function createPlay(deps) {
         }
         const r3 = await pool.query("DELETE FROM play_tombstones WHERE deleted_on < $1", [new Date(now() - 30 * day)]);
         if (r1.rowCount || old.rowCount || r3.rowCount) log(`[play] retention: ${r1.rowCount} game log(s) cleared, ${old.rowCount} table(s) removed, ${r3.rowCount} tombstone(s) dropped`);
-        return { logs: r1.rowCount, tables: old.rowCount, tombstones: r3.rowCount };
+        const r4 = await admin.sweep(); // the admin log's 180 days (v1.1 §5.4)
+        return { logs: r1.rowCount, tables: old.rowCount, tombstones: r3.rowCount, admin_log: r4.log };
     }
 
     // ------------------------------------------------------------------------------------ start / drain

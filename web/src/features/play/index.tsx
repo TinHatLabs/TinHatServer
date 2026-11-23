@@ -12,6 +12,7 @@ import { GamePhoneStrip, GameStatusPill, GamesCallButton } from "./CallChip";
 import { GameCard, hasGameBlock } from "./GameCard";
 import { GamesPane } from "./GamesPane";
 import { OptInHost } from "./OptIn";
+import { CompactHost, TurnWatch } from "./Stage";
 import { roomGame } from "./space";
 import { openGameWindow, ownServer, ownerState, playFeatures, usePlay } from "./store";
 
@@ -50,6 +51,9 @@ export const feature: FeatureModule = {
       r.settingsPanes.add({ id: "games", title: "Games", icon: "applications-games-symbolic", order: 75, component: GamesPane, visible: () => ownerState(ownServer()).features?.play === true || Object.values(usePlay.getState().owners).some((x) => (x.wallets?.length ?? 0) > 0) }),
       r.overlays.add({ id: "play-optin", order: 55, component: OptInHost }),
       r.overlays.add({ id: "play-panel", order: 54, component: GamePanelHost }),
+      // B4 / B10: the compact table on the Call stage, and the "your turn" watcher
+      r.overlays.add({ id: "play-compact", order: 53, component: CompactHost }),
+      r.overlays.add({ id: "play-turnwatch", order: 52, component: TurnWatch }),
       r.onReady.add({ id: "play-features", order: 90, run: () => void playFeatures(ownServer()) }),
     ];
     return () => offs.forEach((o) => o());

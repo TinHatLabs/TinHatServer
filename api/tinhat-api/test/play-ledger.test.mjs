@@ -35,7 +35,8 @@ after(async () => {
 
 let spaceN = 0;
 const newSpace = () => inTx(pool, (c) => L.ensureSpace(c, `!sp${++spaceN}x${process.pid}:play.test`, "play.test"));
-const cfgOf = (params) => ({ ...rules.configFromEnv({}), ...params });
+// vectors/ledger.json runs with the v1 defaults under each case (addendum §6.3: the test names that object)
+const cfgOf = (params) => ({ ...rules.configFromEnv({}), ...rules.V1_DEFAULTS, ...params });
 
 test("migrations: version recorded, running again changes nothing", { skip }, async () => {
     assert.equal(await migrate(pool), SCHEMA_VERSION);

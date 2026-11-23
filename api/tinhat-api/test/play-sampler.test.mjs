@@ -56,7 +56,7 @@ after(async () => {
 test("opted-in people earn; a person who never opted in leaves no row and no log line; idle stops earning", { skip }, async () => {
     const SPACE = "!sp:play.test", ROOM = "!call:play.test";
     const A = "@player-test1:play.test", B = "@player-test2:play.test", C = "@never-opted-in-9q7:play.test";
-    const cfg = { ...rules.configFromEnv({}), tz: "America/Los_Angeles" };
+    const cfg = { ...rules.configFromEnv({}), ...rules.V1_DEFAULTS, tz: "America/Los_Angeles" }; // written for the v1 rate (1 chip / h)
     const sid = await inTx(pool, (c) => L.ensureSpace(c, SPACE, "play.test"));
     for (const u of [A, B]) await inTx(pool, (c) => L.createWallet(c, { sid, user: u, cfg, salt: "s" }));
     let clock = Date.parse("2026-11-19T20:00:00Z");

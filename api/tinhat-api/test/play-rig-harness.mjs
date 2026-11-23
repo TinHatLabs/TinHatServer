@@ -82,7 +82,14 @@ export function platform(n, chips = 20, tag = "t", opts = {}) {
 }
 
 // Finish SETUP (keep the first dealt card, no Market) by timeout
-export const skipSetup = (H) => { assert.equal(H.R().phase, "setup"); H.toDeadline(); assert.equal(H.R().phase, "turn"); };
+// (v1.1: each Mechanic keeps their first card themself first, so nobody times out into `away`, addendum §8.1)
+export const skipSetup = (H) => {
+    assert.equal(H.R().phase, "setup");
+    const r = H.R().r;
+    for (const m of H.R().mechanics) if (!H.R().kept[m] && !H.R().left.includes(m)) H.must(m, { do: "keep", card: H.R().deals[m][0], at: { round: r, spin: 0, phase: "setup" } });
+    if (H.R().phase === "setup") H.toDeadline();
+    assert.equal(H.R().phase, "turn");
+};
 // Spin and let the reels land + the Nudge window pass
 export function spin(H, bet) {
     const n = H.R().spin;

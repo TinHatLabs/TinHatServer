@@ -14,6 +14,7 @@
 //   nextDeadline(st)            ms of the next timer, or null
 //   → every call: { ok, code?, state, effects }; a refused or no-op call returns the SAME state and no effects.
 //
+// ctx.gone (v1.1, B10): the ids seated here with no socket on the table for GONE_MS (dealt out at a deal, reason gone).
 // ctx = { now, balances: { who: wallet chips in the table's space } (sit takes all of them; at every deal each seated
 //         player's wallet chips (earned while seated, a top-up) join their stack first), admitted: bool (the
 //         admission check; REQUIRED when the call may start a hand, see wouldDeal), randomInt? (tests) }
@@ -150,7 +151,7 @@ function run(st, m, ctx, system) {
         }
     }
     if (ctx.admitted === undefined && core.wouldDeal(T, m, ctx.now)) throw new TypeError("a hand start needs the admission check (ctx.admitted)");
-    const r = core.move(T, m, { ...base, system, admitted: ctx.admitted });
+    const r = core.move(T, m, { ...base, system, admitted: ctx.admitted, gone: ctx.gone }); // gone: B10 (§8.1)
     if (!r.ok) return refuse(st, r.code);
     fx.push(...r.effects);
     const out = r.state;

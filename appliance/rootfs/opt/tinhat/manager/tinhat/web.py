@@ -1144,7 +1144,9 @@ class Manager:
         if isinstance(body.get("play"), dict):  # Mini games (play.py): refused out of bounds, like the console
             from . import play
             cur = play.settings(st)
-            for field, name in (("enabled", "enabled"), ("rigPhoneApps", "rig_phone_apps"), ("dayMax", "day_max"), ("start", "start")):
+            for field, name in (("enabled", "enabled"), ("rigPhoneApps", "rig_phone_apps"), ("dayMax", "day_max"), ("start", "start"),
+                                ("chipMinutes", "chip_minutes"), ("sideOn", "side_on"), ("sideDayMax", "side_day_max"),
+                                ("topupTo", "topup_to"), ("capBase", "cap_base"), ("capPerRank", "cap_per_rank")):  # v1.1
                 if field not in body["play"]:
                     continue
                 v, why = play.check(name, body["play"][field])

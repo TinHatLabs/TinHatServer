@@ -338,14 +338,21 @@ function apiCard(o, el) {
     const phoneSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(phone), "aria-label": "Phone notifications" });
     phoneSw.addEventListener("click", () => { phone = !phone; phoneSw.setAttribute("aria-checked", String(phone)); });
     const pl = a.play || null;
-    const bounds = (pl && pl.bounds) || { day_max: [1, 24], start: [0, 50] };
-    let playOn = !!(pl && pl.enabled), rigPhones = !!(pl && pl.rig_phone_apps);
+    const bounds = { day_max: [1, 200], start: [0, 500], chip_minutes: [2, 60], side_day_max: [0, 100], topup_to: [0, 100], cap_base: [20, 100000], cap_per_rank: [0, 100000], ...((pl && pl.bounds) || {}) };
+    let playOn = !!(pl && pl.enabled), rigPhones = !!(pl && pl.rig_phone_apps), sideOn = !(pl && pl.side_on === false);
     const playSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(playOn), "aria-label": "Mini games" });
     playSw.addEventListener("click", () => { playOn = !playOn; playSw.setAttribute("aria-checked", String(playOn)); });
     const rigSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(rigPhones), "aria-label": "Show The Rig in the iPhone and Android apps" });
     rigSw.addEventListener("click", () => { rigPhones = !rigPhones; rigSw.setAttribute("aria-checked", String(rigPhones)); });
     const dayIn = h("input", { type: "number", min: String(bounds.day_max[0]), max: String(bounds.day_max[1]), step: "1", value: pl ? String(pl.day_max) : "8", "aria-label": "Chips a day from calls" });
     const startIn = h("input", { type: "number", min: String(bounds.start[0]), max: String(bounds.start[1]), step: "1", value: pl ? String(pl.start) : "10", "aria-label": "Chips a new player starts with" });
+    // v1.1 (Server 0.3.21): the earn rate and Tune In, server-wide (each space's admins can change their own space's)
+    const chipIn = h("input", { type: "number", min: String(bounds.chip_minutes[0]), max: String(bounds.chip_minutes[1]), step: "1", value: pl && pl.chip_minutes ? String(pl.chip_minutes) : "15", "aria-label": "Minutes in a call per chip" });
+    const sideSw = h("button.switch", { type: "button", role: "switch", "aria-checked": String(sideOn), "aria-label": "Tune In side game" });
+    sideSw.addEventListener("click", () => { sideOn = !sideOn; sideSw.setAttribute("aria-checked", String(sideOn)); });
+    const num = (k, dflt, label) => h("input", { type: "number", min: String(bounds[k][0]), max: String(bounds[k][1]), step: "1", value: pl && pl[k] !== undefined ? String(pl[k]) : String(dflt), "aria-label": label });
+    const topIn = num("topup_to", 5, "The daily top-up at 0 chips"), capIn = num("cap_base", 100, "The cap at rank 0"), perIn = num("cap_per_rank", 50, "The cap added per rank");
+    const sideIn = h("input", { type: "number", min: String(bounds.side_day_max[0]), max: String(bounds.side_day_max[1]), step: "1", value: pl && pl.side_day_max !== undefined ? String(pl.side_day_max) : "10", "aria-label": "Tune In chips a day" });
     const turn = a.turn || {};
     const tHost = h("input", { type: "text", value: turn.host || "", placeholder: "turn.example.com (empty = none)", spellcheck: "false" });
     const tPort = h("input", { type: "text", value: turn.port ? String(turn.port) : "", placeholder: "3478 or 5349" });
@@ -360,7 +367,7 @@ function apiCard(o, el) {
       save.replaceChildren(h("span.spin"), "Applying…");
       err.classList.add("hidden");
       const body = { ...f, memories: mem, recorder: recIn.value.trim(), phonePush: phone, ...(webIn ? { web: webIn.value.trim() } : {}),
-        ...(pl ? { play: { enabled: playOn, rigPhoneApps: rigPhones, dayMax: dayIn.value.trim(), start: startIn.value.trim() } } : {}) };
+        ...(pl ? { play: { enabled: playOn, rigPhoneApps: rigPhones, dayMax: dayIn.value.trim(), start: startIn.value.trim(), chipMinutes: chipIn.value.trim(), sideOn, sideDayMax: sideIn.value.trim(), topupTo: topIn.value.trim(), capBase: capIn.value.trim(), capPerRank: perIn.value.trim() } } : {}) };
       body.turn = tHost.value.trim()
         ? { host: tHost.value.trim(), port: tPort.value.trim(), protocol: tProto.value, username: tUser.value.trim(), credential: tCred.value }
         : null;
@@ -390,10 +397,20 @@ function apiCard(o, el) {
             ...(pl.blocked ? [h("div.s.warn-text", `The games are off whatever this switch says, until the games' safety check passes: ${pl.blocked}. The server checks again every minute and turns the games on by itself once it passes.`)] : [])), playSw),
           h("div.item", h("div.grow", h("div.k", "Show The Rig in the iPhone and Android apps"),
             h("div.s", "Off: the phone apps offer only Texas Hold'em (The Rig still works in browsers and the desktop app). Either way, an App Store or Play Store release needs the simulated-gambling age rating.")), rigSw),
+          h("div.item", h("div.grow", h("div.k", "Minutes in a call per chip"),
+            h("div.s", `People who opened a game earn one chip every this many minutes in a call (${bounds.chip_minutes[0]}–${bounds.chip_minutes[1]}; 15 = four an hour). Each space's admins can set their own.`), chipIn)),
           h("div.item", h("div.grow", h("div.k", "Chips a day from calls"),
-            h("div.s", `One chip per hour in a call, at most this many a day (${bounds.day_max[0]}–${bounds.day_max[1]}). Lowering it takes nothing back.`), dayIn)),
+            h("div.s", `At most this many a day (${bounds.day_max[0]}–${bounds.day_max[1]}). Lowering it takes nothing back.`), dayIn)),
           h("div.item", h("div.grow", h("div.k", "Chips a new player starts with"),
             h("div.s", `For wallets opened from now on (${bounds.start[0]}–${bounds.start[1]}). Existing wallets are untouched.`), startIn)),
+          h("div.item", h("div.grow", h("div.k", "Daily top-up"),
+            h("div.s", `Someone at 0 chips gets this many once a day (${bounds.topup_to[0]}–${bounds.topup_to[1]}).`), topIn)),
+          h("div.item", h("div.grow", h("div.k", "Chip cap"),
+            h("div.s", `Earning stops at the cap: this many at rank 0 (${bounds.cap_base[0]}–${bounds.cap_base[1]}), plus the next number per prestige rank (${bounds.cap_per_rank[0]}–${bounds.cap_per_rank[1]}).`), capIn, perIn)),
+          h("div.item", h("div.grow", h("div.k", "Tune In side game"),
+            h("div.s", "A short guessing game that lets someone with 4 chips or fewer earn a few back. Off: nobody is offered it.")), sideSw),
+          h("div.item", h("div.grow", h("div.k", "Tune In chips a day"),
+            h("div.s", `At most this many a day per person from Tune In (${bounds.side_day_max[0]}–${bounds.side_day_max[1]}).`), sideIn)),
         ] : []),
         h("div.item", h("div.grow", h("div.k", "TURN server for calls"),
           h("div.s", "For callers whose network blocks UDP (a coturn of your own). Leave the host empty for none."),

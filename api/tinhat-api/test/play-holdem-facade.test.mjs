@@ -240,6 +240,7 @@ test("facade: a wallet balance the core won't take never blocks a timer or a dea
     assert.ok(r.ok);
     assert.equal(r.state.hand.log.at(-1).timeout, true, "the turn timer acted");
     T.call(r);
+    T.act("@a:x", { do: "away", on: false }); // v1.1: one timeout = away; back, so the next hand can deal
     const r2 = H.tick(T.st, { now: T.st.pauseUntil, balances: huge, admitted: true, randomInt: ZERO });
     assert.ok(r2.ok);
     assert.equal(r2.state.status, "hand", "the next hand is dealt without the bad top-up");

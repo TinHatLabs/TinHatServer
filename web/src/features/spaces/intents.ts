@@ -3,11 +3,11 @@
 // room isn't in one" (3 s) and nothing opens; else the window opens (or is raised) on `tab`.
 import { bus, openWindow, toast } from "@/core/bus";
 
-export type SpaceTab = "overview" | "members" | "roles" | "rooms";
+export type SpaceTab = "overview" | "members" | "roles" | "rooms" | "games";
 export const SPACE_SETTINGS_WINDOW = "spacesettings";
 
 export function normalizeTab(tab: string | undefined | null): SpaceTab {
-  return tab === "members" || tab === "roles" || tab === "rooms" ? tab : "overview";
+  return tab === "members" || tab === "roles" || tab === "rooms" || tab === "games" ? tab : "overview";
 }
 
 /** Open (or raise + switch tab) the Space settings window for `spaceId`. */

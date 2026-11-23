@@ -281,7 +281,7 @@ function me(space, u) {
     const seatedAt = [...tables.values()].find((t) => t.space === space && t.byUser.get(u) && t.byUser.get(u) !== "spectator");
     const day = new Date().toISOString().slice(0, 10);
     const next = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-    return { v: 1, space, user: u, balance: w.balance, holdings: w.balance, rank: rankOf(space, u), cap: capOf(space, u), at_table: seatedAt ? { table: seatedAt.id, game: seatedAt.game, room: seatedAt.room } : null, earned_today: 2, day_max: 8, accrual_s: 1260, chip_s: 3600, day, topup: { available: w.balance === 0, next_day: next } };
+    return { v: 1, space, user: u, balance: w.balance, holdings: w.balance, rank: rankOf(space, u), cap: capOf(space, u), at_table: seatedAt ? { table: seatedAt.id, game: seatedAt.game, room: seatedAt.room } : null, earned_today: 2, day_max: 16, accrual_s: 420, chip_s: 900, chip_minutes: 15, day, topup: { available: w.balance === 0, next_day: next } };
 }
 const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://x");

@@ -2,7 +2,7 @@
 // faces, raise presets, seat slots, chip labels) + the Rig's deck / paytable / words. SHARED LOGIC: the desktop's
 // play_wire.rs replays the same cases. Pure: no React, no app imports.
 import wordsJson from "../../../testvectors/games/words.json" with { type: "json" };
-import type { Game, HoldemView, Pot } from "./wire";
+import type { Game, HandCategory, HoldemView, Pot } from "./wire";
 // gameVisible / gameSpace / rankContext live ONCE per app: features/prestige/clientRules.ts (the prestige feature).
 
 // ---- cards ---------------------------------------------------------------------------------------------------------
@@ -46,6 +46,175 @@ export function wonWith(n: number, what: string): [string, string] {
   return i < 0 ? ["", t] : [t.slice(0, i), t.slice(i + 5)];
 }
 export const GAMES_TIP: string = wordsJson.callbar.games_tip;
+
+/** F7 (addendum §4.1): what each reaction says ("Ana tipped their hat"); the shared words.json `react.*` once it has
+ *  them, else these. */
+export const R2X = ((wordsJson as unknown as { table: { r2?: Record<string, string>; react?: Record<string, string> } }).table.r2 ?? {}) as Record<string, string>;
+const RXW = ((wordsJson as unknown as { table: { react?: Record<string, string> } }).table.react ?? {}) as Record<string, string>;
+const REACT_W: Record<string, string> = {
+  tip: "tipped their hat",
+  knock: "knocked on the table",
+  clap: "slow-clapped",
+  toss: "tossed a coin to {person}",
+  sweat: "is sweating",
+  foil: "adjusted their foil",
+  ...RXW,
+  toss_pot: "tossed a coin into the pot",
+  label_tip: R2X.react_tip_tip ?? "Tip your hat",
+  label_knock: R2X.react_tip_knock ?? "Knock on the table",
+  label_clap: R2X.react_tip_clap ?? "Slow clap",
+  label_toss: R2X.react_tip_toss ?? "Toss a coin",
+  label_sweat: R2X.react_tip_sweat ?? "Sweat",
+  label_foil: R2X.react_tip_foil ?? "Adjust your foil",
+  tray: "React",
+  mute_all: R2X.react_mute_all ?? "Mute reactions",
+  mute_person: R2X.react_mute_user ?? "Mute {person}'s reactions",
+  unmute_person: R2X.react_unmute_user ?? "Show {person}'s reactions again",
+  toss_to: "Toss to",
+  pot: R2X.react_pot ? R2X.react_pot.charAt(0).toUpperCase() + R2X.react_pot.slice(1) : "The pot",
+  many: R2X.react_n ?? "{n} reactions",
+};
+export const REACT_WORDS: Readonly<Record<string, string>> = REACT_W;
+
+/** F9 Tune In (addendum §6.4) + the earn line (§5.5): the shared words.json `side.*` once it has them, else these. */
+export const SIDE_WORDS: Readonly<Record<string, string>> = {
+  title: R2X.tune_title ?? "Tune In",
+  button: R2X.tune_title ?? "Tune In",
+  offer: R2X.tune_offer ?? "Out of chips? Tune In to earn up to {n} today",
+  intro: R2X.tune_how ?? "A signal is out there between 1 and 100. Tune to it.",
+  higher: R2X.tune_higher ?? "Static… higher",
+  lower: R2X.tune_lower ?? "Static… lower",
+  field: R2X.tune_field ?? "Your guess",
+  range: R2X.tune_range ?? "Somewhere from {lo} to {hi}",
+  tune: R2X.tune_go ?? "Tune",
+  tries: R2X.tune_tries ?? "{n} tries left",
+  found: R2X.tune_found ?? "Signal locked: +{n} chips",
+  lost: R2X.tune_lost ?? "Lost the signal. It was {n}.",
+  cancelled: "The signal faded. Nothing was paid.",
+  starting: "Finding a signal…",
+  again: R2X.tune_again ?? "Again",
+  back: R2X.tune_back ?? "Back to the table",
+  error: R2X.tune_error ?? "Couldn't reach the signal. Try again in a moment.",
+  earn_line: R2X.admin_earn_line ?? "1 chip every {m} min in a call, up to {d} a day.",
+};
+/** Tune In's own words for a refusal (tune_code_*), else the shared code words. */
+export function tuneCodeWords(code: string): string | null {
+  return R2X[`tune_code_${code}`] ?? null;
+}
+/** "1 chip every 15 min in a call, up to 16 a day" (the wallet's own chip_s / day_max: per space since 0.3.21) */
+export function earnLine(chipS: number, dayMax: number): string {
+  return SIDE_WORDS.earn_line!.replace("{m}", String(Math.max(1, Math.round(chipS / 60)))).replace("{d}", String(dayMax));
+}
+export function reactWords(r: string, to?: number | "pot", person = "someone"): string {
+  if (r === "toss" && (to === undefined || to === "pot")) return REACT_W.toss_pot!;
+  return (REACT_W[r] ?? r).replace("{person}", person);
+}
+
+/** `/me/journal` reasons (PM ruling 16:57, addendum v1.0.7): the new `admin`, `side` and `oneoff` (the +25 gift; its tx
+ *  KIND `admin-topup` is never a reason); ANY unknown reason (the server's `other`, `admin-topup` included) is "Other",
+ *  never a borrowed label. */
+const JOURNAL_W: Record<string, string> = {
+  start: "Starting chips",
+  earn: "Earned in a call",
+  topup: "Daily top-up",
+  prestige: "Prestige",
+  sit: "Sat down at a table",
+  cashout: "Left a table",
+  "rig-escrow": "The Rig: staked",
+  "rig-settle": "The Rig: settled",
+  void: "A hand was called off",
+  "lab-grant": "Lab chips",
+  admin: "Admin change",
+  side: "Tune In",
+  oneoff: "A one-time gift from the server",
+  ...(((wordsJson as unknown as { journal?: Record<string, string> }).journal) ?? {}),
+};
+export function journalReasonWords(reason: unknown): string {
+  return (typeof reason === "string" && Object.prototype.hasOwnProperty.call(JOURNAL_W, reason) ? JOURNAL_W[reason] : undefined) ?? "Other";
+}
+
+/** F5 (GAMES-V1.1-ADDENDUM §2): the hand rankings, strongest first: the shared words.json `table.categories` (name),
+ *  `rank_eg` (a five-card example) and `rank_lines` (one line). The desktop's sheet reads the same file. */
+export interface HandRankRow {
+  category: HandCategory;
+  name: string;
+  example: readonly string[];
+  line: string;
+}
+type R2Table = { r2: Record<string, string>; rank_eg: Record<string, string[]>; rank_lines: Record<string, string>; categories: Record<string, string> };
+const R2T = (wordsJson as unknown as { table: R2Table }).table;
+export const HAND_ORDER: readonly HandCategory[] = ["straight-flush", "quads", "full-house", "flush", "straight", "trips", "two-pair", "pair", "high-card"];
+export const HAND_RANKINGS: readonly HandRankRow[] = HAND_ORDER.map((c) => ({ category: c, name: R2T.categories[c]!, example: R2T.rank_eg[c]!, line: R2T.rank_lines[c]! }));
+export const HAND_NAME: Readonly<Record<HandCategory, string>> = R2T.categories as Record<HandCategory, string>;
+
+/** Round 2's new lines (GAMES-V1.1-ADDENDUM): the shared words.json `table.r2` (games-desktop2 keeps the file). */
+export const R2_WORDS: Readonly<{
+  cards_on_phone: string;
+  show_here: string;
+  hands_button: string;
+  hands_title: string;
+  hands_foot: string;
+  hands_you: string;
+  hands_close: string;
+  hidden_sharing: string;
+  odds_win: string;
+  odds_tie: string;
+  odds_improve: string;
+  odds_improve_one: string;
+  odds_info: string;
+  odds_toggle: string;
+  away_back: string;
+  away_stand_hands: string;
+  away_stand_one: string;
+  away_pill_hands: string;
+  away_reason_timeout: string;
+  away_reason_gone: string;
+  away_reason_asked: string;
+  stood_up: string;
+  sit_down: string;
+  stage_table: string;
+  stage_call: string;
+  turn_title: string;
+  turn_title_prefix: string;
+  turn_body: string;
+  turn_last: string;
+  turn_ask: string;
+  turn_yes: string;
+  turn_no: string;
+  turn_toggle: string;
+  away_stand_rounds: string;
+  away_stand_one_round: string;
+  away_rig_watch: string;
+  away_rig_skipped: string;
+}> = {
+  // B10 (addendum §8.2): until the shared words.json carries them (games-desktop2 appends; these are the proposed lines)
+  away_back: "I'm back",
+  away_stand_hands: "You'll stand up in {n} hands (chips kept)",
+  away_stand_one: "You'll stand up after the next hand (chips kept)",
+  away_pill_hands: "away · {n}",
+  away_reason_timeout: "Your turn ran out, so you're sitting out",
+  away_reason_gone: "You were away when the hand was dealt",
+  away_reason_asked: "You're sitting out",
+  stood_up: "You stood up: {n} chips back in your wallet",
+  sit_down: "Sit down",
+  // B4 / B10 §8.3 (proposed for the shared file)
+  stage_table: "Table",
+  stage_call: "Call",
+  turn_title: "Your turn",
+  turn_title_prefix: "(Your turn) ",
+  turn_body: "{game} in {room}",
+  turn_last: "{s} s left · you'll check or fold",
+  turn_ask: "Tell me when it's my turn, even in another game?",
+  turn_yes: "Yes",
+  turn_no: "No",
+  turn_toggle: "Tell me when it's my turn",
+  // B10 on The Rig (proposed for the shared file)
+  away_stand_rounds: "You'll stand up in {n} rounds (chips kept)",
+  away_stand_one_round: "You'll stand up after this round (chips kept)",
+  away_rig_watch: "You're away: watching only this round (no Nudge, Whisper, Peek or Market)",
+  away_rig_skipped: "Your turn to spin is skipped while you're away",
+  ...(R2T.r2 as Record<string, string>),
+} as never;
 
 type WordsT = { table: Record<string, unknown> };
 const T = (wordsJson as unknown as WordsT).table;

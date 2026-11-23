@@ -1,0 +1,201 @@
+/* Stage.module.css — B4's Table | Call pill and the compact table (addendum §1.1, §8.4). */
+.pill {
+  display: inline-flex;
+  flex: none;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--th-surface-sunken);
+  border: 1px solid var(--th-border-subtle);
+  gap: 2px;
+}
+.seg {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--th-text-secondary);
+  font: inherit;
+  font-size: calc(11.5px * var(--th-text-scale, 1));
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.seg:hover {
+  color: var(--th-text-primary);
+}
+.segOn {
+  background: var(--th-button-primary-bg);
+  color: var(--th-button-primary-fg);
+  cursor: default;
+}
+.seg:focus-visible {
+  outline: 2px solid var(--th-accent-bright);
+  outline-offset: 1px;
+}
+
+/* the compact table: 280 × 64 on desktop / web, full width × 56 on phones */
+.compact {
+  position: fixed;
+  z-index: var(--th-z-popup);
+  width: 280px;
+  height: 64px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 8px 4px 6px;
+  border-radius: 12px;
+  background: var(--th-surface-window);
+  border: 1px solid var(--th-island-border-active);
+  box-shadow: 0 8px 24px var(--th-island-shadow);
+  color: var(--th-text-primary);
+}
+.compactPhone {
+  left: 8px;
+  right: 8px;
+  width: auto;
+  height: 56px;
+  bottom: calc(var(--th-safe-bottom, 0px) + 88px);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+}
+.row[data-my-turn] .glyphBtn {
+  color: var(--th-accent-bright);
+}
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+.footText {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.compactPill .seg {
+  padding: 1px 8px;
+  font-size: calc(10.5px * var(--th-text-scale, 1));
+}
+.glyphBtn,
+.open {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--th-text-primary);
+  font: inherit;
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 6px;
+}
+.glyphBtn {
+  font-size: calc(16px * var(--th-text-scale, 1));
+  line-height: 24px;
+}
+.open {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-weight: 600;
+  font-size: calc(12px * var(--th-text-scale, 1));
+}
+.glyph {
+  font-size: calc(15px * var(--th-text-scale, 1));
+}
+.glyphBtn:hover,
+.open:hover {
+  background: var(--th-surface-hover);
+}
+.cards {
+  display: inline-flex;
+  gap: 2px;
+}
+.mini {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  width: 17px;
+  height: 23px;
+  border-radius: 3px;
+  font-size: calc(10px * var(--th-text-scale, 1));
+  font-weight: 700;
+  line-height: 23px;
+  letter-spacing: -0.5px;
+  background: var(--g-card-face, #f4f1ea);
+  box-sizing: border-box;
+}
+.miniSuit {
+  font-size: calc(8px * var(--th-text-scale, 1));
+  margin-left: 0.5px;
+}
+.miniRed {
+  color: var(--g-card-red, #c62828);
+}
+.miniBlack {
+  color: var(--g-card-black, #111);
+}
+.miniBack {
+  background: var(--g-card-back, #2b3a8c);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+.miniGhost {
+  background: transparent;
+  border: 1px dashed var(--g-felt-line, var(--th-border-subtle));
+}
+.pot {
+  font-size: calc(11px * var(--th-text-scale, 1));
+}
+.grow {
+  flex: 1;
+}
+.quick {
+  display: inline-flex;
+  gap: 4px;
+}
+.q {
+  appearance: none;
+  font: inherit;
+  font-size: calc(11.5px * var(--th-text-scale, 1));
+  font-weight: 600;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--th-border-subtle);
+  background: var(--th-button-secondary-bg, var(--th-surface-sunken));
+  color: var(--th-text-primary);
+  cursor: pointer;
+}
+.qHi {
+  background: var(--th-button-primary-bg);
+  border-color: transparent;
+  color: var(--th-button-primary-fg);
+}
+.q:hover {
+  border-color: var(--th-accent-bright);
+}
+.qHi:hover {
+  background: var(--th-button-primary-bg-hover);
+}
+.ringBox {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+.q:focus-visible {
+  outline: 2px solid var(--th-accent-bright);
+  outline-offset: 1px;
+}

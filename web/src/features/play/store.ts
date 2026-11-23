@@ -6,13 +6,12 @@
 // pushes, so there is one sign-in per server.
 import { acquirePoll } from "./poll";
 import { create } from "zustand";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { API_BASE } from "@/core/api";
 import { MATRIX_ORIGIN } from "@/core/bearer";
 import { toast } from "@/core/bus";
 import { createLogger } from "@/core/log";
 import { getSession, onSessionEnding, peekClient } from "@/core/matrix";
-import { getFormFactor } from "@/core/device";
 import { inPhoneApp } from "@/features/native";
 import { useCallStore } from "@/features/calls";
 import { applyRankPush, clientKind, registerPlaySessionSource } from "@/features/prestige/store";
@@ -21,6 +20,11 @@ import { PlayConnection, PlayHttpError, type Ack, type ConnStatus, type NetDeps,
 import { cardBody, GAME_WORDS } from "./rules";
 import { dropRoomGames, roomGame, useRoomGame, type RoomGame } from "./space";
 import { contractOf, type Contract } from "./contract";
+import { padClaim } from "./cardsFace";
+import { REACT_TABLE_PER_MIN, ReactBucket, parseReact, type ReactEvt, type ReactionId } from "./reactRules";
+import { REACT_WORDS, reactWords } from "./rules";
+import { getPref, setPref } from "@/core/prefs";
+import { announce } from "@/ui/announce";
 import { codeWords, newerView, parseMe, parseSpace, parseSummary, parseTables, type CardKind, type Game, type ServerFrame, type Summary, type TableItem, type View, type Wallet } from "./wire";
 
 const log = createLogger("play");
@@ -55,6 +59,8 @@ export function ownServer(): string {
 export interface PlayFeatures {
   play: boolean;
   rigPhoneApps: boolean;
+  /** 0.3.21: the owner offers the admin money screen (`features.play_admin`) */
+  admin?: boolean;
   /** the owner's play API base ("" = none) */
   base: string;
   /** the owner couldn't be reached (vs. reached and plays no games) */
@@ -67,6 +73,8 @@ export interface OwnerPlay {
   rigHidden: boolean;
   /** the spaces on this owner where I have a wallet (the session answer); null = not signed in yet */
   wallets: string[] | null;
+  /** the server's hello features (0.3.21: "react", "away2", "side", "admin", …) */
+  serverFeatures?: string[];
 }
 const NO_OWNER: OwnerPlay = Object.freeze({ features: null, status: "unknown", error: "", rigHidden: false, wallets: null }) as OwnerPlay;
 
@@ -103,9 +111,13 @@ export interface PlayState {
   openErr: Record<string, string>;
   /** the game panel, while open: the room and the table ("" = the Games list) */
   panel: { roomId: string; table: string } | null;
+  /** B4 (addendum §1.1): the stage is on Call while a table of the call's room stays with me as the compact table */
+  compact: { roomId: string; table: string } | null;
+  /** F7: the reactions drawn right now, by table (memory only, gone after a few seconds) */
+  reacts: Record<string, ReactEvt[]>;
 }
 
-export const usePlay = create<PlayState>()(() => ({ owners: {}, wallets: {}, rooms: {}, views: {}, dial: {}, notes: {}, ask: null, confirm: {}, openErr: {}, panel: null }));
+export const usePlay = create<PlayState>()(() => ({ owners: {}, wallets: {}, rooms: {}, views: {}, dial: {}, notes: {}, ask: null, confirm: {}, openErr: {}, panel: null, compact: null, reacts: {} }));
 
 const ckey = (room: string, owner: string, space: string) => `${room}|${owner}|${space}`;
 function setConfirm(key: string, why: string) {
@@ -179,7 +191,7 @@ export function parsePlayFeatures(doc: unknown, own: boolean): PlayFeatures {
   const play = isObj(f) && f.play === true;
   // our own server: this page's same-origin API (proxied in dev); another: its announced https API only
   const base = own ? `${API_BASE}/play/v1` : /^https:\/\/[^/\s?#]+(\/\S*)?$/i.test(api) ? `${api}/play/v1` : "";
-  return { play: play && !!base, rigPhoneApps: isObj(f) && f.play_rig_phone_apps === true, base, unreachable: false };
+  return { play: play && !!base, rigPhoneApps: isObj(f) && f.play_rig_phone_apps === true, admin: isObj(f) && f.play_admin === true, base, unreachable: false };
 }
 
 /** Ask an owner for its play switches (once per session; a failure is asked again a minute later). Only ever an owner
@@ -191,7 +203,7 @@ export function playFeatures(owner: string): Promise<PlayFeatures> {
   if (inflight) return inflight;
   const p = (async (): Promise<PlayFeatures> => {
     // DEV gallery: the play contract's mock behind the dev server's /api proxy (TH_DEV_SERVER = the mock)
-    if (playMock()) return { play: true, rigPhoneApps: new URLSearchParams(location.search).get("playrigphone") === "1", base: `${API_BASE}/play/v1`, unreachable: false };
+    if (playMock()) return { play: true, rigPhoneApps: new URLSearchParams(location.search).get("playrigphone") === "1", admin: new URLSearchParams(location.search).get("playadmin") === "1", base: `${API_BASE}/play/v1`, unreachable: false };
     const own = owner === ownServer();
     try {
       const url = own ? `${MATRIX_ORIGIN}/.well-known/matrix/client` : `https://${owner}/.well-known/matrix/client`;
@@ -230,7 +242,7 @@ function realDeps(base: string, contract: Contract): NetDeps {
     base,
     contract,
     userId: meNow(),
-    client: { kind: clientKind(), v: (import.meta.env.VITE_TW_SEMVER as string | undefined) ?? "dev", pad: getFormFactor() === "mobile" },
+    client: { kind: clientKind(), v: (import.meta.env.VITE_TW_SEMVER as string | undefined) ?? "dev", pad: padNow() },
     openId: async () => {
       const c = peekClient();
       // DEV gallery: the contract mock signs anyone in on loopback (it never checks the token)
@@ -274,7 +286,7 @@ async function makeConn(owner: string): Promise<PlayConnection | null> {
     (f) => onFrame(owner, f),
     (st, err) => {
       patchOwner(owner, { status: st, error: err });
-      if (st === "live" && c.session) patchOwner(owner, { wallets: c.session.wallets, rigHidden: c.session.rigHidden });
+      if (st === "live" && c.session) patchOwner(owner, { wallets: c.session.wallets, rigHidden: c.session.rigHidden, serverFeatures: c.features });
     },
   );
   conns.set(owner, c);
@@ -317,6 +329,7 @@ function onFrame(owner: string, f: ServerFrame) {
       if (!newerView(curOv?.view, f.view)) return;
       tableHome.set(f.table, { owner, space: f.view.space, room: f.view.room });
       reopenTries.delete(f.table);
+      seatRanks(owner, f.view);
       usePlay.setState((s) => {
         const dial = { ...s.dial };
         delete dial[f.table]; // a newer view carries the dial itself
@@ -334,6 +347,7 @@ function onFrame(owner: string, f: ServerFrame) {
       return;
     }
     case "wallet": {
+      selfRank(owner, f.space, f.rank);
       const prev = walletState(owner, f.space).wallet;
       if (prev) patchWallet(owner, f.space, { wallet: { ...prev, balance: f.balance, holdings: f.holdings, rank: f.rank, cap: f.cap, ...(typeof f.earned_today === "number" ? { earned_today: f.earned_today } : {}) }, has: true });
       else void refreshMe(owner, f.space);
@@ -344,6 +358,9 @@ function onFrame(owner: string, f: ServerFrame) {
       return;
     case "post":
       void postCard(owner, f.kind, f.table, f.round);
+      return;
+    case "react":
+      receiveReact(owner, f);
       return;
     case "error":
       if (f.table) {
@@ -375,6 +392,25 @@ function onFrame(owner: string, f: ServerFrame) {
   }
 }
 
+/** B3 (contract v1.1a, design2 14:53): every seat / Rig player may carry `rank` = their rank in the table's BOUND
+ *  space: it goes into the token store as this owner's rank push for `view.space` (absent = the ranks read decides). */
+function seatRanks(owner: string, v: View): void {
+  const people: unknown[] = v.game === "holdem" ? v.seats : v.players;
+  for (const p of people) {
+    const o = p as { u?: unknown; rank?: unknown };
+    if (typeof o.u === "string" && typeof o.rank === "number") applyRankPush(owner, { t: "rank", space: v.space, u: o.u, rank: o.rank });
+  }
+}
+
+/** B3: my own rank comes with every wallet answer of this owner's play socket / GET /me: it goes into the token store
+ *  as that owner's rank push, so my token beside my name (seat plate, my area, chat) never waits on the separate ranks
+ *  read (or fails with it). Only this owner's space, only me. */
+function selfRank(owner: string, space: string, rank: unknown): void {
+  const me = meNow();
+  if (!me || typeof rank !== "number") return;
+  applyRankPush(owner, { t: "rank", space, u: me, rank });
+}
+
 /** GET /me?space= (also runs the server's top-up check). */
 export async function refreshMe(owner: string, space: string): Promise<Wallet | null> {
   const c = await conn(owner);
@@ -383,7 +419,10 @@ export async function refreshMe(owner: string, space: string): Promise<Wallet | 
   try {
     const w = parseMe(await loadContract(), await c.get(`/me?space=${encodeURIComponent(space)}`));
     if (my !== gen) return null;
-    if (w) patchWallet(owner, space, { wallet: w, has: true });
+    if (w) {
+      patchWallet(owner, space, { wallet: w, has: true });
+      selfRank(owner, space, w.rank);
+    }
     return w;
   } catch (e) {
     if (my === gen && e instanceof PlayHttpError && e.code === "no-wallet") patchWallet(owner, space, { has: false, wallet: null });
@@ -554,6 +593,63 @@ export function useTableView(owner: string | null, table: string | null): OpenVi
   return v;
 }
 
+// ---- the Pad claim (B2; privacy.ts padClaim) ------------------------------------------------------------------------
+/** Pad screens of this page that show a table now (PadGames' table). */
+let padTables = 0;
+let padWired = false;
+function pageVisible(): boolean {
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
+function padNow(): boolean {
+  return padClaim({ padTables, visible: pageVisible() });
+}
+/** Tell every connection what this page is now (a change replaces its socket: net.ts setPad). */
+function syncPad(): void {
+  const on = padNow();
+  for (const c of conns.values()) c.setPad(on);
+}
+function wirePad(): void {
+  if (padWired || typeof document === "undefined") return;
+  padWired = true;
+  // a Pad that goes to the background (the phone locked, another app) stops counting at once (synchronously, before a
+  // phone freezes the page): the computer shows the faces again; back in front, it claims the table again
+  const on = () => {
+    syncPad();
+    for (const cb of [...visListeners]) cb();
+  };
+  document.addEventListener("visibilitychange", on);
+  window.addEventListener("pagehide", on);
+  window.addEventListener("pageshow", on);
+}
+const visListeners = new Set<() => void>();
+function subscribeVisible(cb: () => void): () => void {
+  wirePad();
+  visListeners.add(cb);
+  return () => visListeners.delete(cb);
+}
+/** The Pad screen's table (addendum §1.4 (b)): open while the page is visible, closed (`close`) when it goes to the
+ *  background or the Pad leaves the table, open again on return. The last view stays drawn while hidden. */
+export function usePadTableView(owner: string | null, table: string | null): OpenView | null {
+  const visible = useSyncExternalStore(subscribeVisible, pageVisible, () => true);
+  const v = useTableView(owner, visible ? table : null);
+  const kept = usePlay((s) => (table ? (s.views[table] ?? null) : null));
+  return v ?? kept;
+}
+/** This page counts as a Pad (`you.screens` has `pad`) only while a Pad screen DRAWS a validated table (astra: never for
+ *  a table it failed to open). */
+export function usePadClaim(on: boolean): void {
+  useEffect(() => {
+    if (!on) return;
+    wirePad();
+    padTables++;
+    syncPad();
+    return () => {
+      padTables = Math.max(0, padTables - 1);
+      syncPad();
+    };
+  }, [on]);
+}
+
 /** After `space-changed`: forget what was shown about the room and ask again. */
 function spaceChanged(roomId: string) {
   dropRoomGames();
@@ -597,8 +693,33 @@ export async function createTable(roomId: string, game: Game, opts: Record<strin
 
 /** Show the game panel (over the room's timeline area; a sheet on phones) on a table, or the Games list (null). */
 export function openGameWindow(roomId: string, table: string | null): void {
-  usePlay.setState({ panel: { roomId, table: table ?? "" } });
+  usePlay.setState({ panel: { roomId, table: table ?? "" }, compact: null });
 }
+
+// ---- B4: the Table | Call stage (GAMES-V1.1-ADDENDUM §1.1) -----------------------------------------------------------
+/** Table → Call: the table leaves the stage and stays with me as the compact table (in its room's call only). */
+export function toCallStage(): void {
+  const p = usePlay.getState().panel;
+  const c = useCallStore.getState();
+  const inThatCall = !!p && c.inCall && c.callRoomId === p.roomId;
+  usePlay.setState({ panel: null, compact: p && p.table && inThatCall ? { roomId: p.roomId, table: p.table } : null });
+}
+/** Call → Table: the compact table back on the stage. */
+export function toTableStage(): void {
+  const k = usePlay.getState().compact;
+  if (k) openGameWindow(k.roomId, k.table);
+}
+/** `G` (addendum §1.1): flip the stage while the call / the table has the focus. */
+export function flipStage(): void {
+  const st = usePlay.getState();
+  if (st.panel?.table) toCallStage();
+  else if (st.compact) toTableStage();
+}
+// the compact table belongs to its room's call: it goes when that call does
+useCallStore.subscribe((c) => {
+  const k = usePlay.getState().compact;
+  if (k && !(c.inCall && c.callRoomId === k.roomId) && !c.connecting) usePlay.setState({ compact: null });
+});
 /** A card's "Join the call" (spec §4.5): the room's normal join (its gates and sheets), then the panel on the table once
  *  this room's call is up. ONE pending join at a time: a second click for the same room only retargets the table (no
  *  second join); another room's card replaces it. It is dropped when the call fails, another room's call takes over,
@@ -639,8 +760,12 @@ export function joinCallForGame(roomId: string, table: string): void {
   useCallStore.getState().joinCall(roomId);
   settle(useCallStore.getState());
 }
-/** × / Esc: back to the chat. */
+/** × / Esc: back to the chat. A table I'm seated at in this call stays with me as the compact table (B4/B10: never
+ *  miss a turn because the table was closed). */
 export function closeGamePanel(): void {
+  const p = usePlay.getState().panel;
+  const seated = !!p?.table && !!usePlay.getState().views[p.table]?.view.you;
+  if (p && seated) return toCallStage();
   usePlay.setState({ panel: null });
 }
 
@@ -710,6 +835,93 @@ export async function fetchSummary(owner: string, table: string): Promise<Summar
   }
 }
 
+// ---- F7 reactions (§4) ---------------------------------------------------------------------------------------------
+/** how long a reaction stays drawn (1.2 s animation; a still badge for 2 s) */
+export const REACT_SHOW_MS = 2_000;
+export const REACT_MUTE_PREF = "games.react-mute";
+export const REACT_MUTE_PEOPLE_PREF = "games.react-mute-people";
+export function reactMutedPeople(): string[] {
+  try {
+    const v = JSON.parse(getPref(REACT_MUTE_PEOPLE_PREF, "[]") as string) as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+export function reactMuted(u: string): boolean {
+  return getPref(REACT_MUTE_PREF, "0") === "1" || reactMutedPeople().includes(u);
+}
+export function setReactMutedPerson(u: string, on: boolean): void {
+  const cur = reactMutedPeople().filter((x) => x !== u);
+  setPref(REACT_MUTE_PEOPLE_PREF, JSON.stringify(on ? [...cur, u] : cur));
+}
+/** one polite announcement per 3 s at most ("3 reactions" when they come faster) */
+const announced = { at: 0, held: 0, timer: 0 as unknown as ReturnType<typeof setTimeout> | 0 };
+function announceReact(e: Omit<ReactEvt, "got">): void {
+  const now = Date.now();
+  const say = () => {
+    const c = peekClient();
+    const who = e.u === meNow() ? "You" : c?.getUser(e.u)?.displayName || e.u.replace(/^@([^:]+):.*$/, "$1");
+    const n = announced.held;
+    announced.held = 0;
+    announced.at = Date.now();
+    announce(n > 1 ? REACT_WORDS.many!.replace("{n}", String(n)) : `${who} ${reactWords(e.r, e.to)}`);
+  };
+  announced.held++;
+  if (now - announced.at >= 3000 && !announced.timer) return say();
+  if (!announced.timer)
+    announced.timer = setTimeout(() => {
+      announced.timer = 0;
+      say();
+    }, Math.max(0, 3000 - (now - announced.at)));
+}
+/** A `react` frame from `owner` (F7): only for a table this owner speaks for; muted people / all-muted are dropped on
+ *  arrival (§4.3). Exported for the DEV gallery's stand-in reactions (the same path). */
+/** every reaction this page saw per table in the last minute (muted ones too): the client mirror of
+ *  REACT_TABLE_PER_MIN (astra) */
+const tableReacts = new Map<string, number[]>();
+function tableWindow(table: string, now: number): number[] {
+  const w = (tableReacts.get(table) ?? []).filter((t) => now - t < 60_000);
+  tableReacts.set(table, w);
+  return w;
+}
+export function receiveReact(owner: string, f: unknown): void {
+  const e = parseReact(f);
+  if (!e || tableHome.get(e.table)?.owner !== owner) return;
+  tableWindow(e.table, Date.now()).push(Date.now());
+  if (reactMuted(e.u)) return;
+  const got = Date.now();
+  usePlay.setState((s) => ({ reacts: { ...s.reacts, [e.table]: [...(s.reacts[e.table] ?? []).filter((x) => got - x.got < REACT_SHOW_MS), { ...e, got }].slice(-12) } }));
+  announceReact(e);
+  setTimeout(() => usePlay.setState((s) => ({ reacts: { ...s.reacts, [e.table]: (s.reacts[e.table] ?? []).filter((x) => Date.now() - x.got < REACT_SHOW_MS) } })), REACT_SHOW_MS + 50);
+}
+const reactBuckets = new Map<string, ReactBucket>();
+/** ms until this table's next reaction may go (the client mirror; the server decides) */
+export function reactWait(table: string): number {
+  const now = Date.now();
+  const w = tableWindow(table, now);
+  const full = w.length >= REACT_TABLE_PER_MIN ? 60_000 - (now - w[0]!) : 0;
+  return Math.max(full, reactBuckets.get(table)?.waitMs(now) ?? 0);
+}
+/** Can this table take reactions (the server says "react" in its hello and the contract has the move)? */
+export function reactsOn(owner: string | null): boolean {
+  return !!owner && (ownerState(owner).serverFeatures ?? []).includes("react");
+}
+/** Send a reaction (§4.2): no wallet needed, no money; `to` for a toss only (a seat or "pot"). */
+export async function sendReact(table: string, r: ReactionId, to?: number | "pot"): Promise<Ack> {
+  // my sends count at once (reserved until their echo would have come; the echo then adds itself, a slight
+  // over-count only makes the mirror stricter than the server, never looser)
+  const win = tableWindow(table, Date.now());
+  if (win.length >= REACT_TABLE_PER_MIN) return { op: "", ok: false, code: "cooldown", dup: false };
+  win.push(Date.now());
+  let b = reactBuckets.get(table);
+  if (!b) reactBuckets.set(table, (b = new ReactBucket()));
+  if (!b.take(Date.now())) return { op: "", ok: false, code: "cooldown", dup: false };
+  const a: Record<string, unknown> = { do: "react", r };
+  if (r === "toss") a.to = to ?? "pot";
+  return act(table, a);
+}
+
 // ---- chat cards (§6.6) ------------------------------------------------------------------------------------------
 const posted = new Set<string>();
 /** "please post" requests that came before their table's context: replayed when it arrives */
@@ -777,7 +989,7 @@ onSessionEnding(() => {
   confirmRetries.clear();
   featureRetries.clear();
   pendingPosts.clear();
-  usePlay.setState({ owners: {}, wallets: {}, rooms: {}, views: {}, dial: {}, notes: {}, ask: null, confirm: {}, openErr: {}, panel: null });
+  usePlay.setState({ owners: {}, wallets: {}, rooms: {}, views: {}, dial: {}, notes: {}, ask: null, confirm: {}, openErr: {}, panel: null, compact: null, reacts: {} });
 });
 
 export { GAME_WORDS };

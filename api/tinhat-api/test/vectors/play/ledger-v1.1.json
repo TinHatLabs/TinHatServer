@@ -1,0 +1,46 @@
+{
+ "v": 1,
+ "name": "ledger-v1.1",
+ "about": "Tin Hat games v1.1 economy rules (GAMES-V1.1-ADDENDUM §5.2, §6.2, §6.3), as pure cases for the server (games-s2 writes, games-design2 reviews). vectors/ledger.json is unchanged and keeps running with the v1 defaults (rules.V1_DEFAULTS); these cases use the v1.1 defaults unless a case gives `server` (the server-wide env values) and `space` (the space's own settings). Sections: `economy` = the resolved value + source per key (economyFor over configFromEnv); `tick` = sampler samples at the resolved economy (rules.tick; w = {holdings, rank, accrual_s, day, earned_today}, ev = {at, gap_s, eligible}); `admin_delta` = the chips one admin action moves for one wallet (+ mints from mint:admin, − burns to burn:admin; open money is refused before this for everything but a grant); `side_pay` = Tune In's pay on a find; `side_tombstone` = what a deleted-and-rejoined wallet's side counters are. The DB-level rules (all-or-nothing named lists, the op receipt, the log, notices, exactly-once side pay) are tested in the server's test/play-r2-admin.test.mjs and test/play-r2-side.test.mjs.",
+ "defaults": { "chip_minutes": 15, "day_max": 16, "start": 10, "topup_to": 5, "cap_base": 100, "cap_per_rank": 50, "side_day_max": 10, "side_on": true },
+ "economy": [
+  { "id": "all-defaults", "server": {}, "space": {}, "want": { "chip_minutes": [15, "default"], "day_max": [16, "default"], "start": [10, "default"], "side_on": [true, "default"] }, "chip_s": 900 },
+  { "id": "server-wide", "server": { "PLAY_DAY_MAX": "40", "PLAY_CHIP_MINUTES": "30" }, "space": {}, "want": { "day_max": [40, "server"], "chip_minutes": [30, "server"] }, "chip_s": 1800 },
+  { "id": "space-over-server", "server": { "PLAY_DAY_MAX": "40" }, "space": { "day_max": 5, "chip_minutes": 5, "cap_base": 20 }, "want": { "day_max": [5, "space"], "chip_minutes": [5, "space"], "cap_base": [20, "space"] }, "chip_s": 300 },
+  { "id": "out-of-bounds-space-ignored", "server": {}, "space": { "day_max": 201, "chip_minutes": 1, "start": -1, "side_on": "yes" }, "want": { "day_max": [16, "default"], "chip_minutes": [15, "default"], "start": [10, "default"], "side_on": [true, "default"] }, "chip_s": 900 },
+  { "id": "out-of-bounds-server-ignored", "server": { "PLAY_DAY_MAX": "0", "PLAY_START": "501", "PLAY_SIDE_ON": "maybe" }, "space": {}, "want": { "day_max": [16, "default"], "start": [10, "default"], "side_on": [true, "default"] }, "chip_s": 900 },
+  { "id": "side-off-by-space", "server": {}, "space": { "side_on": false, "side_day_max": 0 }, "want": { "side_on": [false, "space"], "side_day_max": [0, "space"] }, "chip_s": 900 }
+ ],
+ "tick": [
+  { "id": "15-min-chip", "space": {}, "w": { "holdings": 10, "rank": 0, "accrual_s": 840, "day": "2026-11-20", "earned_today": 0 }, "ev": { "at": "2026-11-20T20:00:00Z", "gap_s": 60, "eligible": true }, "want": { "chips": 1, "accrual_s": 0, "earned_today": 1 } },
+  { "id": "90-s-cap-per-sample", "space": {}, "w": { "holdings": 10, "rank": 0, "accrual_s": 800, "day": "2026-11-20", "earned_today": 0 }, "ev": { "at": "2026-11-20T20:00:00Z", "gap_s": 600, "eligible": true }, "want": { "chips": 0, "accrual_s": 890, "earned_today": 0 } },
+  { "id": "day-max-16", "space": {}, "w": { "holdings": 30, "rank": 0, "accrual_s": 899, "day": "2026-11-20", "earned_today": 16 }, "ev": { "at": "2026-11-20T20:00:00Z", "gap_s": 60, "eligible": true }, "want": { "chips": 0, "why": "day-max" } },
+  { "id": "space-5-min", "space": { "chip_minutes": 5 }, "w": { "holdings": 10, "rank": 0, "accrual_s": 250, "day": "2026-11-20", "earned_today": 0 }, "ev": { "at": "2026-11-20T20:00:00Z", "gap_s": 60, "eligible": true }, "want": { "chips": 1, "accrual_s": 10, "earned_today": 1 } },
+  { "id": "space-cap-at-rank-1", "space": { "cap_base": 40, "cap_per_rank": 10 }, "w": { "holdings": 50, "rank": 1, "accrual_s": 0, "day": "2026-11-20", "earned_today": 0 }, "ev": { "at": "2026-11-20T20:00:00Z", "gap_s": 60, "eligible": true }, "want": { "chips": 0, "why": "at-cap" } },
+  { "id": "idle-never-earns", "space": { "chip_minutes": 2 }, "w": { "holdings": 10, "rank": 0, "accrual_s": 119, "day": "2026-11-20", "earned_today": 0 }, "ev": { "at": "2026-11-20T20:00:00Z", "gap_s": 60, "eligible": false }, "want": { "chips": 0, "why": "not-eligible", "accrual_s": 119 } }
+ ],
+ "admin_delta": [
+  { "id": "grant", "in": { "action": "grant", "amount": 5, "balance": 38, "start": 10 }, "want": 5 },
+  { "id": "remove-clips-at-balance", "in": { "action": "remove", "amount": 100, "balance": 15, "start": 10 }, "want": -15 },
+  { "id": "remove-some", "in": { "action": "remove", "amount": 4, "balance": 15, "start": 10 }, "want": -4 },
+  { "id": "set-above-cap", "in": { "action": "set", "amount": 250, "balance": 15, "start": 10 }, "want": 235 },
+  { "id": "set-down", "in": { "action": "set", "amount": 0, "balance": 15, "start": 10 }, "want": -15 },
+  { "id": "set-same-no-tx", "in": { "action": "set", "amount": 15, "balance": 15, "start": 10 }, "want": 0 },
+  { "id": "reset-to-space-start", "in": { "action": "reset", "amount": null, "balance": 250, "start": 20 }, "want": -230 },
+  { "id": "reset-up", "in": { "action": "reset", "amount": null, "balance": 0, "start": 10 }, "want": 10 },
+  { "id": "rank-moves-no-chips", "in": { "action": "rank", "amount": 3, "balance": 40, "start": 10 }, "want": 0 }
+ ],
+ "side_pay": [
+  { "id": "first-try", "in": { "tries": 1, "earned_today": 0, "side_day_max": 10, "holdings": 0 }, "want": 3 },
+  { "id": "fifth-try", "in": { "tries": 5, "earned_today": 0, "side_day_max": 10, "holdings": 0 }, "want": 2 },
+  { "id": "seventh-try", "in": { "tries": 7, "earned_today": 0, "side_day_max": 10, "holdings": 0 }, "want": 1 },
+  { "id": "clip-day-max", "in": { "tries": 1, "earned_today": 9, "side_day_max": 10, "holdings": 0 }, "want": 1 },
+  { "id": "clip-broke-line", "in": { "tries": 1, "earned_today": 0, "side_day_max": 10, "holdings": 5 }, "want": 2 },
+  { "id": "clip-to-zero", "in": { "tries": 2, "earned_today": 10, "side_day_max": 10, "holdings": 0 }, "want": 0 },
+  { "id": "never-negative", "in": { "tries": 1, "earned_today": 0, "side_day_max": 10, "holdings": 9 }, "want": 0 }
+ ],
+ "side_tombstone": [
+  { "id": "delete-rejoin-same-day", "deleted": { "side_day": "2026-11-20", "side_earned": 7 }, "today": "2026-11-20", "want": { "left_today": 3 } },
+  { "id": "delete-rejoin-next-day", "deleted": { "side_day": "2026-11-19", "side_earned": 10 }, "today": "2026-11-20", "want": { "left_today": 10 } }
+ ]
+}

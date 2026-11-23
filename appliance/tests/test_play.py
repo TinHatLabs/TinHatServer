@@ -39,25 +39,35 @@ SECRETS = {"registration_shared_secret": "reg", "macaroon_secret_key": "mac", "f
 class Settings(unittest.TestCase):
     def test_defaults_are_the_decided_ones(self):
         # games OFF until the owner turns them on (spec §79; the 0.3.20 release, launch-gate 13:57)
-        self.assertEqual(play.PLAY_DEFAULTS, {"enabled": False, "rig_phone_apps": False, "day_max": 8, "start": 10})
+        # v1.1 (Server 0.3.21, addendum §5.2 / §6.3): every economy key; 1 chip / 15 min, 16 a day
+        self.assertEqual(play.PLAY_DEFAULTS, {"enabled": False, "rig_phone_apps": False, "chip_minutes": 15, "day_max": 16, "start": 10, "topup_to": 5,
+                                              "cap_base": 100, "cap_per_rank": 50, "side_day_max": 10, "side_on": True})
         self.assertEqual(play.settings({}), play.PLAY_DEFAULTS)
 
     def test_bounds_refused_and_ignored(self):
-        for name, value in (("day_max", "0"), ("day_max", "25"), ("day_max", "2.5"), ("start", "51"), ("start", "-1"),
-                            ("start", "ten"), ("rig_phone_apps", "maybe"), ("colour", "1")):
+        for name, value in (("day_max", "0"), ("day_max", "201"), ("day_max", "2.5"), ("start", "501"), ("start", "-1"),
+                            ("start", "ten"), ("rig_phone_apps", "maybe"), ("colour", "1"), ("chip_minutes", "1"), ("chip_minutes", "61"),
+                            ("cap_base", "19"), ("side_on", "maybe")):
             v, why = play.check(name, value)
             self.assertIsNone(v, f"{name}={value}")
             self.assertTrue(why)
         self.assertEqual(play.check("day_max", "24"), (24, ""))
+        self.assertEqual(play.check("day_max", "200"), (200, ""))
+        self.assertEqual(play.check("chip_minutes", "5"), (5, ""))
+        self.assertEqual(play.check("side_on", "off"), (False, ""))
         self.assertEqual(play.check("start", "0"), (0, ""))
         self.assertEqual(play.check("rig_phone_apps", "on"), (True, ""))
         # a stored out-of-bounds value (a hand-edited state) keeps the default
-        self.assertEqual(play.settings({"play": {"day_max": 99, "start": True, "enabled": "yes"}}), play.PLAY_DEFAULTS)
+        self.assertEqual(play.settings({"play": {"day_max": 999, "start": True, "enabled": "yes"}}), play.PLAY_DEFAULTS)
         self.assertEqual(play.settings({"play": {"day_max": 3, "rig_phone_apps": True}})["day_max"], 3)
 
     def test_features_only_explicit(self):
-        self.assertEqual(play.features({}), {"play": False, "play_rig_phone_apps": False})
-        self.assertEqual(play.features({"play": {"enabled": False, "rig_phone_apps": True}}), {"play": False, "play_rig_phone_apps": True})
+        off = {"play_admin": False, "play_side": False, "play_v": 2}
+        self.assertEqual(play.features({}), {"play": False, "play_rig_phone_apps": False, **off})
+        self.assertEqual(play.features({"play": {"enabled": False, "rig_phone_apps": True}}), {"play": False, "play_rig_phone_apps": True, **off})
+        on = play.features({"play": {"enabled": True}, "play_g9_ok": 1})
+        self.assertEqual((on["play_admin"], on["play_side"]), (True, True))
+        self.assertIs(play.features({"play": {"enabled": True, "side_on": False}, "play_g9_ok": 1})["play_side"], True, "the capability; a space may turn it on")
         f = apiconf.features({"server_name": "a.local", "calls": True}, SECRETS)
         self.assertIs(f["play"], False)
         self.assertIs(f["play_rig_phone_apps"], False)
@@ -70,7 +80,11 @@ class Env(unittest.TestCase):
         st = {"server_name": "a.local", "updates": {"tz": "America/Los_Angeles"}, "play": {"day_max": 6}, "play_db_port": 5433}
         lines = play.env_lines(st, {**SECRETS, "play_db_password": "p" * 32})
         self.assertEqual(lines["PLAY_DAY_MAX"], "6")
-        self.assertEqual(lines["PLAY_START"], "10")
+        # v1.1: only keys the owner set reach the env (an unset one = the API's own default, the new 16 for day_max)
+        self.assertNotIn("PLAY_START", lines)
+        self.assertNotIn("PLAY_CHIP_MINUTES", lines)
+        self.assertNotIn("PLAY_DAY_MAX", play.env_lines({**st, "play": {}}, {**SECRETS, "play_db_password": "p" * 32}))
+        self.assertEqual(play.env_lines({**st, "play": {"side_on": False, "chip_minutes": 20}}, {**SECRETS, "play_db_password": "p" * 32})["PLAY_SIDE_ON"], "0")
         self.assertEqual(lines["PLAY_RIG_PHONE_APPS"], "0")
         self.assertEqual(lines["PLAY_TZ"], "America/Los_Angeles")
         self.assertEqual((lines["PLAY_DB_HOST"], lines["PLAY_DB_PORT"]), ("127.0.0.1", "5433"))
@@ -262,11 +276,13 @@ class Dashboard(unittest.TestCase):
     def test_features_card_doc_carries_the_play_settings_and_bounds(self):
         d = apiconf.doc({"server_name": "a.local", "calls": True, "play": {"day_max": 5}}, SECRETS)
         self.assertEqual(d["play"]["day_max"], 5)
-        self.assertEqual(d["play"]["bounds"], {"day_max": [1, 24], "start": [0, 50]})
+        self.assertEqual(d["play"]["bounds"]["day_max"], [1, 200])
+        self.assertEqual(d["play"]["bounds"]["start"], [0, 500])
+        self.assertEqual(d["play"]["bounds"]["chip_minutes"], [2, 60])
 
     def test_the_card_sends_play_and_the_handler_refuses_out_of_bounds(self):
         ui = (_OPT / "manager" / "ui" / "admin.js").read_text()
-        self.assertIn('play: { enabled: playOn, rigPhoneApps: rigPhones, dayMax: dayIn.value.trim(), start: startIn.value.trim() }', ui)
+        self.assertIn('play: { enabled: playOn, rigPhoneApps: rigPhones, dayMax: dayIn.value.trim(), start: startIn.value.trim(), chipMinutes: chipIn.value.trim(), sideOn, sideDayMax: sideIn.value.trim(), topupTo: topIn.value.trim(), capBase: capIn.value.trim(), capPerRank: perIn.value.trim() }', ui)
         web = (_OPT / "manager" / "tinhat" / "web.py").read_text()
         self.assertIn('v, why = play.check(name, body["play"][field])', web)
         self.assertIn('return _err(f"Mini games: {why}.", 400)', web)
@@ -501,3 +517,31 @@ class FreshBox(unittest.TestCase):
         seg = src[src.index("drop = {"):src.index("}", src.index("drop = {"))]
         for k in ("play_g9_ok", "play_g9_block", "play_g9_block_at", "play_api_restart"):
             self.assertIn(f'"{k}"', seg, f"the old box's {k} is never carried into a restore")
+
+
+class UpdateKeepsGamesOn(unittest.TestCase):
+    """PM 15:59 / 16:30: a 0.3.20 → 0.3.21 update must never turn a running box's games off. On 0.3.20 the default is
+    OFF, so the only ways games are on are the dashboard and the CLI, and both store `enabled: True` (play.save keeps
+    every changed key); 0.3.21 reads that key. lab7 flipped only because it ran round 1's pre-release manager (60af8c7),
+    whose default was ON and never stored."""
+
+    def test_switched_on_the_0320_way_stays_on(self):
+        # the 0.3.20 write paths: web.py keeps a field only if it differs from the default (off), then play.save()
+        web = (_OPT / "manager" / "tinhat" / "web.py").read_text()
+        self.assertIn("if v != cur[name]:", web)
+        self.assertIn('play.save(play_changes, s_["mxid"])', web)
+        st = {"server_name": "a.local", "play_g9_ok": 1}
+        with mock.patch.object(play.state, "load_state", return_value=st), \
+             mock.patch.object(play.state, "save_state", side_effect=lambda **kw: {**st, **kw}) as saved:
+            play.save({"enabled": True}, who="@owner:a.local")
+        stored = saved.call_args.kwargs["play"]
+        self.assertIs(stored.get("enabled"), True, "switching on stores the key")
+        after = {**st, "play": stored}
+        self.assertIs(play.settings(after)["enabled"], True)
+        self.assertIs(play.effective(after), True, "0.3.21 keeps the games on")
+        self.assertEqual(play.env_lines(after, {**SECRETS, "play_db_password": "p" * 32})["PLAY_ENABLED"], "1")
+
+    def test_the_lab7_shape_is_the_only_one_that_flips(self):
+        # games on with NO stored key = round 1's pre-release default; on 0.3.20 that state means OFF already
+        self.assertIs(play.PLAY_DEFAULTS["enabled"], False)
+        self.assertIs(play.effective({"play": {}, "play_g9_ok": 1}), False)

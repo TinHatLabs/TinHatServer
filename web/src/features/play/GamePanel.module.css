@@ -38,6 +38,7 @@
 .phone .head {
   height: 48px;
   padding: 0 8px;
+  gap: 4px; /* F-W1: room for the Table | Call pill */
 }
 .title {
   font-weight: 700;
@@ -58,4 +59,17 @@
 .phone .title {
   white-space: nowrap;
   flex: none;
+}
+/* F-W1: on a phone the head's Table | Call pill takes narrower segments, so the space badge keeps room for its avatar */
+.headPill > button {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+/* F-W1: if a very narrow phone or a large text size still leaves no room once the badge is down to its wallet chip,
+   the title gives way (ellipsis) rather than the chip or the close button */
+.phone .titleTight {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

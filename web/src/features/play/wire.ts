@@ -46,6 +46,15 @@ export interface HoldemSeat {
   cards: 0 | 2;
   connected: boolean;
   shown?: string[];
+  /** 0.3.21 (addendum §8.1, additive): a pending / current sit-out; absent or null on older servers */
+  away?: AwayInfo | null;
+}
+/** GAMES-V1.1-ADDENDUM §8.1: why and since when a player sits out, and when they'll stand up (chips kept). */
+export interface AwayInfo {
+  reason: "timeout" | "gone" | "asked";
+  since: number;
+  stand_at: number;
+  hands_left: number;
 }
 export interface Pot {
   amount: number;
@@ -96,6 +105,8 @@ export interface HoldemYou {
   timeouts: number;
   /** The host, in the lobby: Deal is possible (≥ 2 seated with chips). Absent from older servers. */
   can_deal?: boolean;
+  /** 0.3.21 (addendum §8.1): my own sit-out, as on my seat */
+  away?: AwayInfo | null;
 }
 export interface HoldemView extends ViewBase {
   game: "holdem";
@@ -121,6 +132,8 @@ export interface RigPlayer {
   left: boolean;
   spun: boolean;
   skipped: boolean;
+  /** 0.3.21 (addendum §8.1): sitting out from the next round's setup */
+  away?: AwayInfo | null;
 }
 export interface RigBoardCard {
   card: string;
@@ -194,6 +207,8 @@ export interface RigEnd {
 }
 export interface RigYou {
   role: RigRole | null;
+  /** 0.3.21 (addendum §8.1) */
+  away?: AwayInfo | null;
   screens: string[];
   at_cap: boolean;
   holdings: number;
@@ -253,6 +268,10 @@ export interface Wallet {
   chip_s: number;
   day: string;
   topup: { available: boolean; next_day: string };
+  /** 0.3.21 (addendum §6.4): whether Tune In is offered to me now (read tolerantly: side.ts parseSide) */
+  side?: unknown;
+  /** 0.3.21 (addendum §5.5): admin changes to my wallet not yet seen (read tolerantly: adminRules parseNotices) */
+  notices?: unknown;
 }
 export interface SessionAnswer {
   v: 1;
@@ -288,6 +307,7 @@ export type ServerFrame =
   | { t: "ack"; op: string; ok: boolean; code: string; dup: boolean }
   | { t: "wallet"; space: string; balance: number; holdings: number; rank: number; cap: number; earned_today?: number }
   | { t: "rank"; space: string; u: string; rank: number }
+  | { t: "react"; table: string; u: string; seat: number | null; r: string; to?: number | "pot"; at: number }
   | { t: "post"; kind: CardKind; table: string; round?: number }
   | { t: "pong" }
   | { t: "bye"; code: string }
@@ -365,7 +385,7 @@ export function newOp(rand: (n: number) => Uint8Array = (n) => crypto.getRandomV
 }
 
 /** Moves that name no turn (table-level moves carry no `at`). */
-export const TABLE_MOVES: ReadonlySet<string> = new Set(["sit", "leave", "deal", "away", "kick", "close", "join", "start"]);
+export const TABLE_MOVES: ReadonlySet<string> = new Set(["sit", "leave", "deal", "away", "kick", "close", "join", "start", "react"]); // react: addendum §4.2 (lab7 17:3x)
 
 /** The `at` a move names: the turn shown when it was pressed (a stale one is refused by the server, never re-aimed). */
 export function atFor(view: View, act: string): Record<string, number | string> | undefined {
@@ -380,7 +400,20 @@ export function atFor(view: View, act: string): Record<string, number | string> 
 
 /** The words for a refusal code (an ack, an HTTP answer, an `error` frame, or the app's own discovery results): the
  *  shared testvectors/games/words.json `codes` (byte-identical in the desktop). */
-export const CODE_WORDS: Readonly<Record<string, string>> = wordsJson.codes;
+/** The v1.1 codes (contract v1.1b) until the shared words.json has them (games-desktop2 appends; proposed lines). */
+const CODES_V11: Record<string, string> = {
+  cooldown: "Easy there: one more in a moment.",
+  "op-reused": "That was already sent differently. Try again.",
+  "bad-reason": "That note can't be used. Keep it short, with no links or user ids.",
+  "bad-value": "That value is out of range.",
+  "at-table": "They're at a table right now. Try after they leave.",
+  "not-admin": "Only this space's admins can do that.",
+  "not-broke": "Tune In is for when you're down to 4 chips or fewer.",
+  "day-max": "That's all for today. More tomorrow.",
+  "side-off": "Tune In is off in this space.",
+  "no-run": "That signal is gone. Start a new one.",
+};
+export const CODE_WORDS: Readonly<Record<string, string>> = { ...CODES_V11, ...wordsJson.codes };
 export function codeWords(code: string): string {
   return CODE_WORDS[code] ?? CODE_WORDS.other ?? "Something went wrong.";
 }

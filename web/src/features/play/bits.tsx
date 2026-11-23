@@ -1,6 +1,6 @@
 // bits.tsx — the small pieces every game screen uses: a player's name + avatar (the prestige token's PersonName takes
 // over here from the prestige feature), a playing card, a chip stack, the turn ring, the clock hook, the refusal note.
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties } from "react";
 import { peekClient, useMember } from "@/core/matrix";
 import { Avatar, cx } from "@/ui";
 import { PersonName } from "@/features/spaces/PersonName";
@@ -24,10 +24,23 @@ export function myId(): string {
 
 /** A person's name as its own label, with the prestige token of the room's game space at its left (the prestige feature's
  *  PersonName, rev 2 §3.2/§3.3). */
-export function PlayerName({ mxid, roomId, className }: { mxid: string; roomId: string; className?: string }) {
+/** The table's bound space (`view.space`): the prestige token's context for every name at that table (PM 14:49, B3:
+ *  the table's space, not its room). A table root provides it; elsewhere the room decides. */
+export const TableSpace = createContext<string | null>(null);
+
+export function PlayerName({ mxid, roomId, className, tokenSize }: { mxid: string; roomId: string; className?: string; tokenSize?: number }) {
   const m = useMember(roomId, mxid);
+  const space = useContext(TableSpace);
   const name = m?.name || mxid.replace(/^@([^:]+):.*$/, "$1");
-  return <PersonName mxid={mxid} roomId={roomId} name={name} className={cx(s.name, className)} title={mxid} />;
+  return <PersonName mxid={mxid} roomId={space || roomId} name={name} className={cx(s.name, className)} title={mxid} tokenSize={tokenSize} />;
+}
+/** B3 (addendum §1.1): the token beside a name on a seat plate / in a lobby list is the widget size (12 px). */
+export { TOKEN_SIZE_WIDGET as SEAT_TOKEN } from "@/features/prestige/PrestigeToken";
+
+/** A person's name for a SENTENCE or a menu line ("Mute ben's reactions"): no token (PersonName's rule). */
+export function usePlayerLabel(roomId: string, mxid: string): string {
+  const m = useMember(roomId, mxid);
+  return m?.name || mxid.replace(/^@([^:]+):.*$/, "$1");
 }
 
 export function PlayerAvatar({ mxid, roomId, size = 36 }: { mxid: string; roomId: string; size?: number }) {

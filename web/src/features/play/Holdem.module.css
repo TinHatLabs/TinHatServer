@@ -101,6 +101,7 @@
   display: none;
 }
 .pot {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -307,6 +308,96 @@
   color: var(--th-text-muted);
   white-space: nowrap;
 }
+/* B1/B2: "Your cards are on your phone · Show here" under the face-down cards (addendum §1.4 (a)) */
+.onPhone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+  max-width: 240px;
+}
+.showHere {
+  appearance: none;
+  border: 0;
+  background: none;
+  margin: -4px -6px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  font-weight: 600;
+  color: var(--th-accent-bright);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.showHere:hover {
+  text-decoration: underline;
+}
+.showHere:focus-visible {
+  outline: 2px solid var(--th-accent-bright);
+  outline-offset: 1px;
+}
+/* F5/F6: my made hand + odds line, the Hands button */
+.oddsLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 1px;
+  font-size: calc(11.5px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+  font-variant-numeric: tabular-nums;
+  max-width: 300px;
+}
+.oddsLine > * + *::before {
+  content: "·";
+  margin-right: 6px;
+  color: var(--th-text-muted);
+}
+.oddsLine .made {
+  color: var(--th-text-primary);
+  font-weight: 600;
+  font-size: inherit;
+}
+.improve {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: help;
+  border-radius: 3px;
+}
+.improve:focus-visible {
+  outline: 2px solid var(--th-accent-bright);
+  outline-offset: 1px;
+}
+.handsBtn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-end;
+  margin-left: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--th-border-subtle);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--th-text-secondary);
+  font: inherit;
+  font-size: calc(11px * var(--th-text-scale, 1));
+  cursor: pointer;
+  white-space: nowrap;
+}
+.handsBtn:hover,
+.handsBtn[aria-expanded="true"] {
+  color: var(--th-text-primary);
+  border-color: var(--th-accent-bright);
+}
+.handsBtn:focus-visible {
+  outline: 2px solid var(--th-accent-bright);
+  outline-offset: 1px;
+}
 .myInfo {
   display: flex;
   flex-direction: column;
@@ -486,6 +577,11 @@
   transform: translateX(-50%);
   bottom: -14px;
 }
+.mobile .showHere {
+  font-size: calc(12px * var(--th-text-scale, 1));
+  padding: 8px 10px;
+  margin: -8px -10px;
+}
 .mobile .actions {
   align-items: stretch;
 }
@@ -591,4 +687,111 @@
 }
 .mobile:has(.raising) .strip {
   min-height: 56px;
+}
+
+/* ---- B10: away (addendum §8.2) ---- */
+.awaySeat {
+  opacity: 0.6;
+}
+.tagAway {
+  color: var(--th-text-secondary);
+  border: 1px solid var(--th-border-subtle);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.awayBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.backBtn {
+  min-width: 160px;
+  min-height: 40px;
+  font-weight: 700;
+  justify-content: center;
+  text-align: center;
+}
+.awayLine {
+  font-size: calc(11.5px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+  text-align: right;
+  max-width: 360px;
+}
+.mobile .awayBox {
+  align-items: stretch;
+}
+.mobile .backBtn {
+  width: 100%;
+  min-height: 48px;
+}
+.mobile .awayLine {
+  text-align: center;
+  max-width: none;
+}
+
+/* §8.3 the one-time "your turn" question under the action bar */
+.turnAsk {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  column-gap: 10px;
+  font-size: calc(11.5px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+}
+.turnNo {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  font: inherit;
+  color: var(--th-text-muted);
+  cursor: pointer;
+}
+.mobile .turnAsk {
+  justify-content: center;
+  text-align: center;
+}
+
+/* B4: the seat avatar is the call presence (the call's speaking ring, the muted-mic glyph) */
+.avatarWrap.speaking::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--th-call-speaking);
+  pointer-events: none;
+}
+/* bottom-LEFT: the dealer button owns the bottom-right of a seat avatar */
+.micOff {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--th-surface-window);
+  border: 1px solid var(--th-border-subtle);
+}
+.seatCompact .micOff {
+  width: 13px;
+  height: 13px;
+}
+
+/* phones: the made hand and the odds stack (the narrow column would start wrapped lines with a separator) */
+.mobile .oddsLine {
+  flex-direction: column;
+  align-items: flex-start;
+}
+.mobile .oddsLine > * + *::before {
+  content: none;
+}
+
+/* the table takes the focus on a click (R / G work from the felt); no ring for that */
+.root:focus {
+  outline: none;
 }

@@ -1,0 +1,922 @@
+{
+ "v": 1,
+ "name": "afk-v1",
+ "about": "Tin Hat games v1.1 B10, away players at a Hold'em table (GAMES-V1.1-ADDENDUM §8.1), as scripted cases for the SERVER's table engine (games-s2 writes, games-design2 reviews). Seats are numbered 1..8 clockwise; players sit in the order listed (seat = index + 1). Steps: [\"deal\", by] = the host's Deal; [\"tick\", \"deadline\"] = the clock jumps to the current turn deadline and the timers run; [\"tick\", \"now\"] = the timers run at the current time; [\"tick\", \"pause\"] = the clock moves PAUSE_MS on (the next deal); [\"tick\", \"+N\"] = the clock moves N ms on; [\"act\", by, do, extra?] = a player's move (acting moves name the current hand + turn); [\"away\", by, on]; [\"gone\", [ids]] = the platform's set of seated ids with no socket on the table for GONE_MS (used at the next deal); [\"foldout\"] = whoever is to act folds until the hand ends; [\"react\", by] = a table reaction (F7; it never reaches the table engine: the runner does nothing, by design); [\"rig\", {seat: [c, c]}, board] = the open hand's hole cards and board (dealing order); [\"expect\", {...}] checks. Expect keys: away {seat: reason | null}; order [seats dealt in]; status; button; sb_seat; no_bet_from [ids] (no bet effect in the last step); deadline \"now\" | \"normal\" (the turn's deadline is the current time / current time + turn_s); last {seat, a}; seated [seats]; cashout {id, amount, reason} (in the last step's effects); winners [seats] of the first pot; state {seat: seat state in the public view}; hands_left {seat: n}. Every case starts with a fresh table, every player with the given chips; the deck is deterministic (randomInt = 0) unless rigged. Negative controls (they must FAIL the named case): AWAY_AFTER_TIMEOUTS = 2 fails one-timeout; dealing an away seat in (taking its blind) fails no-blind; treating away as folded fails timed-out-check-wins.",
+ "constants": {
+  "AWAY_AFTER_TIMEOUTS": 1,
+  "AWAY_INSTANT_ACT": true,
+  "GONE_MS": 20000,
+  "AWAY_STAND_HANDS": 6,
+  "AWAY_STAND_MS": 600000,
+  "TURN_S": 30,
+  "PAUSE_MS": 5000
+ },
+ "cases": [
+  {
+   "id": "one-timeout",
+   "about": "one timeout → away from the NEXT hand (reason timeout); the current hand's fold stands",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "tick",
+     "deadline"
+    ],
+    [
+     "expect",
+     {
+      "last": {
+       "seat": 1,
+       "a": "timeout"
+      },
+      "away": {
+       "1": "timeout"
+      },
+      "hands_left": {
+       "1": 6
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "id": "no-blind",
+   "about": "an away seat is dealt out: no cards, no blind, state away",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "tick",
+     "deadline"
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "order": [
+       2,
+       3
+      ],
+      "no_bet_from": [
+       "p1"
+      ],
+      "state": {
+       "1": "away"
+      },
+      "hands_left": {
+       "1": 5
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "id": "instant-act",
+   "about": "after a timeout, the same player's later turns in this hand are acted at once; a present player keeps the 30 s",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "act",
+     "p1",
+     "call"
+    ],
+    [
+     "tick",
+     "deadline"
+    ],
+    [
+     "expect",
+     {
+      "deadline": "now",
+      "away": {
+       "2": "timeout"
+      }
+     }
+    ],
+    [
+     "tick",
+     "now"
+    ],
+    [
+     "expect",
+     {
+      "last": {
+       "seat": 2,
+       "a": "timeout"
+      },
+      "deadline": "normal"
+     }
+    ]
+   ]
+  },
+  {
+   "id": "timed-out-check-wins",
+   "about": "a timed-out check can still win the pot: away never changes who can win the current hand; the seat stays active in it",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "rig",
+     {
+      "1": [
+       "2c",
+       "7d"
+      ],
+      "2": [
+       "As",
+       "Ah"
+      ]
+     },
+     [
+      "Kc",
+      "9d",
+      "4s",
+      "Jh",
+      "3c"
+     ]
+    ],
+    [
+     "act",
+     "p1",
+     "call"
+    ],
+    [
+     "tick",
+     "deadline"
+    ],
+    [
+     "expect",
+     {
+      "state": {
+       "2": "active"
+      },
+      "deadline": "now"
+     }
+    ],
+    [
+     "tick",
+     "now"
+    ],
+    [
+     "act",
+     "p1",
+     "check"
+    ],
+    [
+     "tick",
+     "now"
+    ],
+    [
+     "act",
+     "p1",
+     "check"
+    ],
+    [
+     "tick",
+     "now"
+    ],
+    [
+     "act",
+     "p1",
+     "check"
+    ],
+    [
+     "expect",
+     {
+      "status": "pause",
+      "winners": [
+       2
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "id": "back-no-missed-blind",
+   "about": "I'm back (away off): dealt in at the next hand, posting only that hand's own blinds",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "away",
+     "p3",
+     true
+    ],
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "expect",
+     {
+      "order": [
+       1,
+       2
+      ]
+     }
+    ],
+    [
+     "away",
+     "p3",
+     false
+    ],
+    [
+     "expect",
+     {
+      "away": {
+       "3": null
+      }
+     }
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "order": [
+       1,
+       2,
+       3
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "id": "race-im-back",
+   "about": "away off committed before the instant act: the turn gets the normal timer; the instant act then does nothing",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "act",
+     "p1",
+     "call"
+    ],
+    [
+     "tick",
+     "deadline"
+    ],
+    [
+     "expect",
+     {
+      "deadline": "now"
+     }
+    ],
+    [
+     "away",
+     "p2",
+     false
+    ],
+    [
+     "expect",
+     {
+      "deadline": "normal",
+      "away": {
+       "2": null
+      }
+     }
+    ],
+    [
+     "tick",
+     "now"
+    ],
+    [
+     "expect",
+     {
+      "deadline": "normal"
+     }
+    ]
+   ]
+  },
+  {
+   "id": "stand-after-6-hands",
+   "about": "away for 6 dealt-out hands → stand up at the 6th deal (cash-out, reason away, the exact stack)",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     37
+    ]
+   ],
+   "steps": [
+    [
+     "away",
+     "p3",
+     true
+    ],
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "seated": [
+       1,
+       2,
+       3
+      ],
+      "hands_left": {
+       "3": 1
+      }
+     }
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "seated": [
+       1,
+       2
+      ],
+      "cashout": {
+       "id": "p3",
+       "amount": 37,
+       "reason": "away"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "id": "ten-minutes-first-allin-waits",
+   "about": "the 10-minute clock fires first; a stand-up while all-in waits for the settle (never folds out of turn), then completes: cash-out with the pot won, reason away (32 = 10 × 3 + p4's 2 big-blind call before its timed-out fold)",
+   "players": [
+    [
+     "p1",
+     10
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ],
+    [
+     "p4",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "rig",
+     {
+      "1": [
+       "As",
+       "Ad"
+      ],
+      "2": [
+       "7c",
+       "2d"
+      ],
+      "3": [
+       "8h",
+       "3s"
+      ],
+      "4": [
+       "9c",
+       "4h"
+      ]
+     },
+     [
+      "Kc",
+      "9d",
+      "4s",
+      "Jh",
+      "5c"
+     ]
+    ],
+    [
+     "act",
+     "p4",
+     "call"
+    ],
+    [
+     "act",
+     "p1",
+     "allin"
+    ],
+    [
+     "away",
+     "p1",
+     true
+    ],
+    [
+     "act",
+     "p2",
+     "call"
+    ],
+    [
+     "act",
+     "p3",
+     "call"
+    ],
+    [
+     "tick",
+     "+600000"
+    ],
+    [
+     "expect",
+     {
+      "seated": [
+       1,
+       2,
+       3,
+       4
+      ],
+      "state": {
+       "1": "leaving"
+      }
+     }
+    ],
+    [
+     "act",
+     "p2",
+     "check"
+    ],
+    [
+     "act",
+     "p3",
+     "check"
+    ],
+    [
+     "act",
+     "p2",
+     "check"
+    ],
+    [
+     "act",
+     "p3",
+     "check"
+    ],
+    [
+     "act",
+     "p2",
+     "check"
+    ],
+    [
+     "act",
+     "p3",
+     "check"
+    ],
+    [
+     "expect",
+     {
+      "status": "pause",
+      "seated": [
+       2,
+       3,
+       4
+      ],
+      "cashout": {
+       "id": "p1",
+       "amount": 32,
+       "reason": "away"
+      }
+     }
+    ]
+   ]
+  },
+  {
+   "id": "gone-at-deal",
+   "about": "no socket on the table for GONE_MS when a hand is dealt → dealt out (reason gone); back → dealt in",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "gone",
+     [
+      "p2"
+     ]
+    ],
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "expect",
+     {
+      "order": [
+       1,
+       3
+      ],
+      "away": {
+       "2": "gone"
+      }
+     }
+    ],
+    [
+     "gone",
+     []
+    ],
+    [
+     "away",
+     "p2",
+     false
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "order": [
+       1,
+       2,
+       3
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "id": "heads-up-order",
+   "about": "three players, one away → heads-up: the button moves clockwise from its last seat and posts the small blind",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "away",
+     "p2",
+     true
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "order": [
+       1,
+       3
+      ],
+      "button": 3,
+      "sb_seat": 3
+     }
+    ]
+   ]
+  },
+  {
+   "id": "fewer-than-two",
+   "about": "fewer than two eligible: no hand starts, nobody posts",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "away",
+     "p2",
+     true
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "status": "lobby",
+      "no_bet_from": [
+       "p1",
+       "p2"
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "id": "reaction-no-clear",
+   "about": "a reaction is never activity: an automatically-away player who reacts stays away and is dealt out of the next hand",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "tick",
+     "deadline"
+    ],
+    [
+     "expect",
+     {
+      "away": {
+       "1": "timeout"
+      }
+     }
+    ],
+    [
+     "react",
+     "p1"
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "away": {
+       "1": "timeout"
+      },
+      "order": [
+       2,
+       3
+      ]
+     }
+    ]
+   ]
+  },
+  {
+   "id": "button-seat-away",
+   "about": "the button's own player goes away: the next button is the next eligible seat clockwise from that seat; blinds only among eligible seats",
+   "players": [
+    [
+     "p1",
+     50
+    ],
+    [
+     "p2",
+     50
+    ],
+    [
+     "p3",
+     50
+    ],
+    [
+     "p4",
+     50
+    ]
+   ],
+   "steps": [
+    [
+     "deal",
+     "p1"
+    ],
+    [
+     "expect",
+     {
+      "button": 1
+     }
+    ],
+    [
+     "away",
+     "p2",
+     true
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "button": 3,
+      "order": [
+       1,
+       3,
+       4
+      ]
+     }
+    ],
+    [
+     "away",
+     "p3",
+     true
+    ],
+    [
+     "foldout"
+    ],
+    [
+     "tick",
+     "pause"
+    ],
+    [
+     "expect",
+     {
+      "button": 4,
+      "sb_seat": 4,
+      "order": [
+       1,
+       4
+      ],
+      "no_bet_from": [
+       "p2",
+       "p3"
+      ]
+     }
+    ]
+   ]
+  }
+ ],
+ "rig_cases_note": "The Rig's away rule (skipped as Spinner, never a Mechanic, watch-only Railbird, the 3-eligible minimum, stand-up by rounds/10 min) is covered by the server's test/play-r2-afk-rig.test.mjs on the engine; not vectorised here (no shared Rig client rule depends on it)."
+}

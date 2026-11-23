@@ -24,6 +24,7 @@ export interface NetDeps {
   /** the frozen play contract (every frame and answer is checked against it) */
   contract: Contract;
   userId: string;
+  /** `pad` changes through PlayConnection.setPad */
   client: ClientInfo;
   openId(): Promise<OpenIdToken>;
   fetch(url: string, init: RequestInit): Promise<Response>;
@@ -92,6 +93,8 @@ export class PlayConnection {
   session: Session | null = null;
   /** the last refusal (a code), "" while fine */
   error = "";
+  /** the server's `hello.features` (0.3.21+; [] from older servers) */
+  features: string[] = [];
   private ws: SocketLike | null = null;
   private authed = false;
   private tries = 0;
@@ -164,6 +167,9 @@ export class PlayConnection {
   }
   del(path: string): Promise<unknown> {
     return this.http("DELETE", path);
+  }
+  put(path: string, body?: unknown): Promise<unknown> {
+    return this.http("PUT", path, body ?? {});
   }
 
   private sessionP: Promise<Session> | null = null;
@@ -238,6 +244,9 @@ export class PlayConnection {
       const f = parseFrame(this.deps.contract, ev.data);
       if (!f) return;
       if (f.t === "hello") {
+        // 0.3.21 (addendum §7.3): the pieces this server speaks, by name ("react", "away2", "side", "admin", …)
+        const feats = (f as { features?: unknown }).features;
+        this.features = Array.isArray(feats) ? feats.filter((x): x is string => typeof x === "string") : [];
         if (this.session) {
           this.session.wallets = [...f.wallets];
           this.session.rigHidden = f.rig_hidden;
@@ -316,6 +325,20 @@ export class PlayConnection {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     if (!this.closed) void this.connect();
+  }
+
+  /** B2: what this page's sockets say about being a Pad (privacy.ts padClaim). It is a per-socket fact at auth, so a
+   *  change replaces the socket (the same session; the subscriptions, the open tables and any unanswered move come back
+   *  on the new one) and the server drops the old screen from `you.screens` at once. Before the first socket it only
+   *  sets what the first auth says. */
+  setPad(on: boolean): void {
+    if (this.deps.client.pad === on) return;
+    this.deps.client = { ...this.deps.client, pad: on };
+    if (this.closed || !this.ws) return; // signing in / waiting to retry: the next socket's auth reads the new flag
+    this.drop();
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    void this.connect();
   }
 
   /** Stop for good (sign-out, games off). */

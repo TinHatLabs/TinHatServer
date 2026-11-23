@@ -17,9 +17,17 @@ log = logging.getLogger("tinhat.play")
 
 #: the decided defaults: games OFF until the owner turns them on (spec §79; launch-gate 13:57, the 0.3.20 release); day
 #: max 8 and start 10, admin-tweakable; The Rig hidden in the phone apps (one value here).
-PLAY_DEFAULTS = {"enabled": False, "rig_phone_apps": False, "day_max": 8, "start": 10}
-#: §2.7 bounds (the API keeps its own default for anything outside them: rules.mjs TWEAKABLE)
-BOUNDS = {"day_max": (1, 24), "start": (0, 50)}
+#: v1.1 (Server 0.3.21, GAMES-V1.1-ADDENDUM §5.2 / §7.1): every economy key is server-wide tunable here (a space's
+#: admins can override it for their space in the API); defaults = the API's PLAY_DEFAULTS_V11 (1 chip / 15 min, 16 a day).
+PLAY_DEFAULTS = {"enabled": False, "rig_phone_apps": False, "chip_minutes": 15, "day_max": 16, "start": 10, "topup_to": 5,
+                 "cap_base": 100, "cap_per_rank": 50, "side_day_max": 10, "side_on": True}
+#: §2.7 / v1.1 §5.2 bounds (the API keeps its own default for anything outside them: rules.mjs ECONOMY_BOUNDS)
+BOUNDS = {"chip_minutes": (2, 60), "day_max": (1, 200), "start": (0, 500), "topup_to": (0, 100), "cap_base": (20, 100000),
+          "cap_per_rank": (0, 100000), "side_day_max": (0, 100)}
+_BOOLS = ("enabled", "rig_phone_apps", "side_on")
+#: the economy keys written to the API's env ONLY when the owner set them (an unset key = the API's own default, so a
+#: server whose owner never set day_max moves to the new default on update; a set value is kept)
+_ECONOMY_ENV = ("chip_minutes", "day_max", "start", "topup_to", "cap_base", "cap_per_rank", "side_day_max", "side_on")
 #: How the API reaches the games database. "loopback-tcp": Postgres published on the box's loopback only, the API
 #: connects over TCP as `tinhat_play` with its password (the image's `host all all all scram-sha-256` line). The spec's
 #: shared unix socket would hand the API the synapse superuser (the image trusts every local socket connection).
@@ -40,7 +48,7 @@ def settings(st: dict | None = None) -> dict:
     st = st if st is not None else state.load_state()
     p = st.get("play") if isinstance(st.get("play"), dict) else {}
     out = dict(PLAY_DEFAULTS)
-    for k in ("enabled", "rig_phone_apps"):
+    for k in _BOOLS:
         if isinstance(p.get(k), bool):
             out[k] = p[k]
     for k, (lo, hi) in BOUNDS.items():
@@ -52,7 +60,7 @@ def settings(st: dict | None = None) -> dict:
 
 def check(name: str, value) -> tuple[object | None, str]:
     """A value for one setting, or (None, why) — the console and the dashboard refuse anything out of bounds."""
-    if name in ("enabled", "rig_phone_apps"):
+    if name in _BOOLS:
         if isinstance(value, bool):
             return value, ""
         if str(value).strip().lower() in ("on", "true", "yes", "1"):
@@ -63,10 +71,10 @@ def check(name: str, value) -> tuple[object | None, str]:
     if name in BOUNDS:
         lo, hi = BOUNDS[name]
         s = str(value).strip()
-        if not re.fullmatch(r"\d{1,3}", s) or not lo <= int(s) <= hi:
+        if not re.fullmatch(r"\d{1,6}", s) or not lo <= int(s) <= hi:
             return None, f"{name} is a whole number from {lo} to {hi}"
         return int(s), ""
-    return None, f"{name} isn't a game setting (day_max, start, enabled, rig_phone_apps)"
+    return None, f"{name} isn't a game setting ({', '.join(PLAY_DEFAULTS)})"
 
 
 def save(changes: dict, who: str = "console") -> dict:
@@ -207,7 +215,11 @@ def effective(st: dict | None = None) -> bool:
 def features(st: dict | None = None) -> dict:
     """The well-known's flags (§1 "Switches"): the apps show games only on an explicit play: true."""
     p = settings(st)
-    return {"play": effective(st), "play_rig_phone_apps": bool(p["rig_phone_apps"])}
+    on = effective(st)
+    # v1.1 (§7.3): the admin screen and Tune In ride the games switch; play_v 2 = the v1.1 API
+    # play_side = the capability (the API has Tune In); whether a space offers it is /me.side.on, which a space's admins
+    # can turn on over a server-wide off (astra r1 #17)
+    return {"play": on, "play_rig_phone_apps": bool(p["rig_phone_apps"]), "play_admin": on, "play_side": on, "play_v": 2}
 
 
 def password(s: dict | None = None) -> str:
@@ -235,14 +247,17 @@ def env_lines(st: dict | None = None, s: dict | None = None) -> dict:
     lines = {
         "PLAY_ENABLED": "1" if effective(st) else "0",
         "PLAY_RIG_PHONE_APPS": "1" if p["rig_phone_apps"] else "0",
-        "PLAY_DAY_MAX": str(p["day_max"]),
-        "PLAY_START": str(p["start"]),
         "PLAY_DB_HOST": "127.0.0.1",
         "PLAY_DB_PORT": str(port),
         "PLAY_DB_NAME": DATABASE,
         "PLAY_DB_USER": ROLE,
         "PLAY_DB_PASSWORD_FILE": "/conf/play-db.secret",
     }
+    set_ = st.get("play") if isinstance(st.get("play"), dict) else {}
+    for k in _ECONOMY_ENV:
+        if k in set_ and set_[k] == p[k]:  # set by the owner and valid (settings() dropped anything out of bounds)
+            v = p[k]
+            lines[f"PLAY_{k.upper()}"] = ("1" if v else "0") if isinstance(v, bool) else str(v)
     if not port:  # no free loopback port: no games database for the API (db_port); the games stay off, Synapse runs
         for k in ("PLAY_DB_HOST", "PLAY_DB_PORT", "PLAY_DB_NAME", "PLAY_DB_USER", "PLAY_DB_PASSWORD_FILE"):
             lines.pop(k)
@@ -548,7 +563,7 @@ def cli(args: list[str]) -> int:
     if rest[0] == "--reset":
         for name in rest[1:]:
             if name not in PLAY_DEFAULTS:
-                print(f"{name} isn't a game setting (day_max, start, enabled, rig_phone_apps)")
+                print(f"{name} isn't a game setting ({', '.join(PLAY_DEFAULTS)})")
                 return 2
             changes[name] = None
     else:

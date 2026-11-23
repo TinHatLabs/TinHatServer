@@ -16,6 +16,9 @@ export function holdemContract(v, st, viewerWid, ctx) {
     const seats = v.seats.map((s) => {
         const o = { seat: s.seat, u: mx(s.u), stack: s.stack, bet: s.bet, state: s.waiting ? "waiting" : s.state, cards: s.cards === 2 ? 2 : 0, connected: !!ctx.connected(s.u) };
         if (s.shown) o.shown = [...s.shown];
+        const rk = ctx.rank ? ctx.rank(s.u) : null;
+        if (rk !== null && rk !== undefined) o.rank = rk;
+        if (s.away !== undefined) o.away = awayOf(s.away); // v1.1 (B10): null or {reason, since, stand_at, hands_left}
         return o;
     });
     const out = {
@@ -59,10 +62,14 @@ export function holdemContract(v, st, viewerWid, ctx) {
             screens: ctx.screens(viewerWid), at_cap: !!w.at_cap, cap: w.cap, holdings: w.holdings,
             timeouts: Math.min(2, (Object.values(st.seats || {}).find((x) => x.id === viewerWid) || {}).timeouts || 0),
             ...(typeof v.you.can_deal === "boolean" ? { can_deal: v.you.can_deal } : {}),
+            ...(v.you.away !== undefined ? { away: awayOf(v.you.away) } : {}),
         };
     }
     return out;
 }
+
+const AWAY_REASONS = new Set(["timeout", "gone", "asked"]);
+const awayOf = (a) => (a && AWAY_REASONS.has(a.reason) ? { reason: a.reason, since: a.since, stand_at: a.stand_at, hands_left: a.hands_left } : null);
 
 const RIG_ROLES = new Set(["spinner", "mechanic", "sharp", "railbird"]);
 export function rigContract(v, st, viewerWid, ctx) {
@@ -71,10 +78,16 @@ export function rigContract(v, st, viewerWid, ctx) {
     // a busted Mechanic stays `mechanic` (round.roster) with busted: true
     const roster = new Set(v.round?.roster || []);
     const roleOf = (p) => (roster.has(p.u) && v.status === "round" ? "mechanic" : RIG_ROLES.has(p.role) ? p.role : null);
-    const players = (v.players || []).map((p, i) => ({
-        u: mx(p.u), order: Number.isInteger(p.order) && p.order >= 1 ? p.order : i + 1, role: roleOf(p), connected: p.connected ?? !!ctx.connected(p.u), left: !!p.left,
-        spun: !!p.spun, skipped: !!p.skipped,
-    }));
+    const players = (v.players || []).map((p, i) => {
+        const o = {
+            u: mx(p.u), order: Number.isInteger(p.order) && p.order >= 1 ? p.order : i + 1, role: roleOf(p), connected: p.connected ?? !!ctx.connected(p.u), left: !!p.left,
+            spun: !!p.spun, skipped: !!p.skipped,
+        };
+        const rk = ctx.rank ? ctx.rank(p.u) : null; // B3: the prestige rank beside the name (left out when unknown)
+        if (rk !== null && rk !== undefined) o.rank = rk;
+        if (p.away !== undefined) o.away = awayOf(p.away); // v1.1 B10 (hands_left = rounds left before standing up)
+        return o;
+    });
     const out = {
         game: "rig", table: v.table, room: ctx.room, space: v.space, owner: ctx.owner, vseq: Math.max(1, v.vseq), now: ctx.now,
         status: v.status === "closed" ? "closed" : v.status === "end" ? "end" : v.status === "round" ? "round" : "lobby",
@@ -114,7 +127,7 @@ export function rigContract(v, st, viewerWid, ctx) {
 
 function rigYou(y, out, wid, ctx, inRoster = false) {
     const w = ctx.wallet(wid);
-    const base = { screens: ctx.screens(wid), at_cap: !!w.at_cap, holdings: w.holdings };
+    const base = { screens: ctx.screens(wid), at_cap: !!w.at_cap, holdings: w.holdings, away: (out.players.find((p) => p.u === ctx.mx(wid)) || {}).away ?? null }; // v1.1 you.away (astra r2 N6)
     const role = !out.round ? null : inRoster ? "mechanic" : RIG_ROLES.has(y.role) ? y.role : null;
     const peek = (p) => ({ placed: !!(p && p.placed), ...(p && p.mechanic ? { mechanic: ctx.mx(p.mechanic), card: p.card } : {}), locks_after: p?.locks_after ?? out.round.peek_lock_after });
     const market = (m) => (m && m.side && m.side !== "pass" ? { side: m.side, stake: m.stake } : null);

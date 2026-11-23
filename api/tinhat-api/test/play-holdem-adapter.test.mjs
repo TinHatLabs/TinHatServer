@@ -27,7 +27,7 @@ const FIX = (n) => JSON.parse(read(`holdem/${n}.json`));
 const NOW = 1_763_600_000_000;
 
 test("the contract copy is games-s1's frozen one (INDEX md5) and every file matches its INDEX entry", () => {
-    assert.ok(["510330ad3708af4ca75c505edfb33b02", "a2b2fac900b282592d7dcca25319c79b", "ec750aaf74409cf57ca43f22e5e544af", "ed04f652a3a50bbe57805eb0e5289991", "c356ec2ef3bffb05860bccd8d9169ba0", "626d4e75cf3b324db2d70d23e1c0f849"].includes(createHash("md5").update(read("INDEX.json")).digest("hex")));
+    assert.ok(["510330ad3708af4ca75c505edfb33b02", "a2b2fac900b282592d7dcca25319c79b", "ec750aaf74409cf57ca43f22e5e544af", "ed04f652a3a50bbe57805eb0e5289991", "c356ec2ef3bffb05860bccd8d9169ba0", "626d4e75cf3b324db2d70d23e1c0f849", "3fa2ed89ee3cfd02ed0ee5dd958c0a25" /* v1.1a (seat rank) */, "83a72e3d042b62c3fb4aca3d68b074ed" /* v1.1b (away) */, "3e2fe41d070dc23f03a73a6b77bf050f", "5587a7afdbc496f58c033b0ad5da981c", "1604c77fe569e682f9d935749eebf88a", "265673121c6649cebebe730b368a129c", "2d8335fb563c484d803cf9a2b0196a0f", "6af5ada695ba9d4898d042c3688f4daa", "e141ce896d729c193cb4de5772214f6b", "e3dcc0b13f6509aa03f02d839d471649", "ccc16fee678baed1dec2ca3f9a2dc52c"].includes(createHash("md5").update(read("INDEX.json")).digest("hex")));
     const index = JSON.parse(read("INDEX.json"));
     const files = index.files || index;
     let n = 0;
@@ -55,6 +55,7 @@ function ctxFrom(fix) {
         connected: (id) => (any.seats.find((s) => s.u === id) || { connected: true }).connected,
         screens: (id) => (you[id] ? you[id].screens : []),
         wallet: (id) => (you[id] ? { holdings: you[id].holdings, at_cap: you[id].at_cap, cap: you[id].cap } : {}),
+        rank: (id) => { const s = any.seats.find((x) => x.u === id); return s && Number.isInteger(s.rank) ? s.rank : null; }, // v1.1 (B3)
     };
 }
 

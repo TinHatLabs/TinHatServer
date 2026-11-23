@@ -19,7 +19,9 @@ const hBase = (over) => ({
     game: "holdem", table: HOLDEM_TABLE, room: ROOM, space: SPACE, owner: OWNER, now: NOW, host: P.ana, opts: { sb: 1, bb: 2, seats: 8, turn_s: 30 },
     spectators: 1, closed: null, result: null, hand: null, ...over,
 });
-const seat = (n, u, stack, bet, state, hole, extra = {}) => ({ seat: n, u, stack, bet, state, hole, connected: true, screens: ["desktop"], timeouts: 0, holdings: stack + bet, cap: 100, at_cap: false, ...extra });
+// v1.1 (B3): every seat / Rig player carries the person's prestige rank in the table's space (ana is rank 1: cap 150)
+const RANK = (u) => (u === P.ana ? 1 : 0);
+const seat = (n, u, stack, bet, state, hole, extra = {}) => ({ seat: n, u, stack, bet, state, hole, connected: true, screens: ["desktop"], timeouts: 0, holdings: stack + bet, cap: 100, at_cap: false, rank: RANK(u), ...extra });
 const HOLES = { ana: ["As", "Kd"], ben: ["9h", "9c"], dee: ["Qs", "Jc"] };
 
 const BET = (to) => ({ fold: to, check: to, call: to, raise: to, allin: to });
@@ -97,10 +99,10 @@ function holdemSteps() {
         { seat1: ["leave", "away", "kick", "close"], seat4: ["leave", "away"], seat6: ["leave", "away"], spectator: ["sit"] },
         {});
 
-    add("07-headsup-leaving", "Hand 2, heads-up: seat 4 timed out twice and is away (dealt out), eli (seat 8) is out of chips, seat 6 pressed Leave (their hand folds when the action reaches them). Seat 1 is the button = small blind and acts first preflop.",
+    add("07-headsup-leaving", "Hand 2, heads-up: seat 4 timed out once and is away (dealt out; v1.1: stands up after 5 more dealt-out hands or at stand_at), eli (seat 8) is out of chips, seat 6 pressed Leave (their hand folds when the action reaches them). Seat 1 is the button = small blind and acts first preflop.",
         hBase({ status: "hand", vseq: 21, seats: [
             seat(1, P.ana, 19, 1, "active", ["7d", "7s"], { cap: 150, holdings: 20 }),
-            seat(4, P.ben, 10, 0, "away", [], { screens: ["web"], holdings: 10, timeouts: 2, connected: false }),
+            seat(4, P.ben, 10, 0, "away", [], { screens: ["web"], holdings: 10, timeouts: 1, connected: false, away: { reason: "timeout", since: S(-40), stand_at: S(-40) + 600_000, hands_left: 5 } }),
             seat(6, P.dee, 58, 2, "leaving", ["Ah", "3h"], { screens: ["desktop", "pad"], holdings: 60 }),
             seat(8, P.eli, 0, 0, "out", [], { holdings: 0 }),
         ], hand: { n: 2, button: 1, sb: 1, bb: 6, street: "preflop", board: [], pots: [], total: 3,
@@ -127,7 +129,7 @@ const LITE_DECK = ["moon-monday", "lizard-lane", "big-bet-tax", "penny-pincher",
 const COMMIT = "630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd";
 const SEED = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 const board = (deck, states) => deck.map((card) => ({ card, state: "open", ...(states[card] || {}) }));
-const pl = (u, order, role, extra = {}) => ({ u, order, role, connected: true, left: false, spun: false, holdings: 20, at_cap: false, screens: ["desktop"], timeouts: 0, ...extra });
+const pl = (u, order, role, extra = {}) => ({ u, order, role, connected: true, left: false, spun: false, holdings: 20, at_cap: false, screens: ["desktop"], timeouts: 0, rank: RANK(u), ...extra });
 const rBase = (over) => ({
     game: "rig", table: RIG_TABLE, room: ROOM, space: SPACE, owner: OWNER, now: NOW, host: P.ana, opts: { preset: "lite", bankroll: 6, patch: true },
     spectators: 1, closed: null, end: null, round: null, ...over,

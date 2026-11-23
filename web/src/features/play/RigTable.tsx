@@ -9,9 +9,9 @@ import { useEffect, useState } from "react";
 import { useCallStore } from "@/features/calls";
 import { Button, ConfirmDialog, Icon, Switch, cx, useIsMobile } from "@/ui";
 import { whisperAlone } from "@/features/prestige/clientRules";
-import { Chips, PlayerAvatar, PlayerName, TableNote, myId, useNow } from "./bits";
+import { Chips, PlayerAvatar, PlayerName, SEAT_TOKEN, TableNote, TableSpace, myId, useNow } from "./bits";
 import { RigSymbolArt } from "./RigArt";
-import { CLOSED_WORDS, WHISPER_ALONE, isSomeone, PAYTABLE, RIG_PHASE_WORDS, RIG_ROLE_WORDS, STAMP_WORDS, WHISPER_TEMPLATES, rigCard, secondsLeft, whisperOk, w } from "./rules";
+import { CLOSED_WORDS, R2_WORDS, WHISPER_ALONE, isSomeone, PAYTABLE, RIG_PHASE_WORDS, RIG_ROLE_WORDS, STAMP_WORDS, WHISPER_TEMPLATES, rigCard, secondsLeft, whisperOk, w } from "./rules";
 import { actOn, createTable, openGameWindow, type OpenView } from "./store";
 import type { RigBoardCard, RigRound, RigSymbol, RigView, RigWhisper } from "./wire";
 import s from "./Rig.module.css";
@@ -61,6 +61,7 @@ export function RigTable({ ov, roomId, dial, pad, titled = true }: { ov: OpenVie
   const phaseWord = r ? (r.paused ? RIG_PHASE_WORDS.paused : RIG_PHASE_WORDS[r.phase]) : "";
 
   return (
+    <TableSpace.Provider value={v.space || null}>
     <div className={cx(s.root, mobile && s.mobile)} data-testid="rig-table" data-phase={r?.phase ?? v.status} data-role={role} data-table={v.table}>
       <div className={s.bar}>
         <div className={s.title}>
@@ -78,6 +79,17 @@ export function RigTable({ ov, roomId, dial, pad, titled = true }: { ov: OpenVie
           <ConfirmDialog open={closeAsk} onClose={() => setCloseAsk(false)} dialogTitle={w("rig.close_title")} message={w("rig.close_body")} confirmText={w("table.close")} destructive onConfirmed={() => void actOn(v, { do: "close" })} />
         </div>
       </div>
+      {seated && y?.away && v.status !== "end" && v.status !== "closed" && (
+        <div className={s.awayBar} data-testid="rig-away-me">
+          <span className={s.awayText}>
+            {y.away.reason === "timeout" ? R2_WORDS.away_reason_timeout : y.away.reason === "gone" ? R2_WORDS.away_reason_gone : R2_WORDS.away_reason_asked}
+            {" · "}
+            {y.away.hands_left <= 1 ? R2_WORDS.away_stand_one_round : R2_WORDS.away_stand_rounds.replace("{n}", String(y.away.hands_left))}
+            {me && v.players.some((p) => p.u === me && p.skipped) && <> · {R2_WORDS.away_rig_skipped}</>}
+          </span>
+          <Button highlighted text={R2_WORDS.away_back} onClick={() => void actOn(v, { do: "away", on: false })} data-testid="rig-back" />
+        </div>
+      )}
       <div className={s.body}>
         <TableNote table={v.table} />
         {v.status === "closed" ? (
@@ -118,6 +130,7 @@ export function RigTable({ ov, roomId, dial, pad, titled = true }: { ov: OpenVie
         )}
       </div>
     </div>
+    </TableSpace.Provider>
   );
 }
 
@@ -143,7 +156,7 @@ function Lobby({ v, roomId, isHost }: { v: RigView; roomId: string; isHost: bool
               </button>
             )}
             <PlayerAvatar mxid={p.u} roomId={roomId} size={40} />
-            <PlayerName mxid={p.u} roomId={roomId} className={s.lobbyName} />
+            <PlayerName mxid={p.u} roomId={roomId} className={s.lobbyName} tokenSize={SEAT_TOKEN} />
           </div>
         ))}
         {[...Array(Math.max(0, 3 - n))].map((_, i) => (
@@ -415,10 +428,15 @@ function People({ v, roomId }: { v: RigView; roomId: string }) {
       {v.players
         .filter((p) => !p.left)
         .map((p) => (
-          <div key={p.u} className={cx(s.person, !p.connected && s.offline)}>
+          <div key={p.u} className={cx(s.person, !p.connected && s.offline, p.away && s.personAway)} data-away={p.away ? "1" : undefined}>
             <PlayerAvatar mxid={p.u} roomId={roomId} size={24} />
             <PlayerName mxid={p.u} roomId={roomId} className={s.personName} />
             {p.role && <span className={cx(s.personRole, s[`role_${p.role}`])}>{RIG_ROLE_WORDS[p.role]}</span>}
+            {p.away && (
+              <span className={s.awayPill} data-testid={`rig-away-${p.order}`}>
+                {R2_WORDS.away_pill_hands.replace("{n}", String(p.away.hands_left))}
+              </span>
+            )}
             {net && net[p.u] !== undefined && <span className={cx(s.net, net[p.u]! > 0 ? s.up : net[p.u]! < 0 ? s.down : "")}>{net[p.u]! > 0 ? `+${net[p.u]}` : net[p.u]}</span>}
           </div>
         ))}
@@ -700,6 +718,13 @@ function Leaderboard({ v, roomId, isHost, onClose }: { v: RigView; roomId: strin
 /** A Railbird: no secret card, just what's theirs this round (a Nudge, a Whisper). */
 function RailbirdPanel({ v, r, roomId }: { v: RigView; r: RigRound; roomId: string }) {
   const y = v.you!;
+  // away (addendum §8.1): a Railbird who can only watch: Nudge, Whisper, Peek and Market are off
+  if (y.away)
+    return (
+      <div className={cx(s.panel, s.secret)} data-testid="rig-railbird-away">
+        <div className={s.muted}>{R2_WORDS.away_rig_watch}</div>
+      </div>
+    );
   if (!r.features.whisper && !r.features.nudge) return null;
   if (y.whisper_used && (y.nudge_left ?? 0) === 0) return null;
   return <SecretPanel v={v} r={r} roomId={roomId} />;

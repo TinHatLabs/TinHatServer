@@ -92,7 +92,16 @@ const uhash = (salt, user) => createHmac("sha256", salt).update(user).digest("ba
  * Opt in (§2.2, §6.1): creates the wallet with the configured start (start:<wid>), or, within 30 days of a
  * deletion in this space, at 0 with the old day counters (no second top-up or fresh day max by deleting).
  */
+/** v1.1 (addendum §5.2): the economy that applies in this space (its own values over the server's). Cached on the
+ *  returned object for the same space, so passing it on costs nothing. */
+export async function spaceCfg(c, sid, cfg) {
+    if (cfg && cfg.__sid === sid) return cfg;
+    const { rows } = await c.query("SELECT settings FROM play_space_economy WHERE sid = $1", [sid]);
+    return { ...rules.economyFor(cfg, rows.length ? rows[0].settings || {} : {}), __sid: sid };
+}
+
 export async function createWallet(c, { sid, user, cfg, now = Date.now(), salt }) {
+    cfg = await spaceCfg(c, sid, cfg);
     const have = await widOfUser(c, sid, user);
     if (have) return { wid: have, created: false };
     const wid = newWid();
@@ -102,8 +111,8 @@ export async function createWallet(c, { sid, user, cfg, now = Date.now(), salt }
     const back = tomb[0];
     await c.query("INSERT INTO play_people (sid, user_id, wid) VALUES ($1, $2, $3)", [sid, user, wid]);
     const day = rules.dayOf(now, cfg.tz);
-    await c.query("INSERT INTO play_wallets (wid, sid, day, earned_today, topup_day) VALUES ($1, $2, $3, $4, $5)",
-        [wid, sid, back ? back.day : day, back ? back.earned_today || 0 : 0, back ? back.topup_day : null]);
+    await c.query("INSERT INTO play_wallets (wid, sid, day, earned_today, topup_day, side_day, side_earned) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        [wid, sid, back ? back.day : day, back ? back.earned_today || 0 : 0, back ? back.topup_day : null, back ? back.side_day ?? null : null, back ? back.side_earned || 0 : 0]);
     await ensureAccount(c, acct.w(wid), sid);
     if (back) await c.query("DELETE FROM play_tombstones WHERE sid = $1 AND uhash = $2", [sid, h]);
     const start = back ? 0 : cfg.start;
@@ -120,15 +129,24 @@ export async function deleteWallet(c, { sid, user, now = Date.now(), salt }) {
     const { rows: seated } = await c.query("SELECT 1 FROM play_seats WHERE wid = $1 AND active", [wid]);
     if (h.open > 0) return { ok: false, code: "open-money" };
     if (seated.length || h.atTable > 0) return { ok: false, code: "seated" };
-    await c.query("INSERT INTO play_tombstones (sid, uhash, deleted_on, day, earned_today, topup_day) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (sid, uhash) DO UPDATE SET deleted_on = EXCLUDED.deleted_on, day = EXCLUDED.day, earned_today = EXCLUDED.earned_today, topup_day = EXCLUDED.topup_day",
-        [sid, uhash(salt, user), new Date(now), w.day, w.earned_today, w.topup_day]);
+    // v1.1 F9: the side counters ride along, so deleting and rejoining can't refill the day (§6.2)
+    await c.query("INSERT INTO play_tombstones (sid, uhash, deleted_on, day, earned_today, topup_day, side_day, side_earned) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (sid, uhash) DO UPDATE SET deleted_on = EXCLUDED.deleted_on, day = EXCLUDED.day, earned_today = EXCLUDED.earned_today, topup_day = EXCLUDED.topup_day, side_day = EXCLUDED.side_day, side_earned = EXCLUDED.side_earned",
+        [sid, uhash(salt, user), new Date(now), w.day, w.earned_today, w.topup_day, w.side_day ?? null, w.side_earned ?? 0]);
     await c.query("DELETE FROM play_people WHERE sid = $1 AND user_id = $2", [sid, user]);
     await c.query("DELETE FROM play_wallets WHERE wid = $1", [wid]);
+    // v1.1 F8 (§5.4): their notices, and the why-texts of admin log rows about this wallet (the rows stay: "someone")
+    await c.query("DELETE FROM play_notices WHERE wid = $1", [wid]);
+    await c.query("DELETE FROM play_admin_reasons WHERE log_id IN (SELECT id FROM play_admin_log WHERE target_wid = $1)", [wid]);
+    // the admin op receipts naming them (their Matrix id + balances in the stored answer) are scrubbed; the op + its
+    // request hash stay, so a resend still can't run it again (astra r1 #1)
+    // (a valid answer stays: the same log id, nothing about anyone; astra r2 N1)
+    await c.query("UPDATE play_admin_ops SET answer = jsonb_build_object('done', '[]'::jsonb, 'skipped', '[]'::jsonb, 'log', answer->'log') WHERE sid = $1 AND jsonb_path_exists(answer, '$.** ? (@ == $u)', jsonb_build_object('u', $2::text))", [sid, user]);
     return { ok: true, wid };
 }
 
 /** The top-up check at any touch (§2.4). */
 export async function topupIfDue(c, { sid, wid, cfg, now = Date.now() }) {
+    cfg = await spaceCfg(c, sid, cfg);
     const [w] = await _impl.lockWallets(c, [wid]);
     if (!w) return { chips: 0, why: "no-wallet" };
     const h = await holdingsOf(c, wid);
@@ -147,6 +165,7 @@ export async function topupIfDue(c, { sid, wid, cfg, now = Date.now() }) {
  * eligible = the anti-AFK rule's answer for this sample.
  */
 export async function sample(c, { sid, wid, cfg, now, seen, eligible, provisional = 0 }) {
+    cfg = await spaceCfg(c, sid, cfg);
     const [w] = await _impl.lockWallets(c, [wid]);
     if (!w) return { chips: 0, why: "no-wallet" };
     const ct = w.credited_through ? new Date(w.credited_through).getTime() : null;
@@ -175,6 +194,7 @@ export async function move(c, { sid, kind, idem, ref, cfg, now = Date.now(), fro
 
 /** The prestige check at a leave (§2.4): the caller has already cashed the seat out and the person has no open money. */
 export async function prestigeCheck(c, { sid, wid, cfg, now = Date.now() }) {
+    cfg = await spaceCfg(c, sid, cfg);
     const [w] = await _impl.lockWallets(c, [wid]);
     if (!w) return { burned: 0, why: "no-wallet" };
     const h = await holdingsOf(c, wid);
@@ -189,6 +209,7 @@ export async function prestigeCheck(c, { sid, wid, cfg, now = Date.now() }) {
 
 /** GET /me (§6.2): runs the top-up check first. */
 export async function me(c, { sid, spaceId, user, cfg, now = Date.now(), atTable = null, provisional = 0 }) {
+    cfg = await spaceCfg(c, sid, cfg);
     const wid = await widOfUser(c, sid, user);
     if (!wid) return null;
     await topupIfDue(c, { sid, wid, cfg, now });
@@ -199,12 +220,12 @@ export async function me(c, { sid, spaceId, user, cfg, now = Date.now(), atTable
     const earned = w.day === today ? w.earned_today : 0;
     return {
         v: 1, space: spaceId, user, balance: h.wallet, holdings: h.holdings, rank: w.rank, cap: rules.capOf(w.rank, cfg), at_table: atTable,
-        earned_today: earned, day_max: cfg.day_max, accrual_s: w.accrual_s % cfg.chip_s, chip_s: cfg.chip_s, day: today,
+        earned_today: earned, day_max: cfg.day_max, accrual_s: w.accrual_s % cfg.chip_s, chip_s: cfg.chip_s, chip_minutes: cfg.chip_minutes, day: today,
         topup: { available: h.holdings === 0 && h.open === 0 && w.topup_day !== today, next_day: w.topup_day === today ? rules.nextDay(today) : today },
     };
 }
 
-const REASON = { start: "start", earn: "earn", topup: "topup", prestige: "prestige", sit: "sit", cashout: "cashout", "rig-escrow": "rig-escrow", "rig-settle": "rig-settle", void: "void", "lab-grant": "lab-grant" };
+const REASON = { start: "start", earn: "earn", topup: "topup", prestige: "prestige", sit: "sit", cashout: "cashout", "rig-escrow": "rig-escrow", "rig-settle": "rig-settle", void: "void", "lab-grant": "lab-grant", admin: "admin", side: "side", "admin-topup": "oneoff" }; // v1.1 (design2 16:39): + admin, side, oneoff; unknown → other
 
 /**
  * LAB ONLY: mint chips into a wallet for a test (e.g. to reach the cap and prestige). Refused unless env.TINHAT_LAB is
@@ -231,7 +252,7 @@ export async function journal(c, { wid, before = null, limit = 50 }) {
         [acct.w(wid), cur ? new Date(cur.at) : null, cur ? cur.tx : "00000000-0000-0000-0000-000000000000", lim + 1]);
     const page = rows.slice(0, lim);
     return {
-        entries: page.map((r) => ({ tx: r.tx, at: r.kind === "earn" ? null : new Date(r.at).getTime(), day: r.day, delta: Number(r.delta), reason: REASON[r.kind] || (r.delta > 0 ? "rig-settle" : "rig-escrow"), ref: r.ref })),
+        entries: page.map((r) => ({ tx: r.tx, at: r.kind === "earn" ? null : new Date(r.at).getTime(), day: r.day, delta: Number(r.delta), reason: REASON[r.kind] || "other", ref: r.ref })), // never a borrowed reason (design2 16:39)
         next: rows.length > lim ? `${new Date(page[page.length - 1].at).getTime()}.${page[page.length - 1].tx}` : null,
     };
 }
@@ -259,5 +280,13 @@ export async function audit(c) {
     await q(`SELECT id, balance FROM play_accounts WHERE (kind = 'mint' AND balance > 0) OR (kind = 'burn' AND balance < 0)`, "mint/burn sign");
     await q(`SELECT g.id FROM play_games g JOIN play_tx t ON t.idem_key IN ('hand:' || g.table_id || ':' || g.n, 'rig:' || g.table_id || ':' || g.n || ':settle', 'void:' || g.table_id || ':' || g.n, 'rig:' || g.table_id || ':' || g.n || ':void') WHERE g.disposition = 'open'`, "open game with a settlement");
     await q(`SELECT g.id FROM play_games g WHERE g.disposition = 'settled' AND EXISTS (SELECT 1 FROM play_tx t WHERE t.idem_key IN ('void:' || g.table_id || ':' || g.n, 'rig:' || g.table_id || ':' || g.n || ':void'))`, "settled and voided");
+    // v1.1 F8 (§5.4, design2 16:51): admin changes agree with the admin log. Only kind `admin` and mint:admin / burn:admin
+    // (a one-off `admin-topup` / mint:oneoff:* stays in the plain supply checks above).
+    const { rows: [v3] } = await c.query("SELECT to_regclass('play_admin_log') IS NOT NULL AS ok");
+    if (v3.ok) {
+        await q(`SELECT t.tx, t.ref FROM play_tx t WHERE t.kind = 'admin' AND (t.ref IS NULL OR t.ref NOT LIKE 'alog:%' OR (t.at > now() - interval '180 days' AND NOT EXISTS (SELECT 1 FROM play_admin_log l WHERE 'alog:' || l.id = t.ref AND l.sid = t.sid)))`, "admin transaction without its log row");
+        await q(`SELECT e.tx, e.account FROM play_entries e JOIN play_tx t ON t.tx = e.tx WHERE (e.account LIKE 'mint:admin:%' OR e.account LIKE 'burn:admin:%') AND t.kind <> 'admin'`, "admin mint/burn outside an admin transaction");
+        await q(`SELECT l.id, l.net, COALESCE(SUM(e.delta), 0) AS moved FROM play_admin_log l LEFT JOIN play_tx t ON t.ref = 'alog:' || l.id AND t.kind = 'admin' AND t.sid = l.sid LEFT JOIN play_entries e ON e.tx = t.tx AND e.account LIKE 'w:%' WHERE l.action <> 'economy' GROUP BY l.id, l.net HAVING l.net <> COALESCE(SUM(e.delta), 0)`, "admin log row's net != its journal");
+    }
     return bad;
 }

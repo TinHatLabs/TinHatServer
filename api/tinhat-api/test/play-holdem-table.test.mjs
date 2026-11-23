@@ -120,7 +120,7 @@ test("a full table refuses a sit (table-full); seat numbers stay within the host
     assert.throws(() => createTable({ host: "x", opts: { seats: 2 }, now: NOW }), /space/);
 });
 
-test("timeouts: check if free, else fold; two in a row → away from the next hand (dealt out, no blinds); I'm back returns", () => {
+test("timeouts: check if free, else fold; ONE timeout → away from the next hand (dealt out, no blinds); I'm back returns (v1.1 §8.1, CHANGES v1's two)", () => {
     const H = harness([["p1", 50], ["p2", 50], ["p3", 50]]);
     H.do({ do: "deal", by: "p1" }); // button 1, SB 2, BB 3, p1 first
     assert.equal(H.toAct(), "p1");
@@ -130,24 +130,12 @@ test("timeouts: check if free, else fold; two in a row → away from the next ha
     assert.equal(H.T.hand.log.at(-1).a, "fold", "facing the big blind: a timeout folds");
     assert.equal(H.T.hand.log.at(-1).timeout, true);
     assert.equal(H.T.seats[1].timeouts, 1);
+    assert.equal(H.T.seats[1].away, true, "one timeout: away from the next hand");
     H.p("p2", "call");
     H.p("p3", "check");
     H.p("p2", "check"); H.p("p3", "check");
     H.p("p2", "check"); H.p("p3", "check");
     H.p("p2", "check"); H.p("p3", "check");
-    H.tick(H.now + HOLDEM.PAUSE_MS); // hand 2: button 2, SB 3, BB 1; p2 first
-    assert.equal(H.T.hand.button, 2);
-    H.p("p2", "call");
-    H.p("p3", "call");
-    assert.equal(H.toAct(), "p1");
-    H.tick(H.T.hand.deadline);
-    assert.equal(H.T.hand.log.at(-1).a, "check", "the big blind's option: a timeout checks");
-    assert.equal(H.T.seats[1].away, true, "a second timeout in a row: away from the next hand");
-    // finish hand 2
-    H.p("p3", "raise", { to: 20 });
-    H.tick(H.T.hand.deadline); // p1 times out again: folds
-    H.p("p2", "fold");
-    assert.equal(H.T.status, "pause");
     H.tick(H.now + HOLDEM.PAUSE_MS);
     assert.deepEqual(H.T.hand.order, [2, 3], "away: dealt out");
     assert.ok(!H.fx.some((e) => e.t === "bet" && e.id === "p1"), "away: no blinds");
@@ -157,32 +145,35 @@ test("timeouts: check if free, else fold; two in a row → away from the next ha
     H.p(H.toAct(), "fold");
     H.tick(H.now + HOLDEM.PAUSE_MS);
     assert.deepEqual(H.T.hand.order, [1, 2, 3], "back: dealt in at the next hand without posting a missed blind");
+    assert.equal(H.T.hand.button, 3);
+    H.p("p3", "call");
+    H.p("p1", "call");
+    assert.equal(H.toAct(), "p2");
+    H.tick(H.T.hand.deadline);
+    assert.equal(H.T.hand.log.at(-1).a, "check", "the big blind's option: a timeout checks");
 });
 
-test("a move of one's own breaks a run of timeouts (and an automatic away); an away the player asked for stays", () => {
+test("an away the player asked for stays while they play out the current hand (no instant act for them); I'm back clears it", () => {
     const H = harness([["p1", 50], ["p2", 50]]);
     H.do({ do: "deal", by: "p1" });
-    H.tick(H.T.hand.deadline); // p1 (SB) folds on timeout
-    H.tick(H.now + HOLDEM.PAUSE_MS); // hand 2: button 2 = SB acts first
-    H.p("p2", "call");
-    H.tick(H.T.hand.deadline); // p1 checks on timeout: the second in a row → away
-    assert.equal(H.T.seats[1].away, true);
-    H.p("p1", "check"); // flop: p1 acts first heads-up (BB) and moves by hand
-    assert.equal(H.T.seats[1].away, false);
-    assert.equal(H.T.seats[1].timeouts, 0);
     H.do({ do: "away", by: "p2", on: true });
+    H.p("p1", "call");
+    assert.equal(H.T.hand.deadline, H.now + 30_000, "asked: the normal timer, no instant act");
     H.p("p2", "check");
     assert.equal(H.T.seats[2].away, true, "asked for: playing out the current hand doesn't undo it");
+    assert.equal(H.T.seats[2].timeouts, 0);
+    H.do({ do: "away", by: "p2", on: false });
+    assert.equal(H.T.seats[2].away, false);
 });
 
 test("away for 10 minutes → the player leaves (cash-out, reason away)", () => {
     const H = harness([["p1", 50], ["p2", 50], ["p3", 30]]);
     H.do({ do: "away", by: "p3", on: true });
     const since = H.now;
-    assert.equal(nextWake(H.T), since + HOLDEM.AWAY_LEAVE_MS);
-    H.tick(since + HOLDEM.AWAY_LEAVE_MS - 1);
+    assert.equal(nextWake(H.T), since + HOLDEM.AWAY_STAND_MS);
+    H.tick(since + HOLDEM.AWAY_STAND_MS - 1);
     assert.ok(H.T.seats[3]);
-    H.tick(since + HOLDEM.AWAY_LEAVE_MS);
+    H.tick(since + HOLDEM.AWAY_STAND_MS);
     assert.deepEqual(H.fx, [{ t: "cashout", seat: 3, id: "p3", amount: 30, reason: "away" }]);
     assert.equal(H.T.seats[3], undefined);
 });

@@ -16,6 +16,8 @@ import { OverviewTab } from "./OverviewTab";
 import { MembersTab } from "./MembersTab";
 import { RolesTab } from "./RolesTab";
 import { RoomsTab } from "./RoomsTab";
+import { AdminBody, useSpaceGamesTab } from "@/features/play/AdminChips";
+import { R2X } from "@/features/play/rules";
 import s from "./SpaceSettings.module.css";
 
 export const TABS: ReadonlyArray<{ k: SpaceTab; t: string; i: string; d: string }> = [
@@ -24,6 +26,8 @@ export const TABS: ReadonlyArray<{ k: SpaceTab; t: string; i: string; d: string 
   { k: "roles", t: "Roles", i: "security-medium-symbolic", d: "Named groups with permissions, applied to every room" },
   { k: "rooms", t: "Rooms", i: "view-list-details-symbolic", d: "The rooms in this space and whether their permissions match" },
 ];
+/** Games (GAMES-V1.1-ADDENDUM §5.5): only for the space's chip admins (features/play's probe) */
+const GAMES_TAB = { k: "games" as SpaceTab, t: R2X.admin_tab ?? "Games", i: "applications-games-symbolic", d: R2X.admin_tab_hint ?? "Chips in this space: the economy, people's chips and the log" };
 
 /** Window title: "<name> · Space settings" (never exactly "Tin Hat"). */
 export { spaceSettingsTitle } from "./spaceSettingsTitle"; // (its own module: web-perf split)
@@ -38,6 +42,12 @@ export function SpaceSettingsWindow({ spaceId = "", tab: tabProp, nonce }: Space
   const win = useAppWindow();
   const mobile = useFormFactor() === "mobile";
   const [tab, setTab] = useState<SpaceTab>(normalizeTab(tabProp));
+  const games = useSpaceGamesTab(spaceId);
+  const tabs = games ? [...TABS, GAMES_TAB] : TABS;
+  // a Games tab asked for before (or without) the admin answer: show Overview, consistently (astra pass 2)
+  useEffect(() => {
+    if (!tabs.some((t) => t.k === tab)) setTab("overview");
+  }, [tabs, tab]);
   const railRef = useRef<HTMLDivElement>(null);
   const summary = useSpaceAdmin((st) => st.summary);
   const busy = useSpaceAdmin((st) => st.busy);
@@ -60,12 +70,12 @@ export function SpaceSettingsWindow({ spaceId = "", tab: tabProp, nonce }: Space
   // Escape after a clicked button dropped focus to <body> (desktop window; phones have Back)
   useWindowEscapeFallback(!mobile, () => win.close());
   const spaceName = summary?.name ?? "";
-  const cur = TABS.find((t) => t.k === tab)!;
+  const cur = tabs.find((t) => t.k === tab) ?? TABS[0]!;
 
   const onRailKey = (e: KeyboardEvent) => {
-    const i = TABS.findIndex((t) => t.k === tab);
-    if (e.key === "ArrowUp") setTab(TABS[(i + TABS.length - 1) % TABS.length].k);
-    else if (e.key === "ArrowDown") setTab(TABS[(i + 1) % TABS.length].k);
+    const i = tabs.findIndex((t) => t.k === tab);
+    if (e.key === "ArrowUp") setTab(tabs[(i + tabs.length - 1) % tabs.length]!.k);
+    else if (e.key === "ArrowDown") setTab(tabs[(i + 1) % tabs.length]!.k);
     else return;
     e.preventDefault();
   };
@@ -93,7 +103,7 @@ export function SpaceSettingsWindow({ spaceId = "", tab: tabProp, nonce }: Space
       <div className={s.railCaption}>{caption}</div>
       <Separator className={s.railSep} />
       <div ref={railRef} className={s.tabList} tabIndex={0} role="tablist" aria-orientation="vertical" onKeyDown={onRailKey}>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <RailItem key={t.k} tab={t} selected={tab === t.k} onClick={() => (setTab(t.k), railRef.current?.focus({ preventScroll: true }))} />
         ))}
       </div>
@@ -135,6 +145,11 @@ export function SpaceSettingsWindow({ spaceId = "", tab: tabProp, nonce }: Space
       <div className={s.tabPane} hidden={tab !== "rooms"}>
         {!stale && <RoomsTab mobile={mobile} />}
       </div>
+      {games && (
+        <div className={s.tabPane} hidden={tab !== "games"} data-testid="space-games-tab">
+          {!stale && tab === "games" && <AdminBody owner={games.owner} space={games.space} />}
+        </div>
+      )}
     </div>
   );
 
@@ -167,7 +182,7 @@ export function SpaceSettingsWindow({ spaceId = "", tab: tabProp, nonce }: Space
           <ToolButton iconName="view-refresh-symbolic" tip="Refresh" onClick={() => spaceActions.hardRefresh()} />
         </div>
         <div className={s.mTabs} role="tablist">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <button key={t.k} type="button" role="tab" aria-selected={tab === t.k} className={cx(s.mTab, tab === t.k && s.mTabOn)} onClick={() => setTab(t.k)}>
               <Icon name={t.i} size={18} color={tab === t.k ? "var(--th-space-settings-rail-item-icon-selected)" : "var(--th-space-settings-rail-item-icon)"} active={tab === t.k} />
               <span>{t.t}</span>

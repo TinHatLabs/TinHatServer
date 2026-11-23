@@ -16,7 +16,7 @@ const pick = (w) => Object.fromEntries(PICK.map((k) => [k, w[k]]));
 function runAll(R) {
     const bad = [];
     for (const c of V.cases) {
-        const cfg = { ...rules.FIXED, ...c.params };
+        const cfg = { ...rules.V1_DEFAULTS, ...c.params }; // ledger.json = the v1 defaults (addendum §6.3)
         let w = { ...c.start };
         c.events.forEach((ev, i) => {
             const want = c.expect.after_each[i];
@@ -60,20 +60,38 @@ test("config from the environment: defaults, bounds, non-integers keep the defau
     const warns = [];
     const c = rules.configFromEnv({ PLAY_DAY_MAX: "3", PLAY_START: "0", PLAY_TZ: "America/Los_Angeles" }, (w) => warns.push(w));
     assert.equal(c.day_max, 3); assert.equal(c.start, 0); assert.equal(c.tz, "America/Los_Angeles"); assert.equal(warns.length, 0);
-    for (const [k, v] of [["PLAY_DAY_MAX", "0"], ["PLAY_DAY_MAX", "25"], ["PLAY_DAY_MAX", "2.5"], ["PLAY_DAY_MAX", "-1"], ["PLAY_START", "51"], ["PLAY_START", "ten"], ["PLAY_START", "1e1"]]) {
+    for (const [k, v] of [["PLAY_DAY_MAX", "0"], ["PLAY_DAY_MAX", "201"], ["PLAY_DAY_MAX", "2.5"], ["PLAY_DAY_MAX", "-1"], ["PLAY_START", "501"], ["PLAY_START", "ten"], ["PLAY_START", "1e1"]]) {
         const w2 = [];
         const d = rules.configFromEnv({ [k]: v }, (w) => w2.push(w));
-        assert.equal(d.day_max, 8, `${k}=${v}`); assert.equal(d.start, 10, `${k}=${v}`); assert.equal(w2.length, 1, `${k}=${v} warns once`);
+        assert.equal(d.day_max, 16, `${k}=${v}`); assert.equal(d.start, 10, `${k}=${v}`); assert.equal(w2.length, 1, `${k}=${v} warns once`);
     }
     assert.equal(rules.configFromEnv({ PLAY_TZ: "Not/AZone" }).tz, "UTC");
-    assert.equal(rules.configFromEnv({}).chip_s, 3600);
+    // v1.1 defaults (addendum §6.3): 1 chip every 15 min, 16 a day
+    assert.equal(rules.configFromEnv({}).chip_s, 900);
+    assert.equal(rules.configFromEnv({}).day_max, 16);
+    assert.equal(rules.configFromEnv({ PLAY_CHIP_MINUTES: "60" }).chip_s, 3600);
+    assert.equal(rules.configFromEnv({ PLAY_CHIP_MINUTES: "61" }, () => {}).chip_s, 900);
+    assert.equal(rules.configFromEnv({ PLAY_SIDE_ON: "false" }).side_on, false);
+    assert.equal(rules.configFromEnv({ PLAY_DAY_MAX: "40" }).src.day_max, "server");
+    assert.equal(rules.configFromEnv({}).src.day_max, "default");
     // the lab-only fast clock: only with TINHAT_LAB=1, only 10-3600; otherwise ignored (and said so)
     const w3 = [];
-    assert.equal(rules.configFromEnv({ PLAY_CHIP_SECONDS: "60" }, (w) => w3.push(w)).chip_s, 3600);
+    assert.equal(rules.configFromEnv({ PLAY_CHIP_SECONDS: "60" }, (w) => w3.push(w)).chip_s, 900);
     assert.equal(w3.length, 1);
     assert.equal(rules.configFromEnv({ PLAY_CHIP_SECONDS: "60", TINHAT_LAB: "1" }).chip_s, 60);
-    assert.equal(rules.configFromEnv({ PLAY_CHIP_SECONDS: "5", TINHAT_LAB: "1" }).chip_s, 3600);
-    assert.equal(rules.configFromEnv({ PLAY_CHIP_SECONDS: "60", TINHAT_LAB: "true" }).chip_s, 3600);
+    assert.equal(rules.configFromEnv({ PLAY_CHIP_SECONDS: "5", TINHAT_LAB: "1" }).chip_s, 900);
+    assert.equal(rules.configFromEnv({ PLAY_CHIP_SECONDS: "60", TINHAT_LAB: "true" }).chip_s, 900);
+});
+
+test("v1.1 per-space economy: the space's valid values over the server's; invalid ones ignored; src per key", () => {
+    const base = rules.configFromEnv({ PLAY_DAY_MAX: "20" });
+    const e = rules.economyFor(base, { chip_minutes: 5, day_max: 999, start: 0, side_on: "yes", cap_base: 20 });
+    assert.equal(e.chip_minutes, 5); assert.equal(e.chip_s, 300); assert.equal(e.src.chip_minutes, "space");
+    assert.equal(e.day_max, 20, "out of bounds: the server's value stays"); assert.equal(e.src.day_max, "server");
+    assert.equal(e.start, 0); assert.equal(e.side_on, true); assert.equal(e.src.side_on, "default");
+    assert.equal(rules.capOf(2, e), 120);
+    const lab = rules.configFromEnv({ PLAY_CHIP_SECONDS: "60", TINHAT_LAB: "1" });
+    assert.equal(rules.economyFor(lab, { chip_minutes: 30 }).chip_s, 60, "the lab clock wins");
 });
 
 test("server day: local midnight in two zones", () => {

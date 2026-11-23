@@ -296,6 +296,35 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+/* F-W1 (12.2.1): a phone at a table in my call also carries the Table | Call pill in its head (`tight`), so the badge
+   must give way before it can run under the close button: the space's name goes (the tooltip and screen readers keep
+   it), the badge shrinks to the room left, and the avatar drops out WHOLE when it doesn't fit (never half an avatar):
+   right to left from the wallet chip (row-reverse, the chip ordered first), wrapping onto a second line that the
+   one-line height clips. The wallet chip never shrinks or drops. */
+.tight {
+  flex: 0 1000 auto; /* gives way first (the title only once the badge is down to its chip) */
+  min-width: min-content; /* never narrower than the wallet chip (with wrap, min-content = the widest single item) */
+  flex-direction: row-reverse;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  height: calc(28px * var(--th-text-scale, 1));
+  overflow: hidden;
+  gap: 64px 4px;
+}
+.tight .spaceName {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.tight .walletChip {
+  order: -1;
+  flex: none;
+  gap: 6px;
+  padding: 2px 6px;
+}
 /* #24: a phone at a table: the badge drops its server; below 380 px wide its space name too (the avatar, the tooltip
    and screen readers keep it), so the head stays on one line */
 @media (max-width: 379px) {

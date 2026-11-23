@@ -28,6 +28,8 @@ export function holdemView(g, viewer) {
         seats: g.seats.map((s) => {
             const o = { seat: s.seat, u: s.u, stack: s.stack, bet: s.bet, state: s.state, cards: s.state === "folded" ? 0 : (s.hole || []).length, connected: !!s.connected };
             if (showing.has(s.seat) && (s.hole || []).length === 2) o.shown = [...s.hole];
+            if (Number.isInteger(s.rank) && s.rank >= 0) o.rank = s.rank; // v1.1 (B3): public, as the ranks API
+            o.away = s.away ? pick(s.away, ["reason", "since", "stand_at", "hands_left"]) : null; // v1.1 (B10)
             return o;
         }),
         hand: g.hand ? {
@@ -55,6 +57,7 @@ export function holdemView(g, viewer) {
             legal: myTurn ? clone(g.hand.legal) : null,
             screens: [...(me.screens || [])], at_cap: !!me.at_cap, cap: me.cap, holdings: me.holdings,
             timeouts: me.timeouts || 0,
+            away: me.away ? pick(me.away, ["reason", "since", "stand_at", "hands_left"]) : null, // v1.1 (B10)
         };
         if (g.status === "lobby" && g.host === viewer && g.can_deal !== undefined) v.you.can_deal = !!g.can_deal;
     }
@@ -78,7 +81,8 @@ export function rigView(g, viewer) {
     const v = {
         game: "rig", table: g.table, room: g.room, space: g.space, owner: g.owner, vseq: g.vseq, now: g.now, status: g.status, host: g.host,
         opts: pick(g.opts, ["preset", "bankroll", "patch"]),
-        players: g.players.map((p) => ({ u: p.u, order: p.order, role: p.role ?? null, connected: !!p.connected, left: !!p.left, spun: !!p.spun, skipped: !!p.skipped })),
+        players: g.players.map((p) => ({ u: p.u, order: p.order, role: p.role ?? null, connected: !!p.connected, left: !!p.left, spun: !!p.spun, skipped: !!p.skipped,
+            ...(Number.isInteger(p.rank) && p.rank >= 0 ? { rank: p.rank } : {}), away: p.away ? pick(p.away, ["reason", "since", "stand_at", "hands_left"]) : null })), // rank, away: v1.1
         round: null,
         end: g.end ? { rounds: g.end.rounds, leaderboard: g.end.leaderboard.map((x) => ({ u: x.u, net: x.net })), pit_boss: g.end.pit_boss ?? null } : null,
         closed: g.closed ? pick(g.closed, ["reason", "at"]) : null,
@@ -106,7 +110,7 @@ export function rigView(g, viewer) {
     }
     const me = viewer ? g.players.find((p) => p.u === viewer && !p.left) : null;
     if (me) {
-        const base = { screens: [...(me.screens || [])], at_cap: !!me.at_cap, holdings: me.holdings };
+        const base = { screens: [...(me.screens || [])], at_cap: !!me.at_cap, holdings: me.holdings, away: me.away ? pick(me.away, ["reason", "since", "stand_at", "hands_left"]) : null }; // v1.1
         const role = r ? me.role ?? null : null;
         if (role === "spinner") {
             v.you = { role, whispers: (r.whispers || []).map((w) => pick(w, ["spin", "template", "person", "text"])), ...base, timeouts: me.timeouts || 0 };

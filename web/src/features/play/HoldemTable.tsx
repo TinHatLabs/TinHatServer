@@ -4,17 +4,29 @@
 // the action bar (Fold · Check / Call N · Raise to N with ½ pot / pot / all-in · All-in) and the host's Deal / Close.
 // The server's `legal` is the only word on what I may do. Phones: the same pieces stacked (seats strip, felt, my
 // cards, a big action bar).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useCallStore } from "@/features/calls";
+import { toast } from "@/core/bus";
 import { Button, ConfirmDialog, Icon, Slider, cx, useIsMobile } from "@/ui";
-import { Chips, PlayerAvatar, PlayerName, PlayingCard, TableNote, TurnRing, myId, useNow } from "./bits";
-import { actionWords, canDeal, CLOSED_WORDS, HAND_WORDS, winLine, potTotal, raisePresets, SEAT_STATE_WORDS, seatLayout, secondsLeft, w } from "./rules";
-import { actOn, type OpenView } from "./store";
-import type { HoldemSeat, HoldemView } from "./wire";
+import { Chips, PlayerAvatar, PlayerName, PlayingCard, SEAT_TOKEN, TableNote, TableSpace, usePlayerLabel, TurnRing, myId, useNow } from "./bits";
+import { HAND_NAME, R2_WORDS, actionWords, canDeal, CLOSED_WORDS, HAND_WORDS, winLine, potTotal, raisePresets, SEAT_STATE_WORDS, seatLayout, secondsLeft, w } from "./rules";
+import { cardsFace, showHereNext } from "./cardsFace";
+import { presenceOf, type CallSnap } from "./seatPresence";
+import { PotReactions, ReactTray, SeatMuteMenu, SeatReactions } from "./Reactions";
+import { TuneInOffer } from "./TuneIn";
+import { HandsSheet } from "./HandsSheet";
+import { madeHand, ODDS_DEFAULT_ON } from "./odds";
+import { useOdds } from "./oddsClient";
+import { usePrefState } from "@/core/prefs";
+import { notificationPermission, requestNotificationPermission } from "@/features/settings/notify";
+import { TURN_NOTIFY_PREF } from "./turnNotice";
+import { actOn, reactsOn, type OpenView } from "./store";
+import type { AwayInfo, HandCategory, HoldemSeat, HoldemView } from "./wire";
 import s from "./Holdem.module.css";
 
-/** `titled` = false when the game panel's header already names the game. */
-export function HoldemTable({ ov, roomId, titled = true }: { ov: OpenView & { view: HoldemView }; roomId: string; titled?: boolean }) {
+/** `titled` = false when the game panel's header already names the game. `onPad` = drawn on the Pad screen (my cards are
+ *  never hidden there because of the Pad itself). */
+export function HoldemTable({ ov, roomId, titled = true, onPad = false }: { ov: OpenView & { view: HoldemView }; roomId: string; titled?: boolean; onPad?: boolean }) {
   const v = ov.view;
   const me = myId();
   const mobile = useIsMobile();
@@ -33,6 +45,25 @@ export function HoldemTable({ ov, roomId, titled = true }: { ov: OpenView & { vi
   for (const p of v.result?.pots ?? []) for (const [k, n] of Object.entries(p.paid)) won.set(Number(k), (won.get(Number(k)) ?? 0) + n);
   const winners = v.status === "pause" && v.result && !v.result.voided ? [...won.entries()].map(([seat, n]) => ({ seat, n, u: bySeatU(v, seat), made: v.result!.best[String(seat)]?.category })) : [];
   const [closeAsk, setCloseAsk] = useState(false);
+  // B10 §8.2: I stood up while away (the server's stand-up = the v1 leave, chips back to my wallet): say so once
+  const wasMine = useRef<HoldemSeat | null>(null);
+  useEffect(() => {
+    const prev = wasMine.current;
+    wasMine.current = mine;
+    if (prev && !mine && isAway(prev) && v.status !== "closed") toast(R2_WORDS.stood_up.replace("{n}", String(prev.stack + prev.bet)));
+  }, [mine, v.status]);
+  const [specHands, setSpecHands] = useState<HTMLElement | null>(null);
+  // F7: R opens the reactions tray (never while typing)
+  const onRootKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((e.key !== "r" && e.key !== "R") || e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target as HTMLElement;
+    if (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    const b = e.currentTarget.querySelector<HTMLButtonElement>("[data-react-anchor]");
+    if (b) {
+      e.preventDefault();
+      b.click();
+    }
+  };
   const sit = (seat?: number) => void actOn(v, seat ? { do: "sit", seat } : { do: "sit" });
 
   const header = (
@@ -47,13 +78,16 @@ export function HoldemTable({ ov, roomId, titled = true }: { ov: OpenView & { vi
         {isHost && v.status === "lobby" && canDeal(v) && (
           <Button highlighted text={w("table.deal")} onClick={() => void actOn(v, { do: "deal" })} data-testid="holdem-deal" />
         )}
-        {mine && (mine.state === "away" ? <Button text={w("table.back")} onClick={() => void actOn(v, { do: "away", on: false })} /> : <Button flat text={w("table.sit_out")} onClick={() => void actOn(v, { do: "away", on: true })} />)}
+        {mine && !isAway(mine) && <Button flat text={w("table.sit_out")} onClick={() => void actOn(v, { do: "away", on: true })} data-testid="holdem-sit-out" />}
         {mine ? (
           <Button flat text={mine.state === "leaving" ? w("table.leaving") : w("table.leave_table")} disabled={mine.state === "leaving"} onClick={() => void actOn(v, { do: "leave" })} data-testid="holdem-leave" />
         ) : (
           v.seats.length < v.opts.seats && <Button highlighted text={w("table.sit")} onClick={() => sit()} data-testid="holdem-sit" />
         )}
+        {reactsOn(ov.owner) && <ReactTray table={v.table} roomId={roomId} targets={v.seats.filter((x) => x.u !== me).map((x) => ({ seat: x.seat, u: x.u }))} />}
+        {!mine && <Button flat text={R2_WORDS.hands_button} onClick={(e) => setSpecHands(specHands ? null : (e.currentTarget as HTMLElement))} data-testid="holdem-hands-spectator" />}
         {isHost && <Button flat text={w("table.close")} onClick={() => setCloseAsk(true)} data-testid="holdem-close" />}
+        {!mine && <HandsSheet open={!!specHands} onClose={() => setSpecHands(null)} anchor={specHands} mine={null} />}
       </div>
       <ConfirmDialog
         open={closeAsk}
@@ -73,6 +107,7 @@ export function HoldemTable({ ov, roomId, titled = true }: { ov: OpenView & { vi
         {[0, 1, 2, 3, 4].map((i) => (h?.board[i] ? <PlayingCard key={i} card={h.board[i]!} size={mobile ? "md" : "lg"} className={s.boardCard} /> : <PlayingCard key={i} card={null} ghost size={mobile ? "md" : "lg"} />))}
       </div>
       <div className={s.pot} data-testid="holdem-pot">
+        <PotReactions table={v.table} />
         {pot > 0 ? (
           <>
             <span className={s.potWord}>{w("table.pot")}</span>
@@ -106,7 +141,8 @@ export function HoldemTable({ ov, roomId, titled = true }: { ov: OpenView & { vi
   );
 
   return (
-    <div className={cx(s.root, mobile && s.mobile)} data-testid="holdem-table" data-status={v.status} data-table={v.table} data-step-hand={v.hand?.street ?? ""}>
+    <TableSpace.Provider value={v.space || null}>
+    <div className={cx(s.root, mobile && s.mobile)} onKeyDown={onRootKey} tabIndex={-1} data-testid="holdem-table" data-status={v.status} data-table={v.table} data-step-hand={v.hand?.street ?? ""}>
       {header}
       <div className={s.stage}>
         <TableNote table={v.table} />
@@ -154,9 +190,34 @@ export function HoldemTable({ ov, roomId, titled = true }: { ov: OpenView & { vi
           </div>
         )}
       </div>
-      {mine ? <MyArea v={v} mine={mine} roomId={roomId} left={toAct?.seat === mine.seat ? left : 0} sharing={sharing} mobile={mobile} /> : <div className={s.watching}>{v.seats.length < v.opts.seats ? w("table.watching_sit") : w("table.watching_full")}</div>}
+      {mine ? <MyArea key={v.table} v={v} mine={mine} roomId={roomId} left={toAct?.seat === mine.seat ? left : 0} sharing={sharing} mobile={mobile} onPad={onPad} /> : <div className={s.watching}>{v.seats.length < v.opts.seats ? w("table.watching_sit") : w("table.watching_full")}</div>}
     </div>
+    </TableSpace.Provider>
   );
+}
+
+const NO_SCREENS: readonly string[] = [];
+
+/** B4: this person's presence in MY call of the table's room (seatPresence.ts); nothing when I'm not in that call. */
+function useSeatPresence(mxid: string, roomId: string): { speaking: boolean; muted: boolean } {
+  const key = useCallStore((c) => {
+    if (!c.inCall || c.callRoomId !== roomId) return "";
+    const p = presenceOf(c as unknown as CallSnap, mxid, myId());
+    return `${p.speaking ? 1 : 0}${p.muted ? 1 : 0}`;
+  });
+  return { speaking: key[0] === "1", muted: key[1] === "1" };
+}
+
+/** B10: a seat that sits out (0.3.21's `away` object, or v1's `away` state between hands). */
+function isAway(seat: Pick<HoldemSeat, "state" | "away">): boolean {
+  return !!seat.away || seat.state === "away";
+}
+function awayReason(a: AwayInfo | null): string {
+  if (!a) return R2_WORDS.away_reason_asked;
+  return a.reason === "timeout" ? R2_WORDS.away_reason_timeout : a.reason === "gone" ? R2_WORDS.away_reason_gone : R2_WORDS.away_reason_asked;
+}
+function standLine(n: number): string {
+  return n <= 1 ? R2_WORDS.away_stand_one : R2_WORDS.away_stand_hands.replace("{n}", String(n));
 }
 
 function bySeatU(v: HoldemView, seat: number): string {
@@ -178,8 +239,15 @@ function Seat({ seat, v, roomId, left, compact, self, side }: { seat: HoldemSeat
   const shown = seat.shown ?? res?.shown[String(seat.seat)];
   const cards: (string | null)[] = shown ?? (seat.cards > 0 && !self ? [null, null] : []);
   const av = compact ? 30 : 44;
+  const pres = useSeatPresence(seat.u, roomId);
+  const away = isAway(seat);
+  const awayWord = away ? (seat.away ? R2_WORDS.away_pill_hands.replace("{n}", String(seat.away.hands_left)) : SEAT_STATE_WORDS.away) : "";
+  const plateName = usePlayerLabel(roomId, seat.u);
   return (
-    <div className={cx(s.seat, compact && s.seatCompact, side === "l" && s.sideL, side === "r" && s.sideR, turn && s.turn, seat.state === "folded" && s.folded, winner && s.winner, self && s.self)} data-testid={`holdem-seat-${seat.seat}`} data-state={seat.state}>
+    <SeatMuteMenu u={seat.u} name={plateName}>
+      {(bind) => (
+    <div {...(self ? {} : bind)} className={cx(s.seat, compact && s.seatCompact, side === "l" && s.sideL, side === "r" && s.sideR, turn && s.turn, seat.state === "folded" && s.folded, away && !turn && s.awaySeat, winner && s.winner, self && s.self)} data-testid={`holdem-seat-${seat.seat}`} data-state={seat.state} data-away={away ? "1" : undefined}>
+      <SeatReactions table={v.table} seat={seat.seat} />
       {kickable && (
         <button type="button" className={s.kick} onClick={() => void actOn(v, { do: "kick", u: seat.u })} aria-label="Remove from the table" data-testid={`holdem-kick-${seat.seat}`}>
           <Icon name="window-close-symbolic" size={10} color="var(--th-text-secondary)" />
@@ -192,16 +260,25 @@ function Seat({ seat, v, roomId, left, compact, self, side }: { seat: HoldemSeat
           ))}
         </div>
       )}
-      <div className={s.avatarWrap} style={{ width: av + 6, height: av + 6 }}>
+      <div className={cx(s.avatarWrap, pres.speaking && s.speaking)} style={{ width: av + 6, height: av + 6 }} data-speaking={pres.speaking ? "1" : undefined} data-muted={pres.muted ? "1" : undefined}>
         <PlayerAvatar mxid={seat.u} roomId={roomId} size={av} />
+        {pres.muted && (
+          <span className={s.micOff} title="Mic off" data-testid={`holdem-muted-${seat.seat}`}>
+            <Icon name="microphone-sensitivity-muted-symbolic" size={compact ? 9 : 11} color="var(--th-text-primary)" />
+          </span>
+        )}
         {turn && <TurnRing left={left} total={v.opts.turn_s} size={av + 6} />}
         {h?.button === seat.seat && <span className={s.dealer} title="Dealer button">D</span>}
       </div>
       <div className={s.seatText}>
-        <PlayerName mxid={seat.u} roomId={roomId} className={s.seatName} />
+        <PlayerName mxid={seat.u} roomId={roomId} className={s.seatName} tokenSize={SEAT_TOKEN} />
         <span className={s.seatSub}>
           <Chips n={seat.stack} />
-          {(stateWord || last || turn || winner || !seat.connected) && <span className={cx(s.tag, winner && s.tagWin)}>{winner ? `Won ${wonN}` : turn ? `${left}s` : !seat.connected ? w("table.offline") : stateWord || last}</span>}
+          {(stateWord || last || turn || winner || !seat.connected || away) && (
+            <span className={cx(s.tag, winner && s.tagWin, away && !winner && !turn && s.tagAway)} data-testid={away ? `holdem-away-${seat.seat}` : undefined}>
+              {winner ? `Won ${wonN}` : turn ? `${left}s` : !seat.connected ? w("table.offline") : away ? awayWord : stateWord || last}
+            </span>
+          )}
         </span>
         {made && <span className={s.made}>{HAND_WORDS[made]}</span>}
         {compact && shown && (
@@ -218,16 +295,32 @@ function Seat({ seat, v, roomId, left, compact, self, side }: { seat: HoldemSeat
         </span>
       )}
     </div>
+      )}
+    </SeatMuteMenu>
   );
 }
 
-function MyArea({ v, mine, roomId, left, sharing, mobile }: { v: HoldemView; mine: HoldemSeat; roomId: string; left: number; sharing: boolean; mobile: boolean }) {
+function MyArea({ v, mine, roomId, left, sharing, mobile, onPad }: { v: HoldemView; mine: HoldemSeat; roomId: string; left: number; sharing: boolean; mobile: boolean; onPad: boolean }) {
   const y = v.you;
   const legal = y?.legal ?? null;
   const myTurn = !!legal && v.hand?.to_act?.seat === mine.seat;
-  // while my Pad has the table (and this isn't the Pad), or while I share my screen: face down, hold to peek (§4.4)
-  const padHas = !!y?.screens.includes("pad") && !mobile;
-  const hidden = sharing || padHas;
+  // where my cards are face up (addendum §1.4, cardsFace.ts): sharing → down; a Pad of mine has the table → peek with
+  // "Your cards are on your phone · Show here"; Show here holds until a Pad attaches AGAIN or the table closes
+  const screens = y?.screens ?? NO_SCREENS;
+  const [here, setHere] = useState(false);
+  const prevScreens = useRef<readonly string[]>(screens);
+  const screensKey = screens.join(",");
+  useEffect(() => {
+    const prev = prevScreens.current; // captured before the updater runs (astra pass 2)
+    setHere((h) => showHereNext({ here: h, prevScreens: prev, screens, tableClosed: v.status === "closed" }));
+    prevScreens.current = screens;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screensKey, v.status]);
+  // astra: the revocation must hold in THIS render (a Pad attaching again never shows one frame of the faces)
+  const hereNow = here && showHereNext({ here, prevScreens: prevScreens.current, screens, tableClosed: v.status === "closed" });
+  const face = cardsFace({ hasCards: (y?.cards ?? []).length > 0, sharing, onPad, here: hereNow, screens });
+  const padHas = face === "peek";
+  const hidden = face === "down" || face === "peek";
   // a peek is valid only for the privacy context it started in (checked while rendering: a change of context never
   // paints a frame with the faces)
   const ctxKey = `${sharing ? 1 : 0}|${padHas ? 1 : 0}`;
@@ -247,30 +340,71 @@ function MyArea({ v, mine, roomId, left, sharing, mobile }: { v: HoldemView; min
   const presets = raisePresets(v);
   const call = legal?.call;
   const cards = y?.cards ?? [];
-  const showFaces = !hidden || peek;
+  // faces only when up, or while a Pad-hidden hand is held to peek; never while sharing (the share would show them)
+  const showFaces = face === "up" || (face === "peek" && peek);
   // phones: while the raise row is up my cards shrink (and the felt tightens, CSS), so the whole felt stays above my area
   const raising = !!(myTurn && legal && r && r.max > r.min);
+  // F5/F6: my made hand and my odds, only while I can see my own cards (up, or held to peek)
+  const seen = face === "up" || (face === "peek" && peek);
+  const made = seen && cards.length ? madeHand([...cards, ...(v.hand?.board ?? [])]) : null;
+  const [oddsOn, setOddsOn] = usePrefState("games.odds", ODDS_DEFAULT_ON);
+  const od = useOdds(v, face === "peek" && peek ? "peeking" : face, oddsOn);
+  const [handsAt, setHandsAt] = useState<HTMLElement | null>(null);
+  // §8.3 "your turn" notices: asked once, the first time I sit (this line under the action bar), then in the Hands sheet
+  const [turnPref, setTurnPref] = usePrefState(TURN_NOTIFY_PREF, "");
+  const answerTurns = async (yes: boolean) => {
+    setTurnPref(yes ? "1" : "0");
+    if (yes && notificationPermission() === "default") await requestNotificationPermission();
+  };
   return (
     <div className={cx(s.me, myTurn && s.meTurn, raising && s.raising)} data-testid="holdem-me">
       <div className={s.myCards}>
         <div
-          className={cx(s.hand, hidden && s.handHidden)}
-          onPointerDown={hidden ? (e) => (e.currentTarget.setPointerCapture(e.pointerId), setPeek(true)) : undefined}
+          className={cx(s.hand, face === "peek" && s.handHidden)}
+          onPointerDown={face === "peek" ? (e) => (e.currentTarget.setPointerCapture(e.pointerId), setPeek(true)) : undefined}
           onPointerUp={() => setPeek(false)}
           onPointerCancel={() => setPeek(false)}
           onLostPointerCapture={() => setPeek(false)}
           data-testid="holdem-mycards"
-          data-hidden={hidden && !peek ? "1" : "0"}
+          data-hidden={cards.length && !showFaces ? "1" : "0"}
         >
           {cards.length ? cards.map((c, i) => <PlayingCard key={i} card={showFaces ? c : null} size={mobile ? (raising ? "lg" : "xl") : "lg"} />) : <span className={s.noCards}>{mine.state === "out" ? w("table.out") : mine.state === "away" ? w("table.sitting_out") : w("table.seat_states.waiting")}</span>}
+          {mine.state === "out" && <TuneInOffer owner={v.owner} space={v.space} compact />}
         </div>
-        {hidden && cards.length > 0 && <span className={s.peekHint}>{sharing ? w("table.peek_share") : w("table.peek_pad")}</span>}
+        {face === "down" && <span className={s.peekHint}>{R2_WORDS.hidden_sharing}</span>}
         <div className={s.myInfo}>
           <PlayerName mxid={mine.u} roomId={roomId} className={s.myName} />
           <Chips n={mine.stack} big />
+          {face === "peek" && (
+            <span className={s.onPhone} data-testid="holdem-on-phone">
+              <span>{R2_WORDS.cards_on_phone}</span>
+              <button type="button" className={s.showHere} onClick={() => setHere(true)} data-testid="holdem-show-here">
+                {R2_WORDS.show_here}
+              </button>
+            </span>
+          )}
+          {made && (
+            <span className={s.oddsLine} data-testid="holdem-odds">
+              <span className={s.made}>{HAND_NAME[made]}</span>
+              {od && <span data-testid="holdem-odds-win">{R2_WORDS.odds_win.replace("{p}", od.winLabel)}</span>}
+              {od && od.tieLabel !== "0%" && <span>{R2_WORDS.odds_tie.replace("{p}", od.tieLabel)}</span>}
+              {od?.outs && od.outs.total > 0 && (
+                <span className={s.improve} title={`${Object.entries(od.outs.by).map(([c, n]) => `${HAND_NAME[c as HandCategory]} ${n}`).join(" · ")}\n${R2_WORDS.odds_info}`} tabIndex={0} data-testid="holdem-odds-improve">
+                  {od.outs.total === 1 ? R2_WORDS.odds_improve_one : R2_WORDS.odds_improve.replace("{n}", String(od.outs.total))}
+                  <Icon name="help-about-symbolic" size={10} color="currentColor" />
+                </span>
+              )}
+            </span>
+          )}
           {y?.at_cap && <span className={s.cap}>{w("wallet.at_cap_table")}</span>}
-          {(y?.timeouts ?? 0) > 0 && mine.state !== "away" && <span className={s.cap}>{w("table.timeout_note")}</span>}
+          {/* v1's "two in a row and you sit out": only from a 0.3.20 server (0.3.21 sends `you.away` and sits you out after one) */}
+          {(y?.timeouts ?? 0) > 0 && !isAway(mine) && !(y && "away" in y) && <span className={s.cap}>{w("table.timeout_note")}</span>}
         </div>
+        <button type="button" className={s.handsBtn} onClick={(e) => setHandsAt(handsAt ? null : e.currentTarget)} aria-expanded={!!handsAt} data-testid="holdem-hands">
+          <Icon name="help-about-symbolic" size={12} color="currentColor" />
+          {R2_WORDS.hands_button}
+        </button>
+        <HandsSheet open={!!handsAt} onClose={() => setHandsAt(null)} anchor={handsAt} mine={made} odds={{ on: oddsOn === true, set: (b) => setOddsOn(b) }} turns={{ on: turnPref === "1", set: (b) => void answerTurns(b) }} />
       </div>
       <div className={s.actions} data-testid="holdem-actions">
         {myTurn && legal ? (
@@ -299,6 +433,24 @@ function MyArea({ v, mine, roomId, left, sharing, mobile }: { v: HoldemView; min
               </div>
             )}
           </>
+        ) : turnPref === "" && !isAway(mine) ? (
+          <div className={s.turnAsk} data-testid="holdem-turn-ask">
+            <span>{R2_WORDS.turn_ask}</span>
+            <button type="button" className={s.showHere} onClick={() => void answerTurns(true)} data-testid="holdem-turn-yes">
+              {R2_WORDS.turn_yes}
+            </button>
+            <button type="button" className={s.turnNo} onClick={() => void answerTurns(false)} data-testid="holdem-turn-no">
+              {R2_WORDS.turn_no}
+            </button>
+          </div>
+        ) : isAway(mine) ? (
+          <div className={s.awayBox} data-testid="holdem-away-me">
+            <Button highlighted className={s.backBtn} text={R2_WORDS.away_back} onClick={() => void actOn(v, { do: "away", on: false })} data-testid="holdem-back" />
+            <span className={s.awayLine}>
+              {awayReason(y?.away ?? mine.away ?? null)}
+              {(y?.away ?? mine.away) && <> · {standLine((y?.away ?? mine.away)!.hands_left)}</>}
+            </span>
+          </div>
         ) : (
           <div className={s.waitTurn}>{v.hand?.to_act ? w("table.wait_turn") : v.status === "pause" ? w("table.next_hand") : ""}</div>
         )}

@@ -50,8 +50,15 @@ export const HOLDEM = Object.freeze({
     SEATS_DEFAULT: 8,
     TURN_S: 30, // per decision
     PAUSE_MS: 5_000, // between hands (the next deal starts by itself)
-    TIMEOUTS_TO_AWAY: 2, // timeouts in a row → away from the next hand
-    AWAY_LEAVE_MS: 10 * 60_000, // away this long → leave (cash-out + prestige check)
+    // B10 away (addendum v1.1 §8.1; CHANGES v1 "two timeouts"): ONE timeout → away from the next hand; later turns of
+    // an automatically-away player in the current hand are acted at once; a player with no socket on the table for
+    // GONE_MS when a hand is dealt is dealt out; away for AWAY_STAND_HANDS dealt-out hands or AWAY_STAND_MS → stand up
+    // (the v1 leave: deferred to the end of a hand they still have money in; cash-out to the wallet, chips kept)
+    AWAY_AFTER_TIMEOUTS: 1,
+    AWAY_INSTANT_ACT: true,
+    GONE_MS: 20_000,
+    AWAY_STAND_HANDS: 6,
+    AWAY_STAND_MS: 10 * 60_000,
     EMPTY_CLOSE_MS: 10 * 60_000, // nobody seated this long → the table closes
     MIN_TO_SIT: 1,
     MAX_CHIPS: 2 ** 40, // sanity bound on any amount handed in
@@ -96,7 +103,8 @@ export function move(state, m, ctx = {}) {
     if (!Number.isFinite(ctx.now)) throw new TypeError("ctx.now is required");
     const T = structuredClone(state);
     const fx = [];
-    const c = { now: ctx.now, randomInt: ctx.randomInt || cryptoRandomInt, admitted: ctx.admitted };
+    const c = { now: ctx.now, randomInt: ctx.randomInt || cryptoRandomInt, admitted: ctx.admitted,
+        gone: ctx.gone instanceof Set ? ctx.gone : new Set(ctx.gone || []) }; // ids with no socket on the table for GONE_MS
     try {
         if (!m || typeof m.do !== "string") fail("bad");
         if (T.status === "closed") fail("phase");
@@ -174,7 +182,7 @@ function sit(T, m, c, fx) {
         seat = freeSeats(T)[0] ?? fail("table-full");
     }
     T.seq += 1;
-    T.seats[seat] = { id: m.by, stack: m.chips, pending: 0, seq: T.seq, away: false, awaySince: null, awayAuto: false, timeouts: 0, leaving: false };
+    T.seats[seat] = { id: m.by, stack: m.chips, pending: 0, seq: T.seq, away: false, awaySince: null, awayAuto: false, awayReason: null, awayHands: 0, timeouts: 0, leaving: false };
     if (T.host === null) T.host = m.by;
     T.emptySince = null;
     fx.push({ t: "sit", seat, id: m.by, amount: m.chips });
@@ -186,18 +194,29 @@ function freeSeats(T) {
     return out;
 }
 
+/** Sets a seat away from the next hand. reason: timeout | gone (automatic: the player's own move undoes it, and their
+ *  later turns in the current hand are acted at once) | asked (the current hand plays normally). */
+function setAway(x, reason, now) {
+    if (!x.away) { x.away = true; x.awaySince = now; x.awayHands = 0; }
+    x.awayReason = reason;
+    x.awayAuto = reason !== "asked";
+}
+function clearAway(x) {
+    x.away = false; x.awaySince = null; x.awayAuto = false; x.awayReason = null; x.awayHands = 0; x.timeouts = 0;
+}
+
 function away(T, m, c) {
     const s = seatOf(T, m.by);
     if (s === null) fail("bad");
     const x = T.seats[s];
     if (m.on === true) {
-        if (!x.away) { x.away = true; x.awaySince = c.now; }
-        x.awayAuto = false; // asked for: a move in the current hand doesn't undo it
+        setAway(x, "asked", c.now); // asked for: a move in the current hand doesn't undo it
     } else if (m.on === false) {
-        x.away = false;
-        x.awaySince = null;
-        x.awayAuto = false;
-        x.timeouts = 0;
+        clearAway(x);
+        // I'm back while an instant act is pending on this very turn: the turn gets its normal timer (the race of
+        // addendum §8.1: whichever commits first wins; the instant act then finds the deadline moved)
+        const h = T.hand;
+        if (handOpen(T) && h.b.toAct === s && h.instantTurn === h.turn) { h.deadline = c.now + T.opts.turn_s * 1000; h.instantTurn = null; }
     } else fail("bad");
 }
 
@@ -251,6 +270,11 @@ function closeTable(T, reason, c, fx) {
 
 // ----------------------------------------------------------------------------------------------------------- the dealer
 
+/** Players with no socket on the table for GONE_MS when a hand is dealt are dealt out (reason gone). */
+function markGone(T, c) {
+    for (const x of Object.values(T.seats)) if (c.gone.has(x.id) && !x.away && !x.leaving) setAway(x, "gone", c.now);
+}
+
 function eligibleSeats(T) {
     return Object.keys(T.seats).map(Number).sort((a, b) => a - b)
         .filter((s) => T.seats[s].stack + T.seats[s].pending > 0 && !T.seats[s].away && !T.seats[s].leaving);
@@ -263,7 +287,7 @@ export function wouldDeal(T, m, now) {
     if (m.do === "tick") {
         // the turn timer can end a hand at this tick, but the next deal is always a later tick (after the pause)
         if (T.status !== "pause" || now < T.pauseUntil) return false;
-        const away = (x) => x.away && !x.leaving && now - x.awaySince >= HOLDEM.AWAY_LEAVE_MS;
+        const away = (x) => x.away && !x.leaving && now - x.awaySince >= HOLDEM.AWAY_STAND_MS;
         return Object.values(T.seats).filter((x) => x.stack + x.pending > 0 && !x.away && !x.leaving && !away(x)).length >= 2;
     }
     return false;
@@ -274,6 +298,7 @@ export function wouldDeal(T, m, now) {
 function dealHand(T, c, fx) {
     // a failed admission check closes the table even when no hand could start anyway (review round 1)
     if (c.admitted === false) { closeTable(T, "space-changed", c, fx); return true; }
+    markGone(T, c);
     const eligible = eligibleSeats(T);
     if (eligible.length < 2) return false;
     if (c.admitted !== true) throw new TypeError("a hand start needs the admission check (ctx.admitted)");
@@ -313,6 +338,14 @@ function dealHand(T, c, fx) {
     }
     T.hand.last = { seat: b.bbSeat, a: "bb", to: b.p[b.bbSeat].bet };
     syncStacks(T);
+    // away seats were dealt out of one more hand: after AWAY_STAND_HANDS of them, they stand up (not in this hand,
+    // so at once: cash-out with the chips they have)
+    for (const s of Object.keys(T.seats).map(Number).sort((a, b) => a - b)) {
+        const x = T.seats[s];
+        if (!x.away || x.leaving || eligible.includes(s)) continue;
+        x.awayHands = (x.awayHands || 0) + 1;
+        if (x.awayHands >= HOLDEM.AWAY_STAND_HANDS) cashout(T, s, "away", c, fx);
+    }
     progress(T, c, fx);
     return true;
 }
@@ -327,13 +360,15 @@ function play(T, m, c, fx) {
     if (!handOpen(T)) fail("phase");
     const h = T.hand;
     if (!m.at || m.at.hand !== h.n || m.at.turn !== h.turn) fail("stale");
-    if (h.deadline !== null && c.now >= h.deadline) fail("stale"); // the timer acts first: the server ticks, then the move
+    // the timer acts first (the server ticks, then the move), except a pending INSTANT act on this turn: the player's own
+    // move that commits first wins it (addendum §8.1; astra r1 #11)
+    if (h.deadline !== null && c.now >= h.deadline && h.instantTurn !== h.turn) fail("stale");
     const s = seatOf(T, m.by);
     if (s === null || h.b.toAct !== s) fail("not-your-turn");
     const rec = act(h.b, m.do === "raise" ? { do: "raise", to: m.to } : { do: m.do });
     const x = T.seats[s];
     x.timeouts = 0; // a move of their own breaks a run of timeouts
-    if (x.away && x.awayAuto) { x.away = false; x.awaySince = null; x.awayAuto = false; } // ...and shows they're back
+    if (x.away && x.awayAuto) clearAway(x); // ...and shows they're back (an away they asked for stays)
     record(T, rec, c, fx, false);
     progress(T, c, fx);
 }
@@ -368,6 +403,7 @@ function progress(T, c, fx, moved = true) {
         if (moved) {
             h.turn += 1;
             h.deadline = c.now + T.opts.turn_s * 1000;
+            h.instantTurn = null;
         }
         const s = h.b.toAct;
         if (T.seats[s] && T.seats[s].leaving) {
@@ -377,6 +413,9 @@ function progress(T, c, fx, moved = true) {
             moved = true;
             continue;
         }
+        // an automatically-away player's turn: acted at once by the timer (a timer move like any other: an I'm back
+        // that commits first gets the normal timer back, see away())
+        if (moved && HOLDEM.AWAY_INSTANT_ACT && T.seats[s] && T.seats[s].away && T.seats[s].awayAuto) { h.deadline = c.now; h.instantTurn = h.turn; }
         return;
     }
 }
@@ -472,13 +511,13 @@ function tick(T, c, fx) {
         const rec = act(h.b, { do: lg.check ? "check" : "fold" });
         const x = T.seats[s];
         x.timeouts += 1;
-        if (x.timeouts >= HOLDEM.TIMEOUTS_TO_AWAY && !x.away) { x.away = true; x.awaySince = c.now; x.awayAuto = true; }
+        if (x.timeouts >= HOLDEM.AWAY_AFTER_TIMEOUTS && !x.away) setAway(x, "timeout", c.now);
         record(T, rec, c, fx, true);
         progress(T, c, fx);
     }
     for (const s of Object.keys(T.seats).map(Number).sort((a, b) => a - b)) {
         const x = T.seats[s];
-        if (x && x.away && !x.leaving && c.now - x.awaySince >= HOLDEM.AWAY_LEAVE_MS) leaveSeat(T, s, "away", c, fx);
+        if (x && x.away && !x.leaving && c.now - x.awaySince >= HOLDEM.AWAY_STAND_MS) leaveSeat(T, s, "away", c, fx);
     }
     if (T.status === "closed") return;
     if (T.status === "pause" && c.now >= T.pauseUntil) {
@@ -494,7 +533,7 @@ export function nextWake(T) {
     const t = [];
     if (handOpen(T) && T.hand.deadline !== null) t.push(T.hand.deadline);
     if (T.status === "pause" && T.pauseUntil !== null) t.push(T.pauseUntil);
-    for (const x of Object.values(T.seats)) if (x.away && !x.leaving) t.push(x.awaySince + HOLDEM.AWAY_LEAVE_MS);
+    for (const x of Object.values(T.seats)) if (x.away && !x.leaving) t.push(x.awaySince + HOLDEM.AWAY_STAND_MS);
     if (Object.keys(T.seats).length === 0 && T.emptySince !== null) t.push(T.emptySince + HOLDEM.EMPTY_CLOSE_MS);
     return t.length ? Math.min(...t) : null;
 }
@@ -507,8 +546,12 @@ function seatState(T, s) {
     if (h && inHandSeat(T, s) && !h.voided && (T.status === "hand" || T.status === "pause")) {
         const p = h.b.p[s];
         if (x.leaving) return "leaving";
-        if (!h.done) return p.folded ? (x.away ? "away" : "folded") : p.stack === 0 ? "allin" : "active";
-        // a finished hand (the pause): each player as the hand ended (all-in = no chips behind before the settle)
+        // during the hand a seat keeps its hand status (an away-pending player who checked is still active; away
+        // never changes who can win this pot: addendum §8.1); between hands / dealt out, `away` below
+        if (!h.done) return p.folded ? "folded" : p.stack === 0 ? "allin" : "active";
+        // a finished hand (the pause): each player as the hand ended (all-in = no chips behind before the settle); an away
+        // player shows away between hands (addendum §8.1; astra r2 N7)
+        if (x.away) return "away";
         return p.folded ? "folded" : p.stack === 0 ? "allin" : "active";
     }
     if (x.away) return "away";
@@ -535,6 +578,7 @@ export function viewFor(T, { viewer = null, nameOf = (id) => id } = {}) {
             bet: inHand && !h.done ? p.bet : 0,
             state: seatState(T, s),
             cards: inHand && !p.folded ? 2 : 0,
+            away: awayInfo(x),
         };
         if (inHand && h.done && h.result && h.result.shown[s]) row.shown = h.result.shown[s];
         // seated, not in the hand on show (or no hand yet): dealt in at the next one. Never for away / out.
@@ -568,13 +612,19 @@ export function viewFor(T, { viewer = null, nameOf = (id) => id } = {}) {
     if (T.status === "pause") v.next_at = T.pauseUntil;
     const ys = seatOf(T, viewer);
     if (ys !== null) {
-        const you = { seat: ys, cards: [], legal: null, timeouts: T.seats[ys].timeouts };
+        const you = { seat: ys, cards: [], legal: null, timeouts: T.seats[ys].timeouts, away: awayInfo(T.seats[ys]) };
         if (showHand && inHandSeat(T, ys)) you.cards = h.holes[ys].slice();
         if (handOpen(T) && h.b.toAct === ys) you.legal = legal(h.b);
         if (T.host === viewer && T.status === "lobby") you.can_deal = eligibleCount(T) >= 2;
         v.you = you;
     }
     return v;
+}
+
+/** The public away object of a seat (addendum §8.1 view), or null. */
+function awayInfo(x) {
+    if (!x.away) return null;
+    return { reason: x.awayReason || "asked", since: x.awaySince, stand_at: x.awaySince + HOLDEM.AWAY_STAND_MS, hands_left: Math.max(0, HOLDEM.AWAY_STAND_HANDS - (x.awayHands || 0)) };
 }
 
 function eligibleCount(T) {

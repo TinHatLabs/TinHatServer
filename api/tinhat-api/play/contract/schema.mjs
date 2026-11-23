@@ -23,13 +23,18 @@ export const CODES = {
     "open-money": 409, rate: 429, off: 503, db: 503,
     stale: 409, "not-your-turn": 409, phase: 409, bad: 400, "bad-action": 409, "bad-amount": 400, "no-chips": 409,
     limit: 409, locked: 409, window: 409, taken: 409, rules: 409, greyed: 409, "host-only": 403,
+    // v1.1 (addendum §4, §5, §6): additive
+    cooldown: 429, "op-reused": 409, "bad-reason": 400, "bad-value": 400, "at-table": 409, "not-admin": 403,
+    "not-broke": 409, "day-max": 409, "side-off": 403, "no-run": 404,
 };
+/** v1.1 F7 (addendum §4.1): the table reactions, in tray order. No money, not stored. */
+export const REACTIONS = ["tip", "knock", "clap", "toss", "sweat", "foil"];
 
-export const HOLDEM_MOVES = ["sit", "leave", "deal", "fold", "check", "call", "raise", "allin", "away", "kick", "close"];
+export const HOLDEM_MOVES = ["sit", "leave", "deal", "fold", "check", "call", "raise", "allin", "away", "kick", "close", "react"];
 export const RIG_MOVES = ["join", "leave", "start", "keep", "market", "dial", "spin", "call", "audit", "walk", "mute",
-    "patch", "nudge", "whisper", "peek", "kick", "close"];
-// moves that are table-level (no `at`), §6.3
-export const TABLE_MOVES = ["sit", "leave", "deal", "away", "kick", "close", "join", "start"];
+    "patch", "nudge", "whisper", "peek", "kick", "close", "react", "away"];
+// moves that are table-level (no `at`), §6.3 (react: v1.1)
+export const TABLE_MOVES = ["sit", "leave", "deal", "away", "kick", "close", "join", "start", "react"];
 
 const deadline = int(0);
 const seatNo = int(1, 8);
@@ -50,20 +55,23 @@ const F = {
 export const MOVE_SHAPES = {
     holdem: [["sit", ["space"], ["seat"], false], ["leave", [], [], false], ["deal", [], [], false], ["fold", [], [], true],
         ["check", [], [], true], ["call", [], [], true], ["raise", ["to"], [], true], ["allin", [], [], true],
-        ["away", ["on"], [], false], ["kick", ["u"], [], false], ["close", [], [], false]],
+        ["away", ["on"], [], false], ["kick", ["u"], [], false], ["close", [], [], false], ["react", ["r"], ["to"], false]],
     rig: [["join", ["space"], [], false], ["leave", [], [], false], ["start", [], ["preset", "bankroll", "patch"], false],
         ["keep", ["card"], [], true], ["market", ["side", "stake"], [], true], ["market-pass", [], [], true],
         ["dial", ["bet"], [], true], ["spin", [], ["bet"], true], ["call", ["card"], [], true], ["audit", ["spin"], [], true],
         ["walk", [], [], true], ["mute", ["armed"], [], true], ["patch", [], [], true], ["nudge", ["reel", "step"], [], true],
         ["whisper", ["template"], ["person"], true], ["whisper-text", ["text"], [], true], ["peek", ["mechanic", "card"], [], true],
-        ["kick", ["u"], [], false], ["close", [], [], false]],
+        ["kick", ["u"], [], false], ["close", [], [], false], ["react", ["r"], ["to"], false], ["away", ["on"], [], false]],
 };
+// v1.1 F7: a reaction names one of REACTIONS; only `toss` takes a target, a seat (Hold'em) / player order (The Rig) or the pot
+const REACT_TO = { anyOf: [int(1, 8), { const: "pot" }] };
 function actVariants(game) {
     return MOVE_SHAPES[game].map(([name, req, opt, atNeeded]) => {
         const doName = name === "market-pass" ? "market" : name === "whisper-text" ? "whisper" : name;
         const props = { do: { const: doName } };
         for (const k of [...req, ...opt]) props[k] = F[k];
         if (name === "market-pass") props.side = { const: "pass" };
+        if (name === "react") { props.r = { enum: REACTIONS }; props.to = REACT_TO; }
         const a = obj(props, ["do", ...req, ...(name === "market-pass" ? ["side"] : [])]);
         const top = { t: { const: "act" }, table: { type: "string", pattern: game === "holdem" ? "^tH[A-Za-z0-9]{14}$" : "^tR[A-Za-z0-9]{14}$" }, op: { $ref: "#/$defs/op" }, a };
         if (atNeeded) top.at = game === "holdem" ? AT_HOLDEM : AT_RIG;
@@ -104,7 +112,11 @@ export const SCHEMA = {
             state: { enum: ["waiting", "active", "folded", "allin", "away", "out", "leaving"] },
             cards: { enum: [0, 2] }, connected: { type: "boolean" },
             shown: arr(ref("card"), 2, 2),
+            rank: int(0), // v1.1 (B3): the seat's prestige rank in the table's space; absent = unknown (use the ranks API)
+            away: nullable(ref("awayInfo")), // v1.1 (B10): sitting out from the next hand, or null
         }, ["seat", "u", "stack", "bet", "state", "cards", "connected"]),
+        // v1.1 (B10, addendum §8.1): why, since when, and when the seat stands up (whichever comes first)
+        awayInfo: obj({ reason: { enum: ["timeout", "gone", "asked"] }, since: int(0), stand_at: int(0), hands_left: int(0, 50) }),
         holdemPot: obj({ amount: int(1), eligible: arr(seatNo, 1, 8) }),
         holdemHand: obj({
             n: int(1), button: seatNo, sb: seatNo, bb: seatNo,
@@ -133,9 +145,10 @@ export const SCHEMA = {
             seat: seatNo, state: { enum: ["waiting", "active", "folded", "allin", "away", "out", "leaving"] },
             cards: arr(ref("card"), 0, 2),
             legal: nullable(ref("holdemLegal")),
-            screens: arr(ref("screen")), at_cap: { type: "boolean" }, cap: int(100), holdings: int(),
+            screens: arr(ref("screen")), at_cap: { type: "boolean" }, cap: int(20), holdings: int(),
             timeouts: int(0, 2),
             can_deal: { type: "boolean" }, // the host in the lobby: at least two players with chips (the Deal button)
+            away: nullable(ref("awayInfo")), // v1.1 (B10): your own away state (the I'm back button + the stand-up countdown)
         }, ["seat", "state", "cards", "legal", "screens", "at_cap", "cap", "holdings", "timeouts"]),
         holdemView: obj({
             game: { const: "holdem" }, table: ref("table"), room: ref("room"), space: ref("room"), owner: ref("server"), vseq: int(1), now: int(),
@@ -154,7 +167,9 @@ export const SCHEMA = {
             u: ref("mxid"), order: int(1, 8),
             role: { enum: [null, "spinner", "mechanic", "sharp", "railbird"] },
             connected: { type: "boolean" }, left: { type: "boolean" }, spun: { type: "boolean" }, skipped: { type: "boolean" },
-        }),
+            rank: int(0), // v1.1 (B3), as holdemSeat.rank
+            away: nullable(ref("awayInfo")), // v1.1 (B10): away from the next rounds (hands_left counts rounds)
+        }, ["u", "order", "role", "connected", "left", "spun", "skipped"]),
         rigBoardCard: obj({
             card: ref("rigCard"), state: { enum: ["open", "dead", "busted", "wrong"] },
             by: ref("mxid"), spin: int(1, 10),
@@ -213,8 +228,8 @@ export const SCHEMA = {
         rigMarket: nullable(obj({ side: { enum: ["up", "not-up"] }, stake: int(1, 2) })),
         rigYou: {
             oneOf: [
-                obj({ role: { const: null }, screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int() }),
-                obj({ role: { const: "spinner" }, whispers: arr(ref("rigWhisper")), screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(), timeouts: int(0, 2) }),
+                obj({ role: { const: null }, screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(), away: nullable(ref("awayInfo")) }, ["role", "screens", "at_cap", "holdings"]),
+                obj({ role: { const: "spinner" }, whispers: arr(ref("rigWhisper")), screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(), away: nullable(ref("awayInfo")), timeouts: int(0, 2) }, ["role", "whispers", "screens", "at_cap", "holdings", "timeouts"]),
                 obj({
                     role: { const: "mechanic" },
                     deal: arr(ref("rigCard"), 2, 2), kept: { type: "boolean" },
@@ -223,13 +238,13 @@ export const SCHEMA = {
                     mutes_left: int(0, 2), armed: { type: "boolean" }, rake: int(), call_shares: int(),
                     nudge_left: int(0, 1), whisper_used: { type: "boolean" }, peek: ref("rigPeek"), market: ref("rigMarket"),
                     market_done: { type: "boolean" },
-                    screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(),
+                    screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(), away: nullable(ref("awayInfo")),
                 }, ["role", "kept", "card", "busted", "patch", "mutes_left", "armed", "rake", "call_shares", "nudge_left", "whisper_used", "peek", "market", "market_done", "screens", "at_cap", "holdings"]),
                 obj({
                     role: { const: "sharp" }, nudge_left: int(0, 1), whisper_used: { type: "boolean" }, peek: ref("rigPeek"),
-                    market: ref("rigMarket"), market_done: { type: "boolean" }, screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(),
-                }),
-                obj({ role: { const: "railbird" }, nudge_left: int(0, 1), whisper_used: { type: "boolean" }, screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int() }),
+                    market: ref("rigMarket"), market_done: { type: "boolean" }, screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(), away: nullable(ref("awayInfo")),
+                }, ["role", "nudge_left", "whisper_used", "peek", "market", "market_done", "screens", "at_cap", "holdings"]),
+                obj({ role: { const: "railbird" }, nudge_left: int(0, 1), whisper_used: { type: "boolean" }, screens: arr(ref("screen")), at_cap: { type: "boolean" }, holdings: int(), away: nullable(ref("awayInfo")) }, ["role", "nudge_left", "whisper_used", "screens", "at_cap", "holdings"]),
             ],
         },
         rigView: obj({
@@ -261,21 +276,25 @@ export const SCHEMA = {
         c_act: { oneOf: [...actVariants("holdem"), ...actVariants("rig")] },
         clientFrame: { oneOf: [ref("c_auth"), ref("c_sub"), ref("c_unsub"), ref("c_open"), ref("c_close"), ref("c_ping"), ref("c_act")] },
 
-        s_hello: obj({ t: { const: "hello" }, v: { const: 1 }, user: ref("mxid"), now: int(), rig_hidden: { type: "boolean" }, wallets: arr(ref("room")) }),
+        // features (v1.1, addendum §7.3): the socket-only pieces this server has ("fresh-screens", "react", "away2")
+        s_hello: obj({ t: { const: "hello" }, v: { const: 1 }, user: ref("mxid"), now: int(), rig_hidden: { type: "boolean" }, wallets: arr(ref("room")), features: arr(str(32), 0, 16) }, ["t", "v", "user", "now", "rig_hidden", "wallets"]),
+        // v1.1 F7: a reaction, to everyone with the table open (never stored); seat null = someone watching from the call
+        s_react: obj({ t: { const: "react" }, table: ref("table"), u: ref("mxid"), seat: nullable(int(1, 8)), r: { enum: REACTIONS }, to: REACT_TO, at: int() }, ["t", "table", "u", "seat", "r", "at"]),
         s_room: obj({ t: { const: "room" }, room: ref("room"), space: ref("room"), owner: ref("server"), tables: arr(ref("tableListing")) }),
         s_view: obj({ t: { const: "view" }, table: ref("table"), vseq: int(1), view: ref("view") }),
         s_live: obj({ t: { const: "live" }, table: ref("table"), vseq: int(1), dial: int(1, 3) }),
-        s_ack: obj({ t: { const: "ack" }, op: ref("op"), ok: { type: "boolean" }, code: { anyOf: [{ const: "" }, ref("code")] }, dup: { type: "boolean" } }),
-        s_wallet: obj({ t: { const: "wallet" }, space: ref("room"), balance: int(), holdings: int(), rank: int(), cap: int(100), earned_today: int(0, 24) }, ["t", "space", "balance", "holdings", "rank", "cap"]),
+        s_ack: obj({ t: { const: "ack" }, op: ref("op"), ok: { type: "boolean" }, code: { anyOf: [{ const: "" }, ref("code")] }, dup: { type: "boolean" }, retry_ms: int(0, 60_000) }, ["t", "op", "ok", "code", "dup"]),
+        s_wallet: obj({ t: { const: "wallet" }, space: ref("room"), balance: int(), holdings: int(), rank: int(), cap: int(20), earned_today: int(0, 200) }, ["t", "space", "balance", "holdings", "rank", "cap"]),
         s_rank: obj({ t: { const: "rank" }, space: ref("room"), u: ref("mxid"), rank: int(1) }),
         s_post: obj({ t: { const: "post" }, kind: { enum: ["invite", "result", "summary"] }, game: { enum: ["holdem", "rig"] }, table: ref("table"), room: ref("room"), space: ref("room"), round: nullable(int(1)) }),
         s_pong: obj({ t: { const: "pong" }, now: int() }),
         s_bye: obj({ t: { const: "bye" }, code: { enum: ["replaced", "session", "off", "rate", "bad", "restart"] } }),
         s_error: obj({ t: { const: "error" }, code: ref("code"), table: ref("table"), room: ref("room"), space: ref("room"), server: ref("server") }, ["t", "code"]),
-        serverFrame: { oneOf: [ref("s_hello"), ref("s_room"), ref("s_view"), ref("s_live"), ref("s_ack"), ref("s_wallet"), ref("s_rank"), ref("s_post"), ref("s_pong"), ref("s_bye"), ref("s_error")] },
+        serverFrame: { oneOf: [ref("s_hello"), ref("s_room"), ref("s_view"), ref("s_live"), ref("s_ack"), ref("s_wallet"), ref("s_rank"), ref("s_post"), ref("s_pong"), ref("s_bye"), ref("s_error"), ref("s_react")] },
 
         // ------------------------------------------------------------------ HTTP (§6.1, §6.2)
-        httpError: obj({ code: ref("code"), error: str(300), space: ref("room"), server: ref("server") }, ["code"]),
+        httpError: obj({ code: ref("code"), error: str(300), space: ref("room"), server: ref("server"),
+            who: arr(ref("mxid"), 1, 100), key: str(32), min: int(), max: int() }, ["code"]), // who/key/min/max: v1.1 admin answers
         sessionRequest: obj({
             openid: obj({ access_token: str(512), matrix_server_name: str(255), token_type: { const: "Bearer" }, expires_in: int() }),
             user_id: ref("mxid"),
@@ -291,17 +310,42 @@ export const SCHEMA = {
             ],
         },
         me: obj({
-            v: { const: 1 }, space: ref("room"), user: ref("mxid"), balance: int(), holdings: int(), rank: int(), cap: int(100),
+            v: { const: 1 }, space: ref("room"), user: ref("mxid"), balance: int(), holdings: int(), rank: int(), cap: int(20),
             at_table: nullable(obj({ table: ref("table"), game: { enum: ["holdem", "rig"] }, room: ref("room") })),
-            earned_today: int(0, 24), day_max: int(1, 24), accrual_s: int(0, 3599), chip_s: int(1), day: ref("day"),
+            earned_today: int(0, 200), day_max: int(1, 200), accrual_s: int(0, 3599), chip_s: int(1), chip_minutes: int(2, 60), day: ref("day"),
             topup: obj({ available: { type: "boolean" }, next_day: ref("day") }),
-        }),
+            // v1.1 F8 (§5.5): unseen admin changes to this wallet, oldest first (10 a page) + how many more wait
+            notices: obj({ items: arr(obj({ id: int(1), at: int(), action: { enum: ["grant", "remove", "set", "reset", "rank"] }, amount: nullable(int()), reason: nullable(str(140)) }), 0, 10), more: int() }),
+            // v1.1 F9 (§6.4): Tune In for this wallet; the apps show exactly this
+            side: obj({ on: { type: "boolean" }, eligible: { type: "boolean" }, reason: { enum: [null, "not-broke", "open-money", "day-max", "off"] }, left_today: int(0, 100), day_max: int(0, 100), broke_max: int(0, 100) }),
+        }, ["v", "space", "user", "balance", "holdings", "rank", "cap", "at_table", "earned_today", "day_max", "accrual_s", "chip_s", "day", "topup"]), // chip_minutes optional: a 0.3.20 /me lacks it (astra r2 N5)
         journal: obj({
             v: { const: 1 }, space: ref("room"),
-            entries: arr(obj({ tx: str(64), at: nullable(int()), day: ref("day"), delta: { type: "integer" }, reason: { enum: ["start", "earn", "topup", "prestige", "sit", "cashout", "rig-escrow", "rig-settle", "void", "lab-grant"] }, ref: nullable(str(64)) })),
+            entries: arr(obj({ tx: str(64), at: nullable(int()), day: ref("day"), delta: { type: "integer" }, reason: { enum: ["start", "earn", "topup", "prestige", "sit", "cashout", "rig-escrow", "rig-settle", "void", "lab-grant", "admin", "side", "oneoff", "other"] }, ref: nullable(str(64)) })),
             next: nullable(str(64)),
         }),
         ranks: obj({ v: { const: 1 }, space: ref("room"), ranks: map("mxid", int(1)) }),
+        // ---- v1.1 F8: the admin money API (addendum §5.3)
+        econValue: obj({ value: { anyOf: [{ type: "integer" }, { type: "boolean" }] }, source: { enum: ["default", "server", "space"] } }),
+        economy: obj({ chip_minutes: ref("econValue"), day_max: ref("econValue"), start: ref("econValue"), topup_to: ref("econValue"), cap_base: ref("econValue"), cap_per_rank: ref("econValue"), side_day_max: ref("econValue"), side_on: ref("econValue") }),
+        adminSpace: obj({ v: { const: 1 }, space: ref("room"), you: obj({ admin: { const: true }, why: { enum: ["space-admin", "server-owner"] } }), economy: ref("economy"),
+            wallets: arr(obj({ u: ref("mxid"), balance: nullable(int()), rank: int(), cap: int(20), open: { type: "boolean" } })) }),
+        adminWalletsRequest: obj({ op: ref("op"), action: { enum: ["grant", "remove", "set", "reset", "rank"] }, who: { anyOf: [{ const: "everyone" }, arr(ref("mxid"), 1, 100)] }, amount: int(0, 100_000), reason: str(140) }, ["op", "action", "who"]),
+        adminBalance: { anyOf: [obj({ balance: int(), rank: int() }), obj({ granted: int(1) })] },
+        adminWallets: obj({ done: arr(obj({ u: ref("mxid"), before: ref("adminBalance"), after: ref("adminBalance") })), skipped: arr(obj({ u: ref("mxid"), code: { enum: ["at-table", "frozen"] } })), log: int(1), dup: { type: "boolean" } }),
+        adminEconomyRequest: obj({ op: ref("op"), set: { type: "object" }, reset: arr({ enum: ["chip_minutes", "day_max", "start", "topup_to", "cap_base", "cap_per_rank", "side_day_max", "side_on"] }), reason: str(140) }, ["op"]),
+        adminEconomy: obj({ economy: ref("economy"), log: int(1), dup: { type: "boolean" } }),
+        adminLog: obj({ v: { const: 1 }, space: ref("room"), entries: arr(obj({ id: int(1), at: int(), by: ref("mxid"), by_role: { enum: ["space-admin", "server-owner"] },
+            action: { enum: ["grant", "remove", "set", "reset", "rank", "economy"] }, who: { anyOf: [ref("mxid"), { enum: ["everyone", "economy", "someone"] }] },
+            amount: nullable(int()), before: nullable({ type: "object" }), after: nullable({ type: "object" }), reason: nullable(str(140)), count: int() })) }),
+        noticesSeenRequest: obj({ space: ref("room"), upto: int() }),
+        noticesSeen: obj({ v: { const: 1 }, seen: int() }),
+        // ---- v1.1 F9: Tune In (addendum §6.4)
+        sideStartRequest: obj({ space: ref("room") }),
+        sideRun: obj({ run: { type: "string", pattern: "^sR[A-Za-z0-9]{16}$" }, lo: int(1, 100), hi: int(1, 100), tries_left: int(0, 7), expires: int(), pay: arr(int(0, 3), 7, 7), left_today: int(0, 100) }),
+        sideTuneRequest: obj({ op: ref("op"), guess: int(1, 100) }),
+        sideTune: obj({ result: { enum: ["higher", "lower", "found", "lost", "cancelled"] }, lo: int(1, 101), hi: int(0, 100), tries_left: int(0, 7), paid: int(0, 3), secret: int(1, 100),
+            wallet: obj({ balance: int(), holdings: int() }), dup: { type: "boolean" } }, ["result", "lo", "hi", "tries_left", "paid", "dup"]),
         tables: obj({ space: ref("room"), owner: ref("server"), tables: arr(ref("tableListing")) }),
         tableCreated: obj({ table: ref("table") }),
         hands: obj({

@@ -11,9 +11,11 @@ import { useRoomAvatar } from "@/core/matrix";
 import { Avatar, Button, cx, useIsMobile } from "@/ui";
 import { artVars } from "./art";
 import { Chips, PlayerName } from "./bits";
+import { TuneInOffer } from "./TuneIn";
+import { AdminNotices, ManageChipsButton } from "./AdminChips";
 import { HoldemTable } from "./HoldemTable";
 import { RigTable } from "./RigTable";
-import { CLOSED_WORDS, GAME_WORDS, chipLabel, chipWords, w } from "./rules";
+import { CLOSED_WORDS, GAME_WORDS, chipLabel, chipWords, earnLine, w } from "./rules";
 import { canLinkParent, childOnlySpaces, linkParent, useRoomGame, useSpaceName } from "./space";
 import { validFor, useWalletPoll, createTable, ensureWallet, openGameWindow, refreshMe, usePlay, useRoomTables, useTableView, visibleGame, wkey, type OpenView, type RoomPlayWhy } from "./store";
 import { codeWords, type HoldemView, type RigView, type TableItem } from "./wire";
@@ -72,8 +74,9 @@ export function GamesWindow({ roomId, table, bare }: { roomId?: string; table?: 
 
 /** Whose chips are in play: the space's avatar, name and owner ("Game Night · example.org"), never the name alone; and
  *  my chips there. */
-/** `compact` (a phone at a table, #24): the space's name without its server, so the table's head stays on one line. */
-export function SpaceBadge({ owner, space, table, roomId, compact }: { owner: string; space: string; table?: string; roomId?: string; compact?: boolean }) {
+/** `compact` (a phone at a table, #24): the space's name without its server, so the table's head stays on one line.
+ *  `tight` (F-W1: that head also carries the Table | Call pill): the wallet chip, and the avatar only when it fits. */
+export function SpaceBadge({ owner, space, table, roomId, compact, tight }: { owner: string; space: string; table?: string; roomId?: string; compact?: boolean; tight?: boolean }) {
   const g = useRoomGame(roomId ?? "");
   const ovRaw = usePlay((x) => (table ? x.views[table] : undefined));
   const ov = roomId ? validFor(ovRaw, roomId, g) : null;
@@ -88,7 +91,7 @@ export function SpaceBadge({ owner, space, table, roomId, compact }: { owner: st
   const avatar = useRoomAvatar(space);
   const wal = usePlay((x) => x.wallets[wkey(owner, space)]?.wallet ?? null);
   return (
-    <span className={cx(s.spaceBadge, compact && s.compact)} data-testid="games-space" title={compact ? `${name} · ${owner}` : undefined}>
+    <span className={cx(s.spaceBadge, compact && s.compact, tight && s.tight)} data-testid="games-space" title={compact ? `${name} · ${owner}` : undefined}>
       <Avatar name={name} seed={space} size={20} imageSource={avatar} />
       <span className={s.spaceName}>{name}</span>
       {compact ? <span className={s.srOnly}>· {owner}</span> : <span className={s.spaceOwner}>· {owner}</span>}
@@ -197,10 +200,13 @@ function Lobby({ roomId, owner, space, tables, rigShown }: { roomId: string; own
               <span>
                 {w("lobby.earned_today")} <b>{wal.earned_today}</b> of {wal.day_max}
               </span>
-              <span>{w("lobby.per_hour")}</span>
+              <span data-testid="games-earn-line">{wal.chip_s > 0 ? earnLine(wal.chip_s, wal.day_max) : w("lobby.per_hour")}</span>
             </div>
             {wal.holdings >= wal.cap && !wal.at_table && <div className={s.capLine}>{w("wallet.at_cap_idle")}</div>}
             {wal.topup.available && <div className={s.capLine}>{w("wallet.topup")}</div>}
+            <AdminNotices owner={owner} space={space} />
+            <TuneInOffer owner={owner} space={space} />
+            <ManageChipsButton owner={owner} space={space} spaceName={spaceName} />
           </>
         ) : sw?.has === false ? (
           <div className={s.walletWords}>You haven't opened a game in {spaceName} yet. Nothing is counted until you do.</div>

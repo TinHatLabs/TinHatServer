@@ -5,7 +5,7 @@
 // play_entries can ever be updated or deleted (triggers). Matrix ids live in exactly one table: play_people.
 import pg from "pg";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 const V1 = `
 CREATE TABLE play_spaces (
@@ -166,7 +166,41 @@ const V2 = `
 ALTER TABLE play_seats ADD COLUMN person text;
 CREATE UNIQUE INDEX play_seats_one_per_person ON play_seats (person) WHERE active AND person IS NOT NULL;
 `;
-const MIGRATIONS = [[1, V1], [2, V2]];
+// 3 (additive, v1.1 / Server 0.3.21, addendum §7.1): per-space economy, the admin log (append-only; rows go only by the
+// 180-day retention), admin op receipts, notices, the side game's day counters (also kept in tombstones)
+const V3 = `
+CREATE TABLE play_space_economy (sid bigint PRIMARY KEY REFERENCES play_spaces(sid), settings jsonb NOT NULL DEFAULT '{}',
+                                 updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE play_admin_actors  (aid bigserial PRIMARY KEY, sid bigint NOT NULL REFERENCES play_spaces(sid),
+                                 user_id text NOT NULL, UNIQUE (sid, user_id));
+CREATE TABLE play_admin_log     (id bigserial PRIMARY KEY, sid bigint NOT NULL REFERENCES play_spaces(sid),
+                                 at timestamptz NOT NULL DEFAULT now(), aid bigint NOT NULL REFERENCES play_admin_actors(aid),
+                                 role text NOT NULL CHECK (role IN ('space-admin','server-owner')),
+                                 action text NOT NULL, target_wid text, amount bigint, count int,
+                                 before jsonb, after jsonb, net bigint NOT NULL DEFAULT 0);  -- net: chips this row moved into wallets (the audit)
+CREATE INDEX play_admin_log_sid ON play_admin_log (sid, id DESC);
+CREATE TABLE play_admin_reasons (log_id bigint PRIMARY KEY REFERENCES play_admin_log(id) ON DELETE CASCADE,
+                                 text text NOT NULL CHECK (char_length(text) BETWEEN 1 AND 140));
+CREATE TABLE play_admin_ops     (sid bigint NOT NULL, aid bigint NOT NULL REFERENCES play_admin_actors(aid),
+                                 op text NOT NULL, req_hash text NOT NULL, answer jsonb NOT NULL,
+                                 log_id bigint REFERENCES play_admin_log(id) ON DELETE CASCADE, PRIMARY KEY (sid, aid, op));
+CREATE TABLE play_notices       (id bigserial PRIMARY KEY, wid text NOT NULL,
+                                 log_id bigint NOT NULL REFERENCES play_admin_log(id) ON DELETE CASCADE,
+                                 seen boolean NOT NULL DEFAULT false);
+CREATE INDEX play_notices_wid ON play_notices (wid, id);
+ALTER TABLE play_wallets    ADD COLUMN side_day text, ADD COLUMN side_earned int NOT NULL DEFAULT 0 CHECK (side_earned >= 0);
+ALTER TABLE play_tombstones ADD COLUMN side_day text, ADD COLUMN side_earned int;
+CREATE FUNCTION play_admin_log_guard() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN RAISE EXCEPTION 'play: play_admin_log is append-only' USING ERRCODE = 'insufficient_privilege'; END IF;
+  IF OLD.at > now() - interval '180 days' THEN
+    RAISE EXCEPTION 'play: admin log rows go only by the 180-day retention' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN OLD;
+END $f$;
+CREATE TRIGGER play_admin_log_ro BEFORE UPDATE OR DELETE ON play_admin_log FOR EACH ROW EXECUTE FUNCTION play_admin_log_guard();
+`;
+const MIGRATIONS = [[1, V1], [2, V2], [3, V3]];
 
 export function createPool(env = process.env) {
     // On a Tin Hat Server: Postgres's unix socket shared into the API container (/var/run/postgresql), role tinhat_play,
@@ -176,7 +210,7 @@ export function createPool(env = process.env) {
 }
 
 /** Bring the schema to SCHEMA_VERSION (additive steps only, each in its own transaction, under an advisory lock). */
-export async function migrate(pool) {
+export async function migrate(pool, { upTo = SCHEMA_VERSION } = {}) { // upTo: tests only (an older server's schema)
     const c = await pool.connect();
     try {
         await c.query("SELECT pg_advisory_lock(hashtext('tinhat_play:migrate'))");
@@ -184,7 +218,7 @@ export async function migrate(pool) {
         const { rows } = await c.query("SELECT COALESCE(MAX(version), 0) AS v FROM play_schema");
         let have = Number(rows[0].v);
         for (const [v, sql] of MIGRATIONS) {
-            if (v <= have) continue;
+            if (v <= have || v > upTo) continue;
             await c.query("BEGIN");
             try { await c.query(sql); await c.query("INSERT INTO play_schema (version) VALUES ($1)", [v]); await c.query("COMMIT"); have = v; }
             catch (e) { await c.query("ROLLBACK"); throw e; }

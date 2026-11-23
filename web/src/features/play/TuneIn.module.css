@@ -1,0 +1,177 @@
+/* TuneIn.module.css — F9 (addendum §6.4): the offer line and the dial game. */
+.offer {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: calc(12px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+}
+.offerCompact {
+  margin-top: 4px;
+}
+.offerBtn {
+  appearance: none;
+  border: 1px solid var(--th-accent-bright);
+  background: transparent;
+  color: var(--th-accent-bright);
+  font: inherit;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.offerBtn:hover {
+  background: var(--th-surface-hover);
+}
+.offerBtn:focus-visible {
+  outline: 2px solid var(--th-accent-bright);
+  outline-offset: 1px;
+}
+.sheet {
+  width: 300px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--th-surface-window);
+  border: 1px solid var(--th-border-subtle);
+  box-shadow: 0 12px 32px var(--th-island-shadow);
+  color: var(--th-text-primary);
+}
+:root[data-ff="mobile"] .sheet {
+  width: 100%;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0 0 env(safe-area-inset-bottom, 0px);
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.title {
+  font-weight: 700;
+  font-size: calc(14px * var(--th-text-scale, 1));
+}
+.pips {
+  display: inline-flex;
+  gap: 3px;
+}
+.pip {
+  width: 4px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--th-border-subtle);
+}
+.pipOn {
+  background: var(--th-accent-bright);
+}
+.dial {
+  width: 100%;
+  height: auto;
+  cursor: pointer;
+  touch-action: none;
+  border-radius: 10px;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, var(--static, 0.3)) 0 1px, transparent 1px 3px),
+    var(--th-surface-sunken);
+  background-blend-mode: overlay;
+}
+.dialLive {
+  animation: staticShift 0.5s steps(4) infinite;
+}
+@keyframes staticShift {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dialLive {
+    animation: none;
+  }
+}
+.track {
+  fill: none;
+  stroke: var(--th-border-subtle);
+  stroke-width: 10;
+  stroke-linecap: round;
+}
+.lit {
+  fill: none;
+  stroke: var(--th-accent-bright);
+  stroke-opacity: 0.55;
+  stroke-width: 10;
+  stroke-linecap: round;
+}
+.tick {
+  font-size: calc(9px * var(--th-text-scale, 1));
+  fill: var(--th-text-muted);
+}
+.needle {
+  stroke: var(--th-text-primary);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: all 0.18s ease-out;
+}
+.needleLocked {
+  stroke: var(--g-win, var(--th-accent-bright));
+}
+.hub {
+  fill: var(--th-text-primary);
+}
+.value {
+  paint-order: stroke;
+  stroke: var(--th-surface-sunken);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+  font-size: calc(22px * var(--th-text-scale, 1));
+  font-weight: 700;
+  fill: var(--th-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.hint {
+  min-height: 18px;
+  font-size: calc(12.5px * var(--th-text-scale, 1));
+  color: var(--th-text-secondary);
+  text-align: center;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+}
+.num {
+  width: 64px;
+  font: inherit;
+  font-size: calc(16px * var(--th-text-scale, 1));
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--th-border-subtle);
+  background: var(--th-surface-sunken);
+  color: var(--th-text-primary);
+  text-align: center;
+}
+.range {
+  font-size: calc(11.5px * var(--th-text-scale, 1));
+  color: var(--th-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.result {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: calc(14px * var(--th-text-scale, 1));
+  text-align: center;
+}
+.foot {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}

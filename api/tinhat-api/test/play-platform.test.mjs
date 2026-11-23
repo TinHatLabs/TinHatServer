@@ -283,6 +283,9 @@ test("retention: game logs cleared after 30 days, closed tables removed after 90
     const before = (await pool.query("SELECT count(*)::int AS n FROM play_tx")).rows[0].n;
     const logs = (await pool.query("SELECT count(*)::int AS n FROM play_games WHERE log IS NOT NULL")).rows[0].n;
     assert.ok(logs > 0, "some finished games have logs");
+    // finished_at comes from the database's own clock (real time): start the jump from whichever is later, or the test
+    // stops working one day after the fixed start date (it did on 2026-11-20)
+    clock = Math.max(clock, Date.now());
     clock += 31 * 86400_000;
     const r1 = await play.sweep();
     assert.equal(r1.logs, logs);

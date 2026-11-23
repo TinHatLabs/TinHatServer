@@ -122,7 +122,11 @@ export function createSpaceInfo(reader, { now = Date.now } = {}) {
         const create = ev.find((e) => e?.type === "m.room.create" && e.state_key === "");
         if (!create || create.content?.type !== "m.space") return null;
         const owner = typeof create.sender === "string" ? create.sender.slice(create.sender.indexOf(":") + 1) : null;
-        return { owner, joined: new Set(roomView(ev, now()).joined.keys()) };
+        // v1.1 F8: the space room's power levels (ids → numbers only), for the admin check (§5.1)
+        const pl = ev.find((e) => e?.type === "m.room.power_levels" && e.state_key === "")?.content || {};
+        const users = pl.users && typeof pl.users === "object" ? pl.users : {};
+        const levelOf = (u) => { const v = Object.prototype.hasOwnProperty.call(users, u) ? Number(users[u]) : Number(pl.users_default ?? 0); return Number.isFinite(v) ? v : 0; };
+        return { owner, joined: new Set(roomView(ev, now()).joined.keys()), levelOf };
     };
 }
 
